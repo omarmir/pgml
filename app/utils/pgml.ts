@@ -54,6 +54,7 @@ export type PgmlGroup = {
 }
 
 export type PgmlNodeProperties = {
+  color?: string
   x: number
   y: number
   width?: number
@@ -1293,6 +1294,15 @@ const parseNodePropertiesBlock = (block: NamedBlock): { id: string, properties: 
     }
 
     const key = normalizeEffectKey(entry.key)
+
+    if (key === 'color') {
+      if (/^#(?:[\da-f]{3}|[\da-f]{6})$/i.test(entry.value.trim())) {
+        entries.color = entry.value.trim()
+      }
+
+      continue
+    }
+
     const numericValue = Number.parseFloat(entry.value)
 
     if (!Number.isFinite(numericValue)) {
@@ -1337,6 +1347,10 @@ const parseNodePropertiesBlock = (block: NamedBlock): { id: string, properties: 
     x,
     y,
     tableColumns: Number.isFinite(entries.tableColumns) ? Math.max(1, Math.round(entries.tableColumns || 1)) : null
+  }
+
+  if (typeof entries.color === 'string') {
+    properties.color = entries.color
   }
 
   if (Number.isFinite(entries.width)) {
@@ -1405,12 +1419,8 @@ export const buildPgmlWithNodeProperties = (
         `  y: ${formatPgmlNumber(properties.y)}`
       ]
 
-      if (typeof properties.width === 'number') {
-        lines.push(`  width: ${formatPgmlNumber(properties.width)}`)
-      }
-
-      if (typeof properties.height === 'number') {
-        lines.push(`  height: ${formatPgmlNumber(properties.height)}`)
+      if (typeof properties.color === 'string' && properties.color.length > 0) {
+        lines.push(`  color: ${properties.color}`)
       }
 
       if (properties.tableColumns) {
@@ -1777,8 +1787,39 @@ Function register_entity(entity_kind text) returns trigger [replace] {
   $sql$
 }
 
-Procedure archive_orders(retention_days integer) {
-  language: plpgsql
+Procedure archive_orders(retention_days integer) [replace] {
+  docs {
+    summary: "Moves stale orders into an archive store and records the archived timestamp."
+    purpose: "Supports monthly retention jobs for the commerce domain."
+  }
+
+  affects {
+    reads: [public.orders.status, public.orders.submitted_at, public.order_items.order_id]
+    writes: [public.orders_archive, public.order_item_archive]
+    depends_on: [public.orders, public.order_items]
+  }
+
+  source: $sql$
+    CREATE OR REPLACE PROCEDURE public.archive_orders(retention_days integer)
+    LANGUAGE plpgsql
+    AS $$
+    BEGIN
+      INSERT INTO public.orders_archive
+      SELECT *
+      FROM public.orders
+      WHERE status = 'submitted'
+        AND submitted_at < now() - make_interval(days => retention_days);
+
+      INSERT INTO public.order_item_archive
+      SELECT items.*
+      FROM public.order_items AS items
+      INNER JOIN public.orders AS orders
+        ON orders.id = items.order_id
+      WHERE orders.status = 'submitted'
+        AND orders.submitted_at < now() - make_interval(days => retention_days);
+    END;
+    $$;
+  $sql$
 }
 
 Trigger trg_order_items_total_sync on public.order_items {

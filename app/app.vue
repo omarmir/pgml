@@ -1,4 +1,6 @@
 <script setup lang="ts">
+import { useStudioHeaderActions } from './composables/useStudioHeaderActions'
+
 const title = 'PGML'
 const description = 'A Postgres-first markup language and live diagram studio built on top of DBML ideas.'
 
@@ -36,6 +38,27 @@ const navigation = [
 const route = useRoute()
 const isStudioRoute = computed(() => route.path.startsWith('/diagram'))
 const { studioTheme, studioThemeIcon, studioThemeLabel, toggleStudioTheme } = useStudioTheme()
+const { state: studioHeaderActions } = useStudioHeaderActions()
+const studioHeaderActionContent = {
+  align: 'end' as const,
+  side: 'bottom' as const,
+  sideOffset: 6
+}
+const shellContainerClass = computed(() => {
+  return isStudioRoute.value
+    ? 'relative flex min-h-screen w-full min-w-0 flex-col'
+    : 'relative mx-auto flex min-h-screen w-full max-w-[1480px] min-w-0 flex-col px-4 sm:px-6 lg:px-8'
+})
+const headerInnerClass = computed(() => {
+  return isStudioRoute.value
+    ? 'flex min-h-16 items-center justify-between gap-4 px-4 py-3 sm:px-6 lg:px-8'
+    : 'flex min-h-16 items-center justify-between gap-4 py-3'
+})
+const mainClass = computed(() => {
+  return isStudioRoute.value
+    ? 'flex-1 min-h-0'
+    : 'flex-1 pb-14 pt-8 sm:pt-10'
+})
 
 const navLinkClass = (to: string) => {
   const isActive = route.path === to || (to !== '/' && route.path.startsWith(to))
@@ -51,19 +74,11 @@ const navLinkClass = (to: string) => {
     :data-studio-theme="studioTheme"
     class="min-h-screen w-full bg-[color:var(--studio-shell-bg)] text-[color:var(--studio-shell-text)] transition-colors duration-200"
   >
-    <main
-      v-if="isStudioRoute"
-      class="h-screen w-full overflow-hidden"
-    >
-      <NuxtPage />
-    </main>
-
     <div
-      v-else
-      class="relative mx-auto flex min-h-screen w-full max-w-[1480px] flex-col px-4 sm:px-6 lg:px-8"
+      :class="shellContainerClass"
     >
       <header class="sticky top-0 z-40 border-b border-[color:var(--studio-shell-border)] bg-[color:var(--studio-shell-bg)]/92 backdrop-blur">
-        <div class="flex min-h-16 items-center justify-between gap-4 py-3">
+        <div :class="headerInnerClass">
           <div class="flex min-w-0 items-center gap-5">
             <NuxtLink
               to="/"
@@ -97,6 +112,29 @@ const navLinkClass = (to: string) => {
           </div>
 
           <div class="flex shrink-0 items-center gap-1.5">
+            <ClientOnly v-if="isStudioRoute && studioHeaderActions.items.length">
+              <UDropdownMenu
+                :items="studioHeaderActions.items"
+                :content="studioHeaderActionContent"
+                :ui="{
+                  content: 'min-w-[14rem] rounded-none border border-[color:var(--studio-shell-border)] bg-[color:var(--studio-control-bg)] p-1 shadow-[var(--studio-floating-shadow)] backdrop-blur-sm',
+                  group: 'p-0',
+                  separator: 'my-1 bg-[color:var(--studio-shell-border)]',
+                  item: 'rounded-none px-2 py-1.5 text-[0.78rem] text-[color:var(--studio-shell-text)] data-[highlighted]:bg-[color:var(--studio-surface-hover)] data-[highlighted]:text-[color:var(--studio-shell-text)]',
+                  itemLeadingIcon: 'text-[color:var(--studio-shell-muted)]',
+                  itemLabel: 'truncate'
+                }"
+              >
+                <UButton
+                  icon="i-lucide-ellipsis"
+                  color="neutral"
+                  variant="ghost"
+                  class="rounded-none border border-transparent text-[color:var(--studio-shell-muted)] hover:border-[color:var(--studio-shell-border)] hover:bg-[color:var(--studio-surface-hover)] hover:text-[color:var(--studio-shell-text)]"
+                  aria-label="Studio actions"
+                  :loading="studioHeaderActions.isLoading"
+                />
+              </UDropdownMenu>
+            </ClientOnly>
             <UButton
               :icon="studioThemeIcon"
               color="neutral"
@@ -107,8 +145,8 @@ const navLinkClass = (to: string) => {
               @click="toggleStudioTheme"
             />
             <UButton
-              to="/diagram"
-              label="Open Studio"
+              :to="isStudioRoute ? '/' : '/diagram'"
+              :label="isStudioRoute ? 'View Spec' : 'Open Studio'"
               color="neutral"
               trailing-icon="i-lucide-arrow-up-right"
               class="rounded-none border border-[color:var(--studio-shell-border)] bg-[color:var(--studio-control-bg)] text-[color:var(--studio-shell-text)] hover:bg-[color:var(--studio-surface-hover)]"
@@ -117,11 +155,14 @@ const navLinkClass = (to: string) => {
         </div>
       </header>
 
-      <main class="flex-1 pb-14 pt-8 sm:pt-10">
+      <main :class="mainClass">
         <NuxtPage />
       </main>
 
-      <footer class="border-t border-[color:var(--studio-shell-border)] py-5 text-sm text-[color:var(--studio-shell-muted)]">
+      <footer
+        v-if="!isStudioRoute"
+        class="border-t border-[color:var(--studio-shell-border)] py-5 text-sm text-[color:var(--studio-shell-muted)]"
+      >
         PGML extends DBML toward Postgres-native schema design and visual documentation.
       </footer>
     </div>

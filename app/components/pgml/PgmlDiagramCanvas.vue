@@ -27,6 +27,8 @@ const { model } = defineProps<{
   model: PgmlSchemaModel
 }>()
 const emit = defineEmits<{
+  createTable: [groupName: string]
+  editTable: [tableId: string]
   focusSource: [sourceRange: PgmlSourceRange]
 }>()
 
@@ -158,6 +160,7 @@ const pan: Ref<{ x: number, y: number }> = ref({
   x: 30,
   y: 36
 })
+const snapToGrid: Ref<boolean> = ref(false)
 const selectedNodeId: Ref<string | null> = ref(null)
 const nodeStates: Ref<Record<string, CanvasNodeState>> = ref({})
 const connectionLines: Ref<ConnectionLine[]> = ref([])
@@ -176,6 +179,7 @@ const objectRowGapY = 180
 const minCanvasScale = 0.28
 const maxCanvasScale = 1.3
 const zoomStep = 0.08
+const gridSize = 18
 const layoutPadding = 88
 const exportPadding = 96
 const collapsedObjectHeight = 56
@@ -1154,6 +1158,13 @@ const observeCanvasLayout = () => {
 
 const cleanForSearch = (value: string) => value.toLowerCase().replaceAll(/[^\w.]+/g, ' ')
 const clamp = (value: number, min: number, max: number) => Math.min(max, Math.max(min, value))
+const snapCoordinate = (value: number) => {
+  if (!snapToGrid.value) {
+    return value
+  }
+
+  return Math.round(value / gridSize) * gridSize
+}
 const uniqueValues = (values: string[]) => Array.from(new Set(values))
 const getRectCenter = (rect: LayoutRect): LayoutPoint => ({
   x: rect.x + rect.width / 2,
@@ -2730,7 +2741,7 @@ const syncNodeStates = () => {
     const tables = tableGroups.get(groupName) || []
     const existing = nodeStates.value[`group:${groupName}`]
     const storedLayout = model.nodeProperties[`group:${groupName}`]
-    const color = existing?.color || palette[index % palette.length] || '#8b5cf6'
+    const color = storedLayout?.color || existing?.color || palette[index % palette.length] || '#8b5cf6'
     const columnCount = storedLayout?.tableColumns ?? existing?.columnCount ?? 1
     const note = model.groups.find(group => group.name === groupName)?.note || null
     const minimumSize = getGroupMinimumSize(groupName, columnCount)
@@ -2779,8 +2790,7 @@ const syncNodeStates = () => {
     const storedLayout = model.nodeProperties[objectNode.id]
     const collapsed = existing?.collapsed ?? true
     const expandedHeight = Math.max(
-      storedLayout?.height
-      ?? existing?.expandedHeight
+      existing?.expandedHeight
       ?? (existing?.collapsed ? objectNode.expandedHeight || objectNode.height : existing?.height)
       ?? objectNode.expandedHeight
       ?? objectNode.height,
@@ -2792,10 +2802,10 @@ const syncNodeStates = () => {
       collapsed,
       x: storedLayout?.x ?? existing?.x ?? objectPositions[objectNode.id]?.x ?? objectNode.x,
       y: storedLayout?.y ?? existing?.y ?? objectPositions[objectNode.id]?.y ?? objectNode.y,
-      width: storedLayout?.width ?? existing?.width ?? objectNode.width,
+      width: existing?.width ?? objectNode.width,
       height: collapsed ? existing?.height ?? collapsedObjectHeight : expandedHeight,
       expandedHeight,
-      color: existing?.color || objectNode.color,
+      color: storedLayout?.color || existing?.color || objectNode.color,
       minWidth: existing?.minWidth ?? objectNode.width,
       minHeight: collapsed ? existing?.minHeight ?? collapsedObjectHeight : existing?.minHeight ?? objectNode.height,
       hasStoredLayout: Boolean(storedLayout)
@@ -3712,9 +3722,39 @@ const reflowAutoLayout = () => {
   nodeStates.value = resolveObjectCollisions(nextStates)
 }
 
-const zoomBy = (direction: 1 | -1) => {
-  const nextScale = scale.value + direction * zoomStep
-  scale.value = Math.min(maxCanvasScale, Math.max(minCanvasScale, Number(nextScale.toFixed(2))))
+const getViewportRelativePoint = (clientX: number, clientY: number) => {
+  if (!viewportRef.value) {
+    return null
+  }
+
+  const bounds = viewportRef.value.getBoundingClientRect()
+
+  return {
+    x: clientX - bounds.left,
+    y: clientY - bounds.top
+  }
+}
+
+const zoomToScale = (nextScale: number, pivot: { x: number, y: number } | null = null) => {
+  const normalizedScale = Number(clamp(nextScale, minCanvasScale, maxCanvasScale).toFixed(2))
+
+  if (!pivot) {
+    scale.value = normalizedScale
+    return
+  }
+
+  const planeX = (pivot.x - pan.value.x) / scale.value
+  const planeY = (pivot.y - pan.value.y) / scale.value
+
+  scale.value = normalizedScale
+  pan.value = {
+    x: Math.round(pivot.x - planeX * normalizedScale),
+    y: Math.round(pivot.y - planeY * normalizedScale)
+  }
+}
+
+const zoomBy = (direction: 1 | -1, pivot: { x: number, y: number } | null = null) => {
+  zoomToScale(scale.value + direction * zoomStep, pivot)
 }
 
 const fitView = () => {
@@ -3757,18 +3797,11 @@ const resetView = () => {
 
 const getNodeLayoutProperties = () => {
   return Object.values(nodeStates.value).reduce<Record<string, PgmlNodeProperties>>((properties, node) => {
-    const persistedHeight = node.kind === 'object' && node.collapsed
-      ? node.expandedHeight || node.height
-      : node.height
     const nextProperties: PgmlNodeProperties = {
+      color: node.color,
       x: Math.round(node.x),
       y: Math.round(node.y),
       tableColumns: node.kind === 'group' ? Math.max(1, Math.round(node.columnCount || 1)) : null
-    }
-
-    if (node.kind === 'object') {
-      nextProperties.width = Math.round(node.width)
-      nextProperties.height = Math.round(persistedHeight)
     }
 
     properties[node.id] = nextProperties
@@ -3919,8 +3952,8 @@ const startDragNode = (event: PointerEvent, id: string) => {
 
   const onMove = (moveEvent: PointerEvent) => {
     updateNode(id, {
-      x: origin.nodeX + (moveEvent.clientX - origin.x) / scale.value,
-      y: origin.nodeY + (moveEvent.clientY - origin.y) / scale.value
+      x: snapCoordinate(origin.nodeX + (moveEvent.clientX - origin.x) / scale.value),
+      y: snapCoordinate(origin.nodeY + (moveEvent.clientY - origin.y) / scale.value)
     }, {
       remeasure: false
     })
@@ -3989,9 +4022,17 @@ const handleTableClick = (tableId: string) => {
   emit('focusSource', table.sourceRange)
 }
 
+const handleEditTable = (tableId: string) => {
+  emit('editTable', tableId)
+}
+
+const handleCreateTable = (groupName: string) => {
+  emit('createTable', groupName)
+}
+
 const handleWheel = (event: WheelEvent) => {
   event.preventDefault()
-  zoomBy(event.deltaY > 0 ? -1 : 1)
+  zoomBy(event.deltaY > 0 ? -1 : 1, getViewportRelativePoint(event.clientX, event.clientY))
 }
 
 watch(
@@ -4179,6 +4220,19 @@ defineExpose<{
               {{ node.kind === 'group' ? `${node.tableCount || node.tableIds.length} tables` : `${node.tableIds.length} impact` }}
             </span>
             <UButton
+              v-if="node.kind === 'group'"
+              icon="i-lucide-table-2"
+              :data-group-add-table="node.title"
+              color="neutral"
+              variant="ghost"
+              size="xs"
+              class="h-5 rounded-none border border-[color:var(--studio-rail)] px-1 text-[color:var(--studio-shell-muted)] hover:bg-[color:var(--studio-surface-hover)] hover:text-[color:var(--studio-shell-text)]"
+              :aria-label="`Add table to ${node.title}`"
+              :title="`Add table to ${node.title}`"
+              @pointerdown.stop
+              @click.stop="handleCreateTable(node.title)"
+            />
+            <UButton
               v-if="isCollapsibleNode(node)"
               :icon="node.collapsed ? 'i-lucide-plus' : 'i-lucide-minus'"
               color="neutral"
@@ -4227,6 +4281,18 @@ defineExpose<{
                 <span class="inline-flex h-5 items-center border border-[color:var(--studio-rail)] px-1.5 font-mono text-[0.62rem] uppercase tracking-[0.06em] text-[color:var(--studio-shell-muted)]">
                   {{ table.columns.length }} cols
                 </span>
+                <UButton
+                  icon="i-lucide-pencil-line"
+                  :data-table-edit-button="table.fullName"
+                  color="neutral"
+                  variant="ghost"
+                  size="xs"
+                  class="h-5 w-5 rounded-none border border-[color:var(--studio-rail)] px-0 text-[color:var(--studio-shell-muted)] hover:bg-[color:var(--studio-surface-hover)] hover:text-[color:var(--studio-shell-text)]"
+                  aria-label="Edit table"
+                  title="Edit table"
+                  @pointerdown.stop
+                  @click.stop="handleEditTable(table.fullName)"
+                />
               </div>
 
               <div class="grid gap-px bg-[color:var(--studio-divider)]">
@@ -4473,6 +4539,16 @@ defineExpose<{
           class="rounded-none text-[color:var(--studio-shell-muted)] hover:bg-[color:var(--studio-surface-hover)] hover:text-[color:var(--studio-shell-text)]"
           @click="resetView"
         />
+        <button
+          type="button"
+          data-grid-snap-toggle="true"
+          :aria-pressed="snapToGrid"
+          class="border px-2 py-1 font-mono text-[0.62rem] uppercase tracking-[0.08em] transition-colors duration-150"
+          :class="snapToGrid ? 'border-[color:var(--studio-shell-label)] bg-[color:var(--studio-input-bg)] text-[color:var(--studio-shell-text)]' : 'border-[color:var(--studio-shell-border)] text-[color:var(--studio-shell-muted)]'"
+          @click="snapToGrid = !snapToGrid"
+        >
+          Snap
+        </button>
       </div>
     </div>
 

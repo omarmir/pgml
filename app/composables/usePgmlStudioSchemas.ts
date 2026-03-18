@@ -83,12 +83,19 @@ export const usePgmlStudioSchemas = ({
   const schemaDialogMode: Ref<PgmlStudioSchemaDialogMode> = ref('save')
   const includeLayoutInSchema: Ref<boolean> = ref(true)
   const savedSchemas: Ref<SavedPgmlSchema[]> = ref([])
+  const saveSchemaTargetId: Ref<string | null> = ref(null)
 
   const schemaActionTitle = computed(() => schemaDialogMode.value === 'save' ? 'Save schema' : 'Download schema')
   const schemaActionDescription = computed(() => {
     return canEmbedLayout.value
       ? 'Choose a name and decide whether to embed the current canvas layout into the PGML text.'
       : 'The current PGML has a parse error, so only the raw text can be saved right now.'
+  })
+  const saveSchemaTarget = computed(() => {
+    return orderedSavedSchemas.value.find(schema => schema.id === saveSchemaTargetId.value) || null
+  })
+  const saveSchemaActionLabel = computed(() => {
+    return saveSchemaTarget.value ? 'Overwrite saved schema' : 'Save to browser'
   })
   const orderedSavedSchemas = computed(() => {
     return [...savedSchemas.value].sort((left, right) => {
@@ -100,12 +107,14 @@ export const usePgmlStudioSchemas = ({
     source.value = initialSource
     currentSchemaId.value = null
     currentSchemaName.value = exampleSchemaName
+    saveSchemaTargetId.value = null
   }
 
   const clearSchema = () => {
     source.value = ''
     currentSchemaId.value = null
     currentSchemaName.value = untitledSchemaName
+    saveSchemaTargetId.value = null
   }
 
   const readSavedSchemas = () => {
@@ -118,7 +127,17 @@ export const usePgmlStudioSchemas = ({
 
   const openSchemaDialog = (mode: PgmlStudioSchemaDialogMode) => {
     schemaDialogMode.value = mode
+    saveSchemaTargetId.value = mode === 'save' ? currentSchemaId.value : null
     schemaDialogOpen.value = true
+  }
+
+  const selectSaveSchemaTarget = (schema: SavedPgmlSchema) => {
+    saveSchemaTargetId.value = schema.id
+    currentSchemaName.value = schema.name
+  }
+
+  const clearSaveSchemaTarget = () => {
+    saveSchemaTargetId.value = null
   }
 
   const downloadSchemaText = (name: string, text: string) => {
@@ -148,7 +167,7 @@ export const usePgmlStudioSchemas = ({
     const text = buildSchemaText(includeLayoutInSchema.value)
     const updatedAt = new Date().toISOString()
     const matchingSchema = savedSchemas.value.find((entry) => {
-      return entry.id === currentSchemaId.value || entry.name.toLowerCase() === name.toLowerCase()
+      return entry.id === saveSchemaTargetId.value || (!saveSchemaTargetId.value && entry.name.toLowerCase() === name.toLowerCase())
     })
 
     if (matchingSchema) {
@@ -156,6 +175,7 @@ export const usePgmlStudioSchemas = ({
       matchingSchema.text = text
       matchingSchema.updatedAt = updatedAt
       currentSchemaId.value = matchingSchema.id
+      saveSchemaTargetId.value = matchingSchema.id
     } else {
       const nextSchema: SavedPgmlSchema = {
         id: nanoid(),
@@ -166,6 +186,7 @@ export const usePgmlStudioSchemas = ({
 
       savedSchemas.value = [nextSchema, ...savedSchemas.value]
       currentSchemaId.value = nextSchema.id
+      saveSchemaTargetId.value = nextSchema.id
     }
 
     currentSchemaName.value = name
@@ -185,6 +206,7 @@ export const usePgmlStudioSchemas = ({
   const loadSavedSchema = (schema: SavedPgmlSchema) => {
     currentSchemaId.value = schema.id
     currentSchemaName.value = schema.name
+    saveSchemaTargetId.value = schema.id
     source.value = schema.text
     loadDialogOpen.value = false
   }
@@ -194,6 +216,10 @@ export const usePgmlStudioSchemas = ({
 
     if (currentSchemaId.value === schemaId) {
       currentSchemaId.value = null
+    }
+
+    if (saveSchemaTargetId.value === schemaId) {
+      saveSchemaTargetId.value = null
     }
 
     persistSavedSchemas()
@@ -222,6 +248,7 @@ export const usePgmlStudioSchemas = ({
     currentSchemaName,
     deleteSavedSchema,
     downloadSchema,
+    clearSaveSchemaTarget,
     formatSavedAt,
     includeLayoutInSchema,
     loadDialogOpen,
@@ -229,7 +256,11 @@ export const usePgmlStudioSchemas = ({
     loadSavedSchema,
     openSchemaDialog,
     orderedSavedSchemas,
+    saveSchemaActionLabel,
+    saveSchemaTarget,
+    saveSchemaTargetId,
     saveSchemaToBrowser,
+    selectSaveSchemaTarget,
     schemaActionDescription,
     schemaActionTitle,
     schemaDialogMode,

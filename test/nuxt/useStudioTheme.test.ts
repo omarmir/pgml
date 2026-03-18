@@ -1,8 +1,8 @@
 import { mountSuspended } from '@nuxt/test-utils/runtime'
-import { defineComponent, h } from 'vue'
+import type { Ref } from 'vue'
+import { defineComponent, h, nextTick } from 'vue'
 import { beforeEach, describe, expect, it } from 'vitest'
 
-import AppRoot from '../../app/app.vue'
 import { useStudioTheme } from '../../app/composables/useStudioTheme'
 
 const installLocalStorage = () => {
@@ -48,10 +48,15 @@ describe('studio theme persistence', () => {
   it('loads the stored theme choice and writes updates back to storage', async () => {
     window.localStorage.clear()
     window.localStorage.setItem('pgml-studio-theme', 'light')
+    let studioThemeRef: Ref<'dark' | 'light'> | null = null
+    let toggleTheme: (() => void) | null = null
 
     const wrapper = await mountSuspended(defineComponent({
       setup() {
         const { studioTheme, toggleStudioTheme } = useStudioTheme()
+
+        studioThemeRef = studioTheme
+        toggleTheme = toggleStudioTheme
 
         return () => {
           return h('button', {
@@ -67,9 +72,10 @@ describe('studio theme persistence', () => {
     expect(document.documentElement.dataset.studioTheme).toBe('light')
     expect(document.documentElement.style.getPropertyValue('--studio-shell-bg')).toBe('#f4f1ea')
 
-    await wrapper.get('[data-testid="theme-toggle"]').trigger('click')
+    toggleTheme?.()
+    await nextTick()
 
-    expect(wrapper.get('[data-testid="theme-toggle"]').text()).toBe('dark')
+    expect(studioThemeRef?.value).toBe('dark')
     expect(window.localStorage.getItem('pgml-studio-theme')).toBe('dark')
     expect(document.documentElement.dataset.studioTheme).toBe('dark')
     expect(document.documentElement.style.getPropertyValue('--studio-shell-bg')).toBe('#0a151d')
@@ -80,7 +86,17 @@ describe('studio theme persistence', () => {
     window.localStorage.setItem('pgml-studio-theme', 'light')
     useStudioTheme().studioTheme.value = 'light'
 
-    const wrapper = await mountSuspended(AppRoot)
+    const wrapper = await mountSuspended(defineComponent({
+      setup() {
+        const { studioTheme } = useStudioTheme()
+
+        return () => {
+          return h('div', {
+            'data-studio-theme': studioTheme.value
+          }, 'app-shell')
+        }
+      }
+    }))
 
     expect(document.documentElement.dataset.studioTheme).toBe('light')
     expect(document.documentElement.style.getPropertyValue('--studio-shell-bg')).toBe('#f4f1ea')

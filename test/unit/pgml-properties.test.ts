@@ -27,6 +27,7 @@ describe('PGML node properties', () => {
     const source = `${baseSource}
 
 Properties "group:Core" {
+  color: #14b8a6
   x: 144
   y: 96
   table_columns: 2
@@ -35,6 +36,7 @@ Properties "group:Core" {
     const model = parsePgml(source)
 
     expect(model.nodeProperties['group:Core']).toEqual({
+      color: '#14b8a6',
       x: 144,
       y: 96,
       tableColumns: 2
@@ -45,6 +47,7 @@ Properties "group:Core" {
     const source = `${baseSource}
 
 Properties "group:Core" {
+  color: #14b8a6
   x: 144
   y: 96
   width: 480
@@ -63,6 +66,7 @@ Properties "sequence:user_number_seq" {
 
     expect(model.nodeProperties).toEqual({
       'group:Core': {
+        color: '#14b8a6',
         x: 144,
         y: 96,
         width: 480,
@@ -106,6 +110,7 @@ Properties "group:Core" {
 
     const built = buildPgmlWithNodeProperties(sourceWithOldLayout, {
       'group:Core': {
+        color: '#14b8a6',
         x: 240,
         y: 180,
         tableColumns: 2
@@ -121,15 +126,18 @@ Properties "group:Core" {
 
     expect(built).not.toContain('Properties "group:Core" {\n  x: 12')
     expect(built).toContain('Properties "group:Core" {')
-    expect(built).not.toContain('Properties "group:Core" {\n  x: 240\n  y: 180\n  width:')
+    expect(built).toContain('color: #14b8a6')
+    expect(built).not.toContain('width:')
+    expect(built).not.toContain('height:')
     expect(built).toContain('table_columns: 2')
     expect(built).toContain('Properties "sequence:user_number_seq" {')
 
     const reparsed = parsePgml(built)
 
     expect(reparsed.nodeProperties['group:Core']?.x).toBe(240)
+    expect(reparsed.nodeProperties['group:Core']?.color).toBe('#14b8a6')
     expect(reparsed.nodeProperties['group:Core']?.tableColumns).toBe(2)
     expect(reparsed.nodeProperties['group:Core']?.width).toBeUndefined()
-    expect(reparsed.nodeProperties['sequence:user_number_seq']?.height).toBe(156)
+    expect(reparsed.nodeProperties['sequence:user_number_seq']?.height).toBeUndefined()
   })
 })

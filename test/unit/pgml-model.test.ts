@@ -57,10 +57,12 @@ describe('PGML model parsing', () => {
     ]))
     expect(registerEntity?.affects?.sets).toEqual(['public.funding_opportunity_profile.id'])
 
-    expect(archiveOrders?.signature).toBe('archive_orders(retention_days integer)')
+    expect(archiveOrders?.signature).toBe('archive_orders(retention_days integer) [replace]')
     expect(archiveOrders?.metadata).toEqual(expect.arrayContaining([
       expect.objectContaining({ key: 'language', value: 'plpgsql' })
     ]))
+    expect(archiveOrders?.docs?.summary).toContain('Moves stale orders')
+    expect(archiveOrders?.affects?.writes).toEqual(['public.orders_archive', 'public.order_item_archive'])
   })
 
   it('derives trigger execution metadata and called routines from trigger source', () => {

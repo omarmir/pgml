@@ -1,0 +1,499 @@
+import { nanoid } from 'nanoid'
+import type { PgmlColumn, PgmlGroup, PgmlSchemaModel, PgmlSourceRange, PgmlTable } from './pgml'
+
+export type PgmlEditableColumnDraft = {
+  id: string
+  defaultValue: string
+  extraModifiers: string[]
+  name: string
+  note: string
+  notNull: boolean
+  primaryKey: boolean
+  referenceColumn: string
+  referenceEnabled: boolean
+  referenceRelation: '>' | '<' | '-'
+  referenceSchema: string
+  referenceTable: string
+  type: string
+  unique: boolean
+}
+
+export type PgmlEditableTableDraft = {
+  columns: PgmlEditableColumnDraft[]
+  groupName: string | null
+  mode: 'create' | 'edit'
+  name: string
+  note: string
+  originalFullName: string | null
+  preservedConstraints: PgmlTable['constraints']
+  preservedIndexes: PgmlTable['indexes']
+  schema: string
+}
+
+type SourceEdit = {
+  endLine: number
+  replacement: string
+  startLine: number
+}
+
+const trimEditorValue = (value: string) => value.trim()
+const normalizeGroupName = (value: string | null | undefined) => {
+  const normalized = trimEditorValue(value || '')
+
+  return normalized.length > 0 ? normalized : null
+}
+const normalizeTableListEntry = (schema: string, tableName: string) => {
+  const normalizedSchema = trimEditorValue(schema)
+  const normalizedTableName = trimEditorValue(tableName)
+
+  return normalizedSchema === 'public'
+    ? normalizedTableName
+    : `${normalizedSchema}.${normalizedTableName}`
+}
+const serializeColumnReference = (column: PgmlEditableColumnDraft) => {
+  if (
+    !column.referenceEnabled
+    || trimEditorValue(column.referenceTable).length === 0
+    || trimEditorValue(column.referenceColumn).length === 0
+  ) {
+    return null
+  }
+
+  const referenceSchema = trimEditorValue(column.referenceSchema) || 'public'
+
+  return `ref: ${column.referenceRelation} ${referenceSchema}.${trimEditorValue(column.referenceTable)}.${trimEditorValue(column.referenceColumn)}`
+}
+const extractDefaultModifier = (modifiers: string[]) => {
+  return modifiers.find(modifier => modifier.startsWith('default:'))?.replace(/^default:\s*/, '') || ''
+}
+const extractColumnExtraModifiers = (modifiers: string[]) => {
+  return modifiers.filter((modifier) => {
+    const normalizedModifier = modifier.toLowerCase()
+
+    return (
+      normalizedModifier !== 'pk'
+      && normalizedModifier !== 'primary key'
+      && normalizedModifier !== 'not null'
+      && normalizedModifier !== 'unique'
+      && !normalizedModifier.startsWith('default:')
+      && !normalizedModifier.startsWith('note:')
+      && !normalizedModifier.startsWith('ref:')
+    )
+  })
+}
+const toEditableColumnDraft = (column: PgmlColumn): PgmlEditableColumnDraft => {
+  const referenceTableParts = column.reference?.toTable.split('.') || []
+
+  return {
+    id: nanoid(),
+    defaultValue: extractDefaultModifier(column.modifiers),
+    extraModifiers: extractColumnExtraModifiers(column.modifiers),
+    name: column.name,
+    note: column.note || '',
+    notNull: column.modifiers.some(modifier => modifier.toLowerCase() === 'not null'),
+    primaryKey: column.modifiers.some((modifier) => {
+      const normalizedModifier = modifier.toLowerCase()
+
+      return normalizedModifier === 'pk' || normalizedModifier === 'primary key'
+    }),
+    referenceColumn: column.reference?.toColumn || '',
+    referenceEnabled: Boolean(column.reference),
+    referenceRelation: column.reference?.relation || '>',
+    referenceSchema: referenceTableParts.length >= 2 ? referenceTableParts[0] || 'public' : 'public',
+    referenceTable: referenceTableParts.length >= 2
+      ? referenceTableParts[1] || ''
+      : (referenceTableParts[0] || ''),
+    type: column.type,
+    unique: column.modifiers.some(modifier => modifier.toLowerCase() === 'unique')
+  }
+}
+const serializeColumn = (column: PgmlEditableColumnDraft) => {
+  const modifiers: string[] = []
+
+  if (column.primaryKey) {
+    modifiers.push('pk')
+  }
+
+  if (column.notNull) {
+    modifiers.push('not null')
+  }
+
+  if (column.unique) {
+    modifiers.push('unique')
+  }
+
+  if (trimEditorValue(column.defaultValue).length > 0) {
+    modifiers.push(`default: ${trimEditorValue(column.defaultValue)}`)
+  }
+
+  if (trimEditorValue(column.note).length > 0) {
+    modifiers.push(`note: ${trimEditorValue(column.note)}`)
+  }
+
+  const referenceModifier = serializeColumnReference(column)
+
+  if (referenceModifier) {
+    modifiers.push(referenceModifier)
+  }
+
+  modifiers.push(...column.extraModifiers.filter(modifier => trimEditorValue(modifier).length > 0))
+
+  const modifierSuffix = modifiers.length > 0 ? ` [${modifiers.join(', ')}]` : ''
+
+  return `  ${trimEditorValue(column.name)} ${trimEditorValue(column.type)}${modifierSuffix}`
+}
+const serializeGroupBlock = (groupName: string, tableNames: string[], note: string | null) => {
+  const lines = [
+    `TableGroup ${groupName} {`,
+    ...tableNames.map(tableName => `  ${tableName}`)
+  ]
+
+  if (note && trimEditorValue(note).length > 0) {
+    lines.push(`  Note: ${trimEditorValue(note)}`)
+  }
+
+  lines.push('}')
+
+  return lines.join('\n')
+}
+const serializeTableBlock = (draft: PgmlEditableTableDraft) => {
+  const groupName = normalizeGroupName(draft.groupName)
+  const lines = [
+    `Table ${trimEditorValue(draft.schema)}.${trimEditorValue(draft.name)}${groupName ? ` in ${groupName}` : ''} {`
+  ]
+
+  if (trimEditorValue(draft.note).length > 0) {
+    lines.push(`  Note: ${trimEditorValue(draft.note)}`)
+  }
+
+  draft.columns.forEach((column) => {
+    lines.push(serializeColumn(column))
+  })
+
+  draft.preservedIndexes.forEach((index) => {
+    const typeSuffix = index.type.length > 0 ? ` [type: ${index.type}]` : ''
+
+    lines.push(`  Index ${index.name} (${index.columns.join(', ')})${typeSuffix}`)
+  })
+
+  draft.preservedConstraints.forEach((constraint) => {
+    lines.push(`  Constraint ${constraint.name}: ${constraint.expression}`)
+  })
+
+  lines.push('}')
+
+  return lines.join('\n')
+}
+const splitSourceLines = (source: string) => {
+  return source.length > 0 ? source.replaceAll('\r\n', '\n').split('\n') : []
+}
+const applySourceEdits = (source: string, edits: SourceEdit[]) => {
+  const lines = splitSourceLines(source)
+  const sortedEdits = [...edits].sort((left, right) => right.startLine - left.startLine)
+
+  sortedEdits.forEach((edit) => {
+    const startIndex = Math.max(0, edit.startLine - 1)
+    const deleteCount = Math.max(0, edit.endLine - edit.startLine + 1)
+    const replacementLines = splitSourceLines(edit.replacement)
+
+    lines.splice(startIndex, deleteCount, ...replacementLines)
+  })
+
+  return lines.join('\n').replace(/\n{3,}/g, '\n\n').trim()
+}
+const updateGroupBlock = (
+  group: PgmlGroup,
+  options: {
+    addEntry?: string | null
+    removeEntry?: string | null
+    replaceEntry?: {
+      nextEntry: string
+      previousEntry: string
+    } | null
+  }
+) => {
+  const nextTableNames = [...group.tableNames]
+
+  if (options.removeEntry) {
+    const removeEntry = options.removeEntry
+    const removeIndex = nextTableNames.findIndex(entry => entry === removeEntry)
+
+    if (removeIndex >= 0) {
+      nextTableNames.splice(removeIndex, 1)
+    }
+  }
+
+  if (options.replaceEntry) {
+    const replaceIndex = nextTableNames.findIndex(entry => entry === options.replaceEntry?.previousEntry)
+
+    if (replaceIndex >= 0 && options.replaceEntry) {
+      nextTableNames.splice(replaceIndex, 1, options.replaceEntry.nextEntry)
+    }
+  }
+
+  if (options.addEntry && !nextTableNames.includes(options.addEntry)) {
+    nextTableNames.push(options.addEntry)
+  }
+
+  return serializeGroupBlock(group.name, nextTableNames, group.note)
+}
+const getRangeEndLine = (sourceRange: PgmlSourceRange | undefined) => {
+  return sourceRange?.endLine || 0
+}
+const buildGroupMembershipEdits = (
+  model: PgmlSchemaModel,
+  currentTable: PgmlTable | null,
+  draft: PgmlEditableTableDraft
+) => {
+  const edits: SourceEdit[] = []
+  const previousGroupName = normalizeGroupName(currentTable?.groupName)
+  const nextGroupName = normalizeGroupName(draft.groupName)
+  const previousGroup = previousGroupName
+    ? model.groups.find(group => group.name === previousGroupName)
+    : null
+  const nextGroup = nextGroupName
+    ? model.groups.find(group => group.name === nextGroupName)
+    : null
+  const previousEntry = currentTable
+    ? normalizeTableListEntry(currentTable.schema, currentTable.name)
+    : null
+  const nextEntry = normalizeTableListEntry(draft.schema, draft.name)
+
+  if (previousGroup && previousGroup.sourceRange) {
+    const replacement = previousGroupName === nextGroupName
+      ? updateGroupBlock(previousGroup, {
+          replaceEntry: previousEntry && previousEntry !== nextEntry
+            ? {
+                previousEntry,
+                nextEntry
+              }
+            : null
+        })
+      : updateGroupBlock(previousGroup, {
+          removeEntry: previousEntry
+        })
+
+    edits.push({
+      endLine: previousGroup.sourceRange.endLine,
+      replacement,
+      startLine: previousGroup.sourceRange.startLine
+    })
+  }
+
+  if (nextGroup && nextGroup.sourceRange && previousGroupName !== nextGroupName) {
+    edits.push({
+      endLine: nextGroup.sourceRange.endLine,
+      replacement: updateGroupBlock(nextGroup, {
+        addEntry: nextEntry
+      }),
+      startLine: nextGroup.sourceRange.startLine
+    })
+  }
+
+  return edits
+}
+const getCreateTableInsertLine = (model: PgmlSchemaModel, groupName: string | null) => {
+  const normalizedGroupName = normalizeGroupName(groupName)
+
+  if (normalizedGroupName) {
+    const groupedTables = model.tables
+      .filter(table => normalizeGroupName(table.groupName) === normalizedGroupName)
+      .sort((left, right) => getRangeEndLine(left.sourceRange) - getRangeEndLine(right.sourceRange))
+    const lastGroupedTable = groupedTables.at(-1)
+
+    if (lastGroupedTable?.sourceRange) {
+      return lastGroupedTable.sourceRange.endLine + 1
+    }
+
+    const group = model.groups.find(candidate => candidate.name === normalizedGroupName)
+
+    if (group?.sourceRange) {
+      return group.sourceRange.endLine + 1
+    }
+  }
+
+  const lastTable = [...model.tables].sort((left, right) => getRangeEndLine(left.sourceRange) - getRangeEndLine(right.sourceRange)).at(-1)
+
+  if (lastTable?.sourceRange) {
+    return lastTable.sourceRange.endLine + 1
+  }
+
+  const lastGroup = [...model.groups].sort((left, right) => getRangeEndLine(left.sourceRange) - getRangeEndLine(right.sourceRange)).at(-1)
+
+  if (lastGroup?.sourceRange) {
+    return lastGroup.sourceRange.endLine + 1
+  }
+
+  return 1
+}
+const buildCreateGroupInsertEdit = (source: string, groupName: string, tableEntry: string) => {
+  const sourceLines = splitSourceLines(source)
+  const prefix = source.trim().length > 0 ? '\n\n' : ''
+
+  return {
+    endLine: sourceLines.length,
+    replacement: `${prefix}${serializeGroupBlock(groupName, [tableEntry], null)}`,
+    startLine: sourceLines.length + 1
+  } satisfies SourceEdit
+}
+
+export const commonPgmlColumnTypes = [
+  'bigint',
+  'boolean',
+  'date',
+  'integer',
+  'jsonb',
+  'numeric',
+  'text',
+  'time',
+  'timestamp',
+  'timestamptz',
+  'tsvector',
+  'uuid',
+  'varchar'
+]
+
+export const createEditableTableDraft = (table: PgmlTable): PgmlEditableTableDraft => {
+  return {
+    columns: table.columns.map(toEditableColumnDraft),
+    groupName: normalizeGroupName(table.groupName),
+    mode: 'edit',
+    name: table.name,
+    note: table.note || '',
+    originalFullName: table.fullName,
+    preservedConstraints: table.constraints,
+    preservedIndexes: table.indexes,
+    schema: table.schema
+  }
+}
+
+export const createEditableTableDraftForGroup = (groupName: string | null = null): PgmlEditableTableDraft => {
+  return {
+    columns: [
+      {
+        id: nanoid(),
+        defaultValue: '',
+        extraModifiers: [],
+        name: 'id',
+        note: '',
+        notNull: true,
+        primaryKey: true,
+        referenceColumn: '',
+        referenceEnabled: false,
+        referenceRelation: '>',
+        referenceSchema: 'public',
+        referenceTable: '',
+        type: 'uuid',
+        unique: false
+      }
+    ],
+    groupName: normalizeGroupName(groupName),
+    mode: 'create',
+    name: '',
+    note: '',
+    originalFullName: null,
+    preservedConstraints: [],
+    preservedIndexes: [],
+    schema: 'public'
+  }
+}
+
+export const cloneEditableTableDraft = (draft: PgmlEditableTableDraft): PgmlEditableTableDraft => {
+  return {
+    columns: draft.columns.map(column => ({
+      ...column,
+      extraModifiers: [...column.extraModifiers]
+    })),
+    groupName: draft.groupName,
+    mode: draft.mode,
+    name: draft.name,
+    note: draft.note,
+    originalFullName: draft.originalFullName,
+    preservedConstraints: [...draft.preservedConstraints],
+    preservedIndexes: [...draft.preservedIndexes],
+    schema: draft.schema
+  }
+}
+
+export const getEditableTableDraftErrors = (draft: PgmlEditableTableDraft) => {
+  const errors: string[] = []
+  const normalizedName = trimEditorValue(draft.name)
+  const normalizedSchema = trimEditorValue(draft.schema)
+
+  if (normalizedName.length === 0) {
+    errors.push('Table name is required.')
+  }
+
+  if (normalizedSchema.length === 0) {
+    errors.push('Schema is required.')
+  }
+
+  if (!draft.columns.length) {
+    errors.push('Add at least one column.')
+  }
+
+  draft.columns.forEach((column, index) => {
+    if (trimEditorValue(column.name).length === 0) {
+      errors.push(`Column ${index + 1} needs a name.`)
+    }
+
+    if (trimEditorValue(column.type).length === 0) {
+      errors.push(`Column ${index + 1} needs a type.`)
+    }
+
+    if (column.referenceEnabled) {
+      if (trimEditorValue(column.referenceTable).length === 0) {
+        errors.push(`Column ${index + 1} needs a reference table.`)
+      }
+
+      if (trimEditorValue(column.referenceColumn).length === 0) {
+        errors.push(`Column ${index + 1} needs a reference column.`)
+      }
+    }
+  })
+
+  return Array.from(new Set(errors))
+}
+
+export const applyEditableTableDraftToSource = (
+  source: string,
+  model: PgmlSchemaModel,
+  draft: PgmlEditableTableDraft
+) => {
+  const normalizedSource = source.replaceAll('\r\n', '\n')
+  const currentTable = draft.originalFullName
+    ? model.tables.find(table => table.fullName === draft.originalFullName) || null
+    : null
+  const tableBlock = serializeTableBlock(draft)
+  const edits: SourceEdit[] = buildGroupMembershipEdits(model, currentTable, draft)
+
+  if (draft.mode === 'edit' && currentTable?.sourceRange) {
+    edits.push({
+      endLine: currentTable.sourceRange.endLine,
+      replacement: tableBlock,
+      startLine: currentTable.sourceRange.startLine
+    })
+
+    return applySourceEdits(normalizedSource, edits)
+  }
+
+  const nextGroupName = normalizeGroupName(draft.groupName)
+  const nextGroup = nextGroupName
+    ? model.groups.find(group => group.name === nextGroupName) || null
+    : null
+
+  if (nextGroupName && !nextGroup) {
+    edits.push(buildCreateGroupInsertEdit(normalizedSource, nextGroupName, normalizeTableListEntry(draft.schema, draft.name)))
+  }
+
+  const insertLine = getCreateTableInsertLine(model, nextGroupName)
+  const prefix = normalizedSource.trim().length > 0 ? '\n\n' : ''
+
+  edits.push({
+    endLine: insertLine - 1,
+    replacement: `${prefix}${tableBlock}`,
+    startLine: insertLine
+  })
+
+  return applySourceEdits(normalizedSource, edits)
+}
