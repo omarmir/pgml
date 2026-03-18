@@ -29,6 +29,8 @@ type CanvasNodeState = {
   tableCount?: number
   columnCount?: number
   note?: string | null
+  minWidth?: number
+  minHeight?: number
 }
 
 type ConnectionLine = {
@@ -51,6 +53,16 @@ const connectionLines: Ref<ConnectionLine[]> = ref([])
 let resizeObserver: ResizeObserver | null = null
 
 const palette = ['#8b5cf6', '#f59e0b', '#06b6d4', '#10b981', '#ef4444', '#ec4899', '#f97316']
+const groupTableWidth = 232
+const groupTableGap = 8
+const groupHorizontalPadding = 20
+const groupHeaderHeight = 56
+const groupVerticalPadding = 18
+const groupNoteHeight = 28
+const groupColumnRowHeight = 31
+const objectColumnX = 1060
+const objectColumnGapX = 320
+const objectRowGapY = 180
 
 const canvasNodes = computed(() => Object.values(nodeStates.value))
 const selectedNode = computed(() => {
@@ -60,6 +72,139 @@ const selectedNode = computed(() => {
 
   return nodeStates.value[selectedNodeId.value] || null
 })
+const tablesByGroup = computed(() => {
+  const groups: Record<string, PgmlSchemaModel['tables']> = {}
+
+  for (const table of model.tables) {
+    const groupName = table.groupName || 'Ungrouped'
+
+    if (!groups[groupName]) {
+      groups[groupName] = []
+    }
+
+    groups[groupName]?.push(table)
+  }
+
+  return groups
+})
+
+const estimateTableHeight = (columnCount: number) => {
+  return 40 + columnCount * groupColumnRowHeight
+}
+
+const getGroupMinimumSize = (groupName: string, columnCount: number, note?: string | null) => {
+  const tables = tablesByGroup.value[groupName] || []
+  const safeColumnCount = Math.max(1, Math.min(columnCount, Math.max(tables.length, 1)))
+  const rowHeights: number[] = []
+
+  tables.forEach((table, index) => {
+    const rowIndex = Math.floor(index / safeColumnCount)
+    const tableHeight = estimateTableHeight(table.columns.length)
+    rowHeights[rowIndex] = Math.max(rowHeights[rowIndex] || 0, tableHeight)
+  })
+
+  const contentHeight = rowHeights.reduce((sum, height) => sum + height, 0) + Math.max(0, rowHeights.length - 1) * groupTableGap
+
+  return {
+    minWidth: groupHorizontalPadding * 2 + safeColumnCount * groupTableWidth + Math.max(0, safeColumnCount - 1) * groupTableGap,
+    minHeight: groupHeaderHeight + groupVerticalPadding + contentHeight + (note ? groupNoteHeight : 0)
+  }
+}
+
+const getCanvasBounds = () => {
+  if (!canvasNodes.value.length) {
+    return null
+  }
+
+  const minX = Math.min(...canvasNodes.value.map(node => node.x))
+  const minY = Math.min(...canvasNodes.value.map(node => node.y))
+  const maxX = Math.max(...canvasNodes.value.map(node => node.x + node.width))
+  const maxY = Math.max(...canvasNodes.value.map(node => node.y + node.height))
+
+  return {
+    minX,
+    minY,
+    width: maxX - minX,
+    height: maxY - minY
+  }
+}
+
+const measureGroupMinimumSize = (groupId: string) => {
+  if (!planeRef.value) {
+    return null
+  }
+
+  const groupElement = planeRef.value.querySelector(`[data-node-anchor="${groupId}"]`)
+  const headerElement = planeRef.value.querySelector(`[data-node-header="${groupId}"]`)
+  const contentElement = planeRef.value.querySelector(`[data-group-content="${groupId}"]`)
+
+  if (
+    !(groupElement instanceof HTMLElement)
+    || !(headerElement instanceof HTMLElement)
+    || !(contentElement instanceof HTMLElement)
+  ) {
+    return null
+  }
+
+  const contentWrapper = contentElement.parentElement
+  const wrapperStyles = contentWrapper ? window.getComputedStyle(contentWrapper) : null
+  const paddingRight = wrapperStyles ? Number.parseFloat(wrapperStyles.paddingRight) : 0
+  const paddingBottom = wrapperStyles ? Number.parseFloat(wrapperStyles.paddingBottom) : 0
+  const headerBottom = headerElement.offsetTop + headerElement.offsetHeight
+  const contentRight = contentElement.offsetLeft + contentElement.scrollWidth + paddingRight
+  const contentBottom = contentElement.offsetTop + contentElement.scrollHeight + paddingBottom
+
+  return {
+    minWidth: Math.ceil(Math.max(contentRight, 240)),
+    minHeight: Math.ceil(Math.max(headerBottom + paddingBottom, contentBottom))
+  }
+}
+
+const syncMeasuredGroupSizes = () => {
+  let hasChanges = false
+
+  for (const node of canvasNodes.value) {
+    if (node.kind !== 'group') {
+      continue
+    }
+
+    const measuredSize = measureGroupMinimumSize(node.id)
+
+    if (!measuredSize) {
+      continue
+    }
+
+    const current = nodeStates.value[node.id]
+
+    if (!current) {
+      continue
+    }
+
+    const nextWidth = Math.max(current.width, measuredSize.minWidth)
+    const nextHeight = Math.max(current.height, measuredSize.minHeight)
+    const needsUpdate = (
+      current.minWidth !== measuredSize.minWidth
+      || current.minHeight !== measuredSize.minHeight
+      || current.width !== nextWidth
+      || current.height !== nextHeight
+    )
+
+    if (!needsUpdate) {
+      continue
+    }
+
+    nodeStates.value[node.id] = {
+      ...current,
+      minWidth: measuredSize.minWidth,
+      minHeight: measuredSize.minHeight,
+      width: nextWidth,
+      height: nextHeight
+    }
+    hasChanges = true
+  }
+
+  return hasChanges
+}
 
 const cleanForSearch = (value: string) => value.toLowerCase().replaceAll(/[^\w.]+/g, ' ')
 
@@ -110,20 +255,45 @@ const inferCustomTypeTables = (customType: PgmlCustomType) => {
     .map(table => table.fullName)
 }
 
-const buildObjectNodes = () => {
+const buildObjectNodes = (groupStates: Record<string, CanvasNodeState>) => {
   const nodes: CanvasNodeState[] = []
-  let lane = 0
+  const lanes: Record<string, number> = {}
 
-  const nextPosition = () => {
-    const x = 1180 + (lane % 2) * 360
-    const y = 90 + Math.floor(lane / 2) * 220
-    lane += 1
+  const resolveGroupName = (tableIds: string[]) => {
+    const firstTable = model.tables.find(table => tableIds.includes(table.fullName))
+    return firstTable?.groupName || 'Ungrouped'
+  }
 
-    return { x, y }
+  const nextPosition = (tableIds: string[], kind: ObjectKind) => {
+    const groupName = resolveGroupName(tableIds)
+    const groupNode = groupStates[`group:${groupName}`]
+    const laneKey = `${groupName}:${kind === 'Function' || kind === 'Procedure' || kind === 'Trigger' || kind === 'Sequence' ? 'bottom' : 'side'}`
+    const lane = lanes[laneKey] || 0
+
+    lanes[laneKey] = lane + 1
+
+    if (!groupNode) {
+      return {
+        x: objectColumnX + (lane % 2) * objectColumnGapX,
+        y: 90 + Math.floor(lane / 2) * objectRowGapY
+      }
+    }
+
+    if (kind === 'Function' || kind === 'Procedure' || kind === 'Trigger' || kind === 'Sequence') {
+      return {
+        x: groupNode.x + (lane % 2) * objectColumnGapX,
+        y: groupNode.y + groupNode.height + 56 + Math.floor(lane / 2) * objectRowGapY
+      }
+    }
+
+    return {
+      x: groupNode.x + groupNode.width + 72 + (lane % 2) * objectColumnGapX,
+      y: groupNode.y + lane * 136
+    }
   }
 
   const addNode = (partial: Omit<CanvasNodeState, 'x' | 'y'>) => {
-    const position = nextPosition()
+    const position = nextPosition(partial.tableIds, partial.objectKind || 'Index')
 
     nodes.push({
       ...partial,
@@ -262,8 +432,8 @@ const syncNodeStates = () => {
     const existing = nodeStates.value[`group:${groupName}`]
     const color = existing?.color || palette[index % palette.length] || '#8b5cf6'
     const columnCount = existing?.columnCount ?? 1
-    const rows = Math.ceil(tables.length / columnCount)
-    const height = existing?.height || Math.max(180, 74 + rows * 138)
+    const note = model.groups.find(group => group.name === groupName)?.note || null
+    const minimumSize = getGroupMinimumSize(groupName, columnCount, note)
 
     nextStates[`group:${groupName}`] = {
       id: `group:${groupName}`,
@@ -273,17 +443,19 @@ const syncNodeStates = () => {
       details: tables.map(table => table.fullName),
       x: existing?.x ?? 120 + index * 420,
       y: existing?.y ?? 90 + (index % 2) * 120,
-      width: existing?.width ?? 320,
-      height,
+      width: Math.max(existing?.width ?? 320, minimumSize.minWidth),
+      height: Math.max(existing?.height ?? 180, minimumSize.minHeight),
       color,
       tableIds: tables.map(table => table.fullName),
       tableCount: tables.length,
       columnCount,
-      note: model.groups.find(group => group.name === groupName)?.note || null
+      note,
+      minWidth: minimumSize.minWidth,
+      minHeight: minimumSize.minHeight
     }
   })
 
-  for (const objectNode of buildObjectNodes()) {
+  for (const objectNode of buildObjectNodes(nextStates)) {
     const existing = nodeStates.value[objectNode.id]
 
     nextStates[objectNode.id] = {
@@ -454,12 +626,36 @@ const zoomBy = (direction: 1 | -1) => {
   scale.value = Math.min(1.3, Math.max(0.45, Number(nextScale.toFixed(2))))
 }
 
-const resetView = () => {
-  scale.value = 0.62
-  pan.value = {
-    x: 30,
-    y: 36
+const fitView = () => {
+  if (!viewportRef.value) {
+    return
   }
+
+  const bounds = getCanvasBounds()
+
+  if (!bounds) {
+    return
+  }
+
+  const padding = {
+    top: 48,
+    right: 240,
+    bottom: 72,
+    left: 48
+  }
+  const availableWidth = Math.max(240, viewportRef.value.clientWidth - padding.left - padding.right)
+  const availableHeight = Math.max(240, viewportRef.value.clientHeight - padding.top - padding.bottom)
+  const nextScale = Math.min(1, Math.max(0.45, Number(Math.min(availableWidth / bounds.width, availableHeight / bounds.height).toFixed(2))))
+
+  scale.value = nextScale
+  pan.value = {
+    x: Math.round(padding.left + (availableWidth - bounds.width * nextScale) / 2 - bounds.minX * nextScale),
+    y: Math.round(padding.top + (availableHeight - bounds.height * nextScale) / 2 - bounds.minY * nextScale)
+  }
+}
+
+const resetView = () => {
+  fitView()
 }
 
 const updateNode = (id: string, partial: Partial<CanvasNodeState>) => {
@@ -469,10 +665,25 @@ const updateNode = (id: string, partial: Partial<CanvasNodeState>) => {
     return
   }
 
-  nodeStates.value[id] = {
+  const nextNode = {
     ...current,
     ...partial
   }
+
+  if (current.kind === 'group') {
+    const minimumSize = getGroupMinimumSize(
+      current.title,
+      nextNode.columnCount || 1,
+      nextNode.note
+    )
+
+    nextNode.minWidth = minimumSize.minWidth
+    nextNode.minHeight = minimumSize.minHeight
+    nextNode.width = Math.max(nextNode.width, minimumSize.minWidth)
+    nextNode.height = Math.max(nextNode.height, minimumSize.minHeight)
+  }
+
+  nodeStates.value[id] = nextNode
 
   nextTick(() => {
     updateConnections()
@@ -552,13 +763,15 @@ const startResizeNode = (event: PointerEvent, id: string) => {
     x: event.clientX,
     y: event.clientY,
     width: node.width,
-    height: node.height
+    height: node.height,
+    minWidth: node.minWidth || 200,
+    minHeight: node.minHeight || 96
   }
 
   const onMove = (moveEvent: PointerEvent) => {
     updateNode(id, {
-      width: Math.max(200, origin.width + (moveEvent.clientX - origin.x) / scale.value),
-      height: Math.max(96, origin.height + (moveEvent.clientY - origin.y) / scale.value)
+      width: Math.max(origin.minWidth, origin.width + (moveEvent.clientX - origin.x) / scale.value),
+      height: Math.max(origin.minHeight, origin.height + (moveEvent.clientY - origin.y) / scale.value)
     })
   }
 
@@ -581,6 +794,11 @@ watch(
   async () => {
     syncNodeStates()
     await nextTick()
+    if (syncMeasuredGroupSizes()) {
+      await nextTick()
+    }
+    fitView()
+    await nextTick()
     updateConnections()
   },
   { deep: true, immediate: true }
@@ -593,6 +811,7 @@ watch([scale, pan], async () => {
 
 onMounted(() => {
   resizeObserver = new ResizeObserver(() => {
+    syncMeasuredGroupSizes()
     updateConnections()
   })
 
@@ -605,11 +824,20 @@ onMounted(() => {
   }
 
   nextTick(() => {
+    if (syncMeasuredGroupSizes()) {
+      updateConnections()
+    }
     updateConnections()
     requestAnimationFrame(() => {
+      if (syncMeasuredGroupSizes()) {
+        updateConnections()
+      }
       updateConnections()
     })
     window.setTimeout(() => {
+      if (syncMeasuredGroupSizes()) {
+        updateConnections()
+      }
       updateConnections()
     }, 120)
   })
@@ -673,6 +901,7 @@ onBeforeUnmount(() => {
         @pointerdown.stop="selectedNodeId = node.id"
       >
         <div
+          :data-node-header="node.id"
           class="flex cursor-move items-start justify-between gap-2 border-b border-white/6 px-2.5 py-2"
           @pointerdown="startDragNode($event, node.id)"
         >
@@ -708,7 +937,8 @@ onBeforeUnmount(() => {
           </p>
 
           <div
-            class="grid max-h-[calc(100%-28px)] gap-2 overflow-auto"
+            :data-group-content="node.id"
+            class="grid gap-2 overflow-visible"
             :style="{ gridTemplateColumns: `repeat(${node.columnCount || 1}, minmax(0, 1fr))` }"
           >
             <article
@@ -874,7 +1104,7 @@ onBeforeUnmount(() => {
           <input
             :value="selectedNode.width"
             type="range"
-            min="200"
+            :min="selectedNode.minWidth || 200"
             max="640"
             class="w-full"
             @input="updateNode(selectedNode.id, { width: Number(($event.target as HTMLInputElement).value) })"
@@ -886,7 +1116,7 @@ onBeforeUnmount(() => {
           <input
             :value="selectedNode.height"
             type="range"
-            min="96"
+            :min="selectedNode.minHeight || 96"
             max="920"
             class="w-full"
             @input="updateNode(selectedNode.id, { height: Number(($event.target as HTMLInputElement).value) })"
@@ -897,12 +1127,12 @@ onBeforeUnmount(() => {
           v-if="selectedNode.kind === 'group'"
           class="grid gap-1"
         >
-          <span class="font-mono text-[0.58rem] uppercase tracking-[0.08em] text-cyan-300">Table Columns</span>
+          <span class="font-mono text-[0.58rem] uppercase tracking-[0.08em] text-cyan-300">Table Columns · {{ selectedNode.columnCount || 1 }}</span>
           <input
             :value="selectedNode.columnCount || 1"
             type="range"
             min="1"
-            max="4"
+            :max="Math.min(4, selectedNode.tableCount || 4)"
             class="w-full"
             @input="updateNode(selectedNode.id, { columnCount: Number(($event.target as HTMLInputElement).value) })"
           >
