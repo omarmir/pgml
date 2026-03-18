@@ -126,7 +126,18 @@ test('light mode keeps modal secondary actions and select highlights readable', 
 
     return {
       backgroundColor: styles.backgroundColor,
-      color: styles.color
+      color: styles.color,
+      boxShadow: styles.boxShadow
+    }
+  })
+  await page.getByLabel('Table schema').hover()
+  const schemaSelectStylesHover = await page.getByLabel('Table schema').evaluate((element) => {
+    const styles = window.getComputedStyle(element)
+
+    return {
+      backgroundColor: styles.backgroundColor,
+      color: styles.color,
+      boxShadow: styles.boxShadow
     }
   })
   await page.getByLabel('Table schema').click()
@@ -135,7 +146,8 @@ test('light mode keeps modal secondary actions and select highlights readable', 
 
     return {
       backgroundColor: styles.backgroundColor,
-      color: styles.color
+      color: styles.color,
+      boxShadow: styles.boxShadow
     }
   })
   await page.keyboard.press('ArrowDown')
@@ -160,8 +172,10 @@ test('light mode keeps modal secondary actions and select highlights readable', 
 
   expect(schemaSelectStylesBeforeOpen.backgroundColor).not.toBe('rgba(0, 0, 0, 0)')
   expect(schemaSelectStylesBeforeOpen.color).not.toBe(schemaSelectStylesBeforeOpen.backgroundColor)
+  expect(schemaSelectStylesHover.boxShadow).not.toBe(schemaSelectStylesBeforeOpen.boxShadow)
   expect(schemaSelectStylesOpen.backgroundColor).not.toBe('rgba(0, 0, 0, 0)')
   expect(schemaSelectStylesOpen.color).not.toBe(schemaSelectStylesOpen.backgroundColor)
+  expect(schemaSelectStylesOpen.boxShadow).not.toBe(schemaSelectStylesBeforeOpen.boxShadow)
   expect(highlightedItemStyles).not.toBeNull()
   expect(
     highlightedItemStyles?.backgroundColor === 'rgba(0, 0, 0, 0)'

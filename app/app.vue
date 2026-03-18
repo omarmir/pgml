@@ -103,7 +103,7 @@ const navLinkClass = (to: string) => {
               </span>
             </NuxtLink>
 
-            <nav class="hidden self-end pb-0.5 md:flex md:items-center md:gap-3">
+            <nav class="hidden self-end translate-y-px md:flex md:items-center md:gap-3">
               <NuxtLink
                 v-for="item in navigation"
                 :key="item.to"

@@ -74,6 +74,41 @@ test('studio canvas stays viewport-bound and starts centered on the diagram', as
   expect(Math.abs(diagnostics?.centerOffsetY || 0)).toBeLessThan(120)
 })
 
+test('studio header aligns the navigation with the page title copy', async ({ goto, page }) => {
+  await goto('/diagram')
+
+  const headerMetrics = await page.evaluate(() => {
+    const tagline = Array.from(document.querySelectorAll('span')).find((element): element is HTMLSpanElement => {
+      return element instanceof HTMLSpanElement && element.textContent?.trim() === 'Postgres in markup'
+    })
+    const specLink = Array.from(document.querySelectorAll('a')).find((element): element is HTMLAnchorElement => {
+      return element instanceof HTMLAnchorElement && element.textContent?.trim() === 'Spec'
+    })
+    const studioLink = Array.from(document.querySelectorAll('a')).find((element): element is HTMLAnchorElement => {
+      return element instanceof HTMLAnchorElement && element.textContent?.trim() === 'Diagram Studio'
+    })
+
+    if (!tagline || !specLink || !studioLink) {
+      return null
+    }
+
+    const taglineRect = tagline.getBoundingClientRect()
+    const specRect = specLink.getBoundingClientRect()
+    const studioRect = studioLink.getBoundingClientRect()
+
+    return {
+      taglineFontSize: Number.parseFloat(window.getComputedStyle(tagline).fontSize),
+      specOffset: Math.round(specRect.bottom - taglineRect.bottom),
+      studioOffset: Math.round(studioRect.bottom - taglineRect.bottom)
+    }
+  })
+
+  expect(headerMetrics).not.toBeNull()
+  expect(headerMetrics?.taglineFontSize || 0).toBeGreaterThanOrEqual(16)
+  expect(Math.abs(headerMetrics?.specOffset || 0)).toBeLessThanOrEqual(1)
+  expect(Math.abs(headerMetrics?.studioOffset || 0)).toBeLessThanOrEqual(1)
+})
+
 test('table groups keep their required width after changing the table column count', async ({ goto, page }) => {
   await goto('/diagram')
 
