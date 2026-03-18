@@ -1636,6 +1636,124 @@ const moveAnchorPoint = (point: AnchorPoint, distance: number) => {
   }
 }
 
+const getSharedGroupElement = (fromElement: HTMLElement, toElement: HTMLElement) => {
+  const fromGroup = fromElement.closest('[data-node-anchor^="group:"]')
+  const toGroup = toElement.closest('[data-node-anchor^="group:"]')
+
+  if (!(fromGroup instanceof HTMLElement) || !(toGroup instanceof HTMLElement) || fromGroup !== toGroup) {
+    return null
+  }
+
+  return fromGroup
+}
+
+const reserveLaneOffset = (
+  key: string,
+  usage: Map<string, number[]>,
+  baseOffset: number,
+  gap: number
+) => {
+  const slots = usage.get(key) || [0]
+  const laneIndex = slots[0] || 0
+
+  slots[0] = laneIndex + 1
+  usage.set(key, slots)
+
+  return baseOffset + laneIndex * gap
+}
+
+const getExternalLaneSide = (fromBounds: DOMRect, toBounds: DOMRect, groupBounds: DOMRect): AnchorSide => {
+  const sourceCenterX = fromBounds.left + fromBounds.width / 2
+  const sourceCenterY = fromBounds.top + fromBounds.height / 2
+  const targetCenterX = toBounds.left + toBounds.width / 2
+  const targetCenterY = toBounds.top + toBounds.height / 2
+  const sideScores: Array<{ side: AnchorSide, score: number }> = [
+    {
+      side: 'left',
+      score: (sourceCenterX - groupBounds.left) + (targetCenterX - groupBounds.left)
+    },
+    {
+      side: 'right',
+      score: (groupBounds.right - sourceCenterX) + (groupBounds.right - targetCenterX)
+    },
+    {
+      side: 'top',
+      score: (sourceCenterY - groupBounds.top) + (targetCenterY - groupBounds.top)
+    },
+    {
+      side: 'bottom',
+      score: (groupBounds.bottom - sourceCenterY) + (groupBounds.bottom - targetCenterY)
+    }
+  ]
+
+  return sideScores.sort((left, right) => left.score - right.score)[0]?.side || 'right'
+}
+
+const buildSharedGroupPath = (
+  fromElement: HTMLElement,
+  toElement: HTMLElement,
+  groupElement: HTMLElement,
+  planeBounds: DOMRect,
+  usage: Map<string, number[]>
+) => {
+  const fromBounds = fromElement.getBoundingClientRect()
+  const toBounds = toElement.getBoundingClientRect()
+  const groupBounds = groupElement.getBoundingClientRect()
+  const laneSide = getExternalLaneSide(fromBounds, toBounds, groupBounds)
+  const sourceCenterX = fromBounds.left + fromBounds.width / 2
+  const sourceCenterY = fromBounds.top + fromBounds.height / 2
+  const targetCenterX = toBounds.left + toBounds.width / 2
+  const targetCenterY = toBounds.top + toBounds.height / 2
+  const fromRatio = isHorizontalSide(laneSide)
+    ? clamp((targetCenterY - fromBounds.top) / Math.max(fromBounds.height, 1), 0.16, 0.84)
+    : clamp((targetCenterX - fromBounds.left) / Math.max(fromBounds.width, 1), 0.16, 0.84)
+  const toRatio = isHorizontalSide(laneSide)
+    ? clamp((sourceCenterY - toBounds.top) / Math.max(toBounds.height, 1), 0.16, 0.84)
+    : clamp((sourceCenterX - toBounds.left) / Math.max(toBounds.width, 1), 0.16, 0.84)
+  const fromAnchor = reserveAnchorPoint(fromElement, laneSide, fromRatio, planeBounds, usage)
+  const toAnchor = reserveAnchorPoint(toElement, laneSide, toRatio, planeBounds, usage)
+  const laneOffset = reserveLaneOffset(
+    `group-lane:${groupElement.getAttribute('data-node-anchor')}:${laneSide}`,
+    usage,
+    28,
+    18
+  )
+  const fromExit = moveAnchorPoint(fromAnchor, laneOffset)
+  const toExit = moveAnchorPoint(toAnchor, laneOffset)
+  const groupLeft = (groupBounds.left - planeBounds.left) / scale.value
+  const groupRight = (groupBounds.right - planeBounds.left) / scale.value
+  const groupTop = (groupBounds.top - planeBounds.top) / scale.value
+  const groupBottom = (groupBounds.bottom - planeBounds.top) / scale.value
+
+  if (laneSide === 'left' || laneSide === 'right') {
+    const laneX = laneSide === 'left'
+      ? groupLeft - laneOffset
+      : groupRight + laneOffset
+
+    return [
+      `M ${fromAnchor.x} ${fromAnchor.y}`,
+      `L ${fromExit.x} ${fromExit.y}`,
+      `L ${laneX} ${fromExit.y}`,
+      `L ${laneX} ${toExit.y}`,
+      `L ${toExit.x} ${toExit.y}`,
+      `L ${toAnchor.x} ${toAnchor.y}`
+    ].join(' ')
+  }
+
+  const laneY = laneSide === 'top'
+    ? groupTop - laneOffset
+    : groupBottom + laneOffset
+
+  return [
+    `M ${fromAnchor.x} ${fromAnchor.y}`,
+    `L ${fromExit.x} ${fromExit.y}`,
+    `L ${fromExit.x} ${laneY}`,
+    `L ${toExit.x} ${laneY}`,
+    `L ${toExit.x} ${toExit.y}`,
+    `L ${toAnchor.x} ${toAnchor.y}`
+  ].join(' ')
+}
+
 const decideAnchorSides = (fromElement: HTMLElement, toElement: HTMLElement): { from: AnchorSide, to: AnchorSide } => {
   const fromBounds = fromElement.getBoundingClientRect()
   const toBounds = toElement.getBoundingClientRect()
@@ -1733,6 +1851,16 @@ const buildPathBetween = (
   const sourceCenterY = fromBounds.top + fromBounds.height / 2
   const targetCenterX = toBounds.left + toBounds.width / 2
   const targetCenterY = toBounds.top + toBounds.height / 2
+  const sharedGroupElement = !dashed ? getSharedGroupElement(fromElement, toElement) : null
+
+  if (sharedGroupElement) {
+    return {
+      path: buildSharedGroupPath(fromElement, toElement, sharedGroupElement, planeBounds, usage),
+      color,
+      dashed
+    }
+  }
+
   const sides = decideAnchorSides(fromElement, toElement)
   const fromRatio = isHorizontalSide(sides.from)
     ? clamp((targetCenterY - fromBounds.top) / Math.max(fromBounds.height, 1), 0.16, 0.84)
