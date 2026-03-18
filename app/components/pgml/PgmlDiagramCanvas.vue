@@ -20,7 +20,7 @@ const emit = defineEmits<{
 
 type CanvasNodeKind = 'group' | 'object'
 type ObjectKind = 'Index' | 'Constraint' | 'Function' | 'Procedure' | 'Trigger' | 'Sequence' | 'Custom Type'
-type TableAttachmentKind = 'Constraint' | 'Function' | 'Procedure' | 'Trigger' | 'Sequence'
+type TableAttachmentKind = 'Index' | 'Constraint' | 'Function' | 'Procedure' | 'Trigger' | 'Sequence'
 type ImpactTarget = {
   tableId: string
   columnName: string | null
@@ -165,13 +165,15 @@ const attachmentPopoverUi = {
   content: 'w-[22rem] rounded-none border border-[color:var(--studio-shell-border)] bg-[color:var(--studio-control-bg)] p-3 shadow-[var(--studio-floating-shadow)] backdrop-blur-sm'
 }
 const attachmentKindOrder: Record<TableAttachmentKind, number> = {
-  Constraint: 0,
-  Trigger: 1,
-  Function: 2,
-  Procedure: 3,
-  Sequence: 4
+  Index: 0,
+  Constraint: 1,
+  Trigger: 2,
+  Function: 3,
+  Procedure: 4,
+  Sequence: 5
 }
 const attachmentKindColors: Record<TableAttachmentKind, string> = {
+  Index: '#38bdf8',
   Constraint: '#fb7185',
   Function: '#c084fc',
   Procedure: '#f97316',
@@ -213,6 +215,7 @@ const tableGroupById = computed(() => {
 
   return groups
 })
+const knownTableIds = computed(() => new Set(model.tables.map(table => table.fullName)))
 
 const estimateTableHeight = (rowCount: number) => {
   return 40 + rowCount * groupColumnRowHeight
@@ -1604,6 +1607,38 @@ const inferSequenceTargets = (sequence: PgmlSequence) => {
 
   return getUniqueImpactTargets([...explicitTargets, ...sourceTargets, ...modifierTargets])
 }
+const inferIndexTargets = (index: PgmlSchemaModel['tables'][number]['indexes'][number]) => {
+  const tableId = normalizeReference(index.tableName)
+  const targets = index.columns.map(columnName => ({
+    tableId,
+    columnName
+  }))
+
+  if (!targets.length) {
+    return [{
+      tableId,
+      columnName: null
+    }]
+  }
+
+  return getUniqueImpactTargets(targets)
+}
+const inferConstraintTargets = (constraint: PgmlSchemaModel['tables'][number]['constraints'][number]) => {
+  const tableId = normalizeReference(constraint.tableName)
+  const matchedColumns = inferColumnsFromText(tableId, constraint.expression)
+
+  if (!matchedColumns.length) {
+    return [{
+      tableId,
+      columnName: null
+    }]
+  }
+
+  return getUniqueImpactTargets(matchedColumns.map(columnName => ({
+    tableId,
+    columnName
+  })))
+}
 
 const inferCustomTypeTargets = (customType: PgmlCustomType) => {
   const targets = model.tables.flatMap((table) => {
@@ -1625,6 +1660,7 @@ const getMetadataValue = (metadata: Array<{ key: string, value: string }>, key: 
   return metadata.find(entry => normalizeMetadataKey(entry.key) === normalizedKey)?.value || null
 }
 const getUniqueTableIds = (targets: ImpactTarget[]) => uniqueValues(targets.map(target => target.tableId))
+const getResolvedTableIds = (tableIds: string[]) => uniqueValues(tableIds.filter(tableId => knownTableIds.value.has(tableId)))
 const parseMetadataList = (value: string | null) => {
   if (!value) {
     return []
@@ -1664,6 +1700,15 @@ const buildSequenceSubtitle = (sequence: PgmlSequence) => {
   }
 
   return 'Sequence'
+}
+const buildIndexSubtitle = (index: PgmlSchemaModel['tables'][number]['indexes'][number]) => {
+  const parts = [index.type.toUpperCase()]
+
+  if (index.columns.length) {
+    parts.push(index.columns.join(', '))
+  }
+
+  return parts.join(' · ')
 }
 const getRoutinePrimaryTableIds = (routine: PgmlRoutine) => {
   const candidateGroups = routine.affects
@@ -1723,39 +1768,59 @@ const tableAttachmentState = computed(() => {
   }
 
   model.tables.forEach((table) => {
+    table.indexes.forEach((index) => {
+      getResolvedTableIds([normalizeReference(index.tableName)]).forEach((tableId) => {
+        addAttachment({
+          id: `index:${index.name}`,
+          kind: 'Index',
+          title: index.name,
+          subtitle: buildIndexSubtitle(index),
+          details: [
+            `Type: ${index.type.toUpperCase()}`,
+            `Columns: ${index.columns.join(', ')}`
+          ],
+          tableId,
+          color: attachmentKindColors.Index,
+          flags: []
+        })
+      })
+    })
+
     table.constraints.forEach((constraint) => {
-      addAttachment({
-        id: `constraint:${constraint.name}`,
-        kind: 'Constraint',
-        title: constraint.name,
-        subtitle: constraint.expression,
-        details: [constraint.expression],
-        tableId: table.fullName,
-        color: attachmentKindColors.Constraint,
-        flags: []
+      getResolvedTableIds([normalizeReference(constraint.tableName)]).forEach((tableId) => {
+        addAttachment({
+          id: `constraint:${constraint.name}`,
+          kind: 'Constraint',
+          title: constraint.name,
+          subtitle: constraint.expression,
+          details: [constraint.expression],
+          tableId,
+          color: attachmentKindColors.Constraint,
+          flags: []
+        })
       })
     })
   })
 
   model.triggers.forEach((trigger) => {
-    const tableId = normalizeReference(trigger.tableName)
-
-    addAttachment({
-      id: `trigger:${trigger.name}`,
-      kind: 'Trigger',
-      title: trigger.name,
-      subtitle: buildTriggerSubtitle(trigger),
-      details: trigger.details,
-      tableId,
-      color: attachmentKindColors.Trigger,
-      flags: []
+    getResolvedTableIds([normalizeReference(trigger.tableName)]).forEach((tableId) => {
+      addAttachment({
+        id: `trigger:${trigger.name}`,
+        kind: 'Trigger',
+        title: trigger.name,
+        subtitle: buildTriggerSubtitle(trigger),
+        details: trigger.details,
+        tableId,
+        color: attachmentKindColors.Trigger,
+        flags: []
+      })
     })
   })
 
   model.functions.forEach((routine) => {
     const routineId = `function:${routine.name}`
     const triggerTableIds = triggerTableIdsByRoutineName.value.get(cleanForSearch(routine.name)) || []
-    const tableIds = triggerTableIds.length ? triggerTableIds : getRoutinePrimaryTableIds(routine)
+    const tableIds = getResolvedTableIds(triggerTableIds.length ? triggerTableIds : getRoutinePrimaryTableIds(routine))
 
     tableIds.forEach((tableId) => {
       addAttachment({
@@ -1776,7 +1841,7 @@ const tableAttachmentState = computed(() => {
   model.procedures.forEach((procedure) => {
     const procedureId = `procedure:${procedure.name}`
     const triggerTableIds = triggerTableIdsByRoutineName.value.get(cleanForSearch(procedure.name)) || []
-    const tableIds = triggerTableIds.length ? triggerTableIds : getRoutinePrimaryTableIds(procedure)
+    const tableIds = getResolvedTableIds(triggerTableIds.length ? triggerTableIds : getRoutinePrimaryTableIds(procedure))
 
     tableIds.forEach((tableId) => {
       addAttachment({
@@ -1795,7 +1860,7 @@ const tableAttachmentState = computed(() => {
   })
 
   model.sequences.forEach((sequence) => {
-    const tableIds = getSequenceOwnedTableIds(sequence)
+    const tableIds = getResolvedTableIds(getSequenceOwnedTableIds(sequence))
 
     tableIds.forEach((tableId) => {
       addAttachment({
@@ -2366,24 +2431,57 @@ const buildObjectNodes = (groupStates: Record<string, CanvasNodeState>) => {
 
   for (const table of model.tables) {
     for (const index of table.indexes) {
+      const indexId = `index:${index.name}`
+
+      if (attachedObjectIds.has(indexId)) {
+        continue
+      }
+
       addNode({
-        id: `index:${index.name}`,
+        id: indexId,
         kind: 'object',
         objectKind: 'Index',
         collapsed: true,
         title: index.name,
         subtitle: `${index.type.toUpperCase()} on ${table.name}`,
-        details: [`Columns: ${index.columns.join(', ')}`],
+        details: [
+          `Type: ${index.type.toUpperCase()}`,
+          `Columns: ${index.columns.join(', ')}`
+        ],
         width: 248,
         height: 104,
         expandedHeight: 104,
-        color: '#38bdf8',
+        color: attachmentKindColors.Index,
         tableIds: [normalizeReference(index.tableName)],
-        impactTargets: index.columns.map(columnName => ({
-          tableId: normalizeReference(index.tableName),
-          columnName
-        })),
+        impactTargets: inferIndexTargets(index),
         sourceRange: index.sourceRange
+      })
+    }
+  }
+
+  for (const table of model.tables) {
+    for (const constraint of table.constraints) {
+      const constraintId = `constraint:${constraint.name}`
+
+      if (attachedObjectIds.has(constraintId)) {
+        continue
+      }
+
+      addNode({
+        id: constraintId,
+        kind: 'object',
+        objectKind: 'Constraint',
+        collapsed: true,
+        title: constraint.name,
+        subtitle: constraint.expression,
+        details: [constraint.expression],
+        width: 320,
+        height: 114,
+        expandedHeight: 114,
+        color: attachmentKindColors.Constraint,
+        tableIds: [normalizeReference(constraint.tableName)],
+        impactTargets: inferConstraintTargets(constraint),
+        sourceRange: constraint.sourceRange
       })
     }
   }

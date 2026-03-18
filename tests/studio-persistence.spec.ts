@@ -34,7 +34,8 @@ test('studio saves, reloads, and downloads PGML with embedded layout', async ({ 
   expect(savedSchemas).toHaveLength(1)
   expect(savedSchemas[0]?.name).toBe('Roundtrip layout')
   expect(savedSchemas[0]?.text).toContain('Properties "group:Core" {')
-  expect(savedSchemas[0]?.text).toContain('Properties "index:idx_products_search" {')
+  expect(savedSchemas[0]?.text).toContain('Properties "custom-type:Domain:email_address" {')
+  expect(savedSchemas[0]?.text).not.toContain('Properties "index:idx_products_search" {')
   expect(savedSchemas[0]?.text).not.toContain('Properties "constraint:chk_orders_total" {')
   expect(savedSchemas[0]?.text).not.toContain('Properties "function:register_entity" {')
 
