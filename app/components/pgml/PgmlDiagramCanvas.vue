@@ -103,7 +103,6 @@ const groupTableGap = 16
 const groupHorizontalPadding = 20
 const groupHeaderHeight = 56
 const groupVerticalPadding = 18
-const groupNoteHeight = 28
 const groupColumnRowHeight = 31
 const objectColumnX = 1060
 const objectColumnGapX = 320
@@ -147,7 +146,7 @@ const estimateTableHeight = (columnCount: number) => {
   return 40 + columnCount * groupColumnRowHeight
 }
 
-const getGroupMinimumSize = (groupName: string, columnCount: number, note?: string | null) => {
+const getGroupMinimumSize = (groupName: string, columnCount: number) => {
   const tables = tablesByGroup.value[groupName] || []
   const safeColumnCount = Math.max(1, Math.min(columnCount, Math.max(tables.length, 1)))
   const rowHeights: number[] = []
@@ -162,7 +161,7 @@ const getGroupMinimumSize = (groupName: string, columnCount: number, note?: stri
 
   return {
     minWidth: groupHorizontalPadding * 2 + safeColumnCount * groupTableWidth + Math.max(0, safeColumnCount - 1) * groupTableGap,
-    minHeight: groupHeaderHeight + groupVerticalPadding + contentHeight + (note ? groupNoteHeight : 0)
+    minHeight: groupHeaderHeight + groupVerticalPadding + contentHeight
   }
 }
 
@@ -1385,13 +1384,13 @@ const syncNodeStates = () => {
     const color = existing?.color || palette[index % palette.length] || '#8b5cf6'
     const columnCount = existing?.columnCount ?? 1
     const note = model.groups.find(group => group.name === groupName)?.note || null
-    const minimumSize = getGroupMinimumSize(groupName, columnCount, note)
+    const minimumSize = getGroupMinimumSize(groupName, columnCount)
 
     groupNodes.push({
       id: `group:${groupName}`,
       kind: 'group',
       title: groupName,
-      subtitle: `${tables.length} tables`,
+      subtitle: note || '',
       details: tables.map(table => table.fullName),
       x: existing?.x ?? 120 + index * 420,
       y: existing?.y ?? 90 + (index % 2) * 120,
@@ -2061,9 +2060,8 @@ const updateNode = (
 
   if (current.kind === 'group') {
     const minimumSize = getGroupMinimumSize(
-      current.title,
-      nextNode.columnCount || 1,
-      nextNode.note
+      current.id.replace('group:', ''),
+      nextNode.columnCount || 1
     )
 
     nextNode.minWidth = minimumSize.minWidth
@@ -2326,13 +2324,16 @@ onBeforeUnmount(() => {
             <h3 class="truncate text-[0.88rem] font-semibold leading-5 tracking-[-0.02em] text-[color:var(--studio-shell-text)]">
               {{ node.title }}
             </h3>
-            <p class="truncate text-[0.68rem] text-[color:var(--studio-shell-muted)]">
+            <p
+              v-if="node.subtitle"
+              class="truncate text-[0.68rem] text-[color:var(--studio-shell-muted)]"
+            >
               {{ node.subtitle }}
             </p>
           </div>
 
           <span class="inline-flex h-5 items-center border border-[color:var(--studio-rail)] px-1.5 font-mono text-[0.62rem] uppercase tracking-[0.06em] text-[color:var(--studio-shell-muted)]">
-            {{ node.tableIds.length }} impact
+            {{ node.kind === 'group' ? `${node.tableCount || node.tableIds.length} tables` : `${node.tableIds.length} impact` }}
           </span>
         </div>
 
@@ -2340,13 +2341,6 @@ onBeforeUnmount(() => {
           v-if="node.kind === 'group'"
           class="px-2.5 pb-2.5 pt-2"
         >
-          <p
-            v-if="node.note"
-            class="mb-2 text-[0.68rem] leading-5 text-[color:var(--studio-shell-muted)]"
-          >
-            {{ node.note }}
-          </p>
-
           <div
             :data-group-content="node.id"
             class="grid overflow-visible"
@@ -2502,16 +2496,6 @@ onBeforeUnmount(() => {
             type="text"
             class="w-full select-text border border-[color:var(--studio-rail)] bg-[color:var(--studio-input-bg)] px-2 py-1.5 text-[0.68rem] text-[color:var(--studio-shell-text)] outline-none"
             @input="updateNode(selectedNode.id, { title: ($event.target as HTMLInputElement).value })"
-          >
-        </label>
-
-        <label class="grid gap-1">
-          <span class="font-mono text-[0.58rem] uppercase tracking-[0.08em] text-[color:var(--studio-shell-label)]">Subtitle</span>
-          <input
-            :value="selectedNode.subtitle"
-            type="text"
-            class="w-full select-text border border-[color:var(--studio-rail)] bg-[color:var(--studio-input-bg)] px-2 py-1.5 text-[0.68rem] text-[color:var(--studio-shell-text)] outline-none"
-            @input="updateNode(selectedNode.id, { subtitle: ($event.target as HTMLInputElement).value })"
           >
         </label>
 

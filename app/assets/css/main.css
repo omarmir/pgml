@@ -20,39 +20,31 @@
 }
 
 :root {
-  --app-bg: #08141d;
-  --app-panel: rgba(12, 27, 37, 0.82);
-  --app-panel-strong: rgba(9, 21, 31, 0.96);
-  --app-line: rgba(148, 181, 199, 0.2);
-  --app-line-strong: rgba(148, 181, 199, 0.38);
-  --app-text: #edf4f8;
-  --app-muted: #8ca4b3;
+  --app-bg: var(--studio-shell-bg, #0a151d);
+  --app-panel: var(--studio-control-bg, rgba(8, 20, 29, 0.94));
+  --app-panel-strong: var(--studio-node-surface-top, rgba(8, 20, 29, 0.98));
+  --app-line: var(--studio-shell-border, rgba(255, 255, 255, 0.08));
+  --app-line-strong: var(--studio-ring, rgba(255, 255, 255, 0.22));
+  --app-text: var(--studio-shell-text, #e2edf3);
+  --app-muted: var(--studio-shell-muted, rgba(148, 163, 184, 0.88));
   --app-accent: #f69a1f;
-  --app-accent-soft: rgba(246, 154, 31, 0.16);
-  --app-cyan: #79e3ea;
-  --app-group: rgba(121, 227, 234, 0.08);
-  --app-shadow: 0 30px 80px rgba(0, 0, 0, 0.35);
+  --app-accent-soft: color-mix(in srgb, var(--studio-shell-label, #67e8f9) 18%, transparent);
+  --app-cyan: var(--studio-shell-label, #67e8f9);
+  --app-group: var(--studio-group-surface-soft, rgba(255, 255, 255, 0.03));
+  --app-shadow: var(--studio-floating-shadow, 0 20px 40px rgba(0, 0, 0, 0.28));
 }
 
 html {
-  background:
-    radial-gradient(circle at top left, rgba(246, 154, 31, 0.16), transparent 28%),
-    radial-gradient(circle at top right, rgba(121, 227, 234, 0.14), transparent 22%),
-    linear-gradient(180deg, #0b1720 0%, #071119 100%);
-  color: var(--app-text);
+  background: #0a151d;
+  color: #e2edf3;
   overflow-x: hidden;
 }
 
 body {
   min-height: 100vh;
-  color: var(--app-text);
+  color: inherit;
   overflow-x: hidden;
-  background:
-    linear-gradient(135deg, rgba(255, 255, 255, 0.02) 25%, transparent 25%) -24px 0 / 48px 48px,
-    linear-gradient(225deg, rgba(255, 255, 255, 0.02) 25%, transparent 25%) -24px 0 / 48px 48px,
-    linear-gradient(315deg, rgba(255, 255, 255, 0.02) 25%, transparent 25%) 0 0 / 48px 48px,
-    linear-gradient(45deg, rgba(255, 255, 255, 0.02) 25%, transparent 25%) 0 0 / 48px 48px,
-    transparent;
+  background: transparent;
 }
 
 #__nuxt {
@@ -60,28 +52,28 @@ body {
   background: transparent;
 }
 
-.pgml-editor-scroll {
+[data-pgml-editor='true'] {
   scrollbar-width: thin;
   scrollbar-color: var(--studio-scroll-thumb-start) var(--studio-scroll-track);
 }
 
-.pgml-editor-scroll::-webkit-scrollbar {
+[data-pgml-editor='true']::-webkit-scrollbar {
   width: 10px;
 }
 
-.pgml-editor-scroll::-webkit-scrollbar-track {
+[data-pgml-editor='true']::-webkit-scrollbar-track {
   background: var(--studio-scroll-track);
   border-left: 1px solid var(--studio-scroll-track-border);
 }
 
-.pgml-editor-scroll::-webkit-scrollbar-thumb {
+[data-pgml-editor='true']::-webkit-scrollbar-thumb {
   background:
     linear-gradient(180deg, var(--studio-scroll-thumb-start), var(--studio-scroll-thumb-end));
   border: 2px solid var(--studio-scroll-thumb-border);
   min-height: 48px;
 }
 
-.pgml-editor-scroll::-webkit-scrollbar-thumb:hover {
+[data-pgml-editor='true']::-webkit-scrollbar-thumb:hover {
   background:
     linear-gradient(180deg, var(--studio-scroll-thumb-end), var(--studio-scroll-thumb-start));
 }
