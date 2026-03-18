@@ -3673,11 +3673,11 @@ defineExpose<{
 
         <div
           v-if="node.kind === 'group'"
-          class="px-2.5 pb-2.5 pt-2"
+          class="px-5 pb-2.5 pt-2"
         >
           <div
             :data-group-content="node.id"
-            class="grid overflow-visible"
+            class="grid items-start justify-start overflow-visible"
             :style="{
               gridTemplateColumns: `repeat(${node.columnCount || 1}, ${groupTableWidth}px)`,
               gap: `${groupTableGap}px`
@@ -3686,7 +3686,8 @@ defineExpose<{
             <article
               v-for="table in model.tables.filter((table) => node.tableIds.includes(table.fullName))"
               :key="table.fullName"
-              class="rounded-[2px] border border-[color:var(--studio-shell-border)] bg-[color:var(--studio-table-surface)] transition-transform duration-150 hover:-translate-y-0.5 hover:ring-1 hover:ring-[color:var(--studio-ring)]"
+              class="min-w-0 self-start overflow-hidden rounded-[2px] border border-[color:var(--studio-shell-border)] bg-[color:var(--studio-table-surface)] transition-transform duration-150 hover:-translate-y-0.5 hover:ring-1 hover:ring-[color:var(--studio-ring)]"
+              :style="{ width: `${groupTableWidth}px` }"
               :data-table-anchor="table.fullName"
               @click.stop="handleTableClick(table.fullName)"
             >
@@ -3715,7 +3716,7 @@ defineExpose<{
                     :data-table-row-anchor="row.key"
                     data-table-row-kind="column"
                     :data-column-anchor="getColumnAnchorKey(table.fullName, row.column.name)"
-                    class="flex items-start justify-between gap-2 bg-[color:var(--studio-row-surface)] px-2 py-1.5"
+                    class="flex min-w-0 items-start justify-between gap-2 bg-[color:var(--studio-row-surface)] px-2 py-1.5"
                   >
                     <div
                       :data-column-label-anchor="getColumnLabelAnchorKey(table.fullName, row.column.name)"
@@ -3757,7 +3758,7 @@ defineExpose<{
                       :data-table-row-anchor="row.key"
                       data-table-row-kind="attachment"
                       :data-attachment-row="row.attachment.id"
-                      class="flex w-full items-start justify-between gap-2 px-2 py-1.5 text-left transition-[filter,transform] duration-150 hover:brightness-105"
+                      class="flex min-w-0 w-full items-start justify-between gap-2 px-2 py-1.5 text-left transition-[filter,transform] duration-150 hover:brightness-105"
                       :style="getAttachmentRowStyle(row.attachment)"
                       :aria-label="`${row.attachment.kind} ${row.attachment.title}`"
                       @pointerdown.stop

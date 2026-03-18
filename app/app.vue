@@ -35,7 +35,7 @@ const navigation = [
 
 const route = useRoute()
 const isStudioRoute = computed(() => route.path.startsWith('/diagram'))
-const { studioTheme, studioThemeStyles, studioThemeIcon, studioThemeLabel, toggleStudioTheme } = useStudioTheme()
+const { studioTheme, studioThemeIcon, studioThemeLabel, toggleStudioTheme } = useStudioTheme()
 
 const navLinkClass = (to: string) => {
   const isActive = route.path === to || (to !== '/' && route.path.startsWith(to))
@@ -49,7 +49,6 @@ const navLinkClass = (to: string) => {
 <template>
   <div
     :data-studio-theme="studioTheme"
-    :style="studioThemeStyles"
     class="min-h-screen w-full bg-[color:var(--studio-shell-bg)] text-[color:var(--studio-shell-text)] transition-colors duration-200"
   >
     <main

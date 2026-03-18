@@ -1,4 +1,5 @@
 import type { Ref } from 'vue'
+import { createSharedComposable, useStorage } from '@vueuse/core'
 
 export type StudioTheme = 'dark' | 'light'
 
@@ -87,41 +88,23 @@ const applyStudioThemeToDocument = (theme: StudioTheme) => {
   })
 }
 
-export const useStudioTheme = () => {
-  const studioTheme: Ref<StudioTheme> = useState<StudioTheme>('studio-theme', () => 'dark')
-  const studioThemeInitialized: Ref<boolean> = useState<boolean>('studio-theme-initialized', () => false)
-  const studioThemePersistenceRegistered: Ref<boolean> = useState<boolean>('studio-theme-persistence-registered', () => false)
+const normalizeStudioTheme = (value: string | null | undefined): StudioTheme => {
+  return value === 'light' ? 'light' : 'dark'
+}
 
-  if (!studioThemePersistenceRegistered.value) {
-    studioThemePersistenceRegistered.value = true
-
-    onMounted(() => {
-      if (studioThemeInitialized.value) {
-        return
-      }
-
-      const savedTheme = window.localStorage.getItem(studioThemeStorageKey)
-
-      if (savedTheme === 'dark' || savedTheme === 'light') {
-        studioTheme.value = savedTheme
-      }
-
-      applyStudioThemeToDocument(studioTheme.value)
-      studioThemeInitialized.value = true
-    })
-
-    watch(studioTheme, (value) => {
-      if (import.meta.client) {
-        window.localStorage.setItem(studioThemeStorageKey, value)
-      }
-
-      applyStudioThemeToDocument(value)
-    })
-  }
+const useSharedStudioTheme = createSharedComposable(() => {
+  const studioTheme: Ref<StudioTheme> = useStorage<StudioTheme>(studioThemeStorageKey, 'dark')
 
   if (import.meta.client) {
     watchEffect(() => {
-      applyStudioThemeToDocument(studioTheme.value)
+      const nextTheme = normalizeStudioTheme(studioTheme.value)
+
+      if (studioTheme.value !== nextTheme) {
+        studioTheme.value = nextTheme
+        return
+      }
+
+      applyStudioThemeToDocument(nextTheme)
     })
   }
 
@@ -148,4 +131,8 @@ export const useStudioTheme = () => {
     studioThemeLabel,
     toggleStudioTheme
   }
+})
+
+export const useStudioTheme = () => {
+  return useSharedStudioTheme()
 }
