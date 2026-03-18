@@ -145,3 +145,129 @@ test('table groups keep independent table heights and balanced horizontal paddin
   expect(Math.abs((layout?.leftGap || 0) - (layout?.rightGap || 0))).toBeLessThanOrEqual(2)
   expect(layout?.usersHeight || 0).toBeGreaterThan(layout?.tenantsHeight || 0)
 })
+
+test('connection lines hit grouped table borders, render above the owning group, and avoid the group header band', async ({ goto, page }) => {
+  await goto('/diagram')
+
+  const editor = page.locator('[data-pgml-editor="true"]')
+  const source = `TableGroup Core {
+  users
+  orders
+}
+
+Table public.users in Core {
+  id uuid [pk]
+  email text
+}
+
+Table public.orders in Core {
+  id uuid [pk]
+  user_id uuid [ref: > public.users.id]
+}`
+
+  await editor.fill(source)
+  await expect(page.locator('[data-node-anchor="group:Core"]')).toBeVisible()
+
+  const diagnostics = await page.evaluate(() => {
+    const group = document.querySelector('[data-node-anchor="group:Core"]')
+    const content = document.querySelector('[data-group-content="group:Core"]')
+    const ordersTable = document.querySelector('[data-table-anchor="public.orders"]')
+    const connectionLayers = Array.from(document.querySelectorAll('[data-connection-layer="true"]'))
+    const path = connectionLayers.flatMap((layer) => {
+      return Array.from(layer.querySelectorAll('path'))
+    }).find((entry) => {
+      return (entry.getAttribute('stroke') || '').length > 0
+    })
+
+    if (
+      !(group instanceof HTMLElement)
+      || !(content instanceof HTMLElement)
+      || !(ordersTable instanceof HTMLElement)
+      || connectionLayers.length === 0
+      || !(path instanceof SVGPathElement)
+    ) {
+      return null
+    }
+
+    const segmentHitsRect = (
+      from: { x: number, y: number },
+      to: { x: number, y: number },
+      rect: { left: number, right: number, top: number, bottom: number }
+    ) => {
+      if (Math.abs(from.x - to.x) < 0.5) {
+        const x = from.x
+
+        if (x < rect.left || x > rect.right) {
+          return false
+        }
+
+        const minY = Math.min(from.y, to.y)
+        const maxY = Math.max(from.y, to.y)
+
+        return maxY > rect.top && minY < rect.bottom
+      }
+
+      const y = from.y
+
+      if (y < rect.top || y > rect.bottom) {
+        return false
+      }
+
+      const minX = Math.min(from.x, to.x)
+      const maxX = Math.max(from.x, to.x)
+
+      return maxX > rect.left && minX < rect.right
+    }
+
+    const pointMatches = Array.from((path.getAttribute('d') || '').matchAll(/[ML]\s*(-?\d+(?:\.\d+)?)\s+(-?\d+(?:\.\d+)?)/g))
+    const points = pointMatches.map((match) => {
+      return {
+        x: Number.parseFloat(match[1] || '0'),
+        y: Number.parseFloat(match[2] || '0')
+      }
+    })
+    const headerBand = {
+      left: group.offsetLeft,
+      right: group.offsetLeft + group.offsetWidth,
+      top: group.offsetTop,
+      bottom: group.offsetTop + content.offsetTop
+    }
+    const ordersBounds = {
+      left: ordersTable.offsetLeft,
+      right: ordersTable.offsetLeft + ordersTable.offsetWidth,
+      top: ordersTable.offsetTop,
+      bottom: ordersTable.offsetTop + ordersTable.offsetHeight
+    }
+    const overlapsHeader = points.slice(1).some((point, index) => {
+      return segmentHitsRect(points[index]!, point, headerBand)
+    })
+    const lineTouchesOrdersBorder = points.some((point) => {
+      const onVerticalBorder = (
+        (Math.abs(point.x - ordersBounds.left) < 1 || Math.abs(point.x - ordersBounds.right) < 1)
+        && point.y >= ordersBounds.top
+        && point.y <= ordersBounds.bottom
+      )
+      const onHorizontalBorder = (
+        (Math.abs(point.y - ordersBounds.top) < 1 || Math.abs(point.y - ordersBounds.bottom) < 1)
+        && point.x >= ordersBounds.left
+        && point.x <= ordersBounds.right
+      )
+
+      return onVerticalBorder || onHorizontalBorder
+    })
+
+    return {
+      groupZIndex: Number.parseInt(window.getComputedStyle(group).zIndex || '0', 10),
+      maxLineZIndex: Math.max(...connectionLayers.map((layer) => {
+        return Number.parseInt(window.getComputedStyle(layer).zIndex || '0', 10)
+      })),
+      overlapsHeader,
+      lineTouchesOrdersBorder
+    }
+  })
+
+  expect(diagnostics).not.toBeNull()
+  expect(diagnostics?.maxLineZIndex || 0).toBeGreaterThan(diagnostics?.groupZIndex || 0)
+  expect(diagnostics?.overlapsHeader).toBe(false)
+  expect(diagnostics?.lineTouchesOrdersBorder).toBe(true)
+})

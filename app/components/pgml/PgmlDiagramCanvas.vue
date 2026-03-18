@@ -9,6 +9,12 @@ import type {
   PgmlSourceRange
 } from '~/utils/pgml'
 import { getRasterExportPlan } from '~/utils/diagram-export'
+import { getDiagramConnectionZIndex, getDiagramNodeZIndex } from '~/utils/diagram-layering'
+import {
+  buildOrthogonalMiddlePoints,
+  getHeaderSafeGroupLaneSide,
+  isHorizontalDiagramSide
+} from '~/utils/diagram-routing'
 import { normalizeSvgColor, normalizeSvgPaint, parseCssLinearGradient } from '~/utils/svg-paint'
 
 const { model } = defineProps<{
@@ -85,6 +91,7 @@ type ConnectionLine = {
   path: string
   color: string
   dashed: boolean
+  zIndex: number
 }
 
 type LayoutRect = {
@@ -125,6 +132,15 @@ type AnchorPoint = {
   side: AnchorSide
   slot: number
   count: number
+}
+
+type RouteLeg = {
+  anchor: AnchorPoint
+  exit: LayoutPoint
+  outer: LayoutPoint
+  side: AnchorSide
+  outerSide: AnchorSide
+  grouped: boolean
 }
 
 type DiagramExportFormat = 'svg' | 'png'
@@ -182,6 +198,31 @@ const attachmentKindColors: Record<TableAttachmentKind, string> = {
 }
 
 const canvasNodes = computed(() => Object.values(nodeStates.value))
+const nodeLayerOrderById = computed(() => {
+  return canvasNodes.value.reduce<Record<string, number>>((orders, node, index) => {
+    orders[node.id] = index + 1
+    return orders
+  }, {})
+})
+const connectionLineLayers = computed(() => {
+  const layers = connectionLines.value.reduce<Record<string, ConnectionLine[]>>((entries, line) => {
+    const key = String(line.zIndex)
+
+    if (!entries[key]) {
+      entries[key] = []
+    }
+
+    entries[key]?.push(line)
+    return entries
+  }, {})
+
+  return Object.entries(layers)
+    .map(([key, lines]) => ({
+      zIndex: Number.parseInt(key, 10),
+      lines
+    }))
+    .sort((left, right) => left.zIndex - right.zIndex)
+})
 const hasEmbeddedLayout = computed(() => Object.keys(model.nodeProperties).length > 0)
 const selectedNode = computed(() => {
   if (!selectedNodeId.value) {
@@ -471,12 +512,6 @@ const buildExportSvgString = async (padding = exportPadding) => {
     `<rect x="0" y="0" width="${exportWidth}" height="${exportHeight}" ${buildSvgPaintAttributes('fill', backgroundColor, '#0b141a')} />`,
     `<rect x="0" y="0" width="${exportWidth}" height="${exportHeight}" fill="url(#pgml-grid)" />`
   ]
-
-  connectionLines.value.forEach((line) => {
-    parts.push(
-      `<path d="${escapeXml(translatePathData(line.path, offsetX, offsetY))}" fill="none" ${buildSvgPaintAttributes('stroke', line.color, line.color)} stroke-width="2" stroke-dasharray="${line.dashed ? '10 7' : '0'}" stroke-linecap="square" stroke-linejoin="miter" opacity="0.9" />`
-    )
-  })
 
   canvasNodes.value.forEach((node) => {
     const nodeElement = planeRef.value?.querySelector(`[data-node-anchor="${node.id}"]`)
@@ -808,6 +843,12 @@ const buildExportSvgString = async (padding = exportPadding) => {
         `<line x1="${handleX}" y1="${handleY + handleHeight}" x2="${handleX + handleWidth}" y2="${handleY + handleHeight}" ${buildSvgPaintAttributes('stroke', accentColor, accentColor)} stroke-width="2" />`
       )
     }
+  })
+
+  connectionLines.value.forEach((line) => {
+    parts.push(
+      `<path d="${escapeXml(translatePathData(line.path, offsetX, offsetY))}" fill="none" ${buildSvgPaintAttributes('stroke', line.color, line.color)} stroke-width="2" stroke-dasharray="${line.dashed ? '10 7' : '0'}" stroke-linecap="square" stroke-linejoin="miter" opacity="0.9" />`
+    )
   })
 
   return {
@@ -1322,7 +1363,6 @@ const dedupeCandidates = (candidates: Array<{ x: number, y: number }>) => {
     return true
   })
 }
-const isHorizontalSide = (side: AnchorSide) => side === 'left' || side === 'right'
 const getGroupNameForTableId = (tableId: string) => tableGroupById.value[tableId] || 'Ungrouped'
 const getRelatedGroupRectsForNode = (
   node: CanvasNodeState,
@@ -2728,6 +2768,15 @@ const getElementIdentity = (element: HTMLElement) => {
     || ''
   )
 }
+const getConnectionOwnerNodeId = (element: HTMLElement) => {
+  const owner = element.closest('[data-node-anchor]')
+
+  if (!(owner instanceof HTMLElement)) {
+    return null
+  }
+
+  return owner.getAttribute('data-node-anchor')
+}
 
 const getColumnAnchorKey = (tableId: string, columnName: string) => `${tableId}.${columnName}`.toLowerCase()
 const getColumnLabelAnchorKey = (tableId: string, columnName: string) => `${tableId}.${columnName}`.toLowerCase()
@@ -2800,14 +2849,14 @@ const getAttachmentFlagStyle = (flag: TableAttachmentFlag) => {
 
 const getAnchorSlotCount = (element: HTMLElement, side: AnchorSide) => {
   if (element.hasAttribute('data-column-label-anchor')) {
-    return isHorizontalSide(side) ? 2 : 3
+    return isHorizontalDiagramSide(side) ? 2 : 3
   }
 
   const bounds = element.getBoundingClientRect()
-  const dimension = isHorizontalSide(side) ? bounds.height : bounds.width
+  const dimension = isHorizontalDiagramSide(side) ? bounds.height : bounds.width
   const divisor = element.hasAttribute('data-table-anchor')
-    ? (isHorizontalSide(side) ? 72 : 144)
-    : (isHorizontalSide(side) ? 56 : 128)
+    ? (isHorizontalDiagramSide(side) ? 72 : 144)
+    : (isHorizontalDiagramSide(side) ? 56 : 128)
 
   return Math.max(2, Math.min(10, Math.ceil(dimension / divisor)))
 }
@@ -2930,9 +2979,42 @@ const moveAnchorPoint = (point: AnchorPoint, distance: number) => {
   }
 }
 
+const isFieldEndpointElement = (element: HTMLElement) => {
+  return element.hasAttribute('data-column-label-anchor') || element.hasAttribute('data-column-anchor')
+}
+
+const getOwningTableElement = (element: HTMLElement) => {
+  const table = element.closest('[data-table-anchor]')
+
+  if (!(table instanceof HTMLElement)) {
+    return null
+  }
+
+  return table
+}
+
+const getOwningGroupElement = (element: HTMLElement) => {
+  const group = element.closest('[data-node-anchor^="group:"]')
+
+  if (!(group instanceof HTMLElement)) {
+    return null
+  }
+
+  return group
+}
+
+const getHorizontalGroupLaneSide = (fromBounds: DOMRect, toBounds: DOMRect, groupBounds: DOMRect): 'left' | 'right' => {
+  const sourceCenterX = fromBounds.left + fromBounds.width / 2
+  const targetCenterX = toBounds.left + toBounds.width / 2
+  const leftScore = (sourceCenterX - groupBounds.left) + (targetCenterX - groupBounds.left)
+  const rightScore = (groupBounds.right - sourceCenterX) + (groupBounds.right - targetCenterX)
+
+  return leftScore <= rightScore ? 'left' : 'right'
+}
+
 const getSharedGroupElement = (fromElement: HTMLElement, toElement: HTMLElement) => {
-  const fromGroup = fromElement.closest('[data-node-anchor^="group:"]')
-  const toGroup = toElement.closest('[data-node-anchor^="group:"]')
+  const fromGroup = getOwningGroupElement(fromElement)
+  const toGroup = getOwningGroupElement(toElement)
 
   if (!(fromGroup instanceof HTMLElement) || !(toGroup instanceof HTMLElement) || fromGroup !== toGroup) {
     return null
@@ -2956,31 +3038,185 @@ const reserveLaneOffset = (
   return baseOffset + laneIndex * gap
 }
 
-const getExternalLaneSide = (fromBounds: DOMRect, toBounds: DOMRect, groupBounds: DOMRect): AnchorSide => {
-  const sourceCenterX = fromBounds.left + fromBounds.width / 2
-  const sourceCenterY = fromBounds.top + fromBounds.height / 2
-  const targetCenterX = toBounds.left + toBounds.width / 2
-  const targetCenterY = toBounds.top + toBounds.height / 2
-  const sideScores: Array<{ side: AnchorSide, score: number }> = [
-    {
-      side: 'left',
-      score: (sourceCenterX - groupBounds.left) + (targetCenterX - groupBounds.left)
-    },
-    {
-      side: 'right',
-      score: (groupBounds.right - sourceCenterX) + (groupBounds.right - targetCenterX)
-    },
-    {
-      side: 'top',
-      score: (sourceCenterY - groupBounds.top) + (targetCenterY - groupBounds.top)
-    },
-    {
-      side: 'bottom',
-      score: (groupBounds.bottom - sourceCenterY) + (groupBounds.bottom - targetCenterY)
-    }
-  ]
+const getDesiredAnchorRatio = (
+  side: AnchorSide,
+  elementBounds: DOMRect,
+  targetCenterX: number,
+  targetCenterY: number
+) => {
+  return isHorizontalDiagramSide(side)
+    ? clamp((targetCenterY - elementBounds.top) / Math.max(elementBounds.height, 1), 0.16, 0.84)
+    : clamp((targetCenterX - elementBounds.left) / Math.max(elementBounds.width, 1), 0.16, 0.84)
+}
 
-  return sideScores.sort((left, right) => left.score - right.score)[0]?.side || 'right'
+const getRouteOffset = (fromAnchor: AnchorPoint, toAnchor: AnchorPoint) => {
+  return 18 + (fromAnchor.slot % 4) * 6 + (toAnchor.slot % 4) * 4
+}
+
+const pointsMatch = (left: LayoutPoint, right: LayoutPoint) => {
+  return Math.abs(left.x - right.x) < 0.5 && Math.abs(left.y - right.y) < 0.5
+}
+
+const appendRoutePoint = (points: LayoutPoint[], point: LayoutPoint) => {
+  const lastPoint = points.at(-1)
+
+  if (lastPoint && pointsMatch(lastPoint, point)) {
+    return
+  }
+
+  points.push(point)
+}
+
+const buildPathFromPoints = (points: LayoutPoint[]) => {
+  return points.map((point, index) => {
+    return `${index === 0 ? 'M' : 'L'} ${point.x} ${point.y}`
+  }).join(' ')
+}
+
+const reserveRouteLegAnchor = (
+  element: HTMLElement,
+  otherElement: HTMLElement,
+  fallbackSide: AnchorSide,
+  planeBounds: DOMRect,
+  usage: Map<string, number[]>
+) => {
+  const elementBounds = element.getBoundingClientRect()
+  const otherBounds = otherElement.getBoundingClientRect()
+  const targetCenterX = otherBounds.left + otherBounds.width / 2
+  const targetCenterY = otherBounds.top + otherBounds.height / 2
+  const tableElement = isFieldEndpointElement(element) ? getOwningTableElement(element) : null
+  const anchorHost = tableElement || element
+  const anchorBounds = anchorHost.getBoundingClientRect()
+  const groupElement = getOwningGroupElement(anchorHost)
+  const groupBounds = groupElement?.getBoundingClientRect()
+  let side: AnchorSide = fallbackSide
+
+  if (tableElement) {
+    side = targetCenterX >= anchorBounds.left + anchorBounds.width / 2 ? 'right' : 'left'
+  } else if (groupBounds) {
+    side = getHeaderSafeGroupLaneSide(
+      {
+        x: anchorBounds.left + anchorBounds.width / 2,
+        y: anchorBounds.top + anchorBounds.height / 2
+      },
+      {
+        x: targetCenterX,
+        y: targetCenterY
+      },
+      {
+        left: groupBounds.left,
+        right: groupBounds.right,
+        top: groupBounds.top,
+        bottom: groupBounds.bottom
+      }
+    )
+  }
+  const ratio = tableElement
+    ? clamp(
+        ((elementBounds.top + elementBounds.height / 2) - anchorBounds.top) / Math.max(anchorBounds.height, 1),
+        0.16,
+        0.84
+      )
+    : getDesiredAnchorRatio(side, anchorBounds, targetCenterX, targetCenterY)
+
+  return {
+    anchor: reserveAnchorPoint(anchorHost, side, ratio, planeBounds, usage),
+    side,
+    groupElement
+  }
+}
+
+const finalizeRouteLeg = (
+  pendingLeg: {
+    anchor: AnchorPoint
+    side: AnchorSide
+    groupElement: HTMLElement | null
+  },
+  planeBounds: DOMRect,
+  usage: Map<string, number[]>,
+  routeOffset: number
+): RouteLeg => {
+  const exit = moveAnchorPoint(pendingLeg.anchor, routeOffset)
+
+  if (!(pendingLeg.groupElement instanceof HTMLElement)) {
+    return {
+      anchor: pendingLeg.anchor,
+      exit,
+      outer: exit,
+      side: pendingLeg.side,
+      outerSide: pendingLeg.side,
+      grouped: false
+    }
+  }
+
+  const groupBounds = pendingLeg.groupElement.getBoundingClientRect()
+  const laneOffset = reserveLaneOffset(
+    `group-lane:${pendingLeg.groupElement.getAttribute('data-node-anchor')}:${pendingLeg.side}`,
+    usage,
+    28,
+    18
+  )
+  const groupLeft = (groupBounds.left - planeBounds.left) / scale.value
+  const groupRight = (groupBounds.right - planeBounds.left) / scale.value
+  const groupBottom = (groupBounds.bottom - planeBounds.top) / scale.value
+  const outer = pendingLeg.side === 'left'
+    ? { x: groupLeft - laneOffset, y: exit.y }
+    : pendingLeg.side === 'right'
+      ? { x: groupRight + laneOffset, y: exit.y }
+      : { x: exit.x, y: groupBottom + laneOffset }
+
+  return {
+    anchor: pendingLeg.anchor,
+    exit,
+    outer,
+    side: pendingLeg.side,
+    outerSide: pendingLeg.side,
+    grouped: true
+  }
+}
+
+const projectLegToSharedLane = (leg: RouteLeg, laneSide: AnchorSide, lanePoint: LayoutPoint): RouteLeg => {
+  if (leg.grouped) {
+    return leg
+  }
+
+  const outer = isHorizontalDiagramSide(laneSide)
+    ? { x: lanePoint.x, y: leg.exit.y }
+    : { x: leg.exit.x, y: lanePoint.y }
+
+  return {
+    ...leg,
+    outer,
+    outerSide: laneSide
+  }
+}
+
+const buildPathFromLegs = (fromLeg: RouteLeg, toLeg: RouteLeg) => {
+  const laneLeg = fromLeg.grouped !== toLeg.grouped
+    ? (fromLeg.grouped ? fromLeg : toLeg)
+    : null
+  const nextFromLeg = laneLeg ? projectLegToSharedLane(fromLeg, laneLeg.side, laneLeg.outer) : fromLeg
+  const nextToLeg = laneLeg ? projectLegToSharedLane(toLeg, laneLeg.side, laneLeg.outer) : toLeg
+  const points: LayoutPoint[] = []
+
+  appendRoutePoint(points, { x: nextFromLeg.anchor.x, y: nextFromLeg.anchor.y })
+  appendRoutePoint(points, nextFromLeg.exit)
+  appendRoutePoint(points, nextFromLeg.outer)
+
+  buildOrthogonalMiddlePoints(
+    nextFromLeg.outer,
+    nextFromLeg.outerSide,
+    nextToLeg.outer,
+    nextToLeg.outerSide
+  ).forEach((point) => {
+    appendRoutePoint(points, point)
+  })
+
+  appendRoutePoint(points, nextToLeg.outer)
+  appendRoutePoint(points, nextToLeg.exit)
+  appendRoutePoint(points, { x: nextToLeg.anchor.x, y: nextToLeg.anchor.y })
+
+  return buildPathFromPoints(points)
 }
 
 const buildSharedGroupPath = (
@@ -2993,19 +3229,44 @@ const buildSharedGroupPath = (
   const fromBounds = fromElement.getBoundingClientRect()
   const toBounds = toElement.getBoundingClientRect()
   const groupBounds = groupElement.getBoundingClientRect()
-  const laneSide = getExternalLaneSide(fromBounds, toBounds, groupBounds)
   const sourceCenterX = fromBounds.left + fromBounds.width / 2
   const sourceCenterY = fromBounds.top + fromBounds.height / 2
   const targetCenterX = toBounds.left + toBounds.width / 2
   const targetCenterY = toBounds.top + toBounds.height / 2
-  const fromRatio = isHorizontalSide(laneSide)
-    ? clamp((targetCenterY - fromBounds.top) / Math.max(fromBounds.height, 1), 0.16, 0.84)
-    : clamp((targetCenterX - fromBounds.left) / Math.max(fromBounds.width, 1), 0.16, 0.84)
-  const toRatio = isHorizontalSide(laneSide)
-    ? clamp((sourceCenterY - toBounds.top) / Math.max(toBounds.height, 1), 0.16, 0.84)
-    : clamp((sourceCenterX - toBounds.left) / Math.max(toBounds.width, 1), 0.16, 0.84)
-  const fromAnchor = reserveAnchorPoint(fromElement, laneSide, fromRatio, planeBounds, usage)
-  const toAnchor = reserveAnchorPoint(toElement, laneSide, toRatio, planeBounds, usage)
+  const laneSide = isFieldEndpointElement(fromElement) || isFieldEndpointElement(toElement)
+    ? getHorizontalGroupLaneSide(fromBounds, toBounds, groupBounds)
+    : getHeaderSafeGroupLaneSide(
+        { x: sourceCenterX, y: sourceCenterY },
+        { x: targetCenterX, y: targetCenterY },
+        {
+          left: groupBounds.left,
+          right: groupBounds.right,
+          top: groupBounds.top,
+          bottom: groupBounds.bottom
+        }
+      )
+  const fromTableElement = isFieldEndpointElement(fromElement) ? getOwningTableElement(fromElement) : null
+  const toTableElement = isFieldEndpointElement(toElement) ? getOwningTableElement(toElement) : null
+  const fromAnchorHost = fromTableElement || fromElement
+  const toAnchorHost = toTableElement || toElement
+  const fromAnchorBounds = fromAnchorHost.getBoundingClientRect()
+  const toAnchorBounds = toAnchorHost.getBoundingClientRect()
+  const fromRatio = fromTableElement
+    ? clamp(
+        ((fromBounds.top + fromBounds.height / 2) - fromAnchorBounds.top) / Math.max(fromAnchorBounds.height, 1),
+        0.16,
+        0.84
+      )
+    : getDesiredAnchorRatio(laneSide, fromAnchorBounds, targetCenterX, targetCenterY)
+  const toRatio = toTableElement
+    ? clamp(
+        ((toBounds.top + toBounds.height / 2) - toAnchorBounds.top) / Math.max(toAnchorBounds.height, 1),
+        0.16,
+        0.84
+      )
+    : getDesiredAnchorRatio(laneSide, toAnchorBounds, sourceCenterX, sourceCenterY)
+  const fromAnchor = reserveAnchorPoint(fromAnchorHost, laneSide, fromRatio, planeBounds, usage)
+  const toAnchor = reserveAnchorPoint(toAnchorHost, laneSide, toRatio, planeBounds, usage)
   const laneOffset = reserveLaneOffset(
     `group-lane:${groupElement.getAttribute('data-node-anchor')}:${laneSide}`,
     usage,
@@ -3016,7 +3277,6 @@ const buildSharedGroupPath = (
   const toExit = moveAnchorPoint(toAnchor, laneOffset)
   const groupLeft = (groupBounds.left - planeBounds.left) / scale.value
   const groupRight = (groupBounds.right - planeBounds.left) / scale.value
-  const groupTop = (groupBounds.top - planeBounds.top) / scale.value
   const groupBottom = (groupBounds.bottom - planeBounds.top) / scale.value
 
   if (laneSide === 'left' || laneSide === 'right') {
@@ -3034,9 +3294,7 @@ const buildSharedGroupPath = (
     ].join(' ')
   }
 
-  const laneY = laneSide === 'top'
-    ? groupTop - laneOffset
-    : groupBottom + laneOffset
+  const laneY = groupBottom + laneOffset
 
   return [
     `M ${fromAnchor.x} ${fromAnchor.y}`,
@@ -3069,64 +3327,6 @@ const decideAnchorSides = (fromElement: HTMLElement, toElement: HTMLElement): { 
     : { from: 'top', to: 'bottom' }
 }
 
-const buildPathFromAnchors = (fromAnchor: AnchorPoint, toAnchor: AnchorPoint) => {
-  const routeOffset = 18 + (fromAnchor.slot % 4) * 6 + (toAnchor.slot % 4) * 4
-  const fromExit = moveAnchorPoint(fromAnchor, routeOffset)
-  const toExit = moveAnchorPoint(toAnchor, routeOffset)
-
-  if (isHorizontalSide(fromAnchor.side) && isHorizontalSide(toAnchor.side)) {
-    const midX = fromAnchor.side === toAnchor.side
-      ? (fromAnchor.side === 'right'
-          ? Math.max(fromExit.x, toExit.x) + 28
-          : Math.min(fromExit.x, toExit.x) - 28)
-      : (fromExit.x + toExit.x) / 2
-
-    return [
-      `M ${fromAnchor.x} ${fromAnchor.y}`,
-      `L ${fromExit.x} ${fromExit.y}`,
-      `L ${midX} ${fromExit.y}`,
-      `L ${midX} ${toExit.y}`,
-      `L ${toExit.x} ${toExit.y}`,
-      `L ${toAnchor.x} ${toAnchor.y}`
-    ].join(' ')
-  }
-
-  if (!isHorizontalSide(fromAnchor.side) && !isHorizontalSide(toAnchor.side)) {
-    const midY = fromAnchor.side === toAnchor.side
-      ? (fromAnchor.side === 'bottom'
-          ? Math.max(fromExit.y, toExit.y) + 28
-          : Math.min(fromExit.y, toExit.y) - 28)
-      : (fromExit.y + toExit.y) / 2
-
-    return [
-      `M ${fromAnchor.x} ${fromAnchor.y}`,
-      `L ${fromExit.x} ${fromExit.y}`,
-      `L ${fromExit.x} ${midY}`,
-      `L ${toExit.x} ${midY}`,
-      `L ${toExit.x} ${toExit.y}`,
-      `L ${toAnchor.x} ${toAnchor.y}`
-    ].join(' ')
-  }
-
-  if (isHorizontalSide(fromAnchor.side) && !isHorizontalSide(toAnchor.side)) {
-    return [
-      `M ${fromAnchor.x} ${fromAnchor.y}`,
-      `L ${fromExit.x} ${fromExit.y}`,
-      `L ${toExit.x} ${fromExit.y}`,
-      `L ${toExit.x} ${toExit.y}`,
-      `L ${toAnchor.x} ${toAnchor.y}`
-    ].join(' ')
-  }
-
-  return [
-    `M ${fromAnchor.x} ${fromAnchor.y}`,
-    `L ${fromExit.x} ${fromExit.y}`,
-    `L ${fromExit.x} ${toExit.y}`,
-    `L ${toExit.x} ${toExit.y}`,
-    `L ${toAnchor.x} ${toAnchor.y}`
-  ].join(' ')
-}
-
 const buildPathBetween = (
   fromElement: HTMLElement,
   toElement: HTMLElement,
@@ -3139,12 +3339,6 @@ const buildPathBetween = (
   }
 
   const planeBounds = planeRef.value.getBoundingClientRect()
-  const fromBounds = fromElement.getBoundingClientRect()
-  const toBounds = toElement.getBoundingClientRect()
-  const sourceCenterX = fromBounds.left + fromBounds.width / 2
-  const sourceCenterY = fromBounds.top + fromBounds.height / 2
-  const targetCenterX = toBounds.left + toBounds.width / 2
-  const targetCenterY = toBounds.top + toBounds.height / 2
   const sharedGroupElement = !dashed ? getSharedGroupElement(fromElement, toElement) : null
 
   if (sharedGroupElement) {
@@ -3156,17 +3350,14 @@ const buildPathBetween = (
   }
 
   const sides = decideAnchorSides(fromElement, toElement)
-  const fromRatio = isHorizontalSide(sides.from)
-    ? clamp((targetCenterY - fromBounds.top) / Math.max(fromBounds.height, 1), 0.16, 0.84)
-    : clamp((targetCenterX - fromBounds.left) / Math.max(fromBounds.width, 1), 0.16, 0.84)
-  const toRatio = isHorizontalSide(sides.to)
-    ? clamp((sourceCenterY - toBounds.top) / Math.max(toBounds.height, 1), 0.16, 0.84)
-    : clamp((sourceCenterX - toBounds.left) / Math.max(toBounds.width, 1), 0.16, 0.84)
-  const fromAnchor = reserveAnchorPoint(fromElement, sides.from, fromRatio, planeBounds, usage)
-  const toAnchor = reserveAnchorPoint(toElement, sides.to, toRatio, planeBounds, usage)
+  const fromPendingLeg = reserveRouteLegAnchor(fromElement, toElement, sides.from, planeBounds, usage)
+  const toPendingLeg = reserveRouteLegAnchor(toElement, fromElement, sides.to, planeBounds, usage)
+  const routeOffset = getRouteOffset(fromPendingLeg.anchor, toPendingLeg.anchor)
+  const fromLeg = finalizeRouteLeg(fromPendingLeg, planeBounds, usage, routeOffset)
+  const toLeg = finalizeRouteLeg(toPendingLeg, planeBounds, usage, routeOffset)
 
   return {
-    path: buildPathFromAnchors(fromAnchor, toAnchor),
+    path: buildPathFromLegs(fromLeg, toLeg),
     color,
     dashed
   }
@@ -3185,6 +3376,7 @@ const updateConnections = () => {
     toElement: HTMLElement
   }> = []
   const usage = new Map<string, number[]>()
+  const nodeOrders = nodeLayerOrderById.value
 
   for (const reference of model.references) {
     const fromElement = getFieldAnchorElement(reference.fromTable, reference.fromColumn)
@@ -3249,7 +3441,11 @@ const updateConnections = () => {
         key: descriptor.key,
         path: result.path,
         color: result.color,
-        dashed: result.dashed
+        dashed: result.dashed,
+        zIndex: getDiagramConnectionZIndex(
+          nodeOrders[getConnectionOwnerNodeId(descriptor.fromElement) || ''] || 1,
+          nodeOrders[getConnectionOwnerNodeId(descriptor.toElement) || ''] || 1
+        )
       } satisfies ConnectionLine
     })
     .filter((line): line is ConnectionLine => Boolean(line))
@@ -3690,30 +3886,11 @@ defineExpose<{
         transform: `translate(${pan.x}px, ${pan.y}px) scale(${scale})`
       }"
     >
-      <svg
-        class="pointer-events-none absolute inset-0 h-full w-full overflow-visible"
-        viewBox="0 0 2600 1800"
-        preserveAspectRatio="none"
-      >
-        <path
-          v-for="line in connectionLines"
-          :key="line.key"
-          :d="line.path"
-          fill="none"
-          :stroke="line.color"
-          stroke-width="2"
-          :stroke-dasharray="line.dashed ? '10 7' : '0'"
-          stroke-linecap="square"
-          stroke-linejoin="miter"
-          opacity="0.9"
-        />
-      </svg>
-
       <div
         v-for="node in canvasNodes"
         :key="node.id"
         :class="[
-          'absolute overflow-hidden border select-none',
+          'absolute z-[1] overflow-hidden border select-none',
           node.kind === 'group' ? 'rounded-[2px]' : 'rounded-none',
           node.kind === 'object' ? 'transition-transform duration-150 hover:-translate-y-0.5 hover:ring-1 hover:ring-[color:var(--studio-ring)]' : '',
           selectedNodeId === node.id ? 'ring-1 ring-[color:var(--studio-ring)]' : ''
@@ -3723,6 +3900,7 @@ defineExpose<{
           top: `${node.y}px`,
           width: `${node.width}px`,
           height: `${node.height}px`,
+          zIndex: getDiagramNodeZIndex(nodeLayerOrderById[node.id] || 1),
           borderColor: getNodeBorderColor(node),
           background: getNodeBackground(node)
         }"
@@ -3998,6 +4176,29 @@ defineExpose<{
           @click.stop
         />
       </div>
+
+      <svg
+        v-for="layer in connectionLineLayers"
+        :key="layer.zIndex"
+        data-connection-layer="true"
+        class="pointer-events-none absolute inset-0 h-full w-full overflow-visible"
+        :style="{ zIndex: layer.zIndex }"
+        viewBox="0 0 2600 1800"
+        preserveAspectRatio="none"
+      >
+        <path
+          v-for="line in layer.lines"
+          :key="line.key"
+          :d="line.path"
+          fill="none"
+          :stroke="line.color"
+          stroke-width="2"
+          :stroke-dasharray="line.dashed ? '10 7' : '0'"
+          stroke-linecap="square"
+          stroke-linejoin="miter"
+          opacity="0.9"
+        />
+      </svg>
     </div>
 
     <div class="pointer-events-none absolute inset-x-0 bottom-3 z-[2] flex justify-center">
