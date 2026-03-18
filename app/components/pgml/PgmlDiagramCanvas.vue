@@ -3050,17 +3050,52 @@ const getDesiredAnchorRatio = (
 }
 
 const getRouteOffset = (fromAnchor: AnchorPoint, toAnchor: AnchorPoint) => {
-  return 18 + (fromAnchor.slot % 4) * 6 + (toAnchor.slot % 4) * 4
+  const baseOffset = 18 + (fromAnchor.slot % 4) * 6 + (toAnchor.slot % 4) * 4
+
+  if (isHorizontalDiagramSide(fromAnchor.side) && isHorizontalDiagramSide(toAnchor.side) && fromAnchor.side !== toAnchor.side) {
+    return Math.min(baseOffset, Math.max(0, Math.abs(toAnchor.x - fromAnchor.x) / 2 - 1))
+  }
+
+  if (!isHorizontalDiagramSide(fromAnchor.side) && !isHorizontalDiagramSide(toAnchor.side) && fromAnchor.side !== toAnchor.side) {
+    return Math.min(baseOffset, Math.max(0, Math.abs(toAnchor.y - fromAnchor.y) / 2 - 1))
+  }
+
+  return baseOffset
 }
 
 const pointsMatch = (left: LayoutPoint, right: LayoutPoint) => {
   return Math.abs(left.x - right.x) < 0.5 && Math.abs(left.y - right.y) < 0.5
 }
 
+const getSharedAxis = (left: LayoutPoint, right: LayoutPoint) => {
+  if (Math.abs(left.x - right.x) < 0.5) {
+    return 'x'
+  }
+
+  if (Math.abs(left.y - right.y) < 0.5) {
+    return 'y'
+  }
+
+  return null
+}
+
 const appendRoutePoint = (points: LayoutPoint[], point: LayoutPoint) => {
   const lastPoint = points.at(-1)
 
   if (lastPoint && pointsMatch(lastPoint, point)) {
+    return
+  }
+
+  const previousPoint = points.at(-2)
+  const previousAxis = previousPoint && lastPoint ? getSharedAxis(previousPoint, lastPoint) : null
+  const nextAxis = lastPoint ? getSharedAxis(lastPoint, point) : null
+
+  if (
+    previousAxis
+    && nextAxis
+    && previousAxis === nextAxis
+  ) {
+    points[points.length - 1] = point
     return
   }
 
@@ -3273,37 +3308,32 @@ const buildSharedGroupPath = (
     28,
     18
   )
-  const fromExit = moveAnchorPoint(fromAnchor, laneOffset)
-  const toExit = moveAnchorPoint(toAnchor, laneOffset)
   const groupLeft = (groupBounds.left - planeBounds.left) / scale.value
   const groupRight = (groupBounds.right - planeBounds.left) / scale.value
   const groupBottom = (groupBounds.bottom - planeBounds.top) / scale.value
+  const points: LayoutPoint[] = []
+
+  appendRoutePoint(points, { x: fromAnchor.x, y: fromAnchor.y })
 
   if (laneSide === 'left' || laneSide === 'right') {
     const laneX = laneSide === 'left'
       ? groupLeft - laneOffset
       : groupRight + laneOffset
 
-    return [
-      `M ${fromAnchor.x} ${fromAnchor.y}`,
-      `L ${fromExit.x} ${fromExit.y}`,
-      `L ${laneX} ${fromExit.y}`,
-      `L ${laneX} ${toExit.y}`,
-      `L ${toExit.x} ${toExit.y}`,
-      `L ${toAnchor.x} ${toAnchor.y}`
-    ].join(' ')
+    appendRoutePoint(points, { x: laneX, y: fromAnchor.y })
+    appendRoutePoint(points, { x: laneX, y: toAnchor.y })
+    appendRoutePoint(points, { x: toAnchor.x, y: toAnchor.y })
+
+    return buildPathFromPoints(points)
   }
 
   const laneY = groupBottom + laneOffset
 
-  return [
-    `M ${fromAnchor.x} ${fromAnchor.y}`,
-    `L ${fromExit.x} ${fromExit.y}`,
-    `L ${fromExit.x} ${laneY}`,
-    `L ${toExit.x} ${laneY}`,
-    `L ${toExit.x} ${toExit.y}`,
-    `L ${toAnchor.x} ${toAnchor.y}`
-  ].join(' ')
+  appendRoutePoint(points, { x: fromAnchor.x, y: laneY })
+  appendRoutePoint(points, { x: toAnchor.x, y: laneY })
+  appendRoutePoint(points, { x: toAnchor.x, y: toAnchor.y })
+
+  return buildPathFromPoints(points)
 }
 
 const decideAnchorSides = (fromElement: HTMLElement, toElement: HTMLElement): { from: AnchorSide, to: AnchorSide } => {

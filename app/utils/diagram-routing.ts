@@ -30,11 +30,18 @@ export const buildOrthogonalMiddlePoints = (
   }
 
   if (isHorizontalDiagramSide(fromSide) && isHorizontalDiagramSide(toSide)) {
-    const midX = fromSide === toSide
-      ? (fromSide === 'right'
-          ? Math.max(fromPoint.x, toPoint.x) + 28
-          : Math.min(fromPoint.x, toPoint.x) - 28)
-      : (fromPoint.x + toPoint.x) / 2
+    if (fromSide === toSide) {
+      const midX = fromSide === 'right'
+        ? Math.max(fromPoint.x, toPoint.x) + 28
+        : Math.min(fromPoint.x, toPoint.x) - 28
+
+      return [
+        { x: midX, y: fromPoint.y },
+        { x: midX, y: toPoint.y }
+      ]
+    }
+
+    const midX = (fromPoint.x + toPoint.x) / 2
 
     return [
       { x: midX, y: fromPoint.y },
@@ -43,11 +50,18 @@ export const buildOrthogonalMiddlePoints = (
   }
 
   if (!isHorizontalDiagramSide(fromSide) && !isHorizontalDiagramSide(toSide)) {
-    const midY = fromSide === toSide
-      ? (fromSide === 'bottom'
-          ? Math.max(fromPoint.y, toPoint.y) + 28
-          : Math.min(fromPoint.y, toPoint.y) - 28)
-      : (fromPoint.y + toPoint.y) / 2
+    if (fromSide === toSide) {
+      const midY = fromSide === 'bottom'
+        ? Math.max(fromPoint.y, toPoint.y) + 28
+        : Math.min(fromPoint.y, toPoint.y) - 28
+
+      return [
+        { x: fromPoint.x, y: midY },
+        { x: toPoint.x, y: midY }
+      ]
+    }
+
+    const midY = (fromPoint.y + toPoint.y) / 2
 
     return [
       { x: fromPoint.x, y: midY },

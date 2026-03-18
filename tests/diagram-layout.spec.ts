@@ -261,6 +261,7 @@ Table public.orders in Core {
       maxLineZIndex: Math.max(...connectionLayers.map((layer) => {
         return Number.parseInt(window.getComputedStyle(layer).zIndex || '0', 10)
       })),
+      pointCount: points.length,
       overlapsHeader,
       lineTouchesOrdersBorder
     }
@@ -268,6 +269,7 @@ Table public.orders in Core {
 
   expect(diagnostics).not.toBeNull()
   expect(diagnostics?.maxLineZIndex || 0).toBeGreaterThan(diagnostics?.groupZIndex || 0)
+  expect(diagnostics?.pointCount || 0).toBeLessThanOrEqual(4)
   expect(diagnostics?.overlapsHeader).toBe(false)
   expect(diagnostics?.lineTouchesOrdersBorder).toBe(true)
 })

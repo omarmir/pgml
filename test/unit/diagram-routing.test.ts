@@ -35,4 +35,55 @@ describe('diagram routing utilities', () => {
       'bottom'
     )).toEqual([])
   })
+
+  it('routes mixed-orientation legs with a single corner', () => {
+    expect(buildOrthogonalMiddlePoints(
+      { x: 80, y: 120 },
+      'left',
+      { x: 140, y: 220 },
+      'bottom'
+    )).toEqual([
+      { x: 140, y: 120 }
+    ])
+
+    expect(buildOrthogonalMiddlePoints(
+      { x: 220, y: 140 },
+      'right',
+      { x: 320, y: 260 },
+      'bottom'
+    )).toEqual([
+      { x: 320, y: 140 }
+    ])
+
+    expect(buildOrthogonalMiddlePoints(
+      { x: 180, y: 260 },
+      'top',
+      { x: 320, y: 160 },
+      'right'
+    )).toEqual([
+      { x: 180, y: 160 }
+    ])
+  })
+
+  it('keeps opposing anchor routes to a single shared lane with two corners', () => {
+    expect(buildOrthogonalMiddlePoints(
+      { x: 80, y: 120 },
+      'left',
+      { x: 140, y: 220 },
+      'right'
+    )).toEqual([
+      { x: 110, y: 120 },
+      { x: 110, y: 220 }
+    ])
+
+    expect(buildOrthogonalMiddlePoints(
+      { x: 180, y: 260 },
+      'bottom',
+      { x: 320, y: 160 },
+      'top'
+    )).toEqual([
+      { x: 180, y: 210 },
+      { x: 320, y: 210 }
+    ])
+  })
 })
