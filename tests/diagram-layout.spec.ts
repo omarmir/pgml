@@ -92,21 +92,38 @@ test('studio header aligns the navigation with the page title copy', async ({ go
       return null
     }
 
-    const taglineRect = tagline.getBoundingClientRect()
-    const specRect = specLink.getBoundingClientRect()
-    const studioRect = studioLink.getBoundingClientRect()
+    const measureTextBounds = (element: HTMLElement) => {
+      const range = document.createRange()
+      range.selectNodeContents(element)
+
+      const rect = range.getBoundingClientRect()
+
+      return {
+        top: Math.round(rect.top),
+        bottom: Math.round(rect.bottom),
+        height: Math.round(rect.height)
+      }
+    }
+
+    const taglineRect = measureTextBounds(tagline)
+    const specRect = measureTextBounds(specLink)
+    const studioRect = measureTextBounds(studioLink)
 
     return {
       taglineFontSize: Number.parseFloat(window.getComputedStyle(tagline).fontSize),
-      specOffset: Math.round(specRect.bottom - taglineRect.bottom),
-      studioOffset: Math.round(studioRect.bottom - taglineRect.bottom)
+      specTopOffset: specRect.top - taglineRect.top,
+      specBottomOffset: specRect.bottom - taglineRect.bottom,
+      studioTopOffset: studioRect.top - taglineRect.top,
+      studioBottomOffset: studioRect.bottom - taglineRect.bottom
     }
   })
 
   expect(headerMetrics).not.toBeNull()
   expect(headerMetrics?.taglineFontSize || 0).toBeGreaterThanOrEqual(16)
-  expect(Math.abs(headerMetrics?.specOffset || 0)).toBeLessThanOrEqual(2)
-  expect(Math.abs(headerMetrics?.studioOffset || 0)).toBeLessThanOrEqual(2)
+  expect(Math.abs(headerMetrics?.specTopOffset || 0)).toBeLessThanOrEqual(1)
+  expect(Math.abs(headerMetrics?.specBottomOffset || 0)).toBeLessThanOrEqual(1)
+  expect(Math.abs(headerMetrics?.studioTopOffset || 0)).toBeLessThanOrEqual(1)
+  expect(Math.abs(headerMetrics?.studioBottomOffset || 0)).toBeLessThanOrEqual(1)
 })
 
 test('table groups keep their required width after changing the table column count', async ({ goto, page }) => {

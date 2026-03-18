@@ -97,18 +97,18 @@ const navLinkClass = (to: string) => {
                 <span class="font-mono text-[0.72rem] uppercase tracking-[0.14em] text-[color:var(--studio-shell-label)]">
                   PGML
                 </span>
-                <span class="truncate text-base font-medium leading-tight text-[color:var(--studio-shell-muted)] sm:text-[1.05rem]">
+                <span class="truncate text-base font-medium leading-[1.15] text-[color:var(--studio-shell-muted)] sm:text-[1.05rem]">
                   Postgres in markup
                 </span>
               </span>
             </NuxtLink>
 
-            <nav class="hidden self-end translate-y-0.5 md:flex md:items-center md:gap-3">
+            <nav class="hidden self-end translate-y-[3px] md:flex md:items-baseline md:gap-3">
               <NuxtLink
                 v-for="item in navigation"
                 :key="item.to"
                 :to="item.to"
-                class="border-b px-0 py-1 text-sm font-medium transition-colors duration-150"
+                class="border-b px-0 py-1 text-sm leading-none font-medium transition-colors duration-150"
                 :class="navLinkClass(item.to)"
               >
                 {{ item.label }}
