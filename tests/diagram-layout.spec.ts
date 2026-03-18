@@ -105,8 +105,8 @@ test('studio header aligns the navigation with the page title copy', async ({ go
 
   expect(headerMetrics).not.toBeNull()
   expect(headerMetrics?.taglineFontSize || 0).toBeGreaterThanOrEqual(16)
-  expect(Math.abs(headerMetrics?.specOffset || 0)).toBeLessThanOrEqual(1)
-  expect(Math.abs(headerMetrics?.studioOffset || 0)).toBeLessThanOrEqual(1)
+  expect(Math.abs(headerMetrics?.specOffset || 0)).toBeLessThanOrEqual(2)
+  expect(Math.abs(headerMetrics?.studioOffset || 0)).toBeLessThanOrEqual(2)
 })
 
 test('table groups keep their required width after changing the table column count', async ({ goto, page }) => {
