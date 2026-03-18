@@ -44,3 +44,73 @@ test('studio attaches operational rows to tables and still lets floating nodes e
 
   expect(collapsedHeight).toBeLessThan(expandedHeight)
 })
+
+test('studio scrolls the editor to clicked floating cards and grouped tables', async ({ goto, page }) => {
+  await goto('/diagram')
+
+  const filler = Array.from({ length: 80 }, (_, index) => `// filler ${index + 1}`).join('\n')
+  const source = `${filler}
+
+TableGroup Core {
+  orders
+}
+
+Table orders in Core {
+  id integer [pk]
+  total_cents integer
+  Index idx_orders_total (total_cents)
+}
+
+Function orphan_report() {
+  language: sql
+  source: $sql$
+    select 1;
+  $sql$
+}`
+  const editor = page.locator('[data-pgml-editor="true"]')
+
+  await editor.fill(source)
+  await expect(page.locator('[data-node-anchor="function:orphan_report"]')).toBeVisible()
+  await expect(page.locator('[data-table-anchor="public.orders"]')).toBeVisible()
+
+  await editor.evaluate((element: HTMLTextAreaElement) => {
+    element.scrollTop = 0
+    element.setSelectionRange(0, 0)
+  })
+  await page.locator('[data-node-anchor="function:orphan_report"]').click()
+  await expect.poll(async () => {
+    return editor.evaluate((element: HTMLTextAreaElement) => {
+      return {
+        scrollTop: element.scrollTop,
+        selectedText: element.value.slice(element.selectionStart, element.selectionEnd)
+      }
+    })
+  }).toEqual(expect.objectContaining({
+    scrollTop: expect.any(Number),
+    selectedText: `Function orphan_report() {
+  language: sql
+  source: $sql$
+    select 1;
+  $sql$
+}`
+  }))
+
+  await expect.poll(async () => {
+    return editor.evaluate((element: HTMLTextAreaElement) => element.scrollTop)
+  }).toBeGreaterThan(0)
+
+  await editor.evaluate((element: HTMLTextAreaElement) => {
+    element.scrollTop = 0
+    element.setSelectionRange(0, 0)
+  })
+  await page.locator('[data-table-anchor="public.orders"]').click()
+  await expect.poll(async () => {
+    return editor.evaluate((element: HTMLTextAreaElement) => {
+      return element.value.slice(element.selectionStart, element.selectionEnd)
+    })
+  }).toBe(`Table orders in Core {
+  id integer [pk]
+  total_cents integer
+  Index idx_orders_total (total_cents)
+}`)
+})

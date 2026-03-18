@@ -4,10 +4,12 @@ import { nanoid } from 'nanoid'
 import PgmlDiagramCanvas from '~/components/pgml/PgmlDiagramCanvas.vue'
 import {
   buildPgmlWithNodeProperties,
+  getPgmlSourceSelectionRange,
   parsePgml,
   pgmlExample,
   stripPgmlPropertiesBlocks,
-  type PgmlNodeProperties
+  type PgmlNodeProperties,
+  type PgmlSourceRange
 } from '~/utils/pgml'
 
 type PgmlDiagramCanvasExposed = {
@@ -185,6 +187,34 @@ const syncLineNumberScroll = () => {
   }
 
   lineNumberRef.value.scrollTop = textareaRef.value.scrollTop
+}
+
+const focusEditorSourceRange = (sourceRange: PgmlSourceRange) => {
+  if (!textareaRef.value) {
+    return
+  }
+
+  const selectionRange = getPgmlSourceSelectionRange(source.value, sourceRange)
+
+  if (!selectionRange) {
+    return
+  }
+
+  const textarea = textareaRef.value
+  const parsedLineHeight = Number.parseFloat(window.getComputedStyle(textarea).lineHeight)
+  const lineHeight = Number.isFinite(parsedLineHeight) ? parsedLineHeight : 24
+  const targetScrollTop = Math.max(
+    0,
+    (sourceRange.startLine - 1) * lineHeight - textarea.clientHeight / 2 + lineHeight * 2
+  )
+
+  textarea.scrollTop = targetScrollTop
+  syncLineNumberScroll()
+  textarea.focus()
+  textarea.setSelectionRange(selectionRange.start, selectionRange.end)
+  window.requestAnimationFrame(() => {
+    syncLineNumberScroll()
+  })
 }
 
 const readSavedSchemas = () => {
@@ -441,6 +471,7 @@ onMounted(() => {
         <PgmlDiagramCanvas
           ref="canvasRef"
           :model="parsedModel"
+          @focus-source="focusEditorSourceRange"
         />
       </section>
     </div>

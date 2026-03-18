@@ -521,8 +521,8 @@ export const getPgmlSourceSelectionRange = (source: string, sourceRange: PgmlSou
     return null
   }
 
-  const startLine = clamp(Math.round(sourceRange.startLine), 1, lines.length)
-  const endLine = clamp(Math.round(sourceRange.endLine), startLine, lines.length)
+  const startLine = Math.min(Math.max(Math.round(sourceRange.startLine), 1), lines.length)
+  const endLine = Math.min(Math.max(Math.round(sourceRange.endLine), startLine), lines.length)
   const offsets: number[] = []
   let offset = 0
 
@@ -1226,8 +1226,7 @@ const parseCustomType = (block: NamedBlock) => {
     name: cleanName(readMatch(headerMatch[2])),
     details: block.body
       .map(line => line.trim())
-      .filter(line => line.length > 0)
-    ,
+      .filter(line => line.length > 0),
     sourceRange: {
       startLine: block.startLine,
       endLine: block.endLine

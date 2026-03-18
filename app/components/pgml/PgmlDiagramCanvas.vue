@@ -5,13 +5,17 @@ import type {
   PgmlNodeProperties,
   PgmlRoutine,
   PgmlSchemaModel,
-  PgmlSequence
+  PgmlSequence,
+  PgmlSourceRange
 } from '~/utils/pgml'
 import { getRasterExportPlan } from '~/utils/diagram-export'
 import { normalizeSvgColor, normalizeSvgPaint, parseCssLinearGradient } from '~/utils/svg-paint'
 
 const { model } = defineProps<{
   model: PgmlSchemaModel
+}>()
+const emit = defineEmits<{
+  focusSource: [sourceRange: PgmlSourceRange]
 }>()
 
 type CanvasNodeKind = 'group' | 'object'
@@ -73,6 +77,7 @@ type CanvasNodeState = {
   minWidth?: number
   minHeight?: number
   hasStoredLayout?: boolean
+  sourceRange?: PgmlSourceRange
 }
 
 type ConnectionLine = {
@@ -2372,7 +2377,8 @@ const buildObjectNodes = (groupStates: Record<string, CanvasNodeState>) => {
         impactTargets: index.columns.map(columnName => ({
           tableId: normalizeReference(index.tableName),
           columnName
-        }))
+        })),
+        sourceRange: index.sourceRange
       })
     }
   }
@@ -2399,7 +2405,8 @@ const buildObjectNodes = (groupStates: Record<string, CanvasNodeState>) => {
       expandedHeight: 176,
       color: attachmentKindColors.Function,
       tableIds: uniqueValues(impactTargets.map(target => target.tableId)),
-      impactTargets
+      impactTargets,
+      sourceRange: pgFunction.sourceRange
     })
   }
 
@@ -2425,7 +2432,8 @@ const buildObjectNodes = (groupStates: Record<string, CanvasNodeState>) => {
       expandedHeight: 156,
       color: attachmentKindColors.Procedure,
       tableIds: uniqueValues(impactTargets.map(target => target.tableId)),
-      impactTargets
+      impactTargets,
+      sourceRange: procedure.sourceRange
     })
   }
 
@@ -2451,7 +2459,8 @@ const buildObjectNodes = (groupStates: Record<string, CanvasNodeState>) => {
       expandedHeight: 168,
       color: attachmentKindColors.Trigger,
       tableIds: [tableId],
-      impactTargets: inferTriggerTargets(tableId, trigger)
+      impactTargets: inferTriggerTargets(tableId, trigger),
+      sourceRange: trigger.sourceRange
     })
   }
 
@@ -2477,7 +2486,8 @@ const buildObjectNodes = (groupStates: Record<string, CanvasNodeState>) => {
       expandedHeight: 156,
       color: attachmentKindColors.Sequence,
       tableIds: uniqueValues(impactTargets.map(target => target.tableId)),
-      impactTargets
+      impactTargets,
+      sourceRange: sequence.sourceRange
     })
   }
 
@@ -2497,7 +2507,8 @@ const buildObjectNodes = (groupStates: Record<string, CanvasNodeState>) => {
       expandedHeight: 114,
       color: '#14b8a6',
       tableIds: uniqueValues(impactTargets.map(target => target.tableId)),
-      impactTargets
+      impactTargets,
+      sourceRange: customType.sourceRange
     })
   }
 
@@ -3430,6 +3441,26 @@ const startResizeNode = (event: PointerEvent, id: string) => {
   window.addEventListener('pointerup', onUp)
 }
 
+const handleNodeClick = (node: CanvasNodeState) => {
+  selectedNodeId.value = node.id
+
+  if (node.kind !== 'object' || !node.sourceRange) {
+    return
+  }
+
+  emit('focusSource', node.sourceRange)
+}
+
+const handleTableClick = (tableId: string) => {
+  const table = model.tables.find(candidate => candidate.fullName === tableId)
+
+  if (!table?.sourceRange) {
+    return
+  }
+
+  emit('focusSource', table.sourceRange)
+}
+
 const handleWheel = (event: WheelEvent) => {
   event.preventDefault()
   zoomBy(event.deltaY > 0 ? -1 : 1)
@@ -3574,6 +3605,7 @@ defineExpose<{
         :class="[
           'absolute overflow-hidden border select-none',
           node.kind === 'group' ? 'rounded-[2px]' : 'rounded-none',
+          node.kind === 'object' ? 'transition-transform duration-150 hover:-translate-y-0.5 hover:ring-1 hover:ring-[color:var(--studio-ring)]' : '',
           selectedNodeId === node.id ? 'ring-1 ring-[color:var(--studio-ring)]' : ''
         ]"
         :style="{
@@ -3586,6 +3618,7 @@ defineExpose<{
         }"
         :data-node-anchor="node.id"
         @pointerdown.stop="selectedNodeId = node.id"
+        @click.stop="handleNodeClick(node)"
       >
         <div
           :data-node-header="node.id"
@@ -3648,8 +3681,9 @@ defineExpose<{
             <article
               v-for="table in model.tables.filter((table) => node.tableIds.includes(table.fullName))"
               :key="table.fullName"
-              class="rounded-[2px] border border-[color:var(--studio-shell-border)] bg-[color:var(--studio-table-surface)]"
+              class="rounded-[2px] border border-[color:var(--studio-shell-border)] bg-[color:var(--studio-table-surface)] transition-transform duration-150 hover:-translate-y-0.5 hover:ring-1 hover:ring-[color:var(--studio-ring)]"
               :data-table-anchor="table.fullName"
+              @click.stop="handleTableClick(table.fullName)"
             >
               <div class="flex items-start justify-between gap-2 border-b border-[color:var(--studio-divider)] px-2 py-1.5">
                 <div class="min-w-0">
@@ -3718,7 +3752,7 @@ defineExpose<{
                       :data-table-row-anchor="row.key"
                       data-table-row-kind="attachment"
                       :data-attachment-row="row.attachment.id"
-                      class="flex w-full items-start justify-between gap-2 px-2 py-1.5 text-left"
+                      class="flex w-full items-start justify-between gap-2 px-2 py-1.5 text-left transition-[filter,transform] duration-150 hover:brightness-105"
                       :style="getAttachmentRowStyle(row.attachment)"
                       :aria-label="`${row.attachment.kind} ${row.attachment.title}`"
                       @pointerdown.stop
@@ -3850,6 +3884,7 @@ defineExpose<{
           }"
           aria-label="Resize node"
           @pointerdown="startResizeNode($event, node.id)"
+          @click.stop
         />
       </div>
     </div>

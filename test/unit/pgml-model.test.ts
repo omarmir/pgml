@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
-import { parsePgml, pgmlExample } from '../../app/utils/pgml'
+import { getPgmlSourceSelectionRange, parsePgml, pgmlExample } from '../../app/utils/pgml'
 
 describe('PGML model parsing', () => {
   it('parses the bundled example into grouped tables, refs, and custom types', () => {
@@ -75,5 +75,71 @@ describe('PGML model parsing', () => {
       expect.objectContaining({ key: 'arguments', value: '[\'fundingopportunity\']' })
     ]))
     expect(registerTrigger?.docs?.summary).toContain('Registers a Common_Entity id')
+  })
+
+  it('tracks source ranges for navigable schema objects', () => {
+    const source = `TableGroup Core {
+  orders
+}
+
+Table orders in Core {
+  id integer [pk]
+  total_cents integer
+  Constraint chk_orders_total: total_cents >= 0
+  Index idx_orders_total (total_cents)
+}
+
+Function orphan_report() {
+  language: sql
+  source: $sql$
+    select 1;
+  $sql$
+}
+
+Enum order_state {
+  draft
+  submitted
+}`
+    const model = parsePgml(source)
+    const table = model.tables.find(entry => entry.fullName === 'public.orders')
+    const constraint = table?.constraints.find(entry => entry.name === 'chk_orders_total')
+    const index = table?.indexes.find(entry => entry.name === 'idx_orders_total')
+    const routine = model.functions.find(entry => entry.name === 'orphan_report')
+    const customType = model.customTypes.find(entry => entry.name === 'order_state')
+
+    expect(table?.sourceRange).toEqual({ startLine: 5, endLine: 10 })
+    expect(constraint?.sourceRange).toEqual({ startLine: 8, endLine: 8 })
+    expect(index?.sourceRange).toEqual({ startLine: 9, endLine: 9 })
+    expect(routine?.sourceRange).toEqual({ startLine: 12, endLine: 17 })
+    expect(customType?.sourceRange).toEqual({ startLine: 19, endLine: 22 })
+  })
+
+  it('builds editor selection offsets from source ranges', () => {
+    const source = `// filler
+// filler
+
+Table orders {
+  id integer [pk]
+  total_cents integer
+}
+
+Function orphan_report() {
+  language: sql
+  source: $sql$
+    select 1;
+  $sql$
+}`
+    const selectionRange = getPgmlSourceSelectionRange(source.replaceAll('\n', '\r\n'), {
+      startLine: 9,
+      endLine: 14
+    })
+
+    expect(selectionRange).not.toBeNull()
+    expect(source.slice(selectionRange?.start || 0, selectionRange?.end || 0)).toBe(`Function orphan_report() {
+  language: sql
+  source: $sql$
+    select 1;
+  $sql$
+}`)
   })
 })
