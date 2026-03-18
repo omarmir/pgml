@@ -160,6 +160,7 @@ TableGroup Commerce {
 
 Table public.tenants in Core {
   id uuid [pk]
+  name text
 }
 
 Table public.orders in Commerce {
@@ -170,11 +171,25 @@ Table public.orders in Commerce {
   await editor.fill(source)
   await expect(page.locator('[data-node-anchor="group:Core"]')).toBeVisible()
 
+  const coreGroup = page.locator('[data-node-anchor="group:Core"]')
+  const initialGroupHeight = await coreGroup.evaluate((element) => {
+    return Math.round(element.getBoundingClientRect().height)
+  })
+
+  await page.waitForTimeout(250)
+
+  await expect.poll(async () => {
+    return coreGroup.evaluate((element) => {
+      return Math.round(element.getBoundingClientRect().height)
+    })
+  }).toBe(initialGroupHeight)
+
   const diagnostics = await page.evaluate(() => {
     const group = document.querySelector('[data-node-anchor="group:Core"]')
     const groupSurface = document.querySelector('[data-group-surface="group:Core"]')
     const content = document.querySelector('[data-group-content="group:Core"]')
     const tenantsTable = document.querySelector('[data-table-anchor="public.tenants"]')
+    const tenantsIdLabel = document.querySelector('[data-column-label-anchor="public.tenants.id"]')
     const connectionLayers = Array.from(document.querySelectorAll('[data-connection-layer="true"]'))
     const path = connectionLayers.flatMap((layer) => {
       return Array.from(layer.querySelectorAll('path'))
@@ -187,9 +202,16 @@ Table public.orders in Commerce {
       || !(groupSurface instanceof HTMLElement)
       || !(content instanceof HTMLElement)
       || !(tenantsTable instanceof HTMLElement)
+      || !(tenantsIdLabel instanceof HTMLElement)
       || connectionLayers.length === 0
       || !(path instanceof SVGPathElement)
     ) {
+      return null
+    }
+
+    const plane = group.parentElement
+
+    if (!(plane instanceof HTMLElement)) {
       return null
     }
 
@@ -230,6 +252,19 @@ Table public.orders in Commerce {
         y: Number.parseFloat(match[2] || '0')
       }
     })
+    const getOffsetWithinPlane = (element: HTMLElement) => {
+      let current: HTMLElement | null = element
+      let x = 0
+      let y = 0
+
+      while (current && current !== plane) {
+        x += current.offsetLeft
+        y += current.offsetTop
+        current = current.offsetParent instanceof HTMLElement ? current.offsetParent : null
+      }
+
+      return { x, y }
+    }
     const headerBand = {
       left: group.offsetLeft,
       right: group.offsetLeft + group.offsetWidth,
@@ -242,6 +277,14 @@ Table public.orders in Commerce {
       top: tenantsTable.offsetTop,
       bottom: tenantsTable.offsetTop + tenantsTable.offsetHeight
     }
+    const groupBounds = {
+      left: group.offsetLeft,
+      right: group.offsetLeft + group.offsetWidth,
+      top: group.offsetTop,
+      bottom: group.offsetTop + group.offsetHeight
+    }
+    const tenantsIdLabelOffset = getOffsetWithinPlane(tenantsIdLabel)
+    const tenantsIdTargetY = tenantsIdLabelOffset.y + tenantsIdLabel.offsetHeight / 2
     const overlapsHeader = points.slice(1).some((point, index) => {
       return segmentHitsRect(points[index]!, point, headerBand)
     })
@@ -259,8 +302,21 @@ Table public.orders in Commerce {
 
       return onVerticalBorder || onHorizontalBorder
     })
+    const lineTouchesTenantsIdBorder = points.some((point) => {
+      return (
+        (Math.abs(point.x - tenantsBounds.left) < 1 || Math.abs(point.x - tenantsBounds.right) < 1)
+        && Math.abs(point.y - tenantsIdTargetY) < 1.5
+      )
+    })
+    const tableFitsWithinGroup = (
+      tenantsBounds.left >= groupBounds.left - 1
+      && tenantsBounds.right <= groupBounds.right + 1
+      && tenantsBounds.top >= groupBounds.top - 1
+      && tenantsBounds.bottom <= groupBounds.bottom + 1
+    )
 
     return {
+      groupOverflow: window.getComputedStyle(group).overflow,
       groupZIndex: Number.parseInt(window.getComputedStyle(groupSurface).zIndex || '0', 10),
       maxLineZIndex: Math.max(...connectionLayers.map((layer) => {
         return Number.parseInt(window.getComputedStyle(layer).zIndex || '0', 10)
@@ -268,14 +324,19 @@ Table public.orders in Commerce {
       stroke: path.getAttribute('stroke') || '',
       pointCount: points.length,
       overlapsHeader,
-      lineTouchesTenantsBorder
+      lineTouchesTenantsBorder,
+      lineTouchesTenantsIdBorder,
+      tableFitsWithinGroup
     }
   })
 
   expect(diagnostics).not.toBeNull()
+  expect(diagnostics?.groupOverflow).toBe('hidden')
   expect(diagnostics?.maxLineZIndex || 0).toBeGreaterThan(diagnostics?.groupZIndex || 0)
   expect(diagnostics?.stroke).toBe('#8b5cf6')
   expect(diagnostics?.pointCount || 0).toBeLessThanOrEqual(4)
   expect(diagnostics?.overlapsHeader).toBe(false)
   expect(diagnostics?.lineTouchesTenantsBorder).toBe(true)
+  expect(diagnostics?.lineTouchesTenantsIdBorder).toBe(true)
+  expect(diagnostics?.tableFitsWithinGroup).toBe(true)
 })

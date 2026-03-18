@@ -1004,13 +1004,27 @@ const measureGroupMinimumSize = (groupId: string) => {
   const wrapperStyles = contentWrapper ? window.getComputedStyle(contentWrapper) : null
   const paddingRight = wrapperStyles ? Number.parseFloat(wrapperStyles.paddingRight) : 0
   const paddingBottom = wrapperStyles ? Number.parseFloat(wrapperStyles.paddingBottom) : 0
-  const headerBottom = headerElement.offsetTop + headerElement.offsetHeight
-  const contentRight = contentElement.offsetLeft + contentElement.scrollWidth + paddingRight
-  const contentBottom = contentElement.offsetTop + contentElement.scrollHeight + paddingBottom
+  const sizeBuffer = 1
+  const scaleFactor = Math.max(scale.value, 0.001)
+  const groupBounds = groupElement.getBoundingClientRect()
+  const headerBounds = headerElement.getBoundingClientRect()
+  const contentWrapperBounds = contentWrapper instanceof HTMLElement ? contentWrapper.getBoundingClientRect() : null
+  const contentBounds = contentElement.getBoundingClientRect()
+  const contentChildren = Array.from(contentElement.children).filter((child): child is HTMLElement => child instanceof HTMLElement)
+  const contentRight = contentChildren.length
+    ? Math.max(...contentChildren.map((child) => (child.getBoundingClientRect().right - groupBounds.left) / scaleFactor)) + paddingRight
+    : ((contentBounds.right - groupBounds.left) / scaleFactor) + paddingRight
+  const contentBottomFromChildren = contentChildren.length
+    ? Math.max(...contentChildren.map((child) => (child.getBoundingClientRect().bottom - groupBounds.top) / scaleFactor)) + paddingBottom
+    : ((contentBounds.bottom - groupBounds.top) / scaleFactor) + paddingBottom
+  const contentBottom = contentWrapperBounds
+    ? (contentWrapperBounds.bottom - groupBounds.top) / scaleFactor
+    : contentBottomFromChildren
+  const headerBottom = (headerBounds.bottom - groupBounds.top) / scaleFactor
 
   return {
-    minWidth: Math.ceil(Math.max(contentRight, 240, baselineSize.minWidth)),
-    minHeight: Math.ceil(Math.max(headerBottom + paddingBottom, contentBottom, baselineSize.minHeight))
+    minWidth: Math.ceil(Math.max(contentRight + sizeBuffer, 240, baselineSize.minWidth)),
+    minHeight: Math.ceil(Math.max(headerBottom + paddingBottom, contentBottom + sizeBuffer, baselineSize.minHeight))
   }
 }
 
@@ -2948,6 +2962,60 @@ const getAnchorPoint = (
   }
 }
 
+const getExactAnchorPoint = (
+  element: HTMLElement,
+  side: AnchorSide,
+  ratio: number,
+  planeBounds: DOMRect
+): AnchorPoint => {
+  const bounds = element.getBoundingClientRect()
+  const clampedRatio = clamp(ratio, 0, 1)
+  const xLeft = (bounds.left - planeBounds.left) / scale.value
+  const xRight = (bounds.right - planeBounds.left) / scale.value
+  const yTop = (bounds.top - planeBounds.top) / scale.value
+  const yBottom = (bounds.bottom - planeBounds.top) / scale.value
+  const xCenter = (bounds.left - planeBounds.left + bounds.width * clampedRatio) / scale.value
+  const yCenter = (bounds.top - planeBounds.top + bounds.height * clampedRatio) / scale.value
+
+  if (side === 'left') {
+    return {
+      x: xLeft,
+      y: yCenter,
+      side,
+      slot: 0,
+      count: 1
+    }
+  }
+
+  if (side === 'right') {
+    return {
+      x: xRight,
+      y: yCenter,
+      side,
+      slot: 0,
+      count: 1
+    }
+  }
+
+  if (side === 'top') {
+    return {
+      x: xCenter,
+      y: yTop,
+      side,
+      slot: 0,
+      count: 1
+    }
+  }
+
+  return {
+    x: xCenter,
+    y: yBottom,
+    side,
+    slot: 0,
+    count: 1
+  }
+}
+
 const reserveAnchorPoint = (
   element: HTMLElement,
   side: AnchorSide,
@@ -3187,7 +3255,9 @@ const reserveRouteLegAnchor = (
     : getDesiredAnchorRatio(side, anchorBounds, targetCenterX, targetCenterY)
 
   return {
-    anchor: reserveAnchorPoint(anchorHost, side, ratio, planeBounds, usage),
+    anchor: tableElement
+      ? getExactAnchorPoint(anchorHost, side, ratio, planeBounds)
+      : reserveAnchorPoint(anchorHost, side, ratio, planeBounds, usage),
     side,
     groupElement
   }
@@ -3332,8 +3402,12 @@ const buildSharedGroupPath = (
         0.84
       )
     : getDesiredAnchorRatio(laneSide, toAnchorBounds, sourceCenterX, sourceCenterY)
-  const fromAnchor = reserveAnchorPoint(fromAnchorHost, laneSide, fromRatio, planeBounds, usage)
-  const toAnchor = reserveAnchorPoint(toAnchorHost, laneSide, toRatio, planeBounds, usage)
+  const fromAnchor = fromTableElement
+    ? getExactAnchorPoint(fromAnchorHost, laneSide, fromRatio, planeBounds)
+    : reserveAnchorPoint(fromAnchorHost, laneSide, fromRatio, planeBounds, usage)
+  const toAnchor = toTableElement
+    ? getExactAnchorPoint(toAnchorHost, laneSide, toRatio, planeBounds)
+    : reserveAnchorPoint(toAnchorHost, laneSide, toRatio, planeBounds, usage)
   const laneOffset = reserveLaneOffset(
     `group-lane:${groupElement.getAttribute('data-node-anchor')}:${laneSide}`,
     usage,
@@ -3953,8 +4027,8 @@ defineExpose<{
         v-for="node in canvasNodes"
         :key="node.id"
         :class="[
-          'absolute overflow-hidden select-none',
-          node.kind === 'group' ? 'rounded-[2px]' : 'rounded-none border',
+          'absolute select-none',
+          node.kind === 'group' ? 'overflow-hidden rounded-[2px]' : 'overflow-hidden rounded-none border',
           node.kind === 'object' ? 'transition-transform duration-150 hover:-translate-y-0.5 hover:ring-1 hover:ring-[color:var(--studio-ring)]' : '',
           selectedNodeId === node.id && node.kind !== 'group' ? 'ring-1 ring-[color:var(--studio-ring)]' : ''
         ]"
