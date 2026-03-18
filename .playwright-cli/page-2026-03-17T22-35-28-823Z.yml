@@ -1,0 +1,345 @@
+- generic [ref=e1]:
+  - generic [ref=e3]:
+    - banner [ref=e4]:
+      - link "PG PGML Postgres in markup" [ref=e5] [cursor=pointer]:
+        - /url: /
+        - generic [ref=e6]: PG
+        - generic [ref=e7]:
+          - strong [ref=e8]: PGML
+          - generic [ref=e9]: Postgres in markup
+      - navigation [ref=e10]:
+        - link "Spec" [ref=e11] [cursor=pointer]:
+          - /url: /
+        - link "Diagram Studio" [ref=e12] [cursor=pointer]:
+          - /url: /diagram
+      - link "Open Studio" [ref=e13] [cursor=pointer]:
+        - /url: /diagram
+        - generic [ref=e14]: Open Studio
+    - main [ref=e16]:
+      - generic [ref=e17]:
+        - generic [ref=e18]:
+          - generic [ref=e19]: Page 2 · Studio
+          - heading "Paste PGML. Get a grouped database map." [level=1] [ref=e20]
+          - paragraph [ref=e21]: The studio parses PGML into table clusters, foreign-key edges, and a live object catalog. Table groups stay together, references are drawn across cards, and Postgres-specific objects remain visible beside the ER surface.
+        - generic [ref=e22]:
+          - generic [ref=e23]:
+            - generic [ref=e25]:
+              - generic [ref=e26]: Schema Editor
+              - heading "Author the markup" [level=2] [ref=e27]
+            - generic [ref=e28]:
+              - button "Load Example" [active] [ref=e29]:
+                - generic [ref=e31]: Load Example
+              - button "Clear" [ref=e32]:
+                - generic [ref=e34]: Clear
+            - textbox "Paste PGML here..." [ref=e36]: "TableGroup Core { tables: [tenants, users, roles] Note: Shared identity and account ownership } TableGroup Commerce { tables: [products, orders, order_items] Note: Buying flow and inventory edges } Enum role_kind { owner analyst operator } Domain email_address { base: text check: VALUE ~* '^[^@]+@[^@]+\\\\.[^@]+$' } Sequence order_number_seq { start: 1200 increment: 1 } Table public.tenants in Core { id uuid [pk] name text [not null] slug text [unique, not null] created_at timestamptz [default: now()] Index idx_tenants_slug (slug) [type: btree] } Table public.roles in Core { id uuid [pk] key role_kind [unique, not null] label text [not null] } Table public.users in Core { id uuid [pk] tenant_id uuid [not null, ref: > public.tenants.id] role_id uuid [not null, ref: > public.roles.id] email email_address [unique, not null] display_name text [not null] created_at timestamptz [default: now()] Constraint chk_users_email: email <> '' } Table public.products in Commerce { id uuid [pk] tenant_id uuid [not null, ref: > public.tenants.id] sku text [unique, not null] title text [not null] search tsvector [note: generated for full text search] price_cents integer [not null] Index idx_products_search (search) [type: gin] } Table public.orders in Commerce { id uuid [pk] tenant_id uuid [not null, ref: > public.tenants.id] order_number bigint [not null, unique, default: nextval('order_number_seq')] customer_id uuid [ref: > public.users.id] status text [not null] submitted_at timestamptz total_cents integer [not null] Constraint chk_orders_total: total_cents >= 0 } Table public.order_items in Commerce { id uuid [pk] order_id uuid [not null, ref: > public.orders.id] product_id uuid [not null, ref: > public.products.id] quantity integer [not null] unit_price_cents integer [not null] } Function recalc_order_total(order_uuid uuid) returns void { language: plpgsql volatility: volatile } Procedure archive_orders(retention_days integer) { language: plpgsql } Trigger trg_orders_audit on public.orders { timing: after events: [insert, update] execute: audit_order_changes() } Ref: public.orders.customer_id > public.users.id"
+            - generic [ref=e37]:
+              - generic [ref=e38]:
+                - strong [ref=e39]: Tables
+                - generic [ref=e40]: "6"
+              - generic [ref=e41]:
+                - strong [ref=e42]: Groups
+                - generic [ref=e43]: "2"
+              - generic [ref=e44]:
+                - strong [ref=e45]: Refs
+                - generic [ref=e46]: "8"
+              - generic [ref=e47]:
+                - strong [ref=e48]: Other Objects
+                - generic [ref=e49]: "6"
+          - generic [ref=e50]:
+            - generic [ref=e53]:
+              - img:
+                - generic: customer_id -> id
+                - generic: tenant_id -> id
+                - generic: role_id -> id
+                - generic: tenant_id -> id
+                - generic: tenant_id -> id
+                - generic: customer_id -> id
+                - generic: order_id -> id
+                - generic: product_id -> id
+              - generic [ref=e54]:
+                - generic [ref=e359]:
+                  - heading "Core" [level=3] [ref=e360]
+                  - paragraph [ref=e361]: Shared identity and account ownership
+                  - generic [ref=e362]:
+                    - article [ref=e363]:
+                      - generic [ref=e364]:
+                        - generic [ref=e365]:
+                          - heading "tenants" [level=3] [ref=e366]
+                          - paragraph [ref=e367]: public schema
+                        - generic [ref=e368]: 4 cols
+                      - generic [ref=e369]:
+                        - generic [ref=e370]:
+                          - generic [ref=e371]:
+                            - strong [ref=e372]: id
+                            - generic [ref=e373]: uuid
+                          - generic [ref=e375]: pk
+                        - generic [ref=e376]:
+                          - generic [ref=e377]:
+                            - strong [ref=e378]: name
+                            - generic [ref=e379]: text
+                          - generic [ref=e381]: not null
+                        - generic [ref=e382]:
+                          - generic [ref=e383]:
+                            - strong [ref=e384]: slug
+                            - generic [ref=e385]: text
+                          - generic [ref=e386]:
+                            - generic [ref=e387]: unique
+                            - generic [ref=e388]: not null
+                        - generic [ref=e389]:
+                          - generic [ref=e390]:
+                            - strong [ref=e391]: created_at
+                            - generic [ref=e392]: timestamptz
+                          - generic [ref=e394]: "default: now()"
+                    - article [ref=e395]:
+                      - generic [ref=e396]:
+                        - generic [ref=e397]:
+                          - heading "roles" [level=3] [ref=e398]
+                          - paragraph [ref=e399]: public schema
+                        - generic [ref=e400]: 3 cols
+                      - generic [ref=e401]:
+                        - generic [ref=e402]:
+                          - generic [ref=e403]:
+                            - strong [ref=e404]: id
+                            - generic [ref=e405]: uuid
+                          - generic [ref=e407]: pk
+                        - generic [ref=e408]:
+                          - generic [ref=e409]:
+                            - strong [ref=e410]: key
+                            - generic [ref=e411]: role_kind
+                          - generic [ref=e412]:
+                            - generic [ref=e413]: unique
+                            - generic [ref=e414]: not null
+                        - generic [ref=e415]:
+                          - generic [ref=e416]:
+                            - strong [ref=e417]: label
+                            - generic [ref=e418]: text
+                          - generic [ref=e420]: not null
+                    - article [ref=e421]:
+                      - generic [ref=e422]:
+                        - generic [ref=e423]:
+                          - heading "users" [level=3] [ref=e424]
+                          - paragraph [ref=e425]: public schema
+                        - generic [ref=e426]: 6 cols
+                      - generic [ref=e427]:
+                        - generic [ref=e428]:
+                          - generic [ref=e429]:
+                            - strong [ref=e430]: id
+                            - generic [ref=e431]: uuid
+                          - generic [ref=e433]: pk
+                        - generic [ref=e434]:
+                          - generic [ref=e435]:
+                            - strong [ref=e436]: tenant_id
+                            - generic [ref=e437]: uuid
+                          - generic [ref=e438]:
+                            - generic [ref=e439]: not null
+                            - generic [ref=e440]: "ref: > public.tenants.id"
+                        - generic [ref=e441]:
+                          - generic [ref=e442]:
+                            - strong [ref=e443]: role_id
+                            - generic [ref=e444]: uuid
+                          - generic [ref=e445]:
+                            - generic [ref=e446]: not null
+                            - generic [ref=e447]: "ref: > public.roles.id"
+                        - generic [ref=e448]:
+                          - generic [ref=e449]:
+                            - strong [ref=e450]: email
+                            - generic [ref=e451]: email_address
+                          - generic [ref=e452]:
+                            - generic [ref=e453]: unique
+                            - generic [ref=e454]: not null
+                        - generic [ref=e455]:
+                          - generic [ref=e456]:
+                            - strong [ref=e457]: display_name
+                            - generic [ref=e458]: text
+                          - generic [ref=e460]: not null
+                        - generic [ref=e461]:
+                          - generic [ref=e462]:
+                            - strong [ref=e463]: created_at
+                            - generic [ref=e464]: timestamptz
+                          - generic [ref=e466]: "default: now()"
+                - generic [ref=e467]:
+                  - heading "Commerce" [level=3] [ref=e468]
+                  - paragraph [ref=e469]: Buying flow and inventory edges
+                  - generic [ref=e470]:
+                    - article [ref=e471]:
+                      - generic [ref=e472]:
+                        - generic [ref=e473]:
+                          - heading "products" [level=3] [ref=e474]
+                          - paragraph [ref=e475]: public schema
+                        - generic [ref=e476]: 6 cols
+                      - generic [ref=e477]:
+                        - generic [ref=e478]:
+                          - generic [ref=e479]:
+                            - strong [ref=e480]: id
+                            - generic [ref=e481]: uuid
+                          - generic [ref=e483]: pk
+                        - generic [ref=e484]:
+                          - generic [ref=e485]:
+                            - strong [ref=e486]: tenant_id
+                            - generic [ref=e487]: uuid
+                          - generic [ref=e488]:
+                            - generic [ref=e489]: not null
+                            - generic [ref=e490]: "ref: > public.tenants.id"
+                        - generic [ref=e491]:
+                          - generic [ref=e492]:
+                            - strong [ref=e493]: sku
+                            - generic [ref=e494]: text
+                          - generic [ref=e495]:
+                            - generic [ref=e496]: unique
+                            - generic [ref=e497]: not null
+                        - generic [ref=e498]:
+                          - generic [ref=e499]:
+                            - strong [ref=e500]: title
+                            - generic [ref=e501]: text
+                          - generic [ref=e503]: not null
+                        - generic [ref=e504]:
+                          - generic [ref=e505]:
+                            - strong [ref=e506]: search
+                            - generic [ref=e507]: tsvector
+                          - generic [ref=e509]: "note: generated for full text search"
+                        - generic [ref=e510]:
+                          - generic [ref=e511]:
+                            - strong [ref=e512]: price_cents
+                            - generic [ref=e513]: integer
+                          - generic [ref=e515]: not null
+                    - article [ref=e516]:
+                      - generic [ref=e517]:
+                        - generic [ref=e518]:
+                          - heading "orders" [level=3] [ref=e519]
+                          - paragraph [ref=e520]: public schema
+                        - generic [ref=e521]: 7 cols
+                      - generic [ref=e522]:
+                        - generic [ref=e523]:
+                          - generic [ref=e524]:
+                            - strong [ref=e525]: id
+                            - generic [ref=e526]: uuid
+                          - generic [ref=e528]: pk
+                        - generic [ref=e529]:
+                          - generic [ref=e530]:
+                            - strong [ref=e531]: tenant_id
+                            - generic [ref=e532]: uuid
+                          - generic [ref=e533]:
+                            - generic [ref=e534]: not null
+                            - generic [ref=e535]: "ref: > public.tenants.id"
+                        - generic [ref=e536]:
+                          - generic:
+                            - strong: order_number
+                            - generic: bigint
+                          - generic [ref=e537]:
+                            - generic [ref=e538]: not null
+                            - generic [ref=e539]: unique
+                            - generic [ref=e540]: "default: nextval('order_number_seq')"
+                        - generic [ref=e541]:
+                          - generic [ref=e542]:
+                            - strong [ref=e543]: customer_id
+                            - generic [ref=e544]: uuid
+                          - generic [ref=e546]: "ref: > public.users.id"
+                        - generic [ref=e547]:
+                          - generic [ref=e548]:
+                            - strong [ref=e549]: status
+                            - generic [ref=e550]: text
+                          - generic [ref=e552]: not null
+                        - generic [ref=e554]:
+                          - strong [ref=e555]: submitted_at
+                          - generic [ref=e556]: timestamptz
+                        - generic [ref=e557]:
+                          - generic [ref=e558]:
+                            - strong [ref=e559]: total_cents
+                            - generic [ref=e560]: integer
+                          - generic [ref=e562]: not null
+                    - article [ref=e563]:
+                      - generic [ref=e564]:
+                        - generic [ref=e565]:
+                          - heading "order_items" [level=3] [ref=e566]
+                          - paragraph [ref=e567]: public schema
+                        - generic [ref=e568]: 5 cols
+                      - generic [ref=e569]:
+                        - generic [ref=e570]:
+                          - generic [ref=e571]:
+                            - strong [ref=e572]: id
+                            - generic [ref=e573]: uuid
+                          - generic [ref=e575]: pk
+                        - generic [ref=e576]:
+                          - generic [ref=e577]:
+                            - strong [ref=e578]: order_id
+                            - generic [ref=e579]: uuid
+                          - generic [ref=e580]:
+                            - generic [ref=e581]: not null
+                            - generic [ref=e582]: "ref: > public.orders.id"
+                        - generic [ref=e583]:
+                          - generic [ref=e584]:
+                            - strong [ref=e585]: product_id
+                            - generic [ref=e586]: uuid
+                          - generic [ref=e587]:
+                            - generic [ref=e588]: not null
+                            - generic [ref=e589]: "ref: > public.products.id"
+                        - generic [ref=e590]:
+                          - generic [ref=e591]:
+                            - strong [ref=e592]: quantity
+                            - generic [ref=e593]: integer
+                          - generic [ref=e595]: not null
+                        - generic [ref=e596]:
+                          - generic [ref=e597]:
+                            - strong [ref=e598]: unit_price_cents
+                            - generic [ref=e599]: integer
+                          - generic [ref=e601]: not null
+            - generic [ref=e298]:
+              - article [ref=e299]:
+                - heading "Routines and execution objects" [level=3] [ref=e300]
+                - generic [ref=e301]:
+                  - generic [ref=e602]:
+                    - generic [ref=e603]:
+                      - strong [ref=e604]: Function
+                      - paragraph [ref=e605]:
+                        - code [ref=e606]: recalc_order_total(order_uuid uuid) returns void
+                    - generic [ref=e607]: "language: plpgsql"
+                  - generic [ref=e608]:
+                    - generic [ref=e609]:
+                      - strong [ref=e610]: Procedure
+                      - paragraph [ref=e611]:
+                        - code [ref=e612]: archive_orders(retention_days integer)
+                    - generic [ref=e613]: "language: plpgsql"
+                  - generic [ref=e614]:
+                    - generic [ref=e615]:
+                      - strong [ref=e616]: Trigger
+                      - paragraph [ref=e617]:
+                        - code [ref=e618]: trg_orders_audit
+                        - text: "on"
+                        - code [ref=e619]: public.orders
+                    - generic [ref=e620]: "timing: after"
+              - article [ref=e321]:
+                - heading "Sequences and custom types" [level=3] [ref=e322]
+                - generic [ref=e323]:
+                  - generic [ref=e621]:
+                    - generic [ref=e622]:
+                      - strong [ref=e623]: Sequence
+                      - paragraph [ref=e624]:
+                        - code [ref=e625]: order_number_seq
+                    - generic [ref=e626]: "start: 1200"
+                  - generic [ref=e627]:
+                    - generic [ref=e628]:
+                      - strong [ref=e629]: Enum
+                      - paragraph [ref=e630]:
+                        - code [ref=e631]: role_kind
+                    - generic [ref=e632]: owner
+                  - generic [ref=e633]:
+                    - generic [ref=e634]:
+                      - strong [ref=e635]: Domain
+                      - paragraph [ref=e636]:
+                        - code [ref=e637]: email_address
+                    - generic [ref=e638]: "base: text"
+    - contentinfo [ref=e342]:
+      - paragraph [ref=e343]: PGML is a DBML-style language for Postgres-native structures and relationships.
+      - paragraph [ref=e344]: Built with Nuxt 4 and Nuxt UI.
+  - generic:
+    - img
+  - generic:
+    - img
+  - generic [ref=e345]:
+    - button "Toggle Nuxt DevTools" [ref=e346] [cursor=pointer]:
+      - img [ref=e347]
+    - generic "Page load time" [ref=e350]:
+      - generic [ref=e351]: "34"
+      - generic [ref=e352]: ms
+    - button "Toggle Component Inspector" [ref=e354] [cursor=pointer]:
+      - img [ref=e355]

@@ -1,0 +1,118 @@
+- generic [active] [ref=e1]:
+  - generic [ref=e3]:
+    - banner [ref=e4]:
+      - link "PG PGML Postgres in markup" [ref=e5] [cursor=pointer]:
+        - /url: /
+        - generic [ref=e6]: PG
+        - generic [ref=e7]:
+          - strong [ref=e8]: PGML
+          - generic [ref=e9]: Postgres in markup
+      - navigation [ref=e10]:
+        - link "Spec" [ref=e11] [cursor=pointer]:
+          - /url: /
+        - link "Diagram Studio" [ref=e12] [cursor=pointer]:
+          - /url: /diagram
+      - link "Open Studio" [ref=e13] [cursor=pointer]:
+        - /url: /diagram
+        - generic [ref=e14]: Open Studio
+    - main [ref=e16]:
+      - generic [ref=e17]:
+        - generic [ref=e18]:
+          - generic [ref=e19]: DBML-inspired · Postgres-native
+          - heading "Define Postgres as markup, not SQL." [level=1] [ref=e20]
+          - paragraph [ref=e21]: PGML is a schema language for Postgres that starts with DBML ergonomics and grows into Postgres-specific structure. It lets you describe tables, indexes, triggers, functions, procedures, sequences, constraints, and custom types in one readable artifact, then render the whole database as a grouped visual map.
+          - generic [ref=e22]:
+            - link "Launch Diagram Studio" [ref=e23] [cursor=pointer]:
+              - /url: /diagram
+              - generic [ref=e24]: Launch Diagram Studio
+            - link "Read The Spec" [ref=e26] [cursor=pointer]:
+              - /url: "#syntax"
+              - generic [ref=e27]: Read The Spec
+          - generic [ref=e28]:
+            - generic [ref=e29]:
+              - strong [ref=e30]: Phase 1
+              - generic [ref=e31]: Postgres core objects
+            - generic [ref=e32]:
+              - strong [ref=e33]: Syntax
+              - generic [ref=e34]: Readable, block-based, diffable
+            - generic [ref=e35]:
+              - strong [ref=e36]: Layout
+              - generic [ref=e37]: Table groups drive diagram clusters
+        - generic [ref=e38]:
+          - generic [ref=e39]:
+            - generic [ref=e40]:
+              - generic [ref=e41]: Why PGML
+              - heading "Designed for schema authorship, not migration noise" [level=2] [ref=e42]
+            - paragraph [ref=e43]: The language is meant to be a source format for architecture and visualization. Write intent once, then derive diagrams, documentation, and eventually SQL generation from the same model.
+          - generic [ref=e44]:
+            - article [ref=e45]:
+              - heading "Tables, constraints, and indexes" [level=3] [ref=e48]
+              - paragraph [ref=e49]: Define columns, primary keys, foreign keys, checks, uniqueness, and Postgres index types in a DBML-like structure.
+            - article [ref=e50]:
+              - heading "Table groups and schemas" [level=3] [ref=e53]
+              - paragraph [ref=e54]: Model bounded contexts explicitly so the diagram engine lays out tables by domain instead of dumping everything into one grid.
+            - article [ref=e55]:
+              - heading "Routines and triggers" [level=3] [ref=e58]
+              - paragraph [ref=e59]: Capture procedural behavior with functions, procedures, and triggers as schema objects rather than loose migration comments.
+            - article [ref=e60]:
+              - heading "Custom Postgres types" [level=3] [ref=e63]
+              - paragraph [ref=e64]: Represent enums, domains, and composite types in the same document so data shape and database behavior stay in one source of truth.
+        - generic [ref=e65]:
+          - generic [ref=e66]:
+            - generic [ref=e67]:
+              - generic [ref=e68]: Page 1 · Spec
+              - heading "How to write PGML" [level=2] [ref=e69]
+            - paragraph [ref=e70]: The grammar stays close to DBML concepts where that helps readability, then adds blocks for Postgres-only objects and layout hints.
+          - generic [ref=e71]:
+            - article [ref=e72]:
+              - heading "Core block model" [level=3] [ref=e73]
+              - paragraph [ref=e74]: PGML extends DBML with Postgres-native object blocks. Keep the syntax readable, diffable, and structured like source code instead of handwritten SQL migrations.
+              - generic [ref=e75]: "Table public.orders in Commerce { id uuid [pk] tenant_id uuid [not null, ref: > public.tenants.id] status text [not null] total_cents integer [not null] Index idx_orders_status (status) [type: btree] Constraint chk_total: total_cents >= 0 }"
+            - article [ref=e76]:
+              - heading "Group related tables" [level=3] [ref=e77]
+              - paragraph [ref=e78]: Table groups influence both organization in source and layout in the diagram studio. Use them to cluster domains like identity, billing, analytics, or fulfillment.
+              - generic [ref=e79]: "TableGroup Commerce { tables: [products, orders, order_items] Note: buying flow and inventory edges }"
+            - article [ref=e80]:
+              - heading "Describe Postgres objects" [level=3] [ref=e81]
+              - paragraph [ref=e82]: Functions, procedures, triggers, sequences, enums, domains, and composites are first-class schema assets. The studio catalogs them beside the ER graph.
+              - generic [ref=e83]: "Function recalc_order_total(order_uuid uuid) returns void { language: plpgsql volatility: volatile } Trigger trg_orders_audit on public.orders { timing: after events: [insert, update] execute: audit_order_changes() }"
+        - generic [ref=e84]:
+          - generic [ref=e85]:
+            - generic [ref=e86]:
+              - generic [ref=e87]: Grammar Outline
+              - heading "Proposed language surface" [level=2] [ref=e88]
+            - paragraph [ref=e89]: The initial studio is built around these structures now, while the roadmap expands the language toward full Postgres coverage.
+          - generic [ref=e90]:
+            - article [ref=e91]:
+              - heading "Supported in this app" [level=3] [ref=e92]
+              - generic [ref=e93]:
+                - paragraph [ref=e94]:
+                  - strong [ref=e95]: "Tables:"
+                  - text: columns, notes, indexes, constraints, inline refs
+                - paragraph [ref=e96]:
+                  - strong [ref=e97]: "TableGroup:"
+                  - text: layout clustering and domain grouping
+                - paragraph [ref=e98]:
+                  - strong [ref=e99]: "Functions/Procedures:"
+                  - text: routine catalog blocks
+                - paragraph [ref=e100]:
+                  - strong [ref=e101]: "Triggers/Sequences:"
+                  - text: operational object cataloging
+                - paragraph [ref=e102]:
+                  - strong [ref=e103]: "Custom types:"
+                  - text: enums, domains, composites
+            - article [ref=e104]:
+              - heading "Future PGML roadmap" [level=3] [ref=e105]
+              - generic [ref=e106]:
+                - paragraph [ref=e107]: Tables and partitioned tables
+                - paragraph [ref=e108]: Indexes including B-tree, GIN, GiST, BRIN, and hash
+                - paragraph [ref=e109]: Views and materialized views
+                - paragraph [ref=e110]: Schemas, extensions, and foreign tables
+                - paragraph [ref=e111]: Operators, collations, casts, and rules
+                - paragraph [ref=e112]: Text search dictionaries and configurations
+                - paragraph [ref=e113]: Publications and subscriptions for logical replication
+    - contentinfo [ref=e114]:
+      - paragraph [ref=e115]: PGML is a DBML-style language for Postgres-native structures and relationships.
+      - paragraph [ref=e116]: Built with Nuxt 4 and Nuxt UI.
+  - generic:
+    - img

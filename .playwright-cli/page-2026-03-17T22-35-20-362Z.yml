@@ -1,0 +1,70 @@
+- generic [ref=e1]:
+  - generic [ref=e3]:
+    - banner [ref=e4]:
+      - link "PG PGML Postgres in markup" [ref=e5] [cursor=pointer]:
+        - /url: /
+        - generic [ref=e6]: PG
+        - generic [ref=e7]:
+          - strong [ref=e8]: PGML
+          - generic [ref=e9]: Postgres in markup
+      - navigation [ref=e10]:
+        - link "Spec" [ref=e11] [cursor=pointer]:
+          - /url: /
+        - link "Diagram Studio" [ref=e12] [cursor=pointer]:
+          - /url: /diagram
+      - link "Open Studio" [ref=e13] [cursor=pointer]:
+        - /url: /diagram
+        - generic [ref=e14]: Open Studio
+    - main [ref=e16]:
+      - generic [ref=e17]:
+        - generic [ref=e18]:
+          - generic [ref=e19]: Page 2 · Studio
+          - heading "Paste PGML. Get a grouped database map." [level=1] [ref=e20]
+          - paragraph [ref=e21]: The studio parses PGML into table clusters, foreign-key edges, and a live object catalog. Table groups stay together, references are drawn across cards, and Postgres-specific objects remain visible beside the ER surface.
+        - generic [ref=e22]:
+          - generic [ref=e23]:
+            - generic [ref=e25]:
+              - generic [ref=e26]: Schema Editor
+              - heading "Author the markup" [level=2] [ref=e27]
+            - generic [ref=e28]:
+              - button "Load Example" [ref=e29]:
+                - generic [ref=e31]: Load Example
+              - button "Clear" [active] [ref=e32]:
+                - generic [ref=e34]: Clear
+            - textbox "Paste PGML here..." [ref=e36]
+            - generic [ref=e37]:
+              - generic [ref=e38]:
+                - strong [ref=e39]: Tables
+                - generic [ref=e40]: "0"
+              - generic [ref=e41]:
+                - strong [ref=e42]: Groups
+                - generic [ref=e43]: "0"
+              - generic [ref=e44]:
+                - strong [ref=e45]: Refs
+                - generic [ref=e46]: "0"
+              - generic [ref=e47]:
+                - strong [ref=e48]: Other Objects
+                - generic [ref=e49]: "0"
+          - generic [ref=e50]:
+            - generic [ref=e53]:
+              - img
+            - generic [ref=e298]:
+              - article [ref=e299]:
+                - heading "Routines and execution objects" [level=3] [ref=e300]
+              - article [ref=e321]:
+                - heading "Sequences and custom types" [level=3] [ref=e322]
+    - contentinfo [ref=e342]:
+      - paragraph [ref=e343]: PGML is a DBML-style language for Postgres-native structures and relationships.
+      - paragraph [ref=e344]: Built with Nuxt 4 and Nuxt UI.
+  - generic:
+    - img
+  - generic:
+    - img
+  - generic [ref=e345]:
+    - button "Toggle Nuxt DevTools" [ref=e346] [cursor=pointer]:
+      - img [ref=e347]
+    - generic "Page load time" [ref=e350]:
+      - generic [ref=e351]: "34"
+      - generic [ref=e352]: ms
+    - button "Toggle Component Inspector" [ref=e354] [cursor=pointer]:
+      - img [ref=e355]
