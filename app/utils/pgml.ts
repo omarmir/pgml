@@ -331,6 +331,10 @@ const parseGroup = (block: NamedBlock) => {
   for (const line of block.body) {
     const trimmed = line.trim()
 
+    if (trimmed.length === 0 || trimmed.startsWith('//')) {
+      continue
+    }
+
     if (trimmed.startsWith('tables:')) {
       const listMatch = trimmed.match(/\[(.+)\]/)
       const list = listMatch ? readMatch(listMatch[1]).split(',') : []
@@ -338,10 +342,17 @@ const parseGroup = (block: NamedBlock) => {
       for (const entry of list) {
         tableNames.push(cleanName(entry))
       }
+
+      continue
     }
 
     if (trimmed.startsWith('Note:')) {
       note = trimmed.replace('Note:', '').trim()
+      continue
+    }
+
+    if (!trimmed.includes(':')) {
+      tableNames.push(cleanName(trimmed.replace(/,$/, '')))
     }
   }
 
@@ -556,12 +567,16 @@ export const parsePgml = (source: string) => {
 }
 
 export const pgmlExample = `TableGroup Core {
-  tables: [tenants, users, roles]
+  tenants
+  users
+  roles
   Note: Shared identity and account ownership
 }
 
 TableGroup Commerce {
-  tables: [products, orders, order_items]
+  products
+  orders
+  order_items
   Note: Buying flow and inventory edges
 }
 
@@ -581,7 +596,7 @@ Sequence order_number_seq {
   increment: 1
 }
 
-Table public.tenants in Core {
+Table public.tenants {
   id uuid [pk]
   name text [not null]
   slug text [unique, not null]
@@ -589,13 +604,13 @@ Table public.tenants in Core {
   Index idx_tenants_slug (slug) [type: btree]
 }
 
-Table public.roles in Core {
+Table public.roles {
   id uuid [pk]
   key role_kind [unique, not null]
   label text [not null]
 }
 
-Table public.users in Core {
+Table public.users {
   id uuid [pk]
   tenant_id uuid [not null, ref: > public.tenants.id]
   role_id uuid [not null, ref: > public.roles.id]
@@ -605,7 +620,7 @@ Table public.users in Core {
   Constraint chk_users_email: email <> ''
 }
 
-Table public.products in Commerce {
+Table public.products {
   id uuid [pk]
   tenant_id uuid [not null, ref: > public.tenants.id]
   sku text [unique, not null]
@@ -615,7 +630,7 @@ Table public.products in Commerce {
   Index idx_products_search (search) [type: gin]
 }
 
-Table public.orders in Commerce {
+Table public.orders {
   id uuid [pk]
   tenant_id uuid [not null, ref: > public.tenants.id]
   order_number bigint [not null, unique, default: nextval('order_number_seq')]
@@ -626,7 +641,7 @@ Table public.orders in Commerce {
   Constraint chk_orders_total: total_cents >= 0
 }
 
-Table public.order_items in Commerce {
+Table public.order_items {
   id uuid [pk]
   order_id uuid [not null, ref: > public.orders.id]
   product_id uuid [not null, ref: > public.products.id]

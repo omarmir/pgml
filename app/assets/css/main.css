@@ -62,7 +62,7 @@ body {
 
 .pgml-editor-scroll {
   scrollbar-width: thin;
-  scrollbar-color: rgba(121, 227, 234, 0.45) rgba(255, 255, 255, 0.04);
+  scrollbar-color: var(--studio-scroll-thumb-start) var(--studio-scroll-track);
 }
 
 .pgml-editor-scroll::-webkit-scrollbar {
@@ -70,20 +70,20 @@ body {
 }
 
 .pgml-editor-scroll::-webkit-scrollbar-track {
-  background: rgba(255, 255, 255, 0.03);
-  border-left: 1px solid rgba(255, 255, 255, 0.06);
+  background: var(--studio-scroll-track);
+  border-left: 1px solid var(--studio-scroll-track-border);
 }
 
 .pgml-editor-scroll::-webkit-scrollbar-thumb {
   background:
-    linear-gradient(180deg, rgba(121, 227, 234, 0.58), rgba(139, 92, 246, 0.52));
-  border: 2px solid rgba(7, 17, 25, 0.92);
+    linear-gradient(180deg, var(--studio-scroll-thumb-start), var(--studio-scroll-thumb-end));
+  border: 2px solid var(--studio-scroll-thumb-border);
   min-height: 48px;
 }
 
 .pgml-editor-scroll::-webkit-scrollbar-thumb:hover {
   background:
-    linear-gradient(180deg, rgba(121, 227, 234, 0.72), rgba(139, 92, 246, 0.66));
+    linear-gradient(180deg, var(--studio-scroll-thumb-end), var(--studio-scroll-thumb-start));
 }
 
 a {

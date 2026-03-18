@@ -3,7 +3,7 @@ const syntaxCards = [
   {
     title: 'Core block model',
     description: 'PGML extends DBML with Postgres-native object blocks. Keep the syntax readable, diffable, and structured like source code instead of handwritten SQL migrations.',
-    code: `Table public.orders in Commerce {
+    code: `Table public.orders {
   id uuid [pk]
   tenant_id uuid [not null, ref: > public.tenants.id]
   status text [not null]
@@ -16,7 +16,9 @@ const syntaxCards = [
     title: 'Group related tables',
     description: 'Table groups influence both organization in source and layout in the diagram studio. Use them to cluster domains like identity, billing, analytics, or fulfillment.',
     code: `TableGroup Commerce {
-  tables: [products, orders, order_items]
+  products
+  orders
+  order_items
   Note: buying flow and inventory edges
 }`
   },
@@ -152,7 +154,7 @@ const roadmap = [
           <h2>How to write PGML</h2>
         </div>
         <p>
-          The grammar stays close to DBML concepts where that helps readability, then adds blocks for Postgres-only objects and layout hints.
+          The grammar stays close to DBML concepts where that helps readability, including DBML-style table-group blocks, then adds blocks for Postgres-only objects and layout hints.
         </p>
       </div>
 
@@ -185,7 +187,7 @@ const roadmap = [
           <h3>Supported in this app</h3>
           <div class="muted-list">
             <p><strong>Tables:</strong> columns, notes, indexes, constraints, inline refs</p>
-            <p><strong>TableGroup:</strong> layout clustering and domain grouping</p>
+            <p><strong>TableGroup:</strong> DBML-style grouped table lists for layout clustering and domain grouping</p>
             <p><strong>Functions/Procedures:</strong> routine catalog blocks</p>
             <p><strong>Triggers/Sequences:</strong> operational object cataloging</p>
             <p><strong>Custom types:</strong> enums, domains, composites</p>
