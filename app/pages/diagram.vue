@@ -4,6 +4,7 @@ import { nanoid } from 'nanoid'
 import PgmlDiagramCanvas from '~/components/pgml/PgmlDiagramCanvas.vue'
 import {
   buildPgmlWithNodeProperties,
+  getPgmlSourceScrollTop,
   getPgmlSourceSelectionRange,
   parsePgml,
   pgmlExample,
@@ -203,10 +204,7 @@ const focusEditorSourceRange = (sourceRange: PgmlSourceRange) => {
   const textarea = textareaRef.value
   const parsedLineHeight = Number.parseFloat(window.getComputedStyle(textarea).lineHeight)
   const lineHeight = Number.isFinite(parsedLineHeight) ? parsedLineHeight : 24
-  const targetScrollTop = Math.max(
-    0,
-    (sourceRange.startLine - 1) * lineHeight - textarea.clientHeight / 2 + lineHeight * 2
-  )
+  const targetScrollTop = getPgmlSourceScrollTop(sourceRange, lineHeight, 1)
 
   textarea.scrollTop = targetScrollTop
   syncLineNumberScroll()
@@ -436,7 +434,7 @@ onMounted(() => {
           <div class="grid min-h-0 flex-1 grid-cols-[48px_minmax(0,1fr)] overflow-hidden bg-[color:var(--studio-shell-bg)]">
             <div
               ref="lineNumberRef"
-              class="min-h-0 overflow-hidden border-r border-[color:var(--studio-shell-border)] bg-[color:var(--studio-shell-bg)] py-3 text-center font-mono text-[0.78rem] leading-[1.9] text-[color:var(--studio-shell-muted)]"
+              class="min-h-0 overflow-hidden border-r border-[color:var(--studio-shell-border)] bg-[color:var(--studio-shell-bg)] py-3 text-center font-mono text-[0.84rem] leading-[1.9] text-[color:var(--studio-shell-muted)]"
             >
               <span
                 v-for="line in lineNumbers"
@@ -451,7 +449,8 @@ onMounted(() => {
               ref="textareaRef"
               v-model="source"
               data-pgml-editor="true"
-              class="h-full min-h-0 w-full resize-none overflow-y-auto border-none bg-[color:var(--studio-shell-bg)] px-3.5 py-3 font-mono text-[0.84rem] leading-[1.9] text-[color:var(--studio-shell-text)] caret-[color:var(--studio-shell-label)] outline-none placeholder:text-[color:var(--studio-shell-muted)]"
+              wrap="off"
+              class="h-full min-h-0 w-full resize-none overflow-x-auto overflow-y-auto border-none bg-[color:var(--studio-shell-bg)] px-3.5 py-3 font-mono text-[0.84rem] leading-[1.9] text-[color:var(--studio-shell-text)] caret-[color:var(--studio-shell-label)] outline-none placeholder:text-[color:var(--studio-shell-muted)]"
               spellcheck="false"
               placeholder="Paste PGML here..."
               @scroll="syncLineNumberScroll"

@@ -540,6 +540,16 @@ export const getPgmlSourceSelectionRange = (source: string, sourceRange: PgmlSou
   }
 }
 
+export const getPgmlSourceScrollTop = (
+  sourceRange: PgmlSourceRange,
+  lineHeight: number,
+  contextLines: number = 1
+) => {
+  const targetLine = Math.max(sourceRange.startLine - contextLines, 1)
+
+  return Math.max(0, (targetLine - 1) * lineHeight)
+}
+
 const collectBlocks = (source: string) => {
   const lines = source
     .replaceAll('\r\n', '\n')

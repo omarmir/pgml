@@ -106,11 +106,19 @@ Function orphan_report() {
   await page.locator('[data-table-anchor="public.orders"]').click()
   await expect.poll(async () => {
     return editor.evaluate((element: HTMLTextAreaElement) => {
-      return element.value.slice(element.selectionStart, element.selectionEnd)
+      const lineHeight = Number.parseFloat(window.getComputedStyle(element).lineHeight) || 24
+
+      return {
+        selectedText: element.value.slice(element.selectionStart, element.selectionEnd),
+        topVisibleLine: Math.floor(element.scrollTop / lineHeight) + 1
+      }
     })
-  }).toBe(`Table orders in Core {
+  }).toEqual({
+    selectedText: `Table orders in Core {
   id integer [pk]
   total_cents integer
   Index idx_orders_total (total_cents)
-}`)
+}`,
+    topVisibleLine: 57
+  })
 })

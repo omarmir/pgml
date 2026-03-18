@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
-import { getPgmlSourceSelectionRange, parsePgml, pgmlExample } from '../../app/utils/pgml'
+import { getPgmlSourceScrollTop, getPgmlSourceSelectionRange, parsePgml, pgmlExample } from '../../app/utils/pgml'
 
 describe('PGML model parsing', () => {
   it('parses the bundled example into grouped tables, refs, and custom types', () => {
@@ -141,5 +141,10 @@ Function orphan_report() {
     select 1;
   $sql$
 }`)
+  })
+
+  it('computes editor scroll offsets from the source block start', () => {
+    expect(getPgmlSourceScrollTop({ startLine: 95, endLine: 103 }, 24, 1)).toBe(2232)
+    expect(getPgmlSourceScrollTop({ startLine: 1, endLine: 3 }, 24, 1)).toBe(0)
   })
 })
