@@ -35,3 +35,33 @@ test('studio editor panel can expand beyond its default width', async ({ goto, p
     })
   }).toBeGreaterThan(initialWidth + 120)
 })
+
+test('table groups keep their required width after changing the table column count', async ({ goto, page }) => {
+  await goto('/diagram')
+
+  const commerceGroup = page.locator('[data-node-anchor="group:Commerce"]')
+
+  await commerceGroup.click()
+  await expect(page.locator('[data-group-column-count-slider="true"]')).toBeVisible()
+
+  const slider = page.locator('[data-group-column-count-slider="true"]')
+
+  await slider.evaluate((element: HTMLInputElement) => {
+    element.value = '2'
+    element.dispatchEvent(new Event('input', { bubbles: true }))
+  })
+
+  await expect.poll(async () => {
+    return commerceGroup.evaluate((element) => {
+      return Math.round(element.getBoundingClientRect().width)
+    })
+  }).toBeGreaterThanOrEqual(520)
+
+  await page.waitForTimeout(250)
+
+  const settledWidth = await commerceGroup.evaluate((element) => {
+    return Math.round(element.getBoundingClientRect().width)
+  })
+
+  expect(settledWidth).toBeGreaterThanOrEqual(520)
+})

@@ -920,6 +920,11 @@ const measureGroupMinimumSize = (groupId: string) => {
   }
 
   const contentWrapper = contentElement.parentElement
+  const groupState = nodeStates.value[groupId]
+  const baselineSize = getGroupMinimumSize(
+    groupId.replace(/^group:/, ''),
+    groupState?.columnCount || 1
+  )
   const wrapperStyles = contentWrapper ? window.getComputedStyle(contentWrapper) : null
   const paddingRight = wrapperStyles ? Number.parseFloat(wrapperStyles.paddingRight) : 0
   const paddingBottom = wrapperStyles ? Number.parseFloat(wrapperStyles.paddingBottom) : 0
@@ -928,8 +933,8 @@ const measureGroupMinimumSize = (groupId: string) => {
   const contentBottom = contentElement.offsetTop + contentElement.scrollHeight + paddingBottom
 
   return {
-    minWidth: Math.ceil(Math.max(contentRight, 240)),
-    minHeight: Math.ceil(Math.max(headerBottom + paddingBottom, contentBottom))
+    minWidth: Math.ceil(Math.max(contentRight, 240, baselineSize.minWidth)),
+    minHeight: Math.ceil(Math.max(headerBottom + paddingBottom, contentBottom, baselineSize.minHeight))
   }
 }
 
@@ -3674,7 +3679,7 @@ defineExpose<{
             :data-group-content="node.id"
             class="grid overflow-visible"
             :style="{
-              gridTemplateColumns: `repeat(${node.columnCount || 1}, minmax(0, 1fr))`,
+              gridTemplateColumns: `repeat(${node.columnCount || 1}, ${groupTableWidth}px)`,
               gap: `${groupTableGap}px`
             }"
           >
@@ -3999,6 +4004,7 @@ defineExpose<{
           <span class="font-mono text-[0.58rem] uppercase tracking-[0.08em] text-[color:var(--studio-shell-label)]">Table Columns · {{ selectedNode.columnCount || 1 }}</span>
           <input
             :value="selectedNode.columnCount || 1"
+            data-group-column-count-slider="true"
             type="range"
             min="1"
             :max="Math.min(4, selectedNode.tableCount || 4)"

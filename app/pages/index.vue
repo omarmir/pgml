@@ -90,6 +90,26 @@ const syntaxCards = [
   }
 ]
 
+const heroQuickStartCode = `Function register_entity(entity_kind text) returns trigger [replace] {
+  source: $sql$
+    CREATE OR REPLACE FUNCTION public.register_entity(entity_kind text)
+    RETURNS trigger AS $$
+    BEGIN
+      RETURN NEW;
+    END;
+    $$ LANGUAGE plpgsql;
+  $sql$
+}
+
+Trigger trg_register_fundingopportunity on public.funding_opportunity_profile {
+  source: $sql$
+    CREATE TRIGGER trg_register_fundingopportunity
+      BEFORE INSERT ON public.funding_opportunity_profile
+      FOR EACH ROW
+      EXECUTE FUNCTION public.register_entity('fundingopportunity');
+  $sql$
+}`
+
 const quickStartCode = `TableGroup Programs {
   common_entity
   funding_opportunity_profile
@@ -253,7 +273,7 @@ const roadmap = [
               Quick Start
             </div>
             <p class="mt-1 text-sm text-[color:var(--studio-shell-muted)]">
-              A source-first PGML document with a group, sequence, function, and trigger.
+              A compact function-and-trigger draft for the source-first workflow.
             </p>
           </div>
           <span class="border border-[color:var(--studio-shell-border)] px-2 py-1 font-mono text-[0.68rem] uppercase tracking-[0.14em] text-[color:var(--studio-shell-muted)]">
@@ -261,7 +281,10 @@ const roadmap = [
           </span>
         </div>
 
-        <pre class="max-w-full overflow-x-auto px-4 py-4 font-mono text-[0.77rem] leading-6 text-[color:var(--studio-shell-text)] sm:text-[0.8rem]">{{ quickStartCode }}</pre>
+        <pre
+          data-testid="hero-quick-start"
+          class="max-w-full overflow-x-auto px-4 py-4 font-mono text-[0.77rem] leading-6 text-[color:var(--studio-shell-text)] sm:text-[0.8rem]"
+        >{{ heroQuickStartCode }}</pre>
       </div>
     </section>
 
@@ -343,7 +366,10 @@ const roadmap = [
                 <div class="border-b border-[color:var(--studio-shell-border)] px-4 py-3 font-mono text-[0.68rem] uppercase tracking-[0.16em] text-[color:var(--studio-shell-label)]">
                   Example
                 </div>
-                <pre class="max-w-full overflow-x-auto px-4 py-4 font-mono text-[0.77rem] leading-6 text-[color:var(--studio-shell-text)] sm:text-[0.8rem]">{{ quickStartCode }}</pre>
+                <pre
+                  data-testid="quick-start-example"
+                  class="max-w-full overflow-x-auto px-4 py-4 font-mono text-[0.77rem] leading-6 text-[color:var(--studio-shell-text)] sm:text-[0.8rem]"
+                >{{ quickStartCode }}</pre>
               </div>
 
               <div class="border border-[color:var(--studio-shell-border)] bg-[color:var(--studio-shell-bg)] p-4">
