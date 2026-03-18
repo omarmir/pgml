@@ -3,6 +3,7 @@ import type { DropdownMenuItem } from '@nuxt/ui'
 import type { Ref } from 'vue'
 import { nanoid } from 'nanoid'
 import PgmlDiagramCanvas from '~/components/pgml/PgmlDiagramCanvas.vue'
+import { usePgmlColumnDefaultSuggestions } from '~/composables/usePgmlColumnDefaultSuggestions'
 import { useStudioHeaderActions } from '~/composables/useStudioHeaderActions'
 import {
   buildPgmlWithNodeProperties,
@@ -35,6 +36,7 @@ const tableEditorDraft: Ref<PgmlEditableTableDraft | null> = ref(null)
 const tableEditorOpen: Ref<boolean> = ref(false)
 const exportScales = [1, 2, 3, 4, 8]
 const { clearStudioHeaderActions, setStudioHeaderActions } = useStudioHeaderActions()
+const { getColumnDefaultPlaceholder, getColumnDefaultSuggestions } = usePgmlColumnDefaultSuggestions()
 const {
   focusEditorSourceRange,
   lineNumberRef,
@@ -70,6 +72,22 @@ const studioSelectUi = {
   itemDescription: 'text-[color:var(--studio-shell-muted)]',
   itemLeadingIcon: 'text-[color:var(--studio-shell-muted)]',
   itemTrailingIcon: 'text-[color:var(--studio-shell-label)]'
+}
+const studioInputMenuUi = {
+  base: 'rounded-none border-[color:var(--studio-shell-border)] bg-[color:var(--studio-input-bg)] text-[color:var(--studio-shell-text)]',
+  placeholder: 'text-[color:var(--studio-shell-muted)]',
+  trailingIcon: 'text-[color:var(--studio-shell-muted)]',
+  content: 'rounded-none border border-[color:var(--studio-shell-border)] bg-[color:var(--studio-control-bg)] p-1 shadow-[var(--studio-floating-shadow)] backdrop-blur-sm',
+  viewport: 'scroll-py-1 overflow-y-auto',
+  item: 'studio-select-item rounded-none before:rounded-none text-[color:var(--studio-shell-text)]',
+  itemLabel: 'truncate',
+  itemDescription: 'text-[color:var(--studio-shell-muted)]',
+  itemTrailingIcon: 'text-[color:var(--studio-shell-label)]'
+}
+const studioDefaultInputMenuProps: Record<string, unknown> = {
+  autocomplete: true,
+  openOnClick: true,
+  openOnFocus: true
 }
 const studioSwitchUi = {
   wrapper: 'gap-1',
@@ -230,6 +248,10 @@ const tableTargetItems = computed(() => {
 const tableEditorErrors = computed(() => {
   return tableEditorDraft.value ? getEditableTableDraftErrors(tableEditorDraft.value) : []
 })
+
+const getColumnDefaultItems = (columnType: string) => {
+  return getColumnDefaultSuggestions(columnType)
+}
 
 const getReferenceColumnItems = (tableFullName: string) => {
   const referenceTable = parsedModel.value.tables.find(table => table.fullName === tableFullName)
@@ -817,6 +839,7 @@ onBeforeUnmount(() => {
                   <article
                     v-for="column in tableEditorDraft.columns"
                     :key="column.id"
+                    :data-table-editor-column="column.id"
                     class="grid gap-3 border border-[color:var(--studio-shell-border)] bg-[color:var(--studio-control-bg)] px-3 py-3"
                   >
                     <div class="flex items-center justify-between gap-3">
@@ -877,14 +900,20 @@ onBeforeUnmount(() => {
                     <div class="grid gap-3 lg:grid-cols-3">
                       <label class="grid gap-1">
                         <span class="font-mono text-[0.58rem] uppercase tracking-[0.08em] text-[color:var(--studio-shell-label)]">Default</span>
-                        <UInput
+                        <UInputMenu
                           v-model="column.defaultValue"
+                          v-bind="studioDefaultInputMenuProps"
                           aria-label="Column default"
-                          placeholder="now()"
+                          :items="getColumnDefaultItems(column.type)"
+                          :filter-fields="['label', 'value', 'description']"
+                          value-key="value"
+                          label-key="label"
+                          description-key="description"
+                          :placeholder="getColumnDefaultPlaceholder(column.type)"
                           color="neutral"
                           variant="outline"
                           size="sm"
-                          :ui="studioFieldUi"
+                          :ui="studioInputMenuUi"
                         />
                       </label>
 

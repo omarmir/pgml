@@ -20,6 +20,28 @@ test('table edit modal can rename a table and add a new grouped table', async ({
   await expect(page.getByPlaceholder('Paste PGML here...')).toHaveValue(/TableGroup Core \{\n {2}tenants\n {2}accounts\n {2}roles\n {2}audit_log/)
 })
 
+test('table edit modal autocompletes default values from the column type', async ({ goto, page }) => {
+  await goto('/diagram')
+
+  await page.locator('[data-table-edit-button="public.users"]').click()
+
+  const displayNameColumn = page.locator('[data-table-editor-column]').filter({ hasText: 'display_name' })
+  const columnTypeInput = displayNameColumn.getByLabel('Column type', { exact: true })
+  const columnDefaultInput = displayNameColumn.getByLabel('Column default', { exact: true })
+
+  await expect(columnDefaultInput).toHaveAttribute('placeholder', '\'\'')
+  await columnDefaultInput.click()
+  await expect(page.getByText(/^''$/)).toBeVisible()
+  await expect(page.getByText(/^'pending'$/)).toBeVisible()
+
+  await columnTypeInput.fill('boolean')
+  await columnDefaultInput.click()
+
+  await expect(columnDefaultInput).toHaveAttribute('placeholder', 'false')
+  await expect(page.getByText(/^false$/)).toBeVisible()
+  await expect(page.getByText(/^true$/)).toBeVisible()
+})
+
 test('canvas snaps dragged nodes to the grid and zooms around the mouse position', async ({ goto, page }) => {
   await goto('/diagram')
 
