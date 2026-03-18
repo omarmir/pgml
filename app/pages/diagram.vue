@@ -3,6 +3,12 @@ import type { DropdownMenuItem } from '@nuxt/ui'
 import { nanoid } from 'nanoid'
 import PgmlDiagramCanvas from '~/components/pgml/PgmlDiagramCanvas.vue'
 import {
+  clampStudioEditorWidth,
+  getStudioLayoutColumns,
+  studioCompactBreakpoint,
+  studioEditorPanelMinWidth
+} from '~/utils/studio-layout'
+import {
   buildPgmlWithNodeProperties,
   getPgmlSourceScrollTop,
   getPgmlSourceSelectionRange,
@@ -30,6 +36,7 @@ type SavedPgmlSchema = {
 const source: Ref<string> = ref(pgmlExample)
 const currentSchemaId: Ref<string | null> = ref(null)
 const currentSchemaName: Ref<string> = ref('Example schema')
+const layoutShellRef: Ref<HTMLDivElement | null> = ref(null)
 const lineNumberRef: Ref<HTMLDivElement | null> = ref(null)
 const textareaRef: Ref<HTMLTextAreaElement | null> = ref(null)
 const canvasRef: Ref<PgmlDiagramCanvasExposed | null> = ref(null)
@@ -39,6 +46,8 @@ const loadDialogOpen: Ref<boolean> = ref(false)
 const schemaDialogMode: Ref<'save' | 'download'> = ref('save')
 const includeLayoutInSchema: Ref<boolean> = ref(true)
 const savedSchemas: Ref<SavedPgmlSchema[]> = ref([])
+const viewportWidth: Ref<number> = ref(studioCompactBreakpoint)
+const editorPanelWidth: Ref<number> = ref(studioEditorPanelMinWidth)
 const exportScales = [1, 2, 3, 4, 8]
 const { studioThemeIcon, studioThemeLabel, toggleStudioTheme } = useStudioTheme()
 const storageKey = 'pgml-studio-schemas-v1'
@@ -71,6 +80,12 @@ const parsedState = computed(() => {
 const parsedModel = computed(() => parsedState.value.model)
 const parseError = computed(() => parsedState.value.error)
 const canEmbedLayout = computed(() => !parseError.value)
+const isCompactStudioLayout = computed(() => viewportWidth.value < studioCompactBreakpoint)
+const studioLayoutStyle = computed(() => {
+  return {
+    gridTemplateColumns: getStudioLayoutColumns(editorPanelWidth.value, viewportWidth.value)
+  }
+})
 const schemaActionTitle = computed(() => schemaDialogMode.value === 'save' ? 'Save schema' : 'Download schema')
 const schemaActionDescription = computed(() => {
   return canEmbedLayout.value
@@ -188,6 +203,60 @@ const syncLineNumberScroll = () => {
   }
 
   lineNumberRef.value.scrollTop = textareaRef.value.scrollTop
+}
+
+const syncStudioViewport = () => {
+  if (!import.meta.client) {
+    return
+  }
+
+  viewportWidth.value = window.innerWidth
+
+  if (!layoutShellRef.value) {
+    return
+  }
+
+  editorPanelWidth.value = clampStudioEditorWidth(
+    editorPanelWidth.value,
+    layoutShellRef.value.clientWidth
+  )
+}
+
+const resizeEditorPanelBy = (delta: number) => {
+  if (isCompactStudioLayout.value || !layoutShellRef.value) {
+    return
+  }
+
+  editorPanelWidth.value = clampStudioEditorWidth(
+    editorPanelWidth.value + delta,
+    layoutShellRef.value.clientWidth
+  )
+}
+
+const startEditorResize = (event: PointerEvent) => {
+  if (isCompactStudioLayout.value || !layoutShellRef.value) {
+    return
+  }
+
+  event.preventDefault()
+  const originX = event.clientX
+  const originWidth = editorPanelWidth.value
+  const containerWidth = layoutShellRef.value.clientWidth
+
+  const onMove = (moveEvent: PointerEvent) => {
+    editorPanelWidth.value = clampStudioEditorWidth(
+      originWidth + moveEvent.clientX - originX,
+      containerWidth
+    )
+  }
+
+  const onUp = () => {
+    window.removeEventListener('pointermove', onMove)
+    window.removeEventListener('pointerup', onUp)
+  }
+
+  window.addEventListener('pointermove', onMove)
+  window.addEventListener('pointerup', onUp)
 }
 
 const focusEditorSourceRange = (sourceRange: PgmlSourceRange) => {
@@ -374,13 +443,26 @@ const formatSavedAt = (value: string) => {
 
 onMounted(() => {
   readSavedSchemas()
+  syncStudioViewport()
+  window.addEventListener('resize', syncStudioViewport)
+})
+
+onBeforeUnmount(() => {
+  window.removeEventListener('resize', syncStudioViewport)
 })
 </script>
 
 <template>
   <div>
-    <div class="grid h-screen min-h-0 w-full grid-cols-[320px_minmax(0,1fr)] gap-0 overflow-hidden bg-[color:var(--studio-shell-bg)] text-[color:var(--studio-shell-text)] max-[1100px]:h-auto max-[1100px]:grid-cols-1">
-      <aside class="min-h-0 overflow-hidden border-r border-[color:var(--studio-shell-border)] bg-[color:var(--studio-shell-bg)] pr-0 max-[1100px]:border-r-0">
+    <div
+      ref="layoutShellRef"
+      class="grid h-screen min-h-0 w-full gap-0 overflow-hidden bg-[color:var(--studio-shell-bg)] text-[color:var(--studio-shell-text)] max-[1100px]:h-auto"
+      :style="studioLayoutStyle"
+    >
+      <aside
+        data-editor-panel="true"
+        class="min-h-0 overflow-hidden border-r border-[color:var(--studio-shell-border)] bg-[color:var(--studio-shell-bg)] pr-0 max-[1100px]:border-r-0"
+      >
         <div class="flex h-full min-h-0 flex-col bg-[color:var(--studio-shell-bg)]">
           <div class="flex items-center justify-between gap-2 border-b border-[color:var(--studio-shell-border)] bg-[color:var(--studio-shell-bg)] px-3 py-2">
             <div class="flex items-center gap-2">
@@ -465,6 +547,24 @@ onMounted(() => {
           {{ parseError }}
         </div>
       </aside>
+
+      <div
+        v-if="!isCompactStudioLayout"
+        data-editor-resize-handle="true"
+        role="separator"
+        aria-orientation="vertical"
+        aria-label="Resize PGML editor"
+        tabindex="0"
+        class="group relative hidden h-full cursor-ew-resize bg-[color:var(--studio-shell-bg)] outline-none min-[1100px]:block"
+        @pointerdown="startEditorResize"
+        @keydown.left.prevent="resizeEditorPanelBy(-32)"
+        @keydown.right.prevent="resizeEditorPanelBy(32)"
+      >
+        <div class="absolute inset-y-0 left-1/2 w-px -translate-x-1/2 bg-[color:var(--studio-shell-border)] transition-colors duration-150 group-hover:bg-[color:var(--studio-ring)] group-focus-visible:bg-[color:var(--studio-ring)]" />
+        <div class="absolute left-1/2 top-1/2 flex h-14 w-4 -translate-x-1/2 -translate-y-1/2 items-center justify-center border border-[color:var(--studio-shell-border)] bg-[color:var(--studio-control-bg)] text-[color:var(--studio-shell-muted)] shadow-[var(--studio-floating-shadow)] transition-colors duration-150 group-hover:border-[color:var(--studio-ring)] group-focus-visible:border-[color:var(--studio-ring)]">
+          <span class="h-7 w-px bg-[color:var(--studio-shell-border)]" />
+        </div>
+      </div>
 
       <section class="min-h-0 w-full overflow-hidden p-0">
         <PgmlDiagramCanvas
