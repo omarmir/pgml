@@ -151,18 +151,20 @@ test('connection lines hit grouped table borders, render above the owning group,
 
   const editor = page.locator('[data-pgml-editor="true"]')
   const source = `TableGroup Core {
-  users
+  tenants
+}
+
+TableGroup Commerce {
   orders
 }
 
-Table public.users in Core {
+Table public.tenants in Core {
   id uuid [pk]
-  email text
 }
 
-Table public.orders in Core {
+Table public.orders in Commerce {
   id uuid [pk]
-  user_id uuid [ref: > public.users.id]
+  tenant_id uuid [ref: > public.tenants.id]
 }`
 
   await editor.fill(source)
@@ -172,7 +174,7 @@ Table public.orders in Core {
     const group = document.querySelector('[data-node-anchor="group:Core"]')
     const groupSurface = document.querySelector('[data-group-surface="group:Core"]')
     const content = document.querySelector('[data-group-content="group:Core"]')
-    const ordersTable = document.querySelector('[data-table-anchor="public.orders"]')
+    const tenantsTable = document.querySelector('[data-table-anchor="public.tenants"]')
     const connectionLayers = Array.from(document.querySelectorAll('[data-connection-layer="true"]'))
     const path = connectionLayers.flatMap((layer) => {
       return Array.from(layer.querySelectorAll('path'))
@@ -184,7 +186,7 @@ Table public.orders in Core {
       !(group instanceof HTMLElement)
       || !(groupSurface instanceof HTMLElement)
       || !(content instanceof HTMLElement)
-      || !(ordersTable instanceof HTMLElement)
+      || !(tenantsTable instanceof HTMLElement)
       || connectionLayers.length === 0
       || !(path instanceof SVGPathElement)
     ) {
@@ -234,25 +236,25 @@ Table public.orders in Core {
       top: group.offsetTop,
       bottom: group.offsetTop + content.offsetTop
     }
-    const ordersBounds = {
-      left: ordersTable.offsetLeft,
-      right: ordersTable.offsetLeft + ordersTable.offsetWidth,
-      top: ordersTable.offsetTop,
-      bottom: ordersTable.offsetTop + ordersTable.offsetHeight
+    const tenantsBounds = {
+      left: tenantsTable.offsetLeft,
+      right: tenantsTable.offsetLeft + tenantsTable.offsetWidth,
+      top: tenantsTable.offsetTop,
+      bottom: tenantsTable.offsetTop + tenantsTable.offsetHeight
     }
     const overlapsHeader = points.slice(1).some((point, index) => {
       return segmentHitsRect(points[index]!, point, headerBand)
     })
-    const lineTouchesOrdersBorder = points.some((point) => {
+    const lineTouchesTenantsBorder = points.some((point) => {
       const onVerticalBorder = (
-        (Math.abs(point.x - ordersBounds.left) < 1 || Math.abs(point.x - ordersBounds.right) < 1)
-        && point.y >= ordersBounds.top
-        && point.y <= ordersBounds.bottom
+        (Math.abs(point.x - tenantsBounds.left) < 1 || Math.abs(point.x - tenantsBounds.right) < 1)
+        && point.y >= tenantsBounds.top
+        && point.y <= tenantsBounds.bottom
       )
       const onHorizontalBorder = (
-        (Math.abs(point.y - ordersBounds.top) < 1 || Math.abs(point.y - ordersBounds.bottom) < 1)
-        && point.x >= ordersBounds.left
-        && point.x <= ordersBounds.right
+        (Math.abs(point.y - tenantsBounds.top) < 1 || Math.abs(point.y - tenantsBounds.bottom) < 1)
+        && point.x >= tenantsBounds.left
+        && point.x <= tenantsBounds.right
       )
 
       return onVerticalBorder || onHorizontalBorder
@@ -263,15 +265,17 @@ Table public.orders in Core {
       maxLineZIndex: Math.max(...connectionLayers.map((layer) => {
         return Number.parseInt(window.getComputedStyle(layer).zIndex || '0', 10)
       })),
+      stroke: path.getAttribute('stroke') || '',
       pointCount: points.length,
       overlapsHeader,
-      lineTouchesOrdersBorder
+      lineTouchesTenantsBorder
     }
   })
 
   expect(diagnostics).not.toBeNull()
   expect(diagnostics?.maxLineZIndex || 0).toBeGreaterThan(diagnostics?.groupZIndex || 0)
+  expect(diagnostics?.stroke).toBe('#8b5cf6')
   expect(diagnostics?.pointCount || 0).toBeLessThanOrEqual(4)
   expect(diagnostics?.overlapsHeader).toBe(false)
-  expect(diagnostics?.lineTouchesOrdersBorder).toBe(true)
+  expect(diagnostics?.lineTouchesTenantsBorder).toBe(true)
 })

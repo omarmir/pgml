@@ -202,6 +202,18 @@ const attachmentKindColors: Record<TableAttachmentKind, string> = {
 }
 
 const canvasNodes = computed(() => Object.values(nodeStates.value))
+const tableGroupColorByTableId = computed(() => {
+  return model.tables.reduce<Record<string, string>>((colors, table) => {
+    const groupName = table.groupName || 'Ungrouped'
+    const groupNode = nodeStates.value[`group:${groupName}`]
+
+    if (groupNode?.color) {
+      colors[table.fullName] = groupNode.color
+    }
+
+    return colors
+  }, {})
+})
 const nodeLayerOrderById = computed(() => {
   return canvasNodes.value.reduce<Record<string, number>>((orders, node, index) => {
     orders[node.id] = index + 1
@@ -3427,6 +3439,7 @@ const updateConnections = () => {
   }> = []
   const usage = new Map<string, number[]>()
   const nodeOrders = nodeLayerOrderById.value
+  const tableColors = tableGroupColorByTableId.value
 
   for (const reference of model.references) {
     const fromElement = getFieldAnchorElement(reference.fromTable, reference.fromColumn)
@@ -3438,7 +3451,7 @@ const updateConnections = () => {
 
     descriptors.push({
       key: `ref:${reference.fromTable}:${reference.fromColumn}:${reference.toTable}:${reference.toColumn}`,
-      color: '#79e3ea',
+      color: tableColors[reference.toTable] || '#79e3ea',
       dashed: false,
       fromElement,
       toElement
