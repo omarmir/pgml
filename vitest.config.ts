@@ -2,8 +2,11 @@ import { fileURLToPath } from 'node:url'
 import { defineConfig } from 'vitest/config'
 import { defineVitestProject } from '@nuxt/test-utils/config'
 
+const isCoverageRun = process.argv.includes('--coverage')
+
 export default defineConfig({
   test: {
+    maxWorkers: isCoverageRun ? 1 : undefined,
     projects: [
       {
         test: {
@@ -27,8 +30,9 @@ export default defineConfig({
       })
     ],
     coverage: {
-      enabled: true,
-      provider: 'v8'
+      clean: true,
+      provider: 'v8',
+      reportsDirectory: './coverage'
     }
   }
 })

@@ -1,11 +1,50 @@
 import { mountSuspended } from '@nuxt/test-utils/runtime'
 import { defineComponent, h } from 'vue'
-import { describe, expect, it } from 'vitest'
+import { beforeEach, describe, expect, it } from 'vitest'
 
 import AppRoot from '../../app/app.vue'
 import { useStudioTheme } from '../../app/composables/useStudioTheme'
 
+const installLocalStorage = () => {
+  const values = new Map<string, string>()
+  const localStorage = {
+    clear: () => {
+      values.clear()
+    },
+    getItem: (key: string) => {
+      return values.has(key) ? values.get(key)! : null
+    },
+    key: (index: number) => {
+      return Array.from(values.keys())[index] || null
+    },
+    removeItem: (key: string) => {
+      values.delete(key)
+    },
+    setItem: (key: string, value: string) => {
+      values.set(key, value)
+    }
+  }
+
+  Object.defineProperty(window, 'localStorage', {
+    configurable: true,
+    value: localStorage
+  })
+
+  return localStorage
+}
+
 describe('studio theme persistence', () => {
+  beforeEach(() => {
+    installLocalStorage()
+    document.documentElement.removeAttribute('data-studio-theme')
+
+    for (const token of Array.from(document.documentElement.style)) {
+      document.documentElement.style.removeProperty(token)
+    }
+
+    useStudioTheme().studioTheme.value = 'dark'
+  })
+
   it('loads the stored theme choice and writes updates back to storage', async () => {
     window.localStorage.clear()
     window.localStorage.setItem('pgml-studio-theme', 'light')

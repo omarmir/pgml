@@ -1,5 +1,6 @@
 import type { Ref } from 'vue'
-import { createSharedComposable, useStorage } from '@vueuse/core'
+import { createSharedComposable } from '@vueuse/core'
+import { readBrowserStorageItem, writeBrowserStorageItem } from '../utils/browser-storage'
 
 export type StudioTheme = 'dark' | 'light'
 
@@ -92,19 +93,26 @@ const normalizeStudioTheme = (value: string | null | undefined): StudioTheme => 
   return value === 'light' ? 'light' : 'dark'
 }
 
+const readStoredStudioTheme = () => {
+  return normalizeStudioTheme(readBrowserStorageItem(studioThemeStorageKey))
+}
+
 const useSharedStudioTheme = createSharedComposable(() => {
-  const studioTheme: Ref<StudioTheme> = useStorage<StudioTheme>(studioThemeStorageKey, 'dark')
+  const studioTheme: Ref<StudioTheme> = ref(import.meta.client ? readStoredStudioTheme() : 'dark')
 
   if (import.meta.client) {
-    watchEffect(() => {
+    watch(studioTheme, (nextValue) => {
       const nextTheme = normalizeStudioTheme(studioTheme.value)
 
-      if (studioTheme.value !== nextTheme) {
+      if (nextValue !== nextTheme) {
         studioTheme.value = nextTheme
         return
       }
 
       applyStudioThemeToDocument(nextTheme)
+      writeBrowserStorageItem(studioThemeStorageKey, nextTheme)
+    }, {
+      immediate: true
     })
   }
 
@@ -134,5 +142,15 @@ const useSharedStudioTheme = createSharedComposable(() => {
 })
 
 export const useStudioTheme = () => {
-  return useSharedStudioTheme()
+  const sharedTheme = useSharedStudioTheme()
+
+  if (import.meta.client) {
+    const storedTheme = readStoredStudioTheme()
+
+    if (sharedTheme.studioTheme.value !== storedTheme) {
+      sharedTheme.studioTheme.value = storedTheme
+    }
+  }
+
+  return sharedTheme
 }

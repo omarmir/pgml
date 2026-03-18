@@ -173,6 +173,9 @@ const groupColumnRowHeight = 31
 const objectColumnX = 1060
 const objectColumnGapX = 320
 const objectRowGapY = 180
+const minCanvasScale = 0.28
+const maxCanvasScale = 1.3
+const zoomStep = 0.08
 const layoutPadding = 88
 const exportPadding = 96
 const collapsedObjectHeight = 56
@@ -1014,10 +1017,10 @@ const measureGroupMinimumSize = (groupId: string) => {
   const contentBounds = contentElement.getBoundingClientRect()
   const contentChildren = Array.from(contentElement.children).filter((child): child is HTMLElement => child instanceof HTMLElement)
   const contentRight = contentChildren.length
-    ? Math.max(...contentChildren.map((child) => (child.getBoundingClientRect().right - groupBounds.left) / scaleFactor)) + paddingRight
+    ? Math.max(...contentChildren.map(child => (child.getBoundingClientRect().right - groupBounds.left) / scaleFactor)) + paddingRight
     : ((contentBounds.right - groupBounds.left) / scaleFactor) + paddingRight
   const contentBottomFromChildren = contentChildren.length
-    ? Math.max(...contentChildren.map((child) => (child.getBoundingClientRect().bottom - groupBounds.top) / scaleFactor)) + paddingBottom
+    ? Math.max(...contentChildren.map(child => (child.getBoundingClientRect().bottom - groupBounds.top) / scaleFactor)) + paddingBottom
     : ((contentBounds.bottom - groupBounds.top) / scaleFactor) + paddingBottom
   const contentBottom = contentWrapperBounds
     ? (contentWrapperBounds.bottom - groupBounds.top) / scaleFactor
@@ -3185,14 +3188,16 @@ const reserveFieldRowAnchorPoint = (
     return getExactAnchorPoint(tableElement, side, desiredRatio, planeBounds)
   }
 
+  const fieldBounds = fieldElement.getBoundingClientRect()
   const rowBounds = rowElement.getBoundingClientRect()
+  const anchorBandHeight = fieldBounds.height > 0 ? fieldBounds.height : rowBounds.height
   const candidateRatios = getFieldRowAnchorRatios(
-    rowBounds.top,
-    rowBounds.height,
+    fieldBounds.top,
+    anchorBandHeight,
     tableBounds.top,
     tableBounds.height
   )
-  const rowKey = rowElement.getAttribute('data-table-row-anchor') || getElementIdentity(tableElement)
+  const rowKey = rowElement.getAttribute('data-table-row-anchor') || getElementIdentity(fieldElement)
   const usageKey = `field-row:${rowKey}:${side}`
   const slotUsage = usage.get(usageKey) || Array.from({ length: candidateRatios.length }, () => 0)
 
@@ -3708,8 +3713,8 @@ const reflowAutoLayout = () => {
 }
 
 const zoomBy = (direction: 1 | -1) => {
-  const nextScale = scale.value + direction * 0.08
-  scale.value = Math.min(1.3, Math.max(0.45, Number(nextScale.toFixed(2))))
+  const nextScale = scale.value + direction * zoomStep
+  scale.value = Math.min(maxCanvasScale, Math.max(minCanvasScale, Number(nextScale.toFixed(2))))
 }
 
 const fitView = () => {
@@ -3725,13 +3730,19 @@ const fitView = () => {
 
   const padding = {
     top: 48,
-    right: 240,
+    right: 280,
     bottom: 72,
     left: 48
   }
   const availableWidth = Math.max(240, viewportRef.value.clientWidth - padding.left - padding.right)
   const availableHeight = Math.max(240, viewportRef.value.clientHeight - padding.top - padding.bottom)
-  const nextScale = Math.min(1, Math.max(0.45, Number(Math.min(availableWidth / bounds.width, availableHeight / bounds.height).toFixed(2))))
+  const nextScale = Math.min(
+    1,
+    Math.max(
+      minCanvasScale,
+      Number(Math.min(availableWidth / bounds.width, availableHeight / bounds.height).toFixed(2))
+    )
+  )
 
   scale.value = nextScale
   pan.value = {
@@ -4045,6 +4056,7 @@ onMounted(() => {
         reflowAutoLayout()
         updateConnections()
       }
+      fitView()
       updateConnections()
     })
     window.setTimeout(() => {
@@ -4053,6 +4065,7 @@ onMounted(() => {
         reflowAutoLayout()
         updateConnections()
       }
+      fitView()
       updateConnections()
     }, 120)
   })
@@ -4116,7 +4129,7 @@ defineExpose<{
           background: node.kind === 'group' ? 'transparent' : getNodeBackground(node)
         }"
         :data-node-anchor="node.id"
-        @pointerdown.stop="selectedNodeId = node.id"
+        @pointerdown.capture="selectedNodeId = node.id"
         @click.stop="handleNodeClick(node)"
       >
         <div

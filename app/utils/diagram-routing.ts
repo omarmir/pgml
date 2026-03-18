@@ -18,13 +18,13 @@ const fieldRowAnchorOffsets = [0.22, 0.5, 0.78] as const
 export const isHorizontalDiagramSide = (side: DiagramAnchorSide) => side === 'left' || side === 'right'
 
 /**
- * Connection anchor rules for table rows:
+ * Connection anchor rules for field rows:
  * 1. Field endpoints always terminate on the owning table border, never inside the row body.
- * 2. Each row exposes six candidate border anchors: left/right multiplied by top/middle/bottom.
+ * 2. Each field band exposes six candidate border anchors: left/right multiplied by top/middle/bottom.
  * 3. Higher-level routing still decides the side first; this helper only picks among anchors on that side.
- * 4. Unused anchors on the row are preferred before reusing an occupied anchor on the same side.
+ * 4. Unused anchors on the field band are preferred before reusing an occupied anchor on the same side.
  * 5. Ties are broken by closeness to the desired target ratio so routes stay visually local.
- * 6. If a caller cannot resolve row metadata, it should fall back to table-level anchors without bypassing
+ * 6. If a caller cannot resolve field metadata, it should fall back to table-level anchors without bypassing
  *    header-avoidance or orthogonal path rules elsewhere in the router.
  */
 export const getFieldRowAnchorRatios = (
@@ -46,13 +46,18 @@ export const pickDiagramAnchorSlot = (
   desiredRatio: number,
   slotUsage: number[]
 ) => {
+  const minimumRatio = Math.min(...candidateRatios)
+  const maximumRatio = Math.max(...candidateRatios)
+  const normalizedDesiredRatio = desiredRatio < minimumRatio || desiredRatio > maximumRatio
+    ? candidateRatios[Math.floor(candidateRatios.length / 2)] ?? desiredRatio
+    : desiredRatio
   let bestSlot = 0
   let bestScore = Number.POSITIVE_INFINITY
 
   for (let slot = 0; slot < candidateRatios.length; slot += 1) {
     const candidateRatio = candidateRatios[slot] ?? 0.5
     const usage = slotUsage[slot] || 0
-    const score = Math.abs(candidateRatio - desiredRatio) + usage * 0.35
+    const score = Math.abs(candidateRatio - normalizedDesiredRatio) + usage * 0.35
 
     if (score < bestScore) {
       bestScore = score

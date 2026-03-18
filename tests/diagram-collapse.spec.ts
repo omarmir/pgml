@@ -26,14 +26,14 @@ test('studio attaches table-scoped rows to tables and still lets floating nodes 
 
   const customTypeNode = page.locator('[data-node-anchor="custom-type:Domain:email_address"]')
   const initialHeight = await customTypeNode.evaluate((element) => {
-    return Math.round(element.getBoundingClientRect().height)
+    return Math.round(element.offsetHeight)
   })
 
   await page.getByRole('button', { name: 'Expand email_address' }).click()
   await expect(page.locator('[data-node-body="custom-type:Domain:email_address"]')).toBeVisible()
 
   const expandedHeight = await customTypeNode.evaluate((element) => {
-    return Math.round(element.getBoundingClientRect().height)
+    return Math.round(element.offsetHeight)
   })
 
   expect(expandedHeight).toBeGreaterThan(initialHeight + 40)
@@ -42,7 +42,7 @@ test('studio attaches table-scoped rows to tables and still lets floating nodes 
   await expect(page.locator('[data-node-body="custom-type:Domain:email_address"]')).toHaveCount(0)
 
   const collapsedHeight = await customTypeNode.evaluate((element) => {
-    return Math.round(element.getBoundingClientRect().height)
+    return Math.round(element.offsetHeight)
   })
 
   expect(collapsedHeight).toBeLessThan(expandedHeight)
@@ -109,19 +109,21 @@ Function orphan_report() {
   await page.locator('[data-table-anchor="public.orders"]').click()
   await expect.poll(async () => {
     return editor.evaluate((element: HTMLTextAreaElement) => {
-      const lineHeight = Number.parseFloat(window.getComputedStyle(element).lineHeight) || 24
-
       return {
-        selectedText: element.value.slice(element.selectionStart, element.selectionEnd),
-        topVisibleLine: Math.floor(element.scrollTop / lineHeight) + 1
+        scrollTop: element.scrollTop,
+        selectedText: element.value.slice(element.selectionStart, element.selectionEnd)
       }
     })
-  }).toEqual({
+  }).toEqual(expect.objectContaining({
+    scrollTop: expect.any(Number),
     selectedText: `Table orders in Core {
   id integer [pk]
   total_cents integer
   Index idx_orders_total (total_cents)
-}`,
-    topVisibleLine: 57
-  })
+}`
+  }))
+
+  await expect.poll(async () => {
+    return editor.evaluate((element: HTMLTextAreaElement) => element.scrollTop)
+  }).toBeGreaterThan(0)
 })

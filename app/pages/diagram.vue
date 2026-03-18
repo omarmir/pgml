@@ -1,22 +1,12 @@
 <script setup lang="ts">
 import type { DropdownMenuItem } from '@nuxt/ui'
-import { nanoid } from 'nanoid'
 import PgmlDiagramCanvas from '~/components/pgml/PgmlDiagramCanvas.vue'
 import {
-  clampStudioEditorWidth,
-  getStudioLayoutColumns,
-  studioCompactBreakpoint,
-  studioEditorPanelMinWidth
-} from '~/utils/studio-layout'
-import {
   buildPgmlWithNodeProperties,
-  getPgmlSourceScrollTop,
-  getPgmlSourceSelectionRange,
   parsePgml,
   pgmlExample,
   stripPgmlPropertiesBlocks,
-  type PgmlNodeProperties,
-  type PgmlSourceRange
+  type PgmlNodeProperties
 } from '~/utils/pgml'
 
 type PgmlDiagramCanvasExposed = {
@@ -26,31 +16,25 @@ type PgmlDiagramCanvasExposed = {
   getNodeLayoutProperties: () => Record<string, PgmlNodeProperties>
 }
 
-type SavedPgmlSchema = {
-  id: string
-  name: string
-  text: string
-  updatedAt: string
-}
-
 const source: Ref<string> = ref(pgmlExample)
-const currentSchemaId: Ref<string | null> = ref(null)
-const currentSchemaName: Ref<string> = ref('Example schema')
-const layoutShellRef: Ref<HTMLDivElement | null> = ref(null)
-const lineNumberRef: Ref<HTMLDivElement | null> = ref(null)
-const textareaRef: Ref<HTMLTextAreaElement | null> = ref(null)
 const canvasRef: Ref<PgmlDiagramCanvasExposed | null> = ref(null)
 const isExporting: Ref<boolean> = ref(false)
-const schemaDialogOpen: Ref<boolean> = ref(false)
-const loadDialogOpen: Ref<boolean> = ref(false)
-const schemaDialogMode: Ref<'save' | 'download'> = ref('save')
-const includeLayoutInSchema: Ref<boolean> = ref(true)
-const savedSchemas: Ref<SavedPgmlSchema[]> = ref([])
-const viewportWidth: Ref<number> = ref(studioCompactBreakpoint)
-const editorPanelWidth: Ref<number> = ref(studioEditorPanelMinWidth)
 const exportScales = [1, 2, 3, 4, 8]
 const { studioThemeIcon, studioThemeLabel, toggleStudioTheme } = useStudioTheme()
-const storageKey = 'pgml-studio-schemas-v1'
+const {
+  focusEditorSourceRange,
+  lineNumberRef,
+  lineNumbers,
+  syncLineNumberScroll,
+  textareaRef
+} = usePgmlSourceEditor(source)
+const {
+  isCompactStudioLayout,
+  layoutShellRef,
+  resizeEditorPanelBy,
+  startEditorResize,
+  studioLayoutStyle
+} = useStudioEditorLayout()
 const studioModalSurfaceStyle = {
   backgroundColor: 'var(--studio-modal-bg)',
   color: 'var(--studio-shell-text)',
@@ -80,26 +64,41 @@ const parsedState = computed(() => {
 const parsedModel = computed(() => parsedState.value.model)
 const parseError = computed(() => parsedState.value.error)
 const canEmbedLayout = computed(() => !parseError.value)
-const isCompactStudioLayout = computed(() => viewportWidth.value < studioCompactBreakpoint)
-const studioLayoutStyle = computed(() => {
-  return {
-    gridTemplateColumns: getStudioLayoutColumns(editorPanelWidth.value, viewportWidth.value)
+
+const buildSchemaText = (includeLayout: boolean) => {
+  const strippedSource = stripPgmlPropertiesBlocks(source.value)
+
+  if (!includeLayout || !canEmbedLayout.value || !canvasRef.value) {
+    return strippedSource
   }
+
+  return buildPgmlWithNodeProperties(strippedSource, canvasRef.value.getNodeLayoutProperties())
+}
+
+const {
+  clearSchema,
+  currentSchemaName,
+  deleteSavedSchema,
+  downloadSchema,
+  formatSavedAt,
+  includeLayoutInSchema,
+  loadDialogOpen,
+  loadExample,
+  loadSavedSchema,
+  openSchemaDialog,
+  orderedSavedSchemas,
+  saveSchemaToBrowser,
+  schemaActionDescription,
+  schemaActionTitle,
+  schemaDialogMode,
+  schemaDialogOpen
+} = usePgmlStudioSchemas({
+  buildSchemaText,
+  canEmbedLayout,
+  initialSource: pgmlExample,
+  source
 })
-const schemaActionTitle = computed(() => schemaDialogMode.value === 'save' ? 'Save schema' : 'Download schema')
-const schemaActionDescription = computed(() => {
-  return canEmbedLayout.value
-    ? 'Choose a name and decide whether to embed the current canvas layout into the PGML text.'
-    : 'The current PGML has a parse error, so only the raw text can be saved right now.'
-})
-const orderedSavedSchemas = computed(() => {
-  return [...savedSchemas.value].sort((left, right) => {
-    return new Date(right.updatedAt).getTime() - new Date(left.updatedAt).getTime()
-  })
-})
-const lineNumbers = computed(() => {
-  return Array.from({ length: Math.max(source.value.split('\n').length, 1) }, (_, index) => index + 1)
-})
+
 const actionMenuItems = computed<DropdownMenuItem[][]>(() => {
   const exportItems: DropdownMenuItem[] = exportScales.map((scaleOption) => {
     return {
@@ -169,18 +168,6 @@ const actionMenuItems = computed<DropdownMenuItem[][]>(() => {
   ]
 })
 
-const loadExample = () => {
-  source.value = pgmlExample
-  currentSchemaId.value = null
-  currentSchemaName.value = 'Example schema'
-}
-
-const clearSchema = () => {
-  source.value = ''
-  currentSchemaId.value = null
-  currentSchemaName.value = 'Untitled schema'
-}
-
 const runExport = async (format: 'svg' | 'png', scaleFactor?: number) => {
   if (!canvasRef.value || isExporting.value) {
     return
@@ -196,260 +183,6 @@ const runExport = async (format: 'svg' | 'png', scaleFactor?: number) => {
     isExporting.value = false
   }
 }
-
-const syncLineNumberScroll = () => {
-  if (!lineNumberRef.value || !textareaRef.value) {
-    return
-  }
-
-  lineNumberRef.value.scrollTop = textareaRef.value.scrollTop
-}
-
-const syncStudioViewport = () => {
-  if (!import.meta.client) {
-    return
-  }
-
-  viewportWidth.value = window.innerWidth
-
-  if (!layoutShellRef.value) {
-    return
-  }
-
-  editorPanelWidth.value = clampStudioEditorWidth(
-    editorPanelWidth.value,
-    layoutShellRef.value.clientWidth
-  )
-}
-
-const resizeEditorPanelBy = (delta: number) => {
-  if (isCompactStudioLayout.value || !layoutShellRef.value) {
-    return
-  }
-
-  editorPanelWidth.value = clampStudioEditorWidth(
-    editorPanelWidth.value + delta,
-    layoutShellRef.value.clientWidth
-  )
-}
-
-const startEditorResize = (event: PointerEvent) => {
-  if (isCompactStudioLayout.value || !layoutShellRef.value) {
-    return
-  }
-
-  event.preventDefault()
-  const originX = event.clientX
-  const originWidth = editorPanelWidth.value
-  const containerWidth = layoutShellRef.value.clientWidth
-
-  const onMove = (moveEvent: PointerEvent) => {
-    editorPanelWidth.value = clampStudioEditorWidth(
-      originWidth + moveEvent.clientX - originX,
-      containerWidth
-    )
-  }
-
-  const onUp = () => {
-    window.removeEventListener('pointermove', onMove)
-    window.removeEventListener('pointerup', onUp)
-  }
-
-  window.addEventListener('pointermove', onMove)
-  window.addEventListener('pointerup', onUp)
-}
-
-const focusEditorSourceRange = (sourceRange: PgmlSourceRange) => {
-  if (!textareaRef.value) {
-    return
-  }
-
-  const selectionRange = getPgmlSourceSelectionRange(source.value, sourceRange)
-
-  if (!selectionRange) {
-    return
-  }
-
-  const textarea = textareaRef.value
-  const parsedLineHeight = Number.parseFloat(window.getComputedStyle(textarea).lineHeight)
-  const lineHeight = Number.isFinite(parsedLineHeight) ? parsedLineHeight : 24
-  const targetScrollTop = getPgmlSourceScrollTop(sourceRange, lineHeight, 1)
-
-  textarea.scrollTop = targetScrollTop
-  syncLineNumberScroll()
-  textarea.focus()
-  textarea.setSelectionRange(selectionRange.start, selectionRange.end)
-  window.requestAnimationFrame(() => {
-    syncLineNumberScroll()
-  })
-}
-
-const readSavedSchemas = () => {
-  if (!import.meta.client) {
-    return
-  }
-
-  try {
-    const rawValue = window.localStorage.getItem(storageKey)
-
-    if (!rawValue) {
-      savedSchemas.value = []
-      return
-    }
-
-    const parsedValue = JSON.parse(rawValue) as SavedPgmlSchema[]
-
-    savedSchemas.value = Array.isArray(parsedValue)
-      ? parsedValue.filter((entry) => {
-          return typeof entry?.id === 'string'
-            && typeof entry?.name === 'string'
-            && typeof entry?.text === 'string'
-            && typeof entry?.updatedAt === 'string'
-        })
-      : []
-  } catch {
-    savedSchemas.value = []
-  }
-}
-
-const persistSavedSchemas = () => {
-  if (!import.meta.client) {
-    return
-  }
-
-  window.localStorage.setItem(storageKey, JSON.stringify(savedSchemas.value))
-}
-
-const normalizeSchemaName = (value: string) => {
-  const trimmed = value.trim()
-
-  return trimmed.length > 0 ? trimmed : 'Untitled schema'
-}
-
-const slugifySchemaName = (value: string) => {
-  const slug = normalizeSchemaName(value)
-    .toLowerCase()
-    .replaceAll(/[^a-z0-9]+/g, '-')
-    .replaceAll(/^-+|-+$/g, '')
-
-  return slug.length > 0 ? slug : 'schema'
-}
-
-const openSchemaDialog = (mode: 'save' | 'download') => {
-  schemaDialogMode.value = mode
-  schemaDialogOpen.value = true
-}
-
-const buildSchemaText = (includeLayout: boolean) => {
-  const strippedSource = stripPgmlPropertiesBlocks(source.value)
-
-  if (!includeLayout || !canEmbedLayout.value || !canvasRef.value) {
-    return strippedSource
-  }
-
-  return buildPgmlWithNodeProperties(strippedSource, canvasRef.value.getNodeLayoutProperties())
-}
-
-const downloadSchemaText = (name: string, text: string) => {
-  if (!import.meta.client) {
-    return
-  }
-
-  const blob = new Blob([text], {
-    type: 'text/plain;charset=utf-8'
-  })
-  const objectUrl = URL.createObjectURL(blob)
-  const anchor = document.createElement('a')
-
-  anchor.href = objectUrl
-  anchor.download = `${slugifySchemaName(name)}.pgml`
-  document.body.appendChild(anchor)
-  anchor.click()
-  anchor.remove()
-
-  window.setTimeout(() => {
-    URL.revokeObjectURL(objectUrl)
-  }, 0)
-}
-
-const saveSchemaToBrowser = () => {
-  const name = normalizeSchemaName(currentSchemaName.value)
-  const text = buildSchemaText(includeLayoutInSchema.value)
-  const updatedAt = new Date().toISOString()
-  const matchingSchema = savedSchemas.value.find((entry) => {
-    return entry.id === currentSchemaId.value || entry.name.toLowerCase() === name.toLowerCase()
-  })
-
-  if (matchingSchema) {
-    matchingSchema.name = name
-    matchingSchema.text = text
-    matchingSchema.updatedAt = updatedAt
-    currentSchemaId.value = matchingSchema.id
-  } else {
-    const nextSchema: SavedPgmlSchema = {
-      id: nanoid(),
-      name,
-      text,
-      updatedAt
-    }
-
-    savedSchemas.value = [nextSchema, ...savedSchemas.value]
-    currentSchemaId.value = nextSchema.id
-  }
-
-  currentSchemaName.value = name
-  persistSavedSchemas()
-  schemaDialogOpen.value = false
-}
-
-const downloadSchema = () => {
-  const name = normalizeSchemaName(currentSchemaName.value)
-  const text = buildSchemaText(includeLayoutInSchema.value)
-
-  currentSchemaName.value = name
-  downloadSchemaText(name, text)
-  schemaDialogOpen.value = false
-}
-
-const loadSavedSchema = (schema: SavedPgmlSchema) => {
-  currentSchemaId.value = schema.id
-  currentSchemaName.value = schema.name
-  source.value = schema.text
-  loadDialogOpen.value = false
-}
-
-const deleteSavedSchema = (schemaId: string) => {
-  savedSchemas.value = savedSchemas.value.filter(entry => entry.id !== schemaId)
-
-  if (currentSchemaId.value === schemaId) {
-    currentSchemaId.value = null
-  }
-
-  persistSavedSchemas()
-}
-
-const formatSavedAt = (value: string) => {
-  const date = new Date(value)
-
-  if (Number.isNaN(date.getTime())) {
-    return 'Unknown time'
-  }
-
-  return new Intl.DateTimeFormat('en-CA', {
-    dateStyle: 'medium',
-    timeStyle: 'short'
-  }).format(date)
-}
-
-onMounted(() => {
-  readSavedSchemas()
-  syncStudioViewport()
-  window.addEventListener('resize', syncStudioViewport)
-})
-
-onBeforeUnmount(() => {
-  window.removeEventListener('resize', syncStudioViewport)
-})
 </script>
 
 <template>

@@ -116,5 +116,11 @@ describe('diagram routing utilities', () => {
       0.55,
       [0, 0, 0]
     )).toBe(2)
+
+    expect(pickDiagramAnchorSlot(
+      [0.444, 0.5, 0.556],
+      1,
+      [0, 0, 0]
+    )).toBe(1)
   })
 })

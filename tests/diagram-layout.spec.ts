@@ -51,16 +51,17 @@ test('table groups keep their required width after changing the table column cou
     element.dispatchEvent(new Event('input', { bubbles: true }))
   })
 
+  // The canvas is scaled with a CSS transform, so use offsetWidth to assert the stored node width.
   await expect.poll(async () => {
     return commerceGroup.evaluate((element) => {
-      return Math.round(element.getBoundingClientRect().width)
+      return Math.round(element.offsetWidth)
     })
   }).toBeGreaterThanOrEqual(520)
 
   await page.waitForTimeout(250)
 
   const settledWidth = await commerceGroup.evaluate((element) => {
-    return Math.round(element.getBoundingClientRect().width)
+    return Math.round(element.offsetWidth)
   })
 
   expect(settledWidth).toBeGreaterThanOrEqual(520)
@@ -78,7 +79,7 @@ test('table groups keep their required width after changing the table column cou
 
   await expect.poll(async () => {
     return commerceGroup.evaluate((element) => {
-      return Math.round(element.getBoundingClientRect().width)
+      return Math.round(element.offsetWidth)
     })
   }).toBe(settledWidth)
 })
@@ -265,23 +266,26 @@ Table public.orders in Commerce {
 
       return { x, y }
     }
+    const groupOffset = getOffsetWithinPlane(group)
+    const contentOffset = getOffsetWithinPlane(content)
+    const tenantsOffset = getOffsetWithinPlane(tenantsTable)
     const headerBand = {
-      left: group.offsetLeft,
-      right: group.offsetLeft + group.offsetWidth,
-      top: group.offsetTop,
-      bottom: group.offsetTop + content.offsetTop
+      left: groupOffset.x,
+      right: groupOffset.x + group.offsetWidth,
+      top: groupOffset.y,
+      bottom: contentOffset.y
     }
     const tenantsBounds = {
-      left: tenantsTable.offsetLeft,
-      right: tenantsTable.offsetLeft + tenantsTable.offsetWidth,
-      top: tenantsTable.offsetTop,
-      bottom: tenantsTable.offsetTop + tenantsTable.offsetHeight
+      left: tenantsOffset.x,
+      right: tenantsOffset.x + tenantsTable.offsetWidth,
+      top: tenantsOffset.y,
+      bottom: tenantsOffset.y + tenantsTable.offsetHeight
     }
     const groupBounds = {
-      left: group.offsetLeft,
-      right: group.offsetLeft + group.offsetWidth,
-      top: group.offsetTop,
-      bottom: group.offsetTop + group.offsetHeight
+      left: groupOffset.x,
+      right: groupOffset.x + group.offsetWidth,
+      top: groupOffset.y,
+      bottom: groupOffset.y + group.offsetHeight
     }
     const tenantsIdLabelOffset = getOffsetWithinPlane(tenantsIdLabel)
     const tenantsIdTargetY = tenantsIdLabelOffset.y + tenantsIdLabel.offsetHeight / 2
@@ -413,10 +417,10 @@ Table public.invoices in Commerce {
     }
 
     const tenantsBounds = {
-      left: tenantsTable.offsetLeft,
-      right: tenantsTable.offsetLeft + tenantsTable.offsetWidth,
-      top: tenantsTable.offsetTop,
-      bottom: tenantsTable.offsetTop + tenantsTable.offsetHeight
+      left: getOffsetWithinPlane(tenantsTable).x,
+      right: getOffsetWithinPlane(tenantsTable).x + tenantsTable.offsetWidth,
+      top: getOffsetWithinPlane(tenantsTable).y,
+      bottom: getOffsetWithinPlane(tenantsTable).y + tenantsTable.offsetHeight
     }
     const idLabelOffset = getOffsetWithinPlane(tenantsIdLabel)
     const idRowTop = idLabelOffset.y
@@ -435,7 +439,7 @@ Table public.invoices in Commerce {
           && point.y >= idRowTop - 1
           && point.y <= idRowBottom + 1
         )
-      }).map((point) => Math.round(point.y * 10) / 10)
+      }).map(point => Math.round(point.y * 10) / 10)
     })
 
     return {

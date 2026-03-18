@@ -16,6 +16,10 @@ export default defineNuxtConfig({
 
   css: ['~/assets/css/main.css'],
 
+  colorMode: {
+    storage: 'cookie'
+  },
+
   routeRules: {
     '/': { prerender: true }
   },
@@ -29,5 +33,16 @@ export default defineNuxtConfig({
         braceStyle: '1tbs'
       }
     }
+  },
+
+  i18n: {
+    defaultLocale: 'en',
+    locales: [
+      {
+        code: 'en',
+        language: 'en-CA',
+        name: 'English'
+      }
+    ]
   }
 })
