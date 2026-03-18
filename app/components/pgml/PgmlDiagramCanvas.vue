@@ -1,11 +1,13 @@
 <script setup lang="ts">
 import type {
   PgmlCustomType,
+  PgmlNodeProperties,
   PgmlRoutine,
   PgmlSchemaModel,
   PgmlSequence
 } from '~/utils/pgml'
 import { getRasterExportPlan } from '~/utils/diagram-export'
+import { normalizeSvgColor, normalizeSvgPaint, parseCssLinearGradient } from '~/utils/svg-paint'
 
 const { model } = defineProps<{
   model: PgmlSchemaModel
@@ -22,6 +24,7 @@ type CanvasNodeState = {
   id: string
   kind: CanvasNodeKind
   objectKind?: ObjectKind
+  collapsed: boolean
   title: string
   subtitle: string
   details: string[]
@@ -29,6 +32,7 @@ type CanvasNodeState = {
   y: number
   width: number
   height: number
+  expandedHeight?: number
   color: string
   tableIds: string[]
   impactTargets?: ImpactTarget[]
@@ -37,6 +41,7 @@ type CanvasNodeState = {
   note?: string | null
   minWidth?: number
   minHeight?: number
+  hasStoredLayout?: boolean
 }
 
 type ConnectionLine = {
@@ -112,8 +117,10 @@ const objectColumnGapX = 320
 const objectRowGapY = 180
 const layoutPadding = 88
 const exportPadding = 96
+const collapsedObjectHeight = 56
 
 const canvasNodes = computed(() => Object.values(nodeStates.value))
+const hasEmbeddedLayout = computed(() => Object.keys(model.nodeProperties).length > 0)
 const selectedNode = computed(() => {
   if (!selectedNodeId.value) {
     return null
@@ -121,6 +128,7 @@ const selectedNode = computed(() => {
 
   return nodeStates.value[selectedNodeId.value] || null
 })
+const isCollapsibleNode = (node: CanvasNodeState) => node.kind === 'object'
 const tablesByGroup = computed(() => {
   const groups: Record<string, PgmlSchemaModel['tables']> = {}
 
@@ -251,8 +259,16 @@ const chunkLongWord = (value: string, maxCharacters: number) => {
   return chunks
 }
 
-const wrapSvgText = (value: string, maxWidth: number, fontSize: number, mono = false) => {
-  const normalizedValue = value.trim()
+const wrapSvgText = (
+  value: string,
+  maxWidth: number,
+  fontSize: number,
+  mono = false,
+  preserveWhitespace = false
+) => {
+  const normalizedValue = preserveWhitespace
+    ? value.replaceAll('\t', '  ').replaceAll('\r', '')
+    : value.trim()
 
   if (normalizedValue.length === 0) {
     return ['']
@@ -260,6 +276,11 @@ const wrapSvgText = (value: string, maxWidth: number, fontSize: number, mono = f
 
   const averageCharacterWidth = fontSize * (mono ? 0.62 : 0.56)
   const maxCharacters = Math.max(8, Math.floor(maxWidth / averageCharacterWidth))
+
+  if (preserveWhitespace) {
+    return chunkLongWord(normalizedValue, maxCharacters)
+  }
+
   const words = normalizedValue.split(/\s+/)
   const lines: string[] = []
   let currentLine = ''
@@ -302,7 +323,7 @@ const buildSvgText = (
   anchor: 'start' | 'middle' | 'end' = 'start'
 ) => {
   return [
-    `<text x="${x}" y="${y}" text-anchor="${anchor}" style="${style}">`,
+    `<text x="${x}" y="${y}" text-anchor="${anchor}" xml:space="preserve" style="${style}">`,
     ...lines.map((line, index) => {
       const dy = index === 0 ? 0 : lineHeight
 
@@ -310,6 +331,45 @@ const buildSvgText = (
     }),
     '</text>'
   ].join('')
+}
+
+const getSvgGradientOffset = (offset: string | null, index: number, count: number) => {
+  if (offset) {
+    return offset
+  }
+
+  if (count <= 1) {
+    return '0%'
+  }
+
+  return `${Math.round((index / (count - 1)) * 100)}%`
+}
+
+const buildSvgPaintAttributes = (
+  attribute: 'fill' | 'stroke' | 'stop-color',
+  value: string,
+  fallback = 'transparent'
+) => {
+  const paint = normalizeSvgPaint(value, fallback)
+  const opacityAttribute = attribute === 'stop-color' ? 'stop-opacity' : `${attribute}-opacity`
+  const attributes = [`${attribute}="${escapeXml(paint.color)}"`]
+
+  if (paint.opacity !== null && paint.opacity < 1) {
+    attributes.push(`${opacityAttribute}="${paint.opacity}"`)
+  }
+
+  return attributes.join(' ')
+}
+
+const buildSvgTextPaintStyle = (value: string, fallback: string) => {
+  const paint = normalizeSvgPaint(value, fallback)
+  const style = [`fill: ${paint.color};`]
+
+  if (paint.opacity !== null && paint.opacity < 1) {
+    style.push(`fill-opacity: ${paint.opacity};`)
+  }
+
+  return style.join(' ')
 }
 
 const buildExportSvgString = async (padding = exportPadding) => {
@@ -339,60 +399,93 @@ const buildExportSvgString = async (padding = exportPadding) => {
   const dividerColor = readStudioToken('--studio-divider', 'rgba(148, 163, 184, 0.16)')
   const tableSurface = readStudioToken('--studio-table-surface', '#101c24')
   const rowSurface = readStudioToken('--studio-row-surface', '#0d1820')
-  const parts: string[] = [
-    '<?xml version="1.0" encoding="UTF-8"?>',
-    `<svg xmlns="http://www.w3.org/2000/svg" width="${exportWidth}" height="${exportHeight}" viewBox="0 0 ${exportWidth} ${exportHeight}">`,
-    '<defs>',
+  const defs: string[] = [
     '<pattern id="pgml-grid" width="18" height="18" patternUnits="userSpaceOnUse">',
-    `<circle cx="9" cy="9" r="1" fill="${escapeXml(dotColor)}" />`,
-    '</pattern>',
-    '</defs>',
-    `<rect x="0" y="0" width="${exportWidth}" height="${exportHeight}" fill="${escapeXml(backgroundColor)}" />`,
+    `<circle cx="9" cy="9" r="1" ${buildSvgPaintAttributes('fill', dotColor, '#94a3b8')} />`,
+    '</pattern>'
+  ]
+  const parts: string[] = [
+    `<rect x="0" y="0" width="${exportWidth}" height="${exportHeight}" ${buildSvgPaintAttributes('fill', backgroundColor, '#0b141a')} />`,
     `<rect x="0" y="0" width="${exportWidth}" height="${exportHeight}" fill="url(#pgml-grid)" />`
   ]
 
   connectionLines.value.forEach((line) => {
     parts.push(
-      `<path d="${escapeXml(translatePathData(line.path, offsetX, offsetY))}" fill="none" stroke="${escapeXml(line.color)}" stroke-width="2" stroke-dasharray="${line.dashed ? '10 7' : '0'}" stroke-linecap="square" stroke-linejoin="miter" opacity="0.9" />`
+      `<path d="${escapeXml(translatePathData(line.path, offsetX, offsetY))}" fill="none" ${buildSvgPaintAttributes('stroke', line.color, line.color)} stroke-width="2" stroke-dasharray="${line.dashed ? '10 7' : '0'}" stroke-linecap="square" stroke-linejoin="miter" opacity="0.9" />`
     )
   })
 
   canvasNodes.value.forEach((node) => {
     const nodeElement = planeRef.value?.querySelector(`[data-node-anchor="${node.id}"]`)
     const headerElement = planeRef.value?.querySelector(`[data-node-header="${node.id}"]`)
+    const accentElement = planeRef.value?.querySelector(`[data-node-accent="${node.id}"]`)
 
     if (!(nodeElement instanceof HTMLElement) || !(headerElement instanceof HTMLElement)) {
       return
     }
 
     const nodeStyles = window.getComputedStyle(nodeElement)
+    const nodeRect = getPlaneRelativeRect(nodeElement)
+    const accentColor = accentElement instanceof HTMLElement
+      ? normalizeSvgColor(window.getComputedStyle(accentElement).color, node.color)
+      : normalizeSvgColor(node.color, node.color)
+    const nodeBorderColor = normalizeSvgColor(nodeStyles.borderColor, railColor)
+    const nodeFillColor = normalizeSvgColor(nodeStyles.backgroundColor, node.kind === 'group' ? tableSurface : rowSurface)
+    const nodeGradientStops = node.kind === 'group'
+      ? parseCssLinearGradient(nodeStyles.backgroundImage)
+      : null
     const headerRect = getPlaneRelativeRect(headerElement)
 
-    if (!headerRect) {
+    if (!headerRect || !nodeRect) {
       return
     }
 
-    const x = node.x + offsetX
-    const y = node.y + offsetY
+    const x = nodeRect.x + offsetX
+    const y = nodeRect.y + offsetY
+    const nodeWidth = nodeRect.width
+    const nodeHeight = nodeRect.height
     const outerRadius = node.kind === 'group' ? 2 : 0
     const headerBottom = headerRect.y + headerRect.height + offsetY
     const badgeText = node.kind === 'group'
       ? `${node.tableCount || node.tableIds.length} tables`
       : `${node.tableIds.length} impact`
 
+    const gradientId = nodeGradientStops?.length
+      ? `pgml-node-gradient-${node.id.replaceAll(/[^\w-]+/g, '-')}`
+      : null
+
+    if (gradientId && nodeGradientStops) {
+      defs.push(
+        `<linearGradient id="${gradientId}" x1="0%" y1="0%" x2="0%" y2="100%">`,
+        ...nodeGradientStops.map((stop, index) => {
+          return `<stop offset="${getSvgGradientOffset(stop.offset, index, nodeGradientStops.length)}" ${buildSvgPaintAttributes('stop-color', stop.color, stop.color)} />`
+        }),
+        '</linearGradient>'
+      )
+    }
+
     parts.push(
-      `<rect x="${x}" y="${y}" width="${node.width}" height="${node.height}" rx="${outerRadius}" ry="${outerRadius}" fill="${escapeXml(nodeStyles.backgroundColor)}" stroke="${escapeXml(nodeStyles.borderColor)}" stroke-width="1" />`
+      `<rect id="pgml-node-${node.id.replaceAll(/[^\w-]+/g, '-')}-base" x="${x}" y="${y}" width="${nodeWidth}" height="${nodeHeight}" rx="${outerRadius}" ry="${outerRadius}" ${buildSvgPaintAttributes('fill', nodeFillColor, node.kind === 'group' ? tableSurface : rowSurface)} ${buildSvgPaintAttributes('stroke', nodeBorderColor, railColor)} stroke-width="1" />`
     )
-    parts.push(
-      `<line x1="${x}" y1="${headerBottom}" x2="${x + node.width}" y2="${headerBottom}" stroke="${escapeXml(dividerColor)}" stroke-width="1" />`
-    )
+
+    if (gradientId) {
+      parts.push(
+        `<rect id="pgml-node-${node.id.replaceAll(/[^\w-]+/g, '-')}-gradient" x="${x}" y="${y}" width="${nodeWidth}" height="${nodeHeight}" rx="${outerRadius}" ry="${outerRadius}" fill="url(#${gradientId})" stroke="none" />`
+      )
+    }
+
+    if (node.kind === 'group' || !node.collapsed) {
+      parts.push(
+        `<line x1="${x}" y1="${headerBottom}" x2="${x + nodeWidth}" y2="${headerBottom}" ${buildSvgPaintAttributes('stroke', dividerColor, dividerColor)} stroke-width="1" />`
+      )
+    }
     parts.push(
       buildSvgText(
         [node.kind === 'group' ? 'TABLE GROUP' : (node.objectKind || '').toUpperCase()],
         x + 10,
         y + 14,
         8,
-        `font: 600 8px ${monoFont}; letter-spacing: 0.9px; fill: ${getNodeAccentColor(node)};`
+        `font: 600 8px ${monoFont}; letter-spacing: 0.9px; ${buildSvgTextPaintStyle(accentColor, accentColor)}`
       )
     )
     parts.push(
@@ -401,32 +494,32 @@ const buildExportSvgString = async (padding = exportPadding) => {
         x + 10,
         y + 30,
         10,
-        `font: 600 14px ${sansFont}; fill: ${shellText};`
+        `font: 600 14px ${sansFont}; ${buildSvgTextPaintStyle(shellText, '#e2e8f0')}`
       )
     )
 
     if (node.subtitle.length > 0) {
       parts.push(
         buildSvgText(
-          wrapSvgText(node.subtitle, node.width - 90, 10),
+          wrapSvgText(node.subtitle, nodeWidth - 90, 10),
           x + 10,
           y + 44,
           12,
-          `font: 400 10px ${sansFont}; fill: ${shellMuted};`
+          `font: 400 10px ${sansFont}; ${buildSvgTextPaintStyle(shellMuted, '#94a3b8')}`
         )
       )
     }
 
     parts.push(
-      `<rect x="${x + node.width - 72}" y="${y + 8}" width="62" height="18" fill="transparent" stroke="${escapeXml(railColor)}" stroke-width="1" />`
+      `<rect x="${x + nodeWidth - 72}" y="${y + 8}" width="62" height="18" fill="none" ${buildSvgPaintAttributes('stroke', railColor, railColor)} stroke-width="1" />`
     )
     parts.push(
       buildSvgText(
         [badgeText.toUpperCase()],
-        x + node.width - 41,
+        x + nodeWidth - 41,
         y + 20,
         8,
-        `font: 500 8px ${monoFont}; letter-spacing: 0.45px; fill: ${shellMuted};`,
+        `font: 500 8px ${monoFont}; letter-spacing: 0.45px; ${buildSvgTextPaintStyle(shellMuted, '#94a3b8')}`,
         'middle'
       )
     )
@@ -445,6 +538,7 @@ const buildExportSvgString = async (padding = exportPadding) => {
         const tableHeaderElement = tableElement.firstElementChild
         const tableHeaderRect = tableHeaderElement ? getPlaneRelativeRect(tableHeaderElement) : null
         const tableStyles = window.getComputedStyle(tableElement)
+        const tableBorderColor = normalizeSvgColor(tableStyles.borderColor, railColor)
 
         if (!tableRect || !tableHeaderRect) {
           return
@@ -454,10 +548,10 @@ const buildExportSvgString = async (padding = exportPadding) => {
         const tableY = tableRect.y + offsetY
 
         parts.push(
-          `<rect x="${tableX}" y="${tableY}" width="${tableRect.width}" height="${tableRect.height}" rx="2" ry="2" fill="${escapeXml(tableSurface)}" stroke="${escapeXml(tableStyles.borderColor)}" stroke-width="1" />`
+          `<rect x="${tableX}" y="${tableY}" width="${tableRect.width}" height="${tableRect.height}" rx="2" ry="2" ${buildSvgPaintAttributes('fill', window.getComputedStyle(tableElement).backgroundColor, tableSurface)} ${buildSvgPaintAttributes('stroke', tableBorderColor, railColor)} stroke-width="1" />`
         )
         parts.push(
-          `<line x1="${tableX}" y1="${tableHeaderRect.y + tableHeaderRect.height + offsetY}" x2="${tableX + tableRect.width}" y2="${tableHeaderRect.y + tableHeaderRect.height + offsetY}" stroke="${escapeXml(dividerColor)}" stroke-width="1" />`
+          `<line x1="${tableX}" y1="${tableHeaderRect.y + tableHeaderRect.height + offsetY}" x2="${tableX + tableRect.width}" y2="${tableHeaderRect.y + tableHeaderRect.height + offsetY}" ${buildSvgPaintAttributes('stroke', dividerColor, dividerColor)} stroke-width="1" />`
         )
         parts.push(
           buildSvgText(
@@ -465,7 +559,7 @@ const buildExportSvgString = async (padding = exportPadding) => {
             tableX + 8,
             tableY + 16,
             10,
-            `font: 600 11px ${sansFont}; fill: ${shellText};`
+            `font: 600 11px ${sansFont}; ${buildSvgTextPaintStyle(shellText, '#e2e8f0')}`
           )
         )
         parts.push(
@@ -474,11 +568,11 @@ const buildExportSvgString = async (padding = exportPadding) => {
             tableX + 8,
             tableY + 29,
             8,
-            `font: 500 8px ${monoFont}; letter-spacing: 0.6px; fill: ${shellMuted};`
+            `font: 500 8px ${monoFont}; letter-spacing: 0.6px; ${buildSvgTextPaintStyle(shellMuted, '#94a3b8')}`
           )
         )
         parts.push(
-          `<rect x="${tableX + tableRect.width - 48}" y="${tableY + 8}" width="40" height="16" fill="transparent" stroke="${escapeXml(railColor)}" stroke-width="1" />`
+          `<rect x="${tableX + tableRect.width - 48}" y="${tableY + 8}" width="40" height="16" fill="none" ${buildSvgPaintAttributes('stroke', railColor, railColor)} stroke-width="1" />`
         )
         parts.push(
           buildSvgText(
@@ -486,7 +580,7 @@ const buildExportSvgString = async (padding = exportPadding) => {
             tableX + tableRect.width - 28,
             tableY + 19,
             8,
-            `font: 500 8px ${monoFont}; letter-spacing: 0.35px; fill: ${shellMuted};`,
+            `font: 500 8px ${monoFont}; letter-spacing: 0.35px; ${buildSvgTextPaintStyle(shellMuted, '#94a3b8')}`,
             'middle'
           )
         )
@@ -511,7 +605,7 @@ const buildExportSvgString = async (padding = exportPadding) => {
           let modifierCursorY = rowY + 5
 
           parts.push(
-            `<rect x="${rowX}" y="${rowY}" width="${rowRect.width}" height="${rowHeight}" fill="${escapeXml(rowSurface)}" />`
+            `<rect x="${rowX}" y="${rowY}" width="${rowRect.width}" height="${rowHeight}" ${buildSvgPaintAttributes('fill', window.getComputedStyle(rowElement).backgroundColor, rowSurface)} />`
           )
 
           parts.push(
@@ -520,7 +614,7 @@ const buildExportSvgString = async (padding = exportPadding) => {
               rowX + 8,
               rowY + 13,
               9,
-              `font: 600 9px ${monoFont}; fill: ${shellText};`
+              `font: 600 9px ${monoFont}; ${buildSvgTextPaintStyle(shellText, '#e2e8f0')}`
             )
           )
           parts.push(
@@ -529,7 +623,7 @@ const buildExportSvgString = async (padding = exportPadding) => {
               rowX + 8,
               rowY + 24,
               8,
-              `font: 400 8px ${sansFont}; fill: ${shellMuted};`
+              `font: 400 8px ${sansFont}; ${buildSvgTextPaintStyle(shellMuted, '#94a3b8')}`
             )
           )
 
@@ -539,7 +633,7 @@ const buildExportSvgString = async (padding = exportPadding) => {
             const modifierX = rowX + rowRect.width - modifierWidth - 6
 
             parts.push(
-              `<rect x="${modifierX}" y="${modifierCursorY}" width="${modifierWidth}" height="${modifierHeight}" fill="transparent" stroke="${escapeXml(railColor)}" stroke-width="1" />`
+              `<rect x="${modifierX}" y="${modifierCursorY}" width="${modifierWidth}" height="${modifierHeight}" fill="none" ${buildSvgPaintAttributes('stroke', railColor, railColor)} stroke-width="1" />`
             )
             parts.push(
               buildSvgText(
@@ -547,7 +641,7 @@ const buildExportSvgString = async (padding = exportPadding) => {
                 modifierX + modifierWidth - 4,
                 modifierCursorY + 9,
                 8,
-                `font: 500 7.5px ${monoFont}; letter-spacing: 0.25px; fill: ${shellMuted};`,
+                `font: 500 7.5px ${monoFont}; letter-spacing: 0.25px; ${buildSvgTextPaintStyle(shellMuted, '#94a3b8')}`,
                 'end'
               )
             )
@@ -557,7 +651,7 @@ const buildExportSvgString = async (padding = exportPadding) => {
 
           if (columnIndex < table.columns.length - 1) {
             parts.push(
-              `<line x1="${rowX}" y1="${rowY + rowHeight}" x2="${rowX + rowRect.width}" y2="${rowY + rowHeight}" stroke="${escapeXml(dividerColor)}" stroke-width="1" />`
+              `<line x1="${rowX}" y1="${rowY + rowHeight}" x2="${rowX + rowRect.width}" y2="${rowY + rowHeight}" ${buildSvgPaintAttributes('stroke', dividerColor, dividerColor)} stroke-width="1" />`
             )
           }
         })
@@ -579,7 +673,9 @@ const buildExportSvgString = async (padding = exportPadding) => {
         return
       }
 
-      const paragraphLines = wrapSvgText(paragraph.textContent || '', paragraphRect.width, 9, true)
+      const paragraphText = paragraph.textContent || ''
+      const preserveParagraphWhitespace = /^\s+/.test(paragraphText) || paragraphText.length === 0
+      const paragraphLines = wrapSvgText(paragraphText, paragraphRect.width, 9, true, preserveParagraphWhitespace)
 
       parts.push(
         buildSvgText(
@@ -587,7 +683,7 @@ const buildExportSvgString = async (padding = exportPadding) => {
           paragraphRect.x + offsetX,
           paragraphRect.y + offsetY + 8,
           10,
-          `font: 400 9px ${monoFont}; fill: ${shellMuted};`
+          `font: 400 9px ${monoFont}; ${buildSvgTextPaintStyle(shellMuted, '#94a3b8')}`
         )
       )
     })
@@ -600,7 +696,7 @@ const buildExportSvgString = async (padding = exportPadding) => {
       }
 
       parts.push(
-        `<rect x="${chipRect.x + offsetX}" y="${chipRect.y + offsetY}" width="${chipRect.width}" height="${chipRect.height}" fill="transparent" stroke="${escapeXml(railColor)}" stroke-width="1" />`
+        `<rect x="${chipRect.x + offsetX}" y="${chipRect.y + offsetY}" width="${chipRect.width}" height="${chipRect.height}" fill="none" ${buildSvgPaintAttributes('stroke', railColor, railColor)} stroke-width="1" />`
       )
       parts.push(
         buildSvgText(
@@ -608,19 +704,42 @@ const buildExportSvgString = async (padding = exportPadding) => {
           chipRect.x + offsetX + chipRect.width / 2,
           chipRect.y + offsetY + chipRect.height / 2 + 3,
           8,
-          `font: 500 8px ${monoFont}; letter-spacing: 0.35px; fill: ${shellMuted};`,
+          `font: 500 8px ${monoFont}; letter-spacing: 0.35px; ${buildSvgTextPaintStyle(shellMuted, '#94a3b8')}`,
           'middle'
         )
       )
     })
-  })
 
-  parts.push('</svg>')
+    const resizeHandleElement = nodeElement.querySelector('button[aria-label="Resize node"]')
+    const resizeHandleRect = resizeHandleElement ? getPlaneRelativeRect(resizeHandleElement) : null
+
+    if (resizeHandleRect) {
+      const handleX = resizeHandleRect.x + offsetX
+      const handleY = resizeHandleRect.y + offsetY
+      const handleWidth = resizeHandleRect.width
+      const handleHeight = resizeHandleRect.height
+
+      parts.push(
+        `<line x1="${handleX + handleWidth}" y1="${handleY}" x2="${handleX + handleWidth}" y2="${handleY + handleHeight}" ${buildSvgPaintAttributes('stroke', accentColor, accentColor)} stroke-width="2" />`
+      )
+      parts.push(
+        `<line x1="${handleX}" y1="${handleY + handleHeight}" x2="${handleX + handleWidth}" y2="${handleY + handleHeight}" ${buildSvgPaintAttributes('stroke', accentColor, accentColor)} stroke-width="2" />`
+      )
+    }
+  })
 
   return {
     width: exportWidth,
     height: exportHeight,
-    svg: parts.join('')
+    svg: [
+      '<?xml version="1.0" encoding="UTF-8"?>',
+      `<svg xmlns="http://www.w3.org/2000/svg" width="${exportWidth}" height="${exportHeight}" viewBox="0 0 ${exportWidth} ${exportHeight}">`,
+      '<defs>',
+      ...defs,
+      '</defs>',
+      ...parts,
+      '</svg>'
+    ].join('')
   }
 }
 
@@ -742,13 +861,24 @@ const measureObjectMinimumSize = (node: CanvasNodeState) => {
 
   const objectElement = planeRef.value.querySelector(`[data-node-anchor="${node.id}"]`)
   const headerElement = planeRef.value.querySelector(`[data-node-header="${node.id}"]`)
-  const bodyElement = planeRef.value.querySelector(`[data-node-body="${node.id}"]`)
 
   if (
     !(objectElement instanceof HTMLElement)
     || !(headerElement instanceof HTMLElement)
-    || !(bodyElement instanceof HTMLElement)
   ) {
+    return null
+  }
+
+  if (node.collapsed) {
+    return {
+      minWidth: Math.ceil(Math.max(node.minWidth || node.width, 220)),
+      minHeight: Math.ceil(Math.max(headerElement.offsetHeight, collapsedObjectHeight))
+    }
+  }
+
+  const bodyElement = planeRef.value.querySelector(`[data-node-body="${node.id}"]`)
+
+  if (!(bodyElement instanceof HTMLElement)) {
     return null
   }
 
@@ -1924,11 +2054,13 @@ const buildObjectNodes = (groupStates: Record<string, CanvasNodeState>) => {
         id: `index:${index.name}`,
         kind: 'object',
         objectKind: 'Index',
+        collapsed: true,
         title: index.name,
         subtitle: `${index.type.toUpperCase()} on ${table.name}`,
         details: [`Columns: ${index.columns.join(', ')}`],
         width: 248,
         height: 104,
+        expandedHeight: 104,
         color: '#38bdf8',
         tableIds: [normalizeReference(index.tableName)],
         impactTargets: index.columns.map(columnName => ({
@@ -1945,11 +2077,13 @@ const buildObjectNodes = (groupStates: Record<string, CanvasNodeState>) => {
         id: `constraint:${constraint.name}`,
         kind: 'object',
         objectKind: 'Constraint',
+        collapsed: true,
         title: constraint.name,
         subtitle: `Constraint on ${table.name}`,
         details: [constraint.expression],
         width: 258,
         height: 114,
+        expandedHeight: 114,
         color: '#fb7185',
         tableIds: [tableId],
         impactTargets: inferConstraintTargets(tableId, constraint.expression)
@@ -1964,11 +2098,13 @@ const buildObjectNodes = (groupStates: Record<string, CanvasNodeState>) => {
       id: `function:${pgFunction.name}`,
       kind: 'object',
       objectKind: 'Function',
+      collapsed: true,
       title: pgFunction.name,
       subtitle: pgFunction.signature,
       details: pgFunction.details,
       width: 336,
       height: 176,
+      expandedHeight: 176,
       color: '#c084fc',
       tableIds: uniqueValues(impactTargets.map(target => target.tableId)),
       impactTargets
@@ -1982,11 +2118,13 @@ const buildObjectNodes = (groupStates: Record<string, CanvasNodeState>) => {
       id: `procedure:${procedure.name}`,
       kind: 'object',
       objectKind: 'Procedure',
+      collapsed: true,
       title: procedure.name,
       subtitle: procedure.signature,
       details: procedure.details,
       width: 320,
       height: 156,
+      expandedHeight: 156,
       color: '#f97316',
       tableIds: uniqueValues(impactTargets.map(target => target.tableId)),
       impactTargets
@@ -2000,11 +2138,13 @@ const buildObjectNodes = (groupStates: Record<string, CanvasNodeState>) => {
       id: `trigger:${trigger.name}`,
       kind: 'object',
       objectKind: 'Trigger',
+      collapsed: true,
       title: trigger.name,
       subtitle: `On ${trigger.tableName}`,
       details: trigger.details,
       width: 332,
       height: 168,
+      expandedHeight: 168,
       color: '#22c55e',
       tableIds: [tableId],
       impactTargets: inferTriggerTargets(tableId, trigger)
@@ -2018,11 +2158,13 @@ const buildObjectNodes = (groupStates: Record<string, CanvasNodeState>) => {
       id: `sequence:${sequence.name}`,
       kind: 'object',
       objectKind: 'Sequence',
+      collapsed: true,
       title: sequence.name,
       subtitle: 'Sequence',
       details: sequence.details,
       width: 308,
       height: 156,
+      expandedHeight: 156,
       color: '#eab308',
       tableIds: uniqueValues(impactTargets.map(target => target.tableId)),
       impactTargets
@@ -2036,11 +2178,13 @@ const buildObjectNodes = (groupStates: Record<string, CanvasNodeState>) => {
       id: `custom-type:${customType.kind}:${customType.name}`,
       kind: 'object',
       objectKind: 'Custom Type',
+      collapsed: true,
       title: customType.name,
       subtitle: customType.kind,
       details: customType.details,
       width: 258,
       height: 114,
+      expandedHeight: 114,
       color: '#14b8a6',
       tableIds: uniqueValues(impactTargets.map(target => target.tableId)),
       impactTargets
@@ -2070,28 +2214,32 @@ const syncNodeStates = () => {
   orderedNames.forEach((groupName, index) => {
     const tables = tableGroups.get(groupName) || []
     const existing = nodeStates.value[`group:${groupName}`]
+    const storedLayout = model.nodeProperties[`group:${groupName}`]
     const color = existing?.color || palette[index % palette.length] || '#8b5cf6'
-    const columnCount = existing?.columnCount ?? 1
+    const columnCount = storedLayout?.tableColumns || existing?.columnCount || 1
     const note = model.groups.find(group => group.name === groupName)?.note || null
     const minimumSize = getGroupMinimumSize(groupName, columnCount)
 
     groupNodes.push({
       id: `group:${groupName}`,
       kind: 'group',
+      collapsed: false,
       title: groupName,
       subtitle: note || '',
       details: tables.map(table => table.fullName),
-      x: existing?.x ?? 120 + index * 420,
-      y: existing?.y ?? 90 + (index % 2) * 120,
-      width: Math.max(existing?.width ?? 320, minimumSize.minWidth),
-      height: Math.max(existing?.height ?? 180, minimumSize.minHeight),
+      x: storedLayout?.x ?? existing?.x ?? 120 + index * 420,
+      y: storedLayout?.y ?? existing?.y ?? 90 + (index % 2) * 120,
+      width: Math.max(storedLayout?.width ?? existing?.width ?? 320, minimumSize.minWidth),
+      height: Math.max(storedLayout?.height ?? existing?.height ?? 180, minimumSize.minHeight),
+      expandedHeight: Math.max(storedLayout?.height ?? existing?.expandedHeight ?? existing?.height ?? 180, minimumSize.minHeight),
       color,
       tableIds: tables.map(table => table.fullName),
       tableCount: tables.length,
       columnCount,
       note,
       minWidth: minimumSize.minWidth,
-      minHeight: minimumSize.minHeight
+      minHeight: minimumSize.minHeight,
+      hasStoredLayout: Boolean(storedLayout)
     })
   })
 
@@ -2099,11 +2247,12 @@ const syncNodeStates = () => {
 
   for (const groupNode of groupNodes) {
     const existing = nodeStates.value[groupNode.id]
+    const storedLayout = model.nodeProperties[groupNode.id]
 
     nextStates[groupNode.id] = {
       ...groupNode,
-      x: existing?.x ?? groupPositions[groupNode.id]?.x ?? groupNode.x,
-      y: existing?.y ?? groupPositions[groupNode.id]?.y ?? groupNode.y
+      x: storedLayout?.x ?? existing?.x ?? groupPositions[groupNode.id]?.x ?? groupNode.x,
+      y: storedLayout?.y ?? existing?.y ?? groupPositions[groupNode.id]?.y ?? groupNode.y
     }
   }
 
@@ -2112,16 +2261,29 @@ const syncNodeStates = () => {
 
   for (const objectNode of objectNodes) {
     const existing = nodeStates.value[objectNode.id]
+    const storedLayout = model.nodeProperties[objectNode.id]
+    const collapsed = existing?.collapsed ?? true
+    const expandedHeight = Math.max(
+      storedLayout?.height
+      ?? existing?.expandedHeight
+      ?? (existing?.collapsed ? objectNode.expandedHeight || objectNode.height : existing?.height)
+      ?? objectNode.expandedHeight
+      ?? objectNode.height,
+      objectNode.expandedHeight || objectNode.height
+    )
 
     nextStates[objectNode.id] = {
       ...objectNode,
-      x: existing?.x ?? objectPositions[objectNode.id]?.x ?? objectNode.x,
-      y: existing?.y ?? objectPositions[objectNode.id]?.y ?? objectNode.y,
-      width: existing?.width ?? objectNode.width,
-      height: existing?.height ?? objectNode.height,
+      collapsed,
+      x: storedLayout?.x ?? existing?.x ?? objectPositions[objectNode.id]?.x ?? objectNode.x,
+      y: storedLayout?.y ?? existing?.y ?? objectPositions[objectNode.id]?.y ?? objectNode.y,
+      width: storedLayout?.width ?? existing?.width ?? objectNode.width,
+      height: collapsed ? existing?.height ?? collapsedObjectHeight : expandedHeight,
+      expandedHeight,
       color: existing?.color || objectNode.color,
       minWidth: existing?.minWidth ?? objectNode.width,
-      minHeight: existing?.minHeight ?? objectNode.height
+      minHeight: collapsed ? existing?.minHeight ?? collapsedObjectHeight : existing?.minHeight ?? objectNode.height,
+      hasStoredLayout: Boolean(storedLayout)
     }
   }
 
@@ -2186,7 +2348,7 @@ const getNodeBorderColor = (node: CanvasNodeState) => {
 const getNodeBackground = (node: CanvasNodeState) => {
   return node.kind === 'group'
     ? `linear-gradient(180deg, color-mix(in srgb, ${node.color} 12%, transparent), var(--studio-group-surface-soft) 22%), var(--studio-group-surface)`
-    : `linear-gradient(180deg, color-mix(in srgb, ${node.color} 9%, transparent), var(--studio-node-surface-top) 18%), var(--studio-node-surface-bottom)`
+    : `color-mix(in srgb, ${node.color} 8%, var(--studio-node-surface-bottom) 92%)`
 }
 const getNodeAccentColor = (node: CanvasNodeState) => {
   return `color-mix(in srgb, ${node.color} 70%, var(--studio-node-accent-mix) 30%)`
@@ -2652,6 +2814,10 @@ const updateConnections = () => {
 }
 
 const reflowAutoLayout = () => {
+  if (hasEmbeddedLayout.value) {
+    return
+  }
+
   const nextStates: Record<string, CanvasNodeState> = { ...nodeStates.value }
   const groupNodes = Object.values(nextStates).filter(node => node.kind === 'group')
   const groupPositions = autoLayoutGroups(groupNodes)
@@ -2727,6 +2893,24 @@ const resetView = () => {
   fitView()
 }
 
+const getNodeLayoutProperties = () => {
+  return Object.values(nodeStates.value).reduce<Record<string, PgmlNodeProperties>>((properties, node) => {
+    const persistedHeight = node.kind === 'object' && node.collapsed
+      ? node.expandedHeight || node.height
+      : node.height
+
+    properties[node.id] = {
+      x: Math.round(node.x),
+      y: Math.round(node.y),
+      width: Math.round(node.width),
+      height: Math.round(persistedHeight),
+      tableColumns: node.kind === 'group' ? Math.max(1, Math.round(node.columnCount || 1)) : null
+    }
+
+    return properties
+  }, {})
+}
+
 const updateNode = (
   id: string,
   partial: Partial<CanvasNodeState>,
@@ -2745,6 +2929,23 @@ const updateNode = (
   const nextNode = {
     ...current,
     ...partial
+  }
+
+  if (current.kind === 'object') {
+    if (nextNode.collapsed) {
+      const headerElement = planeRef.value?.querySelector(`[data-node-header="${id}"]`)
+      const nextCollapsedHeight = Math.ceil(Math.max(
+        headerElement instanceof HTMLElement ? headerElement.offsetHeight : 0,
+        collapsedObjectHeight
+      ))
+
+      nextNode.minHeight = nextCollapsedHeight
+      nextNode.height = nextCollapsedHeight
+    } else {
+      nextNode.expandedHeight = typeof partial.height === 'number'
+        ? nextNode.height
+        : nextNode.expandedHeight || nextNode.height
+    }
   }
 
   if (current.kind === 'group') {
@@ -2767,6 +2968,34 @@ const updateNode = (
     }
 
     updateConnections()
+  })
+}
+
+const toggleNodeCollapsed = (id: string) => {
+  const node = nodeStates.value[id]
+
+  if (!node || node.kind !== 'object') {
+    return
+  }
+
+  if (node.collapsed) {
+    updateNode(id, {
+      collapsed: false,
+      height: Math.max(node.expandedHeight || node.height, collapsedObjectHeight)
+    })
+    return
+  }
+
+  const headerElement = planeRef.value?.querySelector(`[data-node-header="${id}"]`)
+  const nextCollapsedHeight = Math.ceil(Math.max(
+    headerElement instanceof HTMLElement ? headerElement.offsetHeight : 0,
+    collapsedObjectHeight
+  ))
+
+  updateNode(id, {
+    collapsed: true,
+    expandedHeight: node.height,
+    height: nextCollapsedHeight
   })
 }
 
@@ -2881,13 +3110,17 @@ watch(
       await nextTick()
       observeCanvasLayout()
     }
-    reflowAutoLayout()
+    if (!hasEmbeddedLayout.value) {
+      reflowAutoLayout()
+    }
     await nextTick()
     observeCanvasLayout()
     if (syncMeasuredNodeSizes()) {
       await nextTick()
       observeCanvasLayout()
-      reflowAutoLayout()
+      if (!hasEmbeddedLayout.value) {
+        reflowAutoLayout()
+      }
       await nextTick()
       observeCanvasLayout()
     }
@@ -2907,7 +3140,9 @@ watch([scale, pan], async () => {
 onMounted(() => {
   resizeObserver = new ResizeObserver(() => {
     if (syncMeasuredNodeSizes()) {
-      reflowAutoLayout()
+      if (!hasEmbeddedLayout.value) {
+        reflowAutoLayout()
+      }
     }
     updateConnections()
   })
@@ -2948,6 +3183,7 @@ defineExpose<{
   exportDiagram: (format: DiagramExportFormat, scaleFactor?: number) => Promise<void>
   exportPng: (scaleFactor: number) => Promise<void>
   exportSvg: () => Promise<void>
+  getNodeLayoutProperties: () => Record<string, PgmlNodeProperties>
 }>({
   exportDiagram: async (format, scaleFactor = 1) => {
     if (format === 'svg') {
@@ -2958,7 +3194,8 @@ defineExpose<{
     await exportPng(scaleFactor)
   },
   exportPng,
-  exportSvg
+  exportSvg,
+  getNodeLayoutProperties
 })
 </script>
 
@@ -3017,11 +3254,15 @@ defineExpose<{
       >
         <div
           :data-node-header="node.id"
-          class="flex cursor-move items-start justify-between gap-2 border-b border-[color:var(--studio-divider)] px-2.5 py-2"
+          :class="[
+            'flex cursor-move items-start justify-between gap-2 px-2.5 py-2',
+            node.kind === 'group' || !node.collapsed ? 'border-b border-[color:var(--studio-divider)]' : ''
+          ]"
           @pointerdown="startDragNode($event, node.id)"
         >
           <div class="min-w-0">
             <span
+              :data-node-accent="node.id"
               class="mb-1 inline-flex font-mono text-[0.62rem] uppercase tracking-[0.08em]"
               :style="{ color: getNodeAccentColor(node) }"
             >
@@ -3038,9 +3279,23 @@ defineExpose<{
             </p>
           </div>
 
-          <span class="inline-flex h-5 items-center border border-[color:var(--studio-rail)] px-1.5 font-mono text-[0.62rem] uppercase tracking-[0.06em] text-[color:var(--studio-shell-muted)]">
-            {{ node.kind === 'group' ? `${node.tableCount || node.tableIds.length} tables` : `${node.tableIds.length} impact` }}
-          </span>
+          <div class="flex shrink-0 items-start gap-1">
+            <span class="inline-flex h-5 items-center border border-[color:var(--studio-rail)] px-1.5 font-mono text-[0.62rem] uppercase tracking-[0.06em] text-[color:var(--studio-shell-muted)]">
+              {{ node.kind === 'group' ? `${node.tableCount || node.tableIds.length} tables` : `${node.tableIds.length} impact` }}
+            </span>
+            <UButton
+              v-if="isCollapsibleNode(node)"
+              :icon="node.collapsed ? 'i-lucide-plus' : 'i-lucide-minus'"
+              color="neutral"
+              variant="ghost"
+              size="xs"
+              class="h-5 w-5 rounded-none border border-[color:var(--studio-rail)] px-0 text-[color:var(--studio-shell-muted)] hover:bg-[color:var(--studio-surface-hover)] hover:text-[color:var(--studio-shell-text)]"
+              :aria-label="node.collapsed ? `Expand ${node.title}` : `Collapse ${node.title}`"
+              :title="node.collapsed ? `Expand ${node.title}` : `Collapse ${node.title}`"
+              @pointerdown.stop
+              @click.stop="toggleNodeCollapsed(node.id)"
+            />
+          </div>
         </div>
 
         <div
@@ -3106,7 +3361,7 @@ defineExpose<{
         </div>
 
         <div
-          v-else
+          v-else-if="!node.collapsed"
           :data-node-body="node.id"
           class="grid gap-1.5 px-2.5 pb-2.5 pt-2"
         >
@@ -3131,6 +3386,7 @@ defineExpose<{
         </div>
 
         <button
+          v-if="node.kind === 'group' || !node.collapsed"
           class="absolute bottom-1.5 right-1.5 h-4 w-4 cursor-nwse-resize border-none bg-transparent"
           :style="{
             borderRight: `2px solid ${getNodeAccentColor(node)}`,
@@ -3215,7 +3471,10 @@ defineExpose<{
           >
         </label>
 
-        <label class="grid gap-1">
+        <label
+          v-if="selectedNode.kind === 'group' || !selectedNode.collapsed"
+          class="grid gap-1"
+        >
           <span class="font-mono text-[0.58rem] uppercase tracking-[0.08em] text-[color:var(--studio-shell-label)]">Width</span>
           <input
             :value="selectedNode.width"
@@ -3227,7 +3486,10 @@ defineExpose<{
           >
         </label>
 
-        <label class="grid gap-1">
+        <label
+          v-if="selectedNode.kind === 'group' || !selectedNode.collapsed"
+          class="grid gap-1"
+        >
           <span class="font-mono text-[0.58rem] uppercase tracking-[0.08em] text-[color:var(--studio-shell-label)]">Height</span>
           <input
             :value="selectedNode.height"

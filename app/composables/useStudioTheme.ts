@@ -35,7 +35,9 @@ const studioThemeTokens: Record<StudioTheme, Record<string, string>> = {
     '--studio-subtle': 'rgba(255, 255, 255, 0.03)',
     '--studio-node-border-neutral': 'rgba(255, 255, 255, 0.2)',
     '--studio-node-accent-mix': 'white',
-    '--studio-floating-shadow': '0 20px 40px rgba(0, 0, 0, 0.28)'
+    '--studio-floating-shadow': '0 20px 40px rgba(0, 0, 0, 0.28)',
+    '--studio-modal-bg': '#0f1b24',
+    '--studio-modal-overlay': 'rgba(3, 9, 14, 0.72)'
   },
   light: {
     '--studio-shell-bg': '#f4f1ea',
@@ -67,8 +69,22 @@ const studioThemeTokens: Record<StudioTheme, Record<string, string>> = {
     '--studio-subtle': 'rgba(15, 23, 42, 0.04)',
     '--studio-node-border-neutral': 'rgba(15, 23, 42, 0.14)',
     '--studio-node-accent-mix': 'black',
-    '--studio-floating-shadow': '0 22px 44px rgba(148, 163, 184, 0.24)'
+    '--studio-floating-shadow': '0 22px 44px rgba(148, 163, 184, 0.24)',
+    '--studio-modal-bg': '#fffdf8',
+    '--studio-modal-overlay': 'rgba(148, 163, 184, 0.34)'
   }
+}
+
+const applyStudioThemeToDocument = (theme: StudioTheme) => {
+  if (!import.meta.client) {
+    return
+  }
+
+  document.documentElement.dataset.studioTheme = theme
+
+  Object.entries(studioThemeTokens[theme]).forEach(([token, value]) => {
+    document.documentElement.style.setProperty(token, value)
+  })
 }
 
 export const useStudioTheme = () => {
@@ -90,6 +106,7 @@ export const useStudioTheme = () => {
         studioTheme.value = savedTheme
       }
 
+      applyStudioThemeToDocument(studioTheme.value)
       studioThemeInitialized.value = true
     })
 
@@ -97,6 +114,14 @@ export const useStudioTheme = () => {
       if (import.meta.client) {
         window.localStorage.setItem(studioThemeStorageKey, value)
       }
+
+      applyStudioThemeToDocument(value)
+    })
+  }
+
+  if (import.meta.client) {
+    watchEffect(() => {
+      applyStudioThemeToDocument(studioTheme.value)
     })
   }
 

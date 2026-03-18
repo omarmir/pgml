@@ -44,6 +44,14 @@ export type PgmlGroup = {
   note: string | null
 }
 
+export type PgmlNodeProperties = {
+  x: number
+  y: number
+  width: number
+  height: number
+  tableColumns: number | null
+}
+
 export type PgmlMetadataEntry = {
   key: string
   value: string
@@ -120,6 +128,7 @@ export type PgmlSchemaModel = {
   sequences: PgmlSequence[]
   customTypes: PgmlCustomType[]
   schemas: string[]
+  nodeProperties: Record<string, PgmlNodeProperties>
 }
 
 type NamedBlock = {
@@ -242,6 +251,13 @@ const parseSqlArgumentList = (value: string) => {
 }
 
 const buildListLiteral = (values: string[]) => `[${values.join(', ')}]`
+const formatPgmlNumber = (value: number) => {
+  if (Number.isInteger(value)) {
+    return `${value}`
+  }
+
+  return value.toFixed(2).replace(/\.?0+$/, '')
+}
 
 const mergeMetadataEntries = (metadata: PgmlMetadataEntry[], derived: PgmlMetadataEntry[]) => {
   const existingKeys = new Set(metadata.map(entry => normalizeEffectKey(entry.key)))
@@ -1157,6 +1173,166 @@ const parseTopLevelReference = (line: string) => {
   } satisfies PgmlReference
 }
 
+const parseNodePropertiesBlock = (block: NamedBlock): { id: string, properties: PgmlNodeProperties } | null => {
+  const headerMatch = block.header.match(/^Properties\s+(.+)$/)
+
+  if (!headerMatch) {
+    return null
+  }
+
+  const id = cleanName(readMatch(headerMatch[1]))
+
+  if (id.length === 0) {
+    return null
+  }
+
+  const entries: Partial<PgmlNodeProperties> = {}
+
+  for (const line of block.body) {
+    const trimmed = line.trim()
+
+    if (trimmed.length === 0 || trimmed.startsWith('//')) {
+      continue
+    }
+
+    const entry = parseMetadataEntryLine(trimmed)
+
+    if (!entry) {
+      continue
+    }
+
+    const key = normalizeEffectKey(entry.key)
+    const numericValue = Number.parseFloat(entry.value)
+
+    if (!Number.isFinite(numericValue)) {
+      continue
+    }
+
+    if (key === 'x') {
+      entries.x = numericValue
+      continue
+    }
+
+    if (key === 'y') {
+      entries.y = numericValue
+      continue
+    }
+
+    if (key === 'width') {
+      entries.width = numericValue
+      continue
+    }
+
+    if (key === 'height') {
+      entries.height = numericValue
+      continue
+    }
+
+    if (key === 'table_columns' || key === 'tablecolumns' || key === 'columns') {
+      entries.tableColumns = numericValue
+    }
+  }
+
+  const x = entries.x
+  const y = entries.y
+  const width = entries.width
+  const height = entries.height
+
+  if (
+    x === undefined
+    || y === undefined
+    || width === undefined
+    || height === undefined
+  ) {
+    return null
+  }
+
+  return {
+    id,
+    properties: {
+      x,
+      y,
+      width,
+      height,
+      tableColumns: Number.isFinite(entries.tableColumns) ? Math.max(1, Math.round(entries.tableColumns || 1)) : null
+    } satisfies PgmlNodeProperties
+  }
+}
+
+export const stripPgmlPropertiesBlocks = (source: string) => {
+  const lines = source.split('\n')
+  const keptLines: string[] = []
+  let index = 0
+
+  while (index < lines.length) {
+    const line = lines[index] || ''
+    const trimmed = line.trim()
+
+    if (trimmed.startsWith('Properties ') && trimmed.endsWith('{')) {
+      let depth = 1
+      index += 1
+
+      while (index < lines.length && depth > 0) {
+        const nextLine = lines[index] || ''
+        const nextTrimmed = nextLine.trim()
+
+        if (nextTrimmed.endsWith('{')) {
+          depth += 1
+        }
+
+        if (nextTrimmed === '}') {
+          depth -= 1
+        }
+
+        index += 1
+      }
+
+      continue
+    }
+
+    keptLines.push(line)
+    index += 1
+  }
+
+  return keptLines.join('\n').replace(/\n{3,}/g, '\n\n').trim()
+}
+
+export const buildPgmlWithNodeProperties = (
+  source: string,
+  nodeProperties: Record<string, PgmlNodeProperties>
+) => {
+  const strippedSource = stripPgmlPropertiesBlocks(source)
+  const propertyBlocks = Object.entries(nodeProperties)
+    .sort(([leftId], [rightId]) => leftId.localeCompare(rightId))
+    .map(([id, properties]) => {
+      const lines = [
+        `Properties "${id}" {`,
+        `  x: ${formatPgmlNumber(properties.x)}`,
+        `  y: ${formatPgmlNumber(properties.y)}`,
+        `  width: ${formatPgmlNumber(properties.width)}`,
+        `  height: ${formatPgmlNumber(properties.height)}`
+      ]
+
+      if (properties.tableColumns) {
+        lines.push(`  table_columns: ${Math.max(1, Math.round(properties.tableColumns))}`)
+      }
+
+      lines.push('}')
+
+      return lines.join('\n')
+    })
+
+  if (!propertyBlocks.length) {
+    return strippedSource
+  }
+
+  if (!strippedSource) {
+    return propertyBlocks.join('\n\n')
+  }
+
+  return `${strippedSource}\n\n${propertyBlocks.join('\n\n')}`
+}
+
 export const parsePgml = (source: string) => {
   const { topLevel, blocks } = collectBlocks(source)
   const tables: PgmlTable[] = []
@@ -1167,6 +1343,7 @@ export const parsePgml = (source: string) => {
   const sequences: PgmlSequence[] = []
   const customTypes: PgmlCustomType[] = []
   const references: PgmlReference[] = []
+  const nodeProperties: Record<string, PgmlNodeProperties> = {}
 
   for (const line of topLevel) {
     const reference = parseTopLevelReference(line)
@@ -1188,6 +1365,13 @@ export const parsePgml = (source: string) => {
 
     if (group) {
       groups.push(group)
+      continue
+    }
+
+    const parsedNodeProperties = parseNodePropertiesBlock(block)
+
+    if (parsedNodeProperties) {
+      nodeProperties[parsedNodeProperties.id] = parsedNodeProperties.properties
       continue
     }
 
@@ -1270,7 +1454,8 @@ export const parsePgml = (source: string) => {
     triggers,
     sequences,
     customTypes,
-    schemas: Array.from(schemaSet)
+    schemas: Array.from(schemaSet),
+    nodeProperties
   } satisfies PgmlSchemaModel
 }
 
