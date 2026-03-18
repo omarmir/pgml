@@ -5,6 +5,12 @@ import { getPgmlSourceScrollTop, getPgmlSourceSelectionRange, parsePgml, pgmlExa
 describe('PGML model parsing', () => {
   it('parses the bundled example into grouped tables, refs, and custom types', () => {
     const model = parsePgml(pgmlExample)
+    const orderCustomerReferences = model.references.filter(reference =>
+      reference.fromTable === 'public.orders'
+      && reference.fromColumn === 'customer_id'
+      && reference.toTable === 'public.users'
+      && reference.toColumn === 'id'
+    )
 
     expect(model.groups.map(group => group.name)).toEqual(['Core', 'Commerce', 'Programs'])
     expect(model.tables).toHaveLength(8)
@@ -22,6 +28,7 @@ describe('PGML model parsing', () => {
         toColumn: 'id'
       })
     ]))
+    expect(orderCustomerReferences).toHaveLength(1)
     expect(model.customTypes).toEqual(expect.arrayContaining([
       expect.objectContaining({ kind: 'Enum', name: 'role_kind' }),
       expect.objectContaining({ kind: 'Enum', name: 'entity_type' }),

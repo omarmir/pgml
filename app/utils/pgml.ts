@@ -1818,6 +1818,4 @@ Trigger trg_register_fundingopportunity on public.funding_opportunity_profile {
       EXECUTE FUNCTION public.register_entity('fundingopportunity');
   $sql$
 }
-
-Ref: public.orders.customer_id > public.users.id
 `
