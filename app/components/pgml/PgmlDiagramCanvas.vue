@@ -9,7 +9,11 @@ import type {
   PgmlSourceRange
 } from '~/utils/pgml'
 import { getRasterExportPlan } from '~/utils/diagram-export'
-import { getDiagramConnectionZIndex, getDiagramNodeZIndex } from '~/utils/diagram-layering'
+import {
+  getDiagramConnectionZIndex,
+  getDiagramGroupBackgroundZIndex,
+  getDiagramNodeZIndex
+} from '~/utils/diagram-layering'
 import {
   buildOrthogonalMiddlePoints,
   getHeaderSafeGroupLaneSide,
@@ -204,6 +208,15 @@ const nodeLayerOrderById = computed(() => {
     return orders
   }, {})
 })
+const getNodeLayerOrder = (nodeId: string) => {
+  return nodeLayerOrderById.value[nodeId] || 1
+}
+const getGroupBackgroundLayerZIndex = (nodeId: string) => {
+  return getDiagramGroupBackgroundZIndex(getNodeLayerOrder(nodeId))
+}
+const getNodeForegroundLayerZIndex = (nodeId: string) => {
+  return getDiagramNodeZIndex(getNodeLayerOrder(nodeId))
+}
 const connectionLineLayers = computed(() => {
   const layers = connectionLines.value.reduce<Record<string, ConnectionLine[]>>((entries, line) => {
     const key = String(line.zIndex)
@@ -515,14 +528,21 @@ const buildExportSvgString = async (padding = exportPadding) => {
 
   canvasNodes.value.forEach((node) => {
     const nodeElement = planeRef.value?.querySelector(`[data-node-anchor="${node.id}"]`)
+    const nodeSurfaceElement = node.kind === 'group'
+      ? planeRef.value?.querySelector(`[data-group-surface="${node.id}"]`)
+      : nodeElement
     const headerElement = planeRef.value?.querySelector(`[data-node-header="${node.id}"]`)
     const accentElement = planeRef.value?.querySelector(`[data-node-accent="${node.id}"]`)
 
-    if (!(nodeElement instanceof HTMLElement) || !(headerElement instanceof HTMLElement)) {
+    if (
+      !(nodeElement instanceof HTMLElement)
+      || !(nodeSurfaceElement instanceof HTMLElement)
+      || !(headerElement instanceof HTMLElement)
+    ) {
       return
     }
 
-    const nodeStyles = window.getComputedStyle(nodeElement)
+    const nodeStyles = window.getComputedStyle(nodeSurfaceElement)
     const nodeRect = getPlaneRelativeRect(nodeElement)
     const accentColor = accentElement instanceof HTMLElement
       ? normalizeSvgColor(window.getComputedStyle(accentElement).color, node.color)
@@ -3920,30 +3940,45 @@ defineExpose<{
         v-for="node in canvasNodes"
         :key="node.id"
         :class="[
-          'absolute z-[1] overflow-hidden border select-none',
-          node.kind === 'group' ? 'rounded-[2px]' : 'rounded-none',
+          'absolute overflow-hidden select-none',
+          node.kind === 'group' ? 'rounded-[2px]' : 'rounded-none border',
           node.kind === 'object' ? 'transition-transform duration-150 hover:-translate-y-0.5 hover:ring-1 hover:ring-[color:var(--studio-ring)]' : '',
-          selectedNodeId === node.id ? 'ring-1 ring-[color:var(--studio-ring)]' : ''
+          selectedNodeId === node.id && node.kind !== 'group' ? 'ring-1 ring-[color:var(--studio-ring)]' : ''
         ]"
         :style="{
           left: `${node.x}px`,
           top: `${node.y}px`,
           width: `${node.width}px`,
           height: `${node.height}px`,
-          zIndex: getDiagramNodeZIndex(nodeLayerOrderById[node.id] || 1),
-          borderColor: getNodeBorderColor(node),
-          background: getNodeBackground(node)
+          zIndex: node.kind === 'group' ? 'auto' : getNodeForegroundLayerZIndex(node.id),
+          borderColor: node.kind === 'group' ? 'transparent' : getNodeBorderColor(node),
+          background: node.kind === 'group' ? 'transparent' : getNodeBackground(node)
         }"
         :data-node-anchor="node.id"
         @pointerdown.stop="selectedNodeId = node.id"
         @click.stop="handleNodeClick(node)"
       >
         <div
+          v-if="node.kind === 'group'"
+          :data-group-surface="node.id"
+          :class="[
+            'pointer-events-none absolute inset-0 rounded-[2px] border',
+            selectedNodeId === node.id ? 'ring-1 ring-[color:var(--studio-ring)]' : ''
+          ]"
+          :style="{
+            zIndex: getGroupBackgroundLayerZIndex(node.id),
+            borderColor: getNodeBorderColor(node),
+            background: getNodeBackground(node)
+          }"
+        />
+
+        <div
           :data-node-header="node.id"
           :class="[
-            'flex cursor-move items-start justify-between gap-2 px-2.5 py-2',
+            'relative flex cursor-move items-start justify-between gap-2 px-2.5 py-2',
             node.kind === 'group' || !node.collapsed ? 'border-b border-[color:var(--studio-divider)]' : ''
           ]"
+          :style="node.kind === 'group' ? { zIndex: getNodeForegroundLayerZIndex(node.id) } : undefined"
           @pointerdown="startDragNode($event, node.id)"
         >
           <div class="min-w-0">
@@ -3986,7 +4021,8 @@ defineExpose<{
 
         <div
           v-if="node.kind === 'group'"
-          class="px-5 pb-2.5 pt-2"
+          class="relative px-5 pb-2.5 pt-2"
+          :style="{ zIndex: getNodeForegroundLayerZIndex(node.id) }"
         >
           <div
             :data-group-content="node.id"

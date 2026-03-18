@@ -170,6 +170,7 @@ Table public.orders in Core {
 
   const diagnostics = await page.evaluate(() => {
     const group = document.querySelector('[data-node-anchor="group:Core"]')
+    const groupSurface = document.querySelector('[data-group-surface="group:Core"]')
     const content = document.querySelector('[data-group-content="group:Core"]')
     const ordersTable = document.querySelector('[data-table-anchor="public.orders"]')
     const connectionLayers = Array.from(document.querySelectorAll('[data-connection-layer="true"]'))
@@ -181,6 +182,7 @@ Table public.orders in Core {
 
     if (
       !(group instanceof HTMLElement)
+      || !(groupSurface instanceof HTMLElement)
       || !(content instanceof HTMLElement)
       || !(ordersTable instanceof HTMLElement)
       || connectionLayers.length === 0
@@ -257,7 +259,7 @@ Table public.orders in Core {
     })
 
     return {
-      groupZIndex: Number.parseInt(window.getComputedStyle(group).zIndex || '0', 10),
+      groupZIndex: Number.parseInt(window.getComputedStyle(groupSurface).zIndex || '0', 10),
       maxLineZIndex: Math.max(...connectionLayers.map((layer) => {
         return Number.parseInt(window.getComputedStyle(layer).zIndex || '0', 10)
       })),
