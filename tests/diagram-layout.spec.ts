@@ -340,3 +340,109 @@ Table public.orders in Commerce {
   expect(diagnostics?.lineTouchesTenantsIdBorder).toBe(true)
   expect(diagnostics?.tableFitsWithinGroup).toBe(true)
 })
+
+test('field rows expose multiple side anchors and prefer unused points on the same row', async ({ goto, page }) => {
+  await goto('/diagram')
+
+  const editor = page.locator('[data-pgml-editor="true"]')
+  const source = `TableGroup Core {
+  tenants
+}
+
+TableGroup Commerce {
+  orders
+  invoices
+}
+
+Table public.tenants in Core {
+  id uuid [pk]
+  name text
+}
+
+Table public.orders in Commerce {
+  id uuid [pk]
+  tenant_id uuid [ref: > public.tenants.id]
+}
+
+Table public.invoices in Commerce {
+  id uuid [pk]
+  tenant_id uuid [ref: > public.tenants.id]
+}`
+
+  await editor.fill(source)
+  await expect(page.locator('[data-table-anchor="public.tenants"]')).toBeVisible()
+
+  const diagnostics = await page.evaluate(() => {
+    const coreGroup = document.querySelector('[data-node-anchor="group:Core"]')
+    const tenantsTable = document.querySelector('[data-table-anchor="public.tenants"]')
+    const tenantsIdLabel = document.querySelector('[data-column-label-anchor="public.tenants.id"]')
+    const connectionLayers = Array.from(document.querySelectorAll('[data-connection-layer="true"]'))
+    const paths = connectionLayers.flatMap((layer) => {
+      return Array.from(layer.querySelectorAll('path'))
+    }).filter((entry) => {
+      return (entry.getAttribute('stroke') || '').length > 0
+    })
+
+    if (
+      !(coreGroup instanceof HTMLElement)
+      || !(tenantsTable instanceof HTMLElement)
+      || !(tenantsIdLabel instanceof HTMLElement)
+      || paths.length < 2
+    ) {
+      return null
+    }
+
+    const plane = coreGroup.parentElement
+
+    if (!(plane instanceof HTMLElement)) {
+      return null
+    }
+
+    const getOffsetWithinPlane = (element: HTMLElement) => {
+      let current: HTMLElement | null = element
+      let x = 0
+      let y = 0
+
+      while (current && current !== plane) {
+        x += current.offsetLeft
+        y += current.offsetTop
+        current = current.offsetParent instanceof HTMLElement ? current.offsetParent : null
+      }
+
+      return { x, y }
+    }
+
+    const tenantsBounds = {
+      left: tenantsTable.offsetLeft,
+      right: tenantsTable.offsetLeft + tenantsTable.offsetWidth,
+      top: tenantsTable.offsetTop,
+      bottom: tenantsTable.offsetTop + tenantsTable.offsetHeight
+    }
+    const idLabelOffset = getOffsetWithinPlane(tenantsIdLabel)
+    const idRowTop = idLabelOffset.y
+    const idRowBottom = idLabelOffset.y + tenantsIdLabel.offsetHeight
+    const endpointYs = paths.flatMap((path) => {
+      const pointMatches = Array.from((path.getAttribute('d') || '').matchAll(/[ML]\s*(-?\d+(?:\.\d+)?)\s+(-?\d+(?:\.\d+)?)/g))
+
+      return pointMatches.map((match) => {
+        return {
+          x: Number.parseFloat(match[1] || '0'),
+          y: Number.parseFloat(match[2] || '0')
+        }
+      }).filter((point) => {
+        return (
+          (Math.abs(point.x - tenantsBounds.left) < 1 || Math.abs(point.x - tenantsBounds.right) < 1)
+          && point.y >= idRowTop - 1
+          && point.y <= idRowBottom + 1
+        )
+      }).map((point) => Math.round(point.y * 10) / 10)
+    })
+
+    return {
+      endpointYs: Array.from(new Set(endpointYs)).sort((left, right) => left - right)
+    }
+  })
+
+  expect(diagnostics).not.toBeNull()
+  expect(diagnostics?.endpointYs.length || 0).toBeGreaterThanOrEqual(2)
+})

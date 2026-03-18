@@ -13,8 +13,55 @@ export type DiagramRect = {
 }
 
 const pointTolerance = 0.01
+const fieldRowAnchorOffsets = [0.22, 0.5, 0.78] as const
 
 export const isHorizontalDiagramSide = (side: DiagramAnchorSide) => side === 'left' || side === 'right'
+
+/**
+ * Connection anchor rules for table rows:
+ * 1. Field endpoints always terminate on the owning table border, never inside the row body.
+ * 2. Each row exposes six candidate border anchors: left/right multiplied by top/middle/bottom.
+ * 3. Higher-level routing still decides the side first; this helper only picks among anchors on that side.
+ * 4. Unused anchors on the row are preferred before reusing an occupied anchor on the same side.
+ * 5. Ties are broken by closeness to the desired target ratio so routes stay visually local.
+ * 6. If a caller cannot resolve row metadata, it should fall back to table-level anchors without bypassing
+ *    header-avoidance or orthogonal path rules elsewhere in the router.
+ */
+export const getFieldRowAnchorRatios = (
+  rowTop: number,
+  rowHeight: number,
+  tableTop: number,
+  tableHeight: number
+) => {
+  const safeTableHeight = Math.max(tableHeight, pointTolerance)
+  const safeRowHeight = Math.max(rowHeight, pointTolerance)
+
+  return fieldRowAnchorOffsets.map((offset) => {
+    return Math.max(0, Math.min(1, (rowTop - tableTop + safeRowHeight * offset) / safeTableHeight))
+  })
+}
+
+export const pickDiagramAnchorSlot = (
+  candidateRatios: number[],
+  desiredRatio: number,
+  slotUsage: number[]
+) => {
+  let bestSlot = 0
+  let bestScore = Number.POSITIVE_INFINITY
+
+  for (let slot = 0; slot < candidateRatios.length; slot += 1) {
+    const candidateRatio = candidateRatios[slot] ?? 0.5
+    const usage = slotUsage[slot] || 0
+    const score = Math.abs(candidateRatio - desiredRatio) + usage * 0.35
+
+    if (score < bestScore) {
+      bestScore = score
+      bestSlot = slot
+    }
+  }
+
+  return bestSlot
+}
 
 export const buildOrthogonalMiddlePoints = (
   fromPoint: DiagramPoint,

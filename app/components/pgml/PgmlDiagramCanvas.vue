@@ -16,8 +16,10 @@ import {
 } from '~/utils/diagram-layering'
 import {
   buildOrthogonalMiddlePoints,
+  getFieldRowAnchorRatios,
   getHeaderSafeGroupLaneSide,
-  isHorizontalDiagramSide
+  isHorizontalDiagramSide,
+  pickDiagramAnchorSlot
 } from '~/utils/diagram-routing'
 import { normalizeSvgColor, normalizeSvgPaint, parseCssLinearGradient } from '~/utils/svg-paint'
 
@@ -2966,7 +2968,14 @@ const getExactAnchorPoint = (
   element: HTMLElement,
   side: AnchorSide,
   ratio: number,
-  planeBounds: DOMRect
+  planeBounds: DOMRect,
+  metadata: {
+    slot: number
+    count: number
+  } = {
+    slot: 0,
+    count: 1
+  }
 ): AnchorPoint => {
   const bounds = element.getBoundingClientRect()
   const clampedRatio = clamp(ratio, 0, 1)
@@ -2982,8 +2991,8 @@ const getExactAnchorPoint = (
       x: xLeft,
       y: yCenter,
       side,
-      slot: 0,
-      count: 1
+      slot: metadata.slot,
+      count: metadata.count
     }
   }
 
@@ -2992,8 +3001,8 @@ const getExactAnchorPoint = (
       x: xRight,
       y: yCenter,
       side,
-      slot: 0,
-      count: 1
+      slot: metadata.slot,
+      count: metadata.count
     }
   }
 
@@ -3002,8 +3011,8 @@ const getExactAnchorPoint = (
       x: xCenter,
       y: yTop,
       side,
-      slot: 0,
-      count: 1
+      slot: metadata.slot,
+      count: metadata.count
     }
   }
 
@@ -3011,8 +3020,8 @@ const getExactAnchorPoint = (
     x: xCenter,
     y: yBottom,
     side,
-    slot: 0,
-    count: 1
+    slot: metadata.slot,
+    count: metadata.count
   }
 }
 
@@ -3093,6 +3102,16 @@ const getOwningTableElement = (element: HTMLElement) => {
   return table
 }
 
+const getOwningTableRowElement = (element: HTMLElement) => {
+  const row = element.closest('[data-table-row-anchor]')
+
+  if (!(row instanceof HTMLElement)) {
+    return null
+  }
+
+  return row
+}
+
 const getOwningGroupElement = (element: HTMLElement) => {
   const group = element.closest('[data-node-anchor^="group:"]')
 
@@ -3147,6 +3166,55 @@ const getDesiredAnchorRatio = (
   return isHorizontalDiagramSide(side)
     ? clamp((targetCenterY - elementBounds.top) / Math.max(elementBounds.height, 1), 0.16, 0.84)
     : clamp((targetCenterX - elementBounds.left) / Math.max(elementBounds.width, 1), 0.16, 0.84)
+}
+
+const reserveFieldRowAnchorPoint = (
+  fieldElement: HTMLElement,
+  tableElement: HTMLElement,
+  side: 'left' | 'right',
+  targetCenterY: number,
+  planeBounds: DOMRect,
+  usage: Map<string, number[]>
+) => {
+  // Keep row-side anchor selection aligned with the shared rules documented in diagram-routing.ts.
+  const rowElement = getOwningTableRowElement(fieldElement)
+  const tableBounds = tableElement.getBoundingClientRect()
+  const desiredRatio = clamp((targetCenterY - tableBounds.top) / Math.max(tableBounds.height, 1), 0, 1)
+
+  if (!(rowElement instanceof HTMLElement)) {
+    return getExactAnchorPoint(tableElement, side, desiredRatio, planeBounds)
+  }
+
+  const rowBounds = rowElement.getBoundingClientRect()
+  const candidateRatios = getFieldRowAnchorRatios(
+    rowBounds.top,
+    rowBounds.height,
+    tableBounds.top,
+    tableBounds.height
+  )
+  const rowKey = rowElement.getAttribute('data-table-row-anchor') || getElementIdentity(tableElement)
+  const usageKey = `field-row:${rowKey}:${side}`
+  const slotUsage = usage.get(usageKey) || Array.from({ length: candidateRatios.length }, () => 0)
+
+  if (slotUsage.length < candidateRatios.length) {
+    slotUsage.push(...Array.from({ length: candidateRatios.length - slotUsage.length }, () => 0))
+  }
+
+  const bestSlot = pickDiagramAnchorSlot(candidateRatios, desiredRatio, slotUsage)
+
+  slotUsage[bestSlot] = (slotUsage[bestSlot] || 0) + 1
+  usage.set(usageKey, slotUsage)
+
+  return getExactAnchorPoint(
+    tableElement,
+    side,
+    candidateRatios[bestSlot] ?? desiredRatio,
+    planeBounds,
+    {
+      slot: bestSlot,
+      count: candidateRatios.length
+    }
+  )
 }
 
 const getRouteOffset = (fromAnchor: AnchorPoint, toAnchor: AnchorPoint) => {
@@ -3255,9 +3323,11 @@ const reserveRouteLegAnchor = (
     : getDesiredAnchorRatio(side, anchorBounds, targetCenterX, targetCenterY)
 
   return {
-    anchor: tableElement
-      ? getExactAnchorPoint(anchorHost, side, ratio, planeBounds)
-      : reserveAnchorPoint(anchorHost, side, ratio, planeBounds, usage),
+    anchor: tableElement && isHorizontalDiagramSide(side)
+      ? reserveFieldRowAnchorPoint(element, tableElement, side, targetCenterY, planeBounds, usage)
+      : tableElement
+        ? getExactAnchorPoint(anchorHost, side, ratio, planeBounds)
+        : reserveAnchorPoint(anchorHost, side, ratio, planeBounds, usage),
     side,
     groupElement
   }
@@ -3403,10 +3473,14 @@ const buildSharedGroupPath = (
       )
     : getDesiredAnchorRatio(laneSide, toAnchorBounds, sourceCenterX, sourceCenterY)
   const fromAnchor = fromTableElement
-    ? getExactAnchorPoint(fromAnchorHost, laneSide, fromRatio, planeBounds)
+    ? isHorizontalDiagramSide(laneSide)
+      ? reserveFieldRowAnchorPoint(fromElement, fromTableElement, laneSide, targetCenterY, planeBounds, usage)
+      : getExactAnchorPoint(fromAnchorHost, laneSide, fromRatio, planeBounds)
     : reserveAnchorPoint(fromAnchorHost, laneSide, fromRatio, planeBounds, usage)
   const toAnchor = toTableElement
-    ? getExactAnchorPoint(toAnchorHost, laneSide, toRatio, planeBounds)
+    ? isHorizontalDiagramSide(laneSide)
+      ? reserveFieldRowAnchorPoint(toElement, toTableElement, laneSide, sourceCenterY, planeBounds, usage)
+      : getExactAnchorPoint(toAnchorHost, laneSide, toRatio, planeBounds)
     : reserveAnchorPoint(toAnchorHost, laneSide, toRatio, planeBounds, usage)
   const laneOffset = reserveLaneOffset(
     `group-lane:${groupElement.getAttribute('data-node-anchor')}:${laneSide}`,
