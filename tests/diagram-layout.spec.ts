@@ -64,6 +64,23 @@ test('table groups keep their required width after changing the table column cou
   })
 
   expect(settledWidth).toBeGreaterThanOrEqual(520)
+
+  const headerBox = await page.locator('[data-node-header="group:Commerce"]').boundingBox()
+
+  if (!headerBox) {
+    throw new Error('Group header is not measurable.')
+  }
+
+  await page.mouse.move(headerBox.x + headerBox.width / 2, headerBox.y + 18)
+  await page.mouse.down()
+  await page.mouse.move(headerBox.x + headerBox.width / 2 + 140, headerBox.y + 42)
+  await page.mouse.up()
+
+  await expect.poll(async () => {
+    return commerceGroup.evaluate((element) => {
+      return Math.round(element.getBoundingClientRect().width)
+    })
+  }).toBe(settledWidth)
 })
 
 test('table groups keep independent table heights and balanced horizontal padding', async ({ goto, page }) => {

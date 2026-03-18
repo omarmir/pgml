@@ -3303,12 +3303,19 @@ const updateNode = (
       current.id.replace('group:', ''),
       nextNode.columnCount || 1
     )
+    const resetGroupSize = typeof partial.columnCount === 'number'
+    const nextGroupWidth = resetGroupSize
+      ? minimumSize.minWidth
+      : Math.max(nextNode.width, minimumSize.minWidth)
+    const nextGroupHeight = resetGroupSize
+      ? minimumSize.minHeight
+      : Math.max(nextNode.height, minimumSize.minHeight)
 
     nextNode.minWidth = minimumSize.minWidth
     nextNode.minHeight = minimumSize.minHeight
-    nextNode.width = minimumSize.minWidth
-    nextNode.height = minimumSize.minHeight
-    nextNode.expandedHeight = minimumSize.minHeight
+    nextNode.width = nextGroupWidth
+    nextNode.height = nextGroupHeight
+    nextNode.expandedHeight = nextGroupHeight
   }
 
   nodeStates.value[id] = nextNode
