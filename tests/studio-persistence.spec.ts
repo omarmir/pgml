@@ -94,3 +94,79 @@ test('save modal lists existing schemas as explicit overwrite targets', async ({
   await expect(page.getByPlaceholder('Schema name')).toHaveValue('Core schema')
   await expect(page.getByRole('button', { name: 'Overwrite saved schema' })).toBeVisible()
 })
+
+test('light mode keeps modal secondary actions and select highlights readable', async ({ goto, page }) => {
+  await goto('/diagram')
+
+  await page.getByRole('button', { name: 'Switch to light mode' }).click()
+
+  const studioActionsButton = page.getByRole('button', { name: 'Studio actions' })
+
+  await studioActionsButton.click()
+  await page.getByRole('menuitem', { name: 'Save schema' }).click()
+
+  const cancelButtonStyles = await page.getByRole('button', { name: 'Cancel' }).evaluate((element) => {
+    const styles = window.getComputedStyle(element)
+
+    return {
+      backgroundColor: styles.backgroundColor,
+      borderColor: styles.borderColor,
+      color: styles.color
+    }
+  })
+
+  expect(cancelButtonStyles.backgroundColor).not.toBe('rgba(0, 0, 0, 0)')
+  expect(cancelButtonStyles.borderColor).not.toBe('rgba(0, 0, 0, 0)')
+  expect(cancelButtonStyles.color).not.toBe(cancelButtonStyles.backgroundColor)
+
+  await page.getByRole('button', { name: 'Close' }).click()
+  await page.locator('[data-table-edit-button="public.users"]').click()
+  const schemaSelectStylesBeforeOpen = await page.getByLabel('Table schema').evaluate((element) => {
+    const styles = window.getComputedStyle(element)
+
+    return {
+      backgroundColor: styles.backgroundColor,
+      color: styles.color
+    }
+  })
+  await page.getByLabel('Table schema').click()
+  const schemaSelectStylesOpen = await page.getByLabel('Table schema').evaluate((element) => {
+    const styles = window.getComputedStyle(element)
+
+    return {
+      backgroundColor: styles.backgroundColor,
+      color: styles.color
+    }
+  })
+  await page.keyboard.press('ArrowDown')
+
+  const highlightedItemStyles = await page.evaluate(() => {
+    const highlightedItem = document.querySelector('[data-highlighted]')
+
+    if (!(highlightedItem instanceof HTMLElement)) {
+      return null
+    }
+
+    const styles = window.getComputedStyle(highlightedItem)
+    const beforeStyles = window.getComputedStyle(highlightedItem, '::before')
+
+    return {
+      backgroundColor: styles.backgroundColor,
+      color: styles.color,
+      beforeBackgroundColor: beforeStyles.backgroundColor,
+      boxShadow: styles.boxShadow
+    }
+  })
+
+  expect(schemaSelectStylesBeforeOpen.backgroundColor).not.toBe('rgba(0, 0, 0, 0)')
+  expect(schemaSelectStylesBeforeOpen.color).not.toBe(schemaSelectStylesBeforeOpen.backgroundColor)
+  expect(schemaSelectStylesOpen.backgroundColor).not.toBe('rgba(0, 0, 0, 0)')
+  expect(schemaSelectStylesOpen.color).not.toBe(schemaSelectStylesOpen.backgroundColor)
+  expect(highlightedItemStyles).not.toBeNull()
+  expect(
+    highlightedItemStyles?.backgroundColor === 'rgba(0, 0, 0, 0)'
+    && highlightedItemStyles?.beforeBackgroundColor === 'rgba(0, 0, 0, 0)'
+    && highlightedItemStyles?.boxShadow === 'none'
+  ).toBe(false)
+  expect(highlightedItemStyles?.color).not.toBe(highlightedItemStyles?.backgroundColor)
+})

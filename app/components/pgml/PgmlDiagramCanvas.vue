@@ -1827,7 +1827,7 @@ const getRoutinePrimaryTableIds = (routine: PgmlRoutine) => {
 
   const inferredTableIds = getUniqueTableIds(inferRoutineTargets(routine))
 
-  return inferredTableIds.length === 1 ? inferredTableIds : []
+  return inferredTableIds
 }
 const getSequenceOwnedTableIds = (sequence: PgmlSequence) => {
   const metadataOwnedBy = getMetadataValue(sequence.metadata, 'owned_by')

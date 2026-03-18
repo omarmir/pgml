@@ -44,9 +44,14 @@ const studioHeaderActionContent = {
   side: 'bottom' as const,
   sideOffset: 6
 }
+const rootClass = computed(() => {
+  return isStudioRoute.value
+    ? 'h-dvh w-full overflow-hidden bg-[color:var(--studio-shell-bg)] text-[color:var(--studio-shell-text)] transition-colors duration-200'
+    : 'min-h-screen w-full bg-[color:var(--studio-shell-bg)] text-[color:var(--studio-shell-text)] transition-colors duration-200'
+})
 const shellContainerClass = computed(() => {
   return isStudioRoute.value
-    ? 'relative flex min-h-screen w-full min-w-0 flex-col'
+    ? 'relative flex h-full w-full min-w-0 flex-col overflow-hidden'
     : 'relative mx-auto flex min-h-screen w-full max-w-[1480px] min-w-0 flex-col px-4 sm:px-6 lg:px-8'
 })
 const headerInnerClass = computed(() => {
@@ -56,7 +61,7 @@ const headerInnerClass = computed(() => {
 })
 const mainClass = computed(() => {
   return isStudioRoute.value
-    ? 'flex-1 min-h-0'
+    ? 'flex-1 min-h-0 overflow-hidden'
     : 'flex-1 pb-14 pt-8 sm:pt-10'
 })
 
@@ -72,38 +77,38 @@ const navLinkClass = (to: string) => {
 <template>
   <div
     :data-studio-theme="studioTheme"
-    class="min-h-screen w-full bg-[color:var(--studio-shell-bg)] text-[color:var(--studio-shell-text)] transition-colors duration-200"
+    :class="rootClass"
   >
     <div
       :class="shellContainerClass"
     >
       <header class="sticky top-0 z-40 border-b border-[color:var(--studio-shell-border)] bg-[color:var(--studio-shell-bg)]/92 backdrop-blur">
         <div :class="headerInnerClass">
-          <div class="flex min-w-0 items-center gap-5">
+          <div class="flex min-w-0 items-end gap-6">
             <NuxtLink
               to="/"
-              class="flex min-w-0 items-center gap-3 text-[color:var(--studio-shell-text)] no-underline"
+              class="flex min-w-0 items-end gap-3 text-[color:var(--studio-shell-text)] no-underline"
             >
               <span class="grid h-10 w-10 shrink-0 place-items-center border border-[color:var(--studio-shell-border)] bg-[color:var(--studio-control-bg)] font-mono text-[0.78rem] font-semibold uppercase tracking-[0.18em] text-[color:var(--studio-shell-label)]">
                 PG
               </span>
 
-              <span class="flex min-w-0 flex-col">
+              <span class="flex min-w-0 flex-col justify-end">
                 <span class="font-mono text-[0.72rem] uppercase tracking-[0.14em] text-[color:var(--studio-shell-label)]">
                   PGML
                 </span>
-                <span class="truncate text-sm text-[color:var(--studio-shell-muted)]">
+                <span class="truncate text-base font-medium leading-tight text-[color:var(--studio-shell-muted)] sm:text-[1.05rem]">
                   Postgres in markup
                 </span>
               </span>
             </NuxtLink>
 
-            <nav class="hidden items-center gap-2 md:flex">
+            <nav class="hidden self-end pb-0.5 md:flex md:items-center md:gap-3">
               <NuxtLink
                 v-for="item in navigation"
                 :key="item.to"
                 :to="item.to"
-                class="border-b px-0 py-2 text-sm font-medium transition-colors duration-150"
+                class="border-b px-0 py-1 text-sm font-medium transition-colors duration-150"
                 :class="navLinkClass(item.to)"
               >
                 {{ item.label }}
@@ -120,7 +125,7 @@ const navLinkClass = (to: string) => {
                   content: 'min-w-[14rem] rounded-none border border-[color:var(--studio-shell-border)] bg-[color:var(--studio-control-bg)] p-1 shadow-[var(--studio-floating-shadow)] backdrop-blur-sm',
                   group: 'p-0',
                   separator: 'my-1 bg-[color:var(--studio-shell-border)]',
-                  item: 'rounded-none px-2 py-1.5 text-[0.78rem] text-[color:var(--studio-shell-text)] data-[highlighted]:bg-[color:var(--studio-surface-hover)] data-[highlighted]:text-[color:var(--studio-shell-text)]',
+                  item: 'rounded-none px-2 py-1.5 text-[0.78rem] text-[color:var(--studio-shell-text)] data-[highlighted]:bg-[color:var(--studio-shell-text)]/12 data-[highlighted]:text-[color:var(--studio-shell-text)]',
                   itemLeadingIcon: 'text-[color:var(--studio-shell-muted)]',
                   itemLabel: 'truncate'
                 }"

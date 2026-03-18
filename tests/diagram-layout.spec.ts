@@ -36,6 +36,44 @@ test('studio editor panel can expand beyond its default width', async ({ goto, p
   }).toBeGreaterThan(initialWidth + 120)
 })
 
+test('studio canvas stays viewport-bound and starts centered on the diagram', async ({ goto, page }) => {
+  await goto('/diagram')
+
+  await expect(page.locator('[data-node-anchor="group:Core"]')).toBeVisible()
+
+  const diagnostics = await page.evaluate(() => {
+    const documentElement = document.documentElement
+    const nodeElements = Array.from(document.querySelectorAll('[data-node-anchor]')).filter((element): element is HTMLElement => {
+      return element instanceof HTMLElement
+    })
+
+    if (!nodeElements.length) {
+      return null
+    }
+
+    const nodeRects = nodeElements.map((element) => {
+      return element.getBoundingClientRect()
+    })
+    const minX = Math.min(...nodeRects.map(rect => rect.left))
+    const maxX = Math.max(...nodeRects.map(rect => rect.right))
+    const minY = Math.min(...nodeRects.map(rect => rect.top))
+    const maxY = Math.max(...nodeRects.map(rect => rect.bottom))
+
+    return {
+      hasHorizontalScroll: documentElement.scrollWidth > window.innerWidth + 1,
+      hasVerticalScroll: documentElement.scrollHeight > window.innerHeight + 1,
+      centerOffsetX: Math.round(((minX + maxX) / 2) - (window.innerWidth / 2)),
+      centerOffsetY: Math.round(((minY + maxY) / 2) - (window.innerHeight / 2))
+    }
+  })
+
+  expect(diagnostics).not.toBeNull()
+  expect(diagnostics?.hasHorizontalScroll).toBe(false)
+  expect(diagnostics?.hasVerticalScroll).toBe(false)
+  expect(Math.abs(diagnostics?.centerOffsetX || 0)).toBeLessThan(180)
+  expect(Math.abs(diagnostics?.centerOffsetY || 0)).toBeLessThan(120)
+})
+
 test('table groups keep their required width after changing the table column count', async ({ goto, page }) => {
   await goto('/diagram')
 

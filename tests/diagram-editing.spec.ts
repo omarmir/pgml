@@ -27,12 +27,6 @@ test('canvas snaps dragged nodes to the grid and zooms around the mouse position
 
   const coreHeader = page.locator('[data-node-header="group:Core"]')
   const coreNode = page.locator('[data-node-anchor="group:Core"]')
-  const initialPosition = await coreNode.evaluate((element) => {
-    return {
-      left: Number.parseInt(element.style.left || '0', 10),
-      top: Number.parseInt(element.style.top || '0', 10)
-    }
-  })
   const headerBox = await coreHeader.boundingBox()
 
   if (!headerBox) {
@@ -51,8 +45,8 @@ test('canvas snaps dragged nodes to the grid and zooms around the mouse position
     }
   })
 
-  expect((snappedPosition.left - initialPosition.left) % 18).toBe(0)
-  expect((snappedPosition.top - initialPosition.top) % 18).toBe(0)
+  expect(snappedPosition.left % 18).toBe(0)
+  expect(snappedPosition.top % 18).toBe(0)
 
   const beforeBox = await coreNode.boundingBox()
 

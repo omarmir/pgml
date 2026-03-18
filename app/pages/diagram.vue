@@ -55,6 +55,32 @@ const studioModalSurfaceStyle = {
   borderColor: 'var(--studio-shell-border)',
   boxShadow: 'var(--studio-floating-shadow)'
 }
+const studioFieldUi = {
+  base: 'rounded-none border-[color:var(--studio-shell-border)] bg-[color:var(--studio-input-bg)] text-[color:var(--studio-shell-text)]'
+}
+const studioSelectUi = {
+  base: 'studio-select-trigger rounded-none border-[color:var(--studio-shell-border)] bg-[color:var(--studio-input-bg)] text-[color:var(--studio-shell-text)]',
+  value: 'text-[color:var(--studio-shell-text)]',
+  placeholder: 'text-[color:var(--studio-shell-muted)]',
+  trailingIcon: 'text-[color:var(--studio-shell-muted)]',
+  content: 'rounded-none border border-[color:var(--studio-shell-border)] bg-[color:var(--studio-control-bg)] p-1 shadow-[var(--studio-floating-shadow)] backdrop-blur-sm',
+  viewport: 'scroll-py-1 overflow-y-auto',
+  item: 'studio-select-item rounded-none before:rounded-none text-[color:var(--studio-shell-text)]',
+  itemLabel: 'truncate',
+  itemDescription: 'text-[color:var(--studio-shell-muted)]',
+  itemLeadingIcon: 'text-[color:var(--studio-shell-muted)]',
+  itemTrailingIcon: 'text-[color:var(--studio-shell-label)]'
+}
+const studioSwitchUi = {
+  wrapper: 'gap-1',
+  base: 'border border-[color:var(--studio-shell-border)] bg-[color:var(--studio-rail)] data-[state=checked]:bg-[color:var(--studio-shell-label)]',
+  thumb: 'bg-[color:var(--studio-modal-bg)]',
+  label: 'text-[0.78rem] text-[color:var(--studio-shell-text)]',
+  description: 'text-[0.7rem] text-[color:var(--studio-shell-muted)]'
+}
+const secondaryModalButtonClass = 'rounded-none border border-[color:var(--studio-shell-border)] bg-[color:var(--studio-control-bg)] text-[color:var(--studio-shell-text)] hover:bg-[color:var(--studio-shell-text)]/8'
+const iconGhostButtonClass = 'rounded-none text-[color:var(--studio-shell-muted)] hover:bg-[color:var(--studio-shell-text)]/8 hover:text-[color:var(--studio-shell-text)]'
+const overwriteTargetButtonClass = 'grid gap-1 border px-3 py-2 text-left transition-colors duration-150'
 const parsedState = computed(() => {
   try {
     return {
@@ -341,7 +367,7 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <div>
+  <div class="h-full min-h-0">
     <div
       ref="layoutShellRef"
       class="grid h-full min-h-0 w-full gap-0 overflow-hidden bg-[color:var(--studio-shell-bg)] text-[color:var(--studio-shell-text)] max-[1100px]:h-auto"
@@ -446,7 +472,7 @@ onBeforeUnmount(() => {
                 icon="i-lucide-x"
                 color="neutral"
                 variant="ghost"
-                class="rounded-none text-[color:var(--studio-shell-muted)] hover:bg-[color:var(--studio-surface-hover)] hover:text-[color:var(--studio-shell-text)]"
+                :class="iconGhostButtonClass"
                 aria-label="Close"
                 @click="schemaDialogOpen = false"
               />
@@ -465,9 +491,7 @@ onBeforeUnmount(() => {
                       color="neutral"
                       variant="outline"
                       size="sm"
-                      :ui="{
-                        base: 'rounded-none border-[color:var(--studio-shell-border)] bg-[color:var(--studio-input-bg)] text-[color:var(--studio-shell-text)]'
-                      }"
+                      :ui="studioFieldUi"
                     />
                   </label>
 
@@ -478,13 +502,7 @@ onBeforeUnmount(() => {
                     :disabled="!canEmbedLayout"
                     label="Include current layout"
                     description="Embed node positions, colors, and grouped table columns into the PGML text."
-                    :ui="{
-                      wrapper: 'gap-1',
-                      base: 'border border-[color:var(--studio-shell-border)] bg-[color:var(--studio-rail)] data-[state=checked]:bg-[color:var(--studio-shell-label)]',
-                      thumb: 'bg-[color:var(--studio-modal-bg)]',
-                      label: 'text-[0.78rem] text-[color:var(--studio-shell-text)]',
-                      description: 'text-[0.7rem] text-[color:var(--studio-shell-muted)]'
-                    }"
+                    :ui="studioSwitchUi"
                   />
                 </div>
 
@@ -518,8 +536,12 @@ onBeforeUnmount(() => {
                       v-for="schema in orderedSavedSchemas"
                       :key="schema.id"
                       type="button"
-                      class="grid gap-1 border px-3 py-2 text-left transition-colors duration-150"
-                      :class="saveSchemaTarget?.id === schema.id ? 'border-[color:var(--studio-shell-label)] bg-[color:var(--studio-input-bg)]' : 'border-[color:var(--studio-shell-border)] bg-[color:var(--studio-control-bg)] hover:bg-[color:var(--studio-surface-hover)]'"
+                      :class="[
+                        overwriteTargetButtonClass,
+                        saveSchemaTarget?.id === schema.id
+                          ? 'border-[color:var(--studio-shell-label)] bg-[color:var(--studio-shell-text)]/8'
+                          : 'border-[color:var(--studio-shell-border)] bg-[color:var(--studio-control-bg)] hover:bg-[color:var(--studio-shell-text)]/8'
+                      ]"
                       @click="selectSaveSchemaTarget(schema)"
                     >
                       <span class="truncate text-[0.78rem] font-semibold text-[color:var(--studio-shell-text)]">
@@ -545,8 +567,8 @@ onBeforeUnmount(() => {
               <UButton
                 label="Cancel"
                 color="neutral"
-                variant="ghost"
-                class="rounded-none"
+                variant="outline"
+                :class="secondaryModalButtonClass"
                 @click="schemaDialogOpen = false"
               />
               <UButton
@@ -599,7 +621,7 @@ onBeforeUnmount(() => {
                 icon="i-lucide-x"
                 color="neutral"
                 variant="ghost"
-                class="rounded-none text-[color:var(--studio-shell-muted)] hover:bg-[color:var(--studio-surface-hover)] hover:text-[color:var(--studio-shell-text)]"
+                :class="iconGhostButtonClass"
                 aria-label="Close"
                 @click="loadDialogOpen = false"
               />
@@ -629,17 +651,17 @@ onBeforeUnmount(() => {
                       <UButton
                         label="Load"
                         color="neutral"
-                        variant="ghost"
+                        variant="outline"
                         size="xs"
-                        class="rounded-none"
+                        :class="secondaryModalButtonClass"
                         @click="loadSavedSchema(schema)"
                       />
                       <UButton
                         icon="i-lucide-trash-2"
                         color="neutral"
-                        variant="ghost"
+                        variant="outline"
                         size="xs"
-                        class="rounded-none"
+                        :class="secondaryModalButtonClass"
                         aria-label="Delete saved schema"
                         @click="deleteSavedSchema(schema.id)"
                       />
@@ -660,8 +682,8 @@ onBeforeUnmount(() => {
               <UButton
                 label="Close"
                 color="neutral"
-                variant="ghost"
-                class="rounded-none"
+                variant="outline"
+                :class="secondaryModalButtonClass"
                 @click="loadDialogOpen = false"
               />
             </div>
@@ -699,7 +721,7 @@ onBeforeUnmount(() => {
                 icon="i-lucide-x"
                 color="neutral"
                 variant="ghost"
-                class="rounded-none text-[color:var(--studio-shell-muted)] hover:bg-[color:var(--studio-surface-hover)] hover:text-[color:var(--studio-shell-text)]"
+                :class="iconGhostButtonClass"
                 aria-label="Close"
                 @click="closeTableEditor"
               />
@@ -728,7 +750,7 @@ onBeforeUnmount(() => {
                     color="neutral"
                     variant="outline"
                     size="sm"
-                    :ui="{ base: 'rounded-none border-[color:var(--studio-shell-border)] bg-[color:var(--studio-input-bg)] text-[color:var(--studio-shell-text)]' }"
+                    :ui="studioFieldUi"
                   />
                 </label>
 
@@ -741,7 +763,7 @@ onBeforeUnmount(() => {
                     color="neutral"
                     variant="outline"
                     size="sm"
-                    :ui="{ base: 'rounded-none border-[color:var(--studio-shell-border)] bg-[color:var(--studio-input-bg)] text-[color:var(--studio-shell-text)]' }"
+                    :ui="studioSelectUi"
                   />
                 </label>
 
@@ -754,7 +776,7 @@ onBeforeUnmount(() => {
                     color="neutral"
                     variant="outline"
                     size="sm"
-                    :ui="{ base: 'rounded-none border-[color:var(--studio-shell-border)] bg-[color:var(--studio-input-bg)] text-[color:var(--studio-shell-text)]' }"
+                    :ui="studioSelectUi"
                     @update:model-value="updateTableDraftGroup(String($event))"
                   />
                 </label>
@@ -823,7 +845,7 @@ onBeforeUnmount(() => {
                           color="neutral"
                           variant="outline"
                           size="sm"
-                          :ui="{ base: 'rounded-none border-[color:var(--studio-shell-border)] bg-[color:var(--studio-input-bg)] text-[color:var(--studio-shell-text)]' }"
+                          :ui="studioFieldUi"
                         />
                       </label>
 
@@ -837,7 +859,7 @@ onBeforeUnmount(() => {
                             color="neutral"
                             variant="outline"
                             size="sm"
-                            :ui="{ base: 'rounded-none border-[color:var(--studio-shell-border)] bg-[color:var(--studio-input-bg)] text-[color:var(--studio-shell-text)]' }"
+                            :ui="studioSelectUi"
                           />
                           <UInput
                             v-model="column.type"
@@ -846,7 +868,7 @@ onBeforeUnmount(() => {
                             color="neutral"
                             variant="outline"
                             size="sm"
-                            :ui="{ base: 'rounded-none border-[color:var(--studio-shell-border)] bg-[color:var(--studio-input-bg)] text-[color:var(--studio-shell-text)]' }"
+                            :ui="studioFieldUi"
                           />
                         </div>
                       </div>
@@ -862,7 +884,7 @@ onBeforeUnmount(() => {
                           color="neutral"
                           variant="outline"
                           size="sm"
-                          :ui="{ base: 'rounded-none border-[color:var(--studio-shell-border)] bg-[color:var(--studio-input-bg)] text-[color:var(--studio-shell-text)]' }"
+                          :ui="studioFieldUi"
                         />
                       </label>
 
@@ -875,7 +897,7 @@ onBeforeUnmount(() => {
                           color="neutral"
                           variant="outline"
                           size="sm"
-                          :ui="{ base: 'rounded-none border-[color:var(--studio-shell-border)] bg-[color:var(--studio-input-bg)] text-[color:var(--studio-shell-text)]' }"
+                          :ui="studioFieldUi"
                         />
                       </label>
                     </div>
@@ -913,13 +935,7 @@ onBeforeUnmount(() => {
                       size="sm"
                       label="Reference"
                       description="Choose the referenced table and column instead of typing a raw ref modifier."
-                      :ui="{
-                        wrapper: 'gap-1',
-                        base: 'border border-[color:var(--studio-shell-border)] bg-[color:var(--studio-rail)] data-[state=checked]:bg-[color:var(--studio-shell-label)]',
-                        thumb: 'bg-[color:var(--studio-modal-bg)]',
-                        label: 'text-[0.78rem] text-[color:var(--studio-shell-text)]',
-                        description: 'text-[0.7rem] text-[color:var(--studio-shell-muted)]'
-                      }"
+                      :ui="studioSwitchUi"
                     />
 
                     <div
@@ -935,7 +951,7 @@ onBeforeUnmount(() => {
                           color="neutral"
                           variant="outline"
                           size="sm"
-                          :ui="{ base: 'rounded-none border-[color:var(--studio-shell-border)] bg-[color:var(--studio-input-bg)] text-[color:var(--studio-shell-text)]' }"
+                          :ui="studioSelectUi"
                         />
                       </label>
 
@@ -950,7 +966,7 @@ onBeforeUnmount(() => {
                           color="neutral"
                           variant="outline"
                           size="sm"
-                          :ui="{ base: 'rounded-none border-[color:var(--studio-shell-border)] bg-[color:var(--studio-input-bg)] text-[color:var(--studio-shell-text)]' }"
+                          :ui="studioSelectUi"
                           @update:model-value="updateTableDraftReferenceTarget(column.id, String($event))"
                         />
                       </label>
@@ -964,7 +980,7 @@ onBeforeUnmount(() => {
                           color="neutral"
                           variant="outline"
                           size="sm"
-                          :ui="{ base: 'rounded-none border-[color:var(--studio-shell-border)] bg-[color:var(--studio-input-bg)] text-[color:var(--studio-shell-text)]' }"
+                          :ui="studioSelectUi"
                         />
                       </label>
                     </div>
@@ -977,8 +993,8 @@ onBeforeUnmount(() => {
               <UButton
                 label="Cancel"
                 color="neutral"
-                variant="ghost"
-                class="rounded-none"
+                variant="outline"
+                :class="secondaryModalButtonClass"
                 @click="closeTableEditor"
               />
               <UButton
