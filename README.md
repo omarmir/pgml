@@ -471,8 +471,6 @@ PGML can embed canvas layout so a saved schema is self-contained.
 Properties "group:Commerce" {
   x: 540
   y: 120
-  width: 612
-  height: 948
   table_columns: 1
 }
 ```
@@ -481,8 +479,8 @@ Supported properties:
 
 - `x`
 - `y`
-- `width`
-- `height`
+- `width` for floating nodes
+- `height` for floating nodes
 - `table_columns`
 
 These blocks are intended for studio persistence, not hand-authoring.

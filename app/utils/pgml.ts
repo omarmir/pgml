@@ -6,6 +6,11 @@ export type PgmlColumn = {
   reference: PgmlReference | null
 }
 
+export type PgmlSourceRange = {
+  startLine: number
+  endLine: number
+}
+
 export type PgmlTable = {
   name: string
   schema: string
@@ -15,6 +20,7 @@ export type PgmlTable = {
   columns: PgmlColumn[]
   indexes: PgmlIndex[]
   constraints: PgmlConstraint[]
+  sourceRange?: PgmlSourceRange
 }
 
 export type PgmlIndex = {
@@ -22,12 +28,14 @@ export type PgmlIndex = {
   tableName: string
   columns: string[]
   type: string
+  sourceRange?: PgmlSourceRange
 }
 
 export type PgmlConstraint = {
   name: string
   tableName: string
   expression: string
+  sourceRange?: PgmlSourceRange
 }
 
 export type PgmlReference = {
@@ -42,13 +50,14 @@ export type PgmlGroup = {
   name: string
   tableNames: string[]
   note: string | null
+  sourceRange?: PgmlSourceRange
 }
 
 export type PgmlNodeProperties = {
   x: number
   y: number
-  width: number
-  height: number
+  width?: number
+  height?: number
   tableColumns: number | null
 }
 
@@ -91,6 +100,7 @@ export type PgmlRoutine = {
   docs: PgmlDocumentation | null
   affects: PgmlAffects | null
   source: string | null
+  sourceRange?: PgmlSourceRange
 }
 
 export type PgmlTrigger = {
@@ -101,6 +111,7 @@ export type PgmlTrigger = {
   docs: PgmlDocumentation | null
   affects: PgmlAffects | null
   source: string | null
+  sourceRange?: PgmlSourceRange
 }
 
 export type PgmlSequence = {
@@ -110,12 +121,14 @@ export type PgmlSequence = {
   docs: PgmlDocumentation | null
   affects: PgmlAffects | null
   source: string | null
+  sourceRange?: PgmlSourceRange
 }
 
 export type PgmlCustomType = {
   kind: 'Enum' | 'Domain' | 'Composite'
   name: string
   details: string[]
+  sourceRange?: PgmlSourceRange
 }
 
 export type PgmlSchemaModel = {
@@ -134,6 +147,9 @@ export type PgmlSchemaModel = {
 type NamedBlock = {
   header: string
   body: string[]
+  startLine: number
+  endLine: number
+  bodyStartLine: number
 }
 
 type ParsedExecutableBody = {
@@ -498,6 +514,32 @@ const parseReferenceTarget = (value: string) => {
   }
 }
 
+export const getPgmlSourceSelectionRange = (source: string, sourceRange: PgmlSourceRange) => {
+  const lines = source.replaceAll('\r\n', '\n').split('\n')
+
+  if (!lines.length) {
+    return null
+  }
+
+  const startLine = clamp(Math.round(sourceRange.startLine), 1, lines.length)
+  const endLine = clamp(Math.round(sourceRange.endLine), startLine, lines.length)
+  const offsets: number[] = []
+  let offset = 0
+
+  lines.forEach((line, index) => {
+    offsets[index] = offset
+    offset += line.length + 1
+  })
+
+  const start = offsets[startLine - 1] || 0
+  const end = (offsets[endLine - 1] || 0) + (lines[endLine - 1]?.length || 0)
+
+  return {
+    start,
+    end: Math.max(start, end)
+  }
+}
+
 const collectBlocks = (source: string) => {
   const lines = source
     .replaceAll('\r\n', '\n')
@@ -520,6 +562,8 @@ const collectBlocks = (source: string) => {
     if (line.endsWith('{')) {
       const header = line.slice(0, -1).trim()
       const body: string[] = []
+      const startLine = index + 1
+      let endLine = lines.length
       let depth = 1
       index += 1
 
@@ -535,6 +579,7 @@ const collectBlocks = (source: string) => {
           depth -= 1
 
           if (depth === 0) {
+            endLine = index + 1
             index += 1
             break
           }
@@ -549,7 +594,10 @@ const collectBlocks = (source: string) => {
 
       blocks.push({
         header,
-        body
+        body,
+        startLine,
+        endLine,
+        bodyStartLine: startLine + 1
       })
       continue
     }
@@ -918,16 +966,17 @@ const parseTable = (block: NamedBlock) => {
   const constraints: PgmlConstraint[] = []
   let note: string | null = null
 
-  for (const line of block.body) {
+  block.body.forEach((line, lineIndex) => {
     const trimmed = line.trim()
+    const sourceLine = block.bodyStartLine + lineIndex
 
     if (trimmed.length === 0 || trimmed.startsWith('//')) {
-      continue
+      return
     }
 
     if (trimmed.startsWith('Note:')) {
       note = trimmed.replace('Note:', '').trim()
-      continue
+      return
     }
 
     const indexMatch = trimmed.match(/^Index\s+([^\s(]+)\s*\(([^)]*)\)(?:\s*\[([^\]]+)\])?$/)
@@ -943,9 +992,13 @@ const parseTable = (block: NamedBlock) => {
         name: cleanName(indexName),
         tableName: `${nameTarget.schema}.${nameTarget.table}`,
         columns: indexColumns.split(',').map(value => cleanName(value)),
-        type: typePart ? typePart.replace('type:', '').trim() : 'btree'
+        type: typePart ? typePart.replace('type:', '').trim() : 'btree',
+        sourceRange: {
+          startLine: sourceLine,
+          endLine: sourceLine
+        }
       })
-      continue
+      return
     }
 
     const constraintMatch = trimmed.match(/^Constraint\s+([^:]+):\s*(.+)$/)
@@ -957,15 +1010,19 @@ const parseTable = (block: NamedBlock) => {
       constraints.push({
         name: cleanName(constraintName),
         tableName: `${nameTarget.schema}.${nameTarget.table}`,
-        expression: constraintExpression.trim()
+        expression: constraintExpression.trim(),
+        sourceRange: {
+          startLine: sourceLine,
+          endLine: sourceLine
+        }
       })
-      continue
+      return
     }
 
     const columnMatch = trimmed.match(/^([^\s]+)\s+([^[\]]+?)(?:\s+\[([^\]]+)\])?$/)
 
     if (!columnMatch) {
-      continue
+      return
     }
 
     const columnName = readMatch(columnMatch[1])
@@ -1001,7 +1058,7 @@ const parseTable = (block: NamedBlock) => {
       note: notePart ? notePart.replace('note:', '').trim() : null,
       reference
     })
-  }
+  })
 
   return {
     name: nameTarget.table,
@@ -1011,7 +1068,11 @@ const parseTable = (block: NamedBlock) => {
     note,
     columns,
     indexes,
-    constraints
+    constraints,
+    sourceRange: {
+      startLine: block.startLine,
+      endLine: block.endLine
+    }
   } satisfies PgmlTable
 }
 
@@ -1057,7 +1118,11 @@ const parseGroup = (block: NamedBlock) => {
   return {
     name: groupName,
     tableNames,
-    note
+    note,
+    sourceRange: {
+      startLine: block.startLine,
+      endLine: block.endLine
+    }
   } satisfies PgmlGroup
 }
 
@@ -1084,7 +1149,11 @@ const parseRoutine = (block: NamedBlock, keyword: 'Function' | 'Procedure') => {
     metadata: mergedMetadata,
     docs: executable.docs,
     affects: executable.affects,
-    source: executable.source
+    source: executable.source,
+    sourceRange: {
+      startLine: block.startLine,
+      endLine: block.endLine
+    }
   } satisfies PgmlRoutine
 }
 
@@ -1112,7 +1181,11 @@ const parseTrigger = (block: NamedBlock) => {
     metadata: mergedMetadata,
     docs: executable.docs,
     affects: executable.affects,
-    source: executable.source
+    source: executable.source,
+    sourceRange: {
+      startLine: block.startLine,
+      endLine: block.endLine
+    }
   } satisfies PgmlTrigger
 }
 
@@ -1133,7 +1206,11 @@ const parseSequence = (block: NamedBlock) => {
     metadata: mergedMetadata,
     docs: executable.docs,
     affects: executable.affects,
-    source: executable.source
+    source: executable.source,
+    sourceRange: {
+      startLine: block.startLine,
+      endLine: block.endLine
+    }
   } satisfies PgmlSequence
 }
 
@@ -1150,6 +1227,11 @@ const parseCustomType = (block: NamedBlock) => {
     details: block.body
       .map(line => line.trim())
       .filter(line => line.length > 0)
+    ,
+    sourceRange: {
+      startLine: block.startLine,
+      endLine: block.endLine
+    }
   } satisfies PgmlCustomType
 }
 
@@ -1235,27 +1317,30 @@ const parseNodePropertiesBlock = (block: NamedBlock): { id: string, properties: 
 
   const x = entries.x
   const y = entries.y
-  const width = entries.width
-  const height = entries.height
-
   if (
     x === undefined
     || y === undefined
-    || width === undefined
-    || height === undefined
   ) {
     return null
   }
 
+  const properties: PgmlNodeProperties = {
+    x,
+    y,
+    tableColumns: Number.isFinite(entries.tableColumns) ? Math.max(1, Math.round(entries.tableColumns || 1)) : null
+  }
+
+  if (Number.isFinite(entries.width)) {
+    properties.width = entries.width
+  }
+
+  if (Number.isFinite(entries.height)) {
+    properties.height = entries.height
+  }
+
   return {
     id,
-    properties: {
-      x,
-      y,
-      width,
-      height,
-      tableColumns: Number.isFinite(entries.tableColumns) ? Math.max(1, Math.round(entries.tableColumns || 1)) : null
-    } satisfies PgmlNodeProperties
+    properties
   }
 }
 
@@ -1308,10 +1393,16 @@ export const buildPgmlWithNodeProperties = (
       const lines = [
         `Properties "${id}" {`,
         `  x: ${formatPgmlNumber(properties.x)}`,
-        `  y: ${formatPgmlNumber(properties.y)}`,
-        `  width: ${formatPgmlNumber(properties.width)}`,
-        `  height: ${formatPgmlNumber(properties.height)}`
+        `  y: ${formatPgmlNumber(properties.y)}`
       ]
+
+      if (typeof properties.width === 'number') {
+        lines.push(`  width: ${formatPgmlNumber(properties.width)}`)
+      }
+
+      if (typeof properties.height === 'number') {
+        lines.push(`  height: ${formatPgmlNumber(properties.height)}`)
+      }
 
       if (properties.tableColumns) {
         lines.push(`  table_columns: ${Math.max(1, Math.round(properties.tableColumns))}`)

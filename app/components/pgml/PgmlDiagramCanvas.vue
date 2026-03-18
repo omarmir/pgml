@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import type {
+  PgmlColumn,
   PgmlCustomType,
   PgmlNodeProperties,
   PgmlRoutine,
@@ -15,9 +16,39 @@ const { model } = defineProps<{
 
 type CanvasNodeKind = 'group' | 'object'
 type ObjectKind = 'Index' | 'Constraint' | 'Function' | 'Procedure' | 'Trigger' | 'Sequence' | 'Custom Type'
+type TableAttachmentKind = 'Constraint' | 'Function' | 'Procedure' | 'Trigger' | 'Sequence'
 type ImpactTarget = {
   tableId: string
   columnName: string | null
+}
+
+type TableAttachmentFlag = {
+  key: string
+  label: string
+  color: string
+}
+
+type TableAttachment = {
+  id: string
+  kind: TableAttachmentKind
+  title: string
+  subtitle: string
+  details: string[]
+  tableId: string
+  color: string
+  flags: TableAttachmentFlag[]
+}
+
+type TableRow = {
+  kind: 'column'
+  key: string
+  tableId: string
+  column: PgmlColumn
+} | {
+  kind: 'attachment'
+  key: string
+  tableId: string
+  attachment: TableAttachment
 }
 
 type CanvasNodeState = {
@@ -118,6 +149,30 @@ const objectRowGapY = 180
 const layoutPadding = 88
 const exportPadding = 96
 const collapsedObjectHeight = 56
+const triggerCallFlagColor = '#38bdf8'
+const attachmentPopoverContent = {
+  side: 'right' as const,
+  align: 'start' as const,
+  sideOffset: 10,
+  collisionPadding: 16
+}
+const attachmentPopoverUi = {
+  content: 'w-[22rem] rounded-none border border-[color:var(--studio-shell-border)] bg-[color:var(--studio-control-bg)] p-3 shadow-[var(--studio-floating-shadow)] backdrop-blur-sm'
+}
+const attachmentKindOrder: Record<TableAttachmentKind, number> = {
+  Constraint: 0,
+  Trigger: 1,
+  Function: 2,
+  Procedure: 3,
+  Sequence: 4
+}
+const attachmentKindColors: Record<TableAttachmentKind, string> = {
+  Constraint: '#fb7185',
+  Function: '#c084fc',
+  Procedure: '#f97316',
+  Trigger: '#22c55e',
+  Sequence: '#eab308'
+}
 
 const canvasNodes = computed(() => Object.values(nodeStates.value))
 const hasEmbeddedLayout = computed(() => Object.keys(model.nodeProperties).length > 0)
@@ -154,8 +209,8 @@ const tableGroupById = computed(() => {
   return groups
 })
 
-const estimateTableHeight = (columnCount: number) => {
-  return 40 + columnCount * groupColumnRowHeight
+const estimateTableHeight = (rowCount: number) => {
+  return 40 + rowCount * groupColumnRowHeight
 }
 
 const getGroupMinimumSize = (groupName: string, columnCount: number) => {
@@ -165,7 +220,7 @@ const getGroupMinimumSize = (groupName: string, columnCount: number) => {
 
   tables.forEach((table, index) => {
     const rowIndex = Math.floor(index / safeColumnCount)
-    const tableHeight = estimateTableHeight(table.columns.length)
+    const tableHeight = estimateTableHeight(getTableRows(table.fullName).length)
     rowHeights[rowIndex] = Math.max(rowHeights[rowIndex] || 0, tableHeight)
   })
 
@@ -585,13 +640,10 @@ const buildExportSvgString = async (padding = exportPadding) => {
           )
         )
 
-        table.columns.forEach((column, columnIndex) => {
-          const rowElement = tableElement.querySelector(`[data-column-anchor="${getColumnAnchorKey(table.fullName, column.name)}"]`)
+        const rowElements = Array.from(tableElement.querySelectorAll('[data-table-row-anchor]'))
+          .filter((rowElement): rowElement is HTMLElement => rowElement instanceof HTMLElement)
 
-          if (!(rowElement instanceof HTMLElement)) {
-            return
-          }
-
+        rowElements.forEach((rowElement, rowIndex) => {
           const rowRect = getPlaneRelativeRect(rowElement)
 
           if (!rowRect) {
@@ -601,55 +653,77 @@ const buildExportSvgString = async (padding = exportPadding) => {
           const rowX = rowRect.x + offsetX
           const rowY = rowRect.y + offsetY
           const rowHeight = rowRect.height
-          const modifierWidth = Math.min(118, rowRect.width * 0.44)
-          let modifierCursorY = rowY + 5
+          const rowStyles = window.getComputedStyle(rowElement)
 
           parts.push(
-            `<rect x="${rowX}" y="${rowY}" width="${rowRect.width}" height="${rowHeight}" ${buildSvgPaintAttributes('fill', window.getComputedStyle(rowElement).backgroundColor, rowSurface)} />`
+            `<rect x="${rowX}" y="${rowY}" width="${rowRect.width}" height="${rowHeight}" ${buildSvgPaintAttributes('fill', rowStyles.backgroundColor, rowSurface)} />`
           )
 
-          parts.push(
-            buildSvgText(
-              [column.name],
-              rowX + 8,
-              rowY + 13,
-              9,
-              `font: 600 9px ${monoFont}; ${buildSvgTextPaintStyle(shellText, '#e2e8f0')}`
-            )
-          )
-          parts.push(
-            buildSvgText(
-              [column.type],
-              rowX + 8,
-              rowY + 24,
-              8,
-              `font: 400 8px ${sansFont}; ${buildSvgTextPaintStyle(shellMuted, '#94a3b8')}`
-            )
-          )
+          const titleElement = rowElement.querySelector('[data-table-row-title]')
+          const subtitleElement = rowElement.querySelector('[data-table-row-subtitle]')
 
-          column.modifiers.slice(0, 2).forEach((modifier) => {
-            const modifierLines = wrapSvgText(modifier.toUpperCase(), modifierWidth - 8, 7.5, true)
-            const modifierHeight = Math.max(14, modifierLines.length * 8 + 4)
-            const modifierX = rowX + rowRect.width - modifierWidth - 6
+          if (titleElement instanceof HTMLElement) {
+            const titleRect = getPlaneRelativeRect(titleElement)
+
+            if (titleRect) {
+              parts.push(
+                buildSvgText(
+                  [titleElement.textContent || ''],
+                  titleRect.x + offsetX,
+                  titleRect.y + offsetY + titleRect.height - 2,
+                  9,
+                  `font: 600 9px ${monoFont}; ${buildSvgTextPaintStyle(shellText, '#e2e8f0')}`
+                )
+              )
+            }
+          }
+
+          if (subtitleElement instanceof HTMLElement) {
+            const subtitleRect = getPlaneRelativeRect(subtitleElement)
+
+            if (subtitleRect) {
+              parts.push(
+                buildSvgText(
+                  [subtitleElement.textContent || ''],
+                  subtitleRect.x + offsetX,
+                  subtitleRect.y + offsetY + subtitleRect.height - 2,
+                  8,
+                  `font: 400 8px ${sansFont}; ${buildSvgTextPaintStyle(shellMuted, '#94a3b8')}`
+                )
+              )
+            }
+          }
+
+          rowElement.querySelectorAll('[data-table-row-badge]').forEach((badgeElement) => {
+            if (!(badgeElement instanceof HTMLElement)) {
+              return
+            }
+
+            const badgeRect = getPlaneRelativeRect(badgeElement)
+
+            if (!badgeRect) {
+              return
+            }
+
+            const badgeStyles = window.getComputedStyle(badgeElement)
+            const badgeFill = normalizeSvgColor(badgeStyles.backgroundColor, 'transparent')
 
             parts.push(
-              `<rect x="${modifierX}" y="${modifierCursorY}" width="${modifierWidth}" height="${modifierHeight}" fill="none" ${buildSvgPaintAttributes('stroke', railColor, railColor)} stroke-width="1" />`
+              `<rect x="${badgeRect.x + offsetX}" y="${badgeRect.y + offsetY}" width="${badgeRect.width}" height="${badgeRect.height}" ${buildSvgPaintAttributes('fill', badgeFill, 'transparent')} ${buildSvgPaintAttributes('stroke', badgeStyles.borderColor, railColor)} stroke-width="1" />`
             )
             parts.push(
               buildSvgText(
-                modifierLines,
-                modifierX + modifierWidth - 4,
-                modifierCursorY + 9,
-                8,
-                `font: 500 7.5px ${monoFont}; letter-spacing: 0.25px; ${buildSvgTextPaintStyle(shellMuted, '#94a3b8')}`,
-                'end'
+                [badgeElement.textContent || ''],
+                badgeRect.x + offsetX + badgeRect.width / 2,
+                badgeRect.y + offsetY + badgeRect.height / 2 + 2.5,
+                7.5,
+                `font: 500 7.5px ${monoFont}; letter-spacing: 0.24px; ${buildSvgTextPaintStyle(badgeStyles.color, shellMuted)}`,
+                'middle'
               )
             )
-
-            modifierCursorY += modifierHeight + 2
           })
 
-          if (columnIndex < table.columns.length - 1) {
+          if (rowIndex < rowElements.length - 1) {
             parts.push(
               `<line x1="${rowX}" y1="${rowY + rowHeight}" x2="${rowX + rowRect.width}" y2="${rowY + rowHeight}" ${buildSvgPaintAttributes('stroke', dividerColor, dividerColor)} stroke-width="1" />`
             )
@@ -916,8 +990,12 @@ const syncMeasuredNodeSizes = () => {
       continue
     }
 
-    const nextWidth = Math.max(current.width, measuredSize.minWidth)
-    const nextHeight = Math.max(current.height, measuredSize.minHeight)
+    const nextWidth = current.kind === 'group'
+      ? measuredSize.minWidth
+      : Math.max(current.width, measuredSize.minWidth)
+    const nextHeight = current.kind === 'group'
+      ? measuredSize.minHeight
+      : Math.max(current.height, measuredSize.minHeight)
     const needsUpdate = (
       current.minWidth !== measuredSize.minWidth
       || current.minHeight !== measuredSize.minHeight
@@ -934,7 +1012,10 @@ const syncMeasuredNodeSizes = () => {
       minWidth: measuredSize.minWidth,
       minHeight: measuredSize.minHeight,
       width: nextWidth,
-      height: nextHeight
+      height: nextHeight,
+      expandedHeight: current.kind === 'group'
+        ? nextHeight
+        : current.expandedHeight
     }
     hasChanges = true
   }
@@ -1423,19 +1504,6 @@ const inferColumnsFromText = (tableId: string, text: string) => {
     .map(column => column.name)
 }
 
-const inferConstraintTargets = (tableId: string, expression: string) => {
-  const matchedColumns = inferColumnsFromText(tableId, expression)
-
-  if (!matchedColumns.length) {
-    return [{ tableId, columnName: null }]
-  }
-
-  return matchedColumns.map(columnName => ({
-    tableId,
-    columnName
-  }))
-}
-
 const inferRoutineTargets = (routine: PgmlRoutine) => {
   const explicitTargets = routine.affects
     ? getImpactTargetsFromValues([
@@ -1539,6 +1607,243 @@ const inferCustomTypeTargets = (customType: PgmlCustomType) => {
 
   return getUniqueImpactTargets(targets)
 }
+
+const normalizeMetadataKey = (value: string) => value.toLowerCase().replaceAll(/[^\w]+/g, '_')
+const getMetadataValue = (metadata: Array<{ key: string, value: string }>, key: string) => {
+  const normalizedKey = normalizeMetadataKey(key)
+
+  return metadata.find(entry => normalizeMetadataKey(entry.key) === normalizedKey)?.value || null
+}
+const getUniqueTableIds = (targets: ImpactTarget[]) => uniqueValues(targets.map(target => target.tableId))
+const parseMetadataList = (value: string | null) => {
+  if (!value) {
+    return []
+  }
+
+  return value
+    .replace(/^\[(.*)\]$/, '$1')
+    .split(',')
+    .map(entry => entry.trim())
+    .filter(entry => entry.length > 0)
+}
+const buildTriggerSubtitle = (trigger: PgmlSchemaModel['triggers'][number]) => {
+  const timing = getMetadataValue(trigger.metadata, 'timing')
+  const events = parseMetadataList(getMetadataValue(trigger.metadata, 'events'))
+  const level = getMetadataValue(trigger.metadata, 'level')
+  const parts: string[] = []
+
+  if (timing) {
+    parts.push(timing.toUpperCase())
+  }
+
+  if (events.length) {
+    parts.push(events.map(eventName => eventName.toUpperCase()).join(' / '))
+  }
+
+  if (level) {
+    parts.push(level.toUpperCase())
+  }
+
+  return parts.join(' · ') || `On ${trigger.tableName}`
+}
+const buildSequenceSubtitle = (sequence: PgmlSequence) => {
+  const ownedBy = getMetadataValue(sequence.metadata, 'owned_by')
+
+  if (ownedBy) {
+    return `Owned by ${ownedBy}`
+  }
+
+  return 'Sequence'
+}
+const getRoutinePrimaryTableIds = (routine: PgmlRoutine) => {
+  const candidateGroups = routine.affects
+    ? [routine.affects.ownedBy, routine.affects.sets, routine.affects.writes]
+    : []
+
+  for (const values of candidateGroups) {
+    const tableIds = getUniqueTableIds(getImpactTargetsFromValues(values))
+
+    if (tableIds.length) {
+      return tableIds
+    }
+  }
+
+  const inferredTableIds = getUniqueTableIds(inferRoutineTargets(routine))
+
+  return inferredTableIds.length === 1 ? inferredTableIds : []
+}
+const getSequenceOwnedTableIds = (sequence: PgmlSequence) => {
+  const metadataOwnedBy = getMetadataValue(sequence.metadata, 'owned_by')
+  const explicitOwnedBy = sequence.affects?.ownedBy || []
+  const values = metadataOwnedBy
+    ? [metadataOwnedBy, ...explicitOwnedBy]
+    : explicitOwnedBy
+
+  return getUniqueTableIds(getImpactTargetsFromValues(values))
+}
+const triggerTableIdsByRoutineName = computed(() => {
+  const mapping = new Map<string, string[]>()
+
+  model.triggers.forEach((trigger) => {
+    const routineName = getMetadataValue(trigger.metadata, 'function')
+
+    if (!routineName) {
+      return
+    }
+
+    const normalizedRoutineName = cleanForSearch(routineName.split('.').at(-1) || routineName)
+    const nextTableIds = mapping.get(normalizedRoutineName) || []
+
+    nextTableIds.push(normalizeReference(trigger.tableName))
+    mapping.set(normalizedRoutineName, uniqueValues(nextTableIds))
+  })
+
+  return mapping
+})
+const tableAttachmentState = computed(() => {
+  const attachmentsByTableId: Record<string, TableAttachment[]> = {}
+  const attachedObjectIds = new Set<string>()
+  const addAttachment = (attachment: TableAttachment) => {
+    if (!attachmentsByTableId[attachment.tableId]) {
+      attachmentsByTableId[attachment.tableId] = []
+    }
+
+    attachmentsByTableId[attachment.tableId]?.push(attachment)
+    attachedObjectIds.add(attachment.id)
+  }
+
+  model.tables.forEach((table) => {
+    table.constraints.forEach((constraint) => {
+      addAttachment({
+        id: `constraint:${constraint.name}`,
+        kind: 'Constraint',
+        title: constraint.name,
+        subtitle: constraint.expression,
+        details: [constraint.expression],
+        tableId: table.fullName,
+        color: attachmentKindColors.Constraint,
+        flags: []
+      })
+    })
+  })
+
+  model.triggers.forEach((trigger) => {
+    const tableId = normalizeReference(trigger.tableName)
+
+    addAttachment({
+      id: `trigger:${trigger.name}`,
+      kind: 'Trigger',
+      title: trigger.name,
+      subtitle: buildTriggerSubtitle(trigger),
+      details: trigger.details,
+      tableId,
+      color: attachmentKindColors.Trigger,
+      flags: []
+    })
+  })
+
+  model.functions.forEach((routine) => {
+    const routineId = `function:${routine.name}`
+    const triggerTableIds = triggerTableIdsByRoutineName.value.get(cleanForSearch(routine.name)) || []
+    const tableIds = triggerTableIds.length ? triggerTableIds : getRoutinePrimaryTableIds(routine)
+
+    tableIds.forEach((tableId) => {
+      addAttachment({
+        id: routineId,
+        kind: 'Function',
+        title: routine.name,
+        subtitle: routine.signature,
+        details: routine.details,
+        tableId,
+        color: attachmentKindColors.Function,
+        flags: triggerTableIds.length
+          ? [{ key: 'trigger-call', label: 'TRIGGER', color: triggerCallFlagColor }]
+          : []
+      })
+    })
+  })
+
+  model.procedures.forEach((procedure) => {
+    const procedureId = `procedure:${procedure.name}`
+    const triggerTableIds = triggerTableIdsByRoutineName.value.get(cleanForSearch(procedure.name)) || []
+    const tableIds = triggerTableIds.length ? triggerTableIds : getRoutinePrimaryTableIds(procedure)
+
+    tableIds.forEach((tableId) => {
+      addAttachment({
+        id: procedureId,
+        kind: 'Procedure',
+        title: procedure.name,
+        subtitle: procedure.signature,
+        details: procedure.details,
+        tableId,
+        color: attachmentKindColors.Procedure,
+        flags: triggerTableIds.length
+          ? [{ key: 'trigger-call', label: 'TRIGGER', color: triggerCallFlagColor }]
+          : []
+      })
+    })
+  })
+
+  model.sequences.forEach((sequence) => {
+    const tableIds = getSequenceOwnedTableIds(sequence)
+
+    tableIds.forEach((tableId) => {
+      addAttachment({
+        id: `sequence:${sequence.name}`,
+        kind: 'Sequence',
+        title: sequence.name,
+        subtitle: buildSequenceSubtitle(sequence),
+        details: sequence.details,
+        tableId,
+        color: attachmentKindColors.Sequence,
+        flags: []
+      })
+    })
+  })
+
+  Object.values(attachmentsByTableId).forEach((attachments) => {
+    attachments.sort((left, right) => {
+      const orderDelta = attachmentKindOrder[left.kind] - attachmentKindOrder[right.kind]
+
+      if (orderDelta !== 0) {
+        return orderDelta
+      }
+
+      return left.title.localeCompare(right.title)
+    })
+  })
+
+  return {
+    attachmentsByTableId,
+    attachedObjectIds
+  }
+})
+const tableRowsByTableId = computed(() => {
+  return model.tables.reduce<Record<string, TableRow[]>>((rowsByTableId, table) => {
+    const rows: TableRow[] = [
+      ...table.columns.map((column) => {
+        return {
+          kind: 'column' as const,
+          key: `${table.fullName}.${column.name}`,
+          tableId: table.fullName,
+          column
+        }
+      }),
+      ...(tableAttachmentState.value.attachmentsByTableId[table.fullName] || []).map((attachment) => {
+        return {
+          kind: 'attachment' as const,
+          key: attachment.id,
+          tableId: table.fullName,
+          attachment
+        }
+      })
+    ]
+
+    rowsByTableId[table.fullName] = rows
+    return rowsByTableId
+  }, {})
+})
+const getTableRows = (tableId: string) => tableRowsByTableId.value[tableId] || []
 
 const buildGroupRelationWeights = (groupNames: string[]) => {
   const weights: Record<string, Record<string, number>> = {}
@@ -2005,6 +2310,7 @@ const autoLayoutObjectNodes = (objectNodes: CanvasNodeState[], groupStates: Reco
 const buildObjectNodes = (groupStates: Record<string, CanvasNodeState>) => {
   const nodes: CanvasNodeState[] = []
   const lanes: Record<string, number> = {}
+  const attachedObjectIds = tableAttachmentState.value.attachedObjectIds
 
   const resolveGroupName = (tableIds: string[]) => {
     const firstTable = model.tables.find(table => tableIds.includes(table.fullName))
@@ -2069,33 +2375,19 @@ const buildObjectNodes = (groupStates: Record<string, CanvasNodeState>) => {
         }))
       })
     }
-
-    for (const constraint of table.constraints) {
-      const tableId = normalizeReference(constraint.tableName)
-
-      addNode({
-        id: `constraint:${constraint.name}`,
-        kind: 'object',
-        objectKind: 'Constraint',
-        collapsed: true,
-        title: constraint.name,
-        subtitle: `Constraint on ${table.name}`,
-        details: [constraint.expression],
-        width: 258,
-        height: 114,
-        expandedHeight: 114,
-        color: '#fb7185',
-        tableIds: [tableId],
-        impactTargets: inferConstraintTargets(tableId, constraint.expression)
-      })
-    }
   }
 
   for (const pgFunction of model.functions) {
+    const functionId = `function:${pgFunction.name}`
+
+    if (attachedObjectIds.has(functionId)) {
+      continue
+    }
+
     const impactTargets = inferRoutineTargets(pgFunction)
 
     addNode({
-      id: `function:${pgFunction.name}`,
+      id: functionId,
       kind: 'object',
       objectKind: 'Function',
       collapsed: true,
@@ -2105,17 +2397,23 @@ const buildObjectNodes = (groupStates: Record<string, CanvasNodeState>) => {
       width: 336,
       height: 176,
       expandedHeight: 176,
-      color: '#c084fc',
+      color: attachmentKindColors.Function,
       tableIds: uniqueValues(impactTargets.map(target => target.tableId)),
       impactTargets
     })
   }
 
   for (const procedure of model.procedures) {
+    const procedureId = `procedure:${procedure.name}`
+
+    if (attachedObjectIds.has(procedureId)) {
+      continue
+    }
+
     const impactTargets = inferRoutineTargets(procedure)
 
     addNode({
-      id: `procedure:${procedure.name}`,
+      id: procedureId,
       kind: 'object',
       objectKind: 'Procedure',
       collapsed: true,
@@ -2125,17 +2423,23 @@ const buildObjectNodes = (groupStates: Record<string, CanvasNodeState>) => {
       width: 320,
       height: 156,
       expandedHeight: 156,
-      color: '#f97316',
+      color: attachmentKindColors.Procedure,
       tableIds: uniqueValues(impactTargets.map(target => target.tableId)),
       impactTargets
     })
   }
 
   for (const trigger of model.triggers) {
+    const triggerId = `trigger:${trigger.name}`
+
+    if (attachedObjectIds.has(triggerId)) {
+      continue
+    }
+
     const tableId = normalizeReference(trigger.tableName)
 
     addNode({
-      id: `trigger:${trigger.name}`,
+      id: triggerId,
       kind: 'object',
       objectKind: 'Trigger',
       collapsed: true,
@@ -2145,17 +2449,23 @@ const buildObjectNodes = (groupStates: Record<string, CanvasNodeState>) => {
       width: 332,
       height: 168,
       expandedHeight: 168,
-      color: '#22c55e',
+      color: attachmentKindColors.Trigger,
       tableIds: [tableId],
       impactTargets: inferTriggerTargets(tableId, trigger)
     })
   }
 
   for (const sequence of model.sequences) {
+    const sequenceId = `sequence:${sequence.name}`
+
+    if (attachedObjectIds.has(sequenceId)) {
+      continue
+    }
+
     const impactTargets = inferSequenceTargets(sequence)
 
     addNode({
-      id: `sequence:${sequence.name}`,
+      id: sequenceId,
       kind: 'object',
       objectKind: 'Sequence',
       collapsed: true,
@@ -2165,7 +2475,7 @@ const buildObjectNodes = (groupStates: Record<string, CanvasNodeState>) => {
       width: 308,
       height: 156,
       expandedHeight: 156,
-      color: '#eab308',
+      color: attachmentKindColors.Sequence,
       tableIds: uniqueValues(impactTargets.map(target => target.tableId)),
       impactTargets
     })
@@ -2216,7 +2526,7 @@ const syncNodeStates = () => {
     const existing = nodeStates.value[`group:${groupName}`]
     const storedLayout = model.nodeProperties[`group:${groupName}`]
     const color = existing?.color || palette[index % palette.length] || '#8b5cf6'
-    const columnCount = storedLayout?.tableColumns || existing?.columnCount || 1
+    const columnCount = storedLayout?.tableColumns ?? existing?.columnCount ?? 1
     const note = model.groups.find(group => group.name === groupName)?.note || null
     const minimumSize = getGroupMinimumSize(groupName, columnCount)
 
@@ -2229,9 +2539,9 @@ const syncNodeStates = () => {
       details: tables.map(table => table.fullName),
       x: storedLayout?.x ?? existing?.x ?? 120 + index * 420,
       y: storedLayout?.y ?? existing?.y ?? 90 + (index % 2) * 120,
-      width: Math.max(storedLayout?.width ?? existing?.width ?? 320, minimumSize.minWidth),
-      height: Math.max(storedLayout?.height ?? existing?.height ?? 180, minimumSize.minHeight),
-      expandedHeight: Math.max(storedLayout?.height ?? existing?.expandedHeight ?? existing?.height ?? 180, minimumSize.minHeight),
+      width: minimumSize.minWidth,
+      height: minimumSize.minHeight,
+      expandedHeight: minimumSize.minHeight,
       color,
       tableIds: tables.map(table => table.fullName),
       tableCount: tables.length,
@@ -2352,6 +2662,26 @@ const getNodeBackground = (node: CanvasNodeState) => {
 }
 const getNodeAccentColor = (node: CanvasNodeState) => {
   return `color-mix(in srgb, ${node.color} 70%, var(--studio-node-accent-mix) 30%)`
+}
+const getAttachmentRowStyle = (attachment: TableAttachment) => {
+  return {
+    backgroundColor: `color-mix(in srgb, ${attachment.color} 8%, var(--studio-row-surface) 92%)`,
+    boxShadow: `inset 3px 0 0 color-mix(in srgb, ${attachment.color} 58%, transparent)`
+  }
+}
+const getAttachmentKindBadgeStyle = (attachment: TableAttachment) => {
+  return {
+    borderColor: `color-mix(in srgb, ${attachment.color} 58%, var(--studio-rail) 42%)`,
+    backgroundColor: `color-mix(in srgb, ${attachment.color} 16%, transparent)`,
+    color: `color-mix(in srgb, ${attachment.color} 72%, var(--studio-shell-text) 28%)`
+  }
+}
+const getAttachmentFlagStyle = (flag: TableAttachmentFlag) => {
+  return {
+    borderColor: `color-mix(in srgb, ${flag.color} 56%, var(--studio-rail) 44%)`,
+    backgroundColor: `color-mix(in srgb, ${flag.color} 14%, transparent)`,
+    color: `color-mix(in srgb, ${flag.color} 72%, var(--studio-shell-text) 28%)`
+  }
 }
 
 const getAnchorSlotCount = (element: HTMLElement, side: AnchorSide) => {
@@ -2898,14 +3228,18 @@ const getNodeLayoutProperties = () => {
     const persistedHeight = node.kind === 'object' && node.collapsed
       ? node.expandedHeight || node.height
       : node.height
-
-    properties[node.id] = {
+    const nextProperties: PgmlNodeProperties = {
       x: Math.round(node.x),
       y: Math.round(node.y),
-      width: Math.round(node.width),
-      height: Math.round(persistedHeight),
       tableColumns: node.kind === 'group' ? Math.max(1, Math.round(node.columnCount || 1)) : null
     }
+
+    if (node.kind === 'object') {
+      nextProperties.width = Math.round(node.width)
+      nextProperties.height = Math.round(persistedHeight)
+    }
+
+    properties[node.id] = nextProperties
 
     return properties
   }, {})
@@ -2956,8 +3290,9 @@ const updateNode = (
 
     nextNode.minWidth = minimumSize.minWidth
     nextNode.minHeight = minimumSize.minHeight
-    nextNode.width = Math.max(nextNode.width, minimumSize.minWidth)
-    nextNode.height = Math.max(nextNode.height, minimumSize.minHeight)
+    nextNode.width = minimumSize.minWidth
+    nextNode.height = minimumSize.minHeight
+    nextNode.expandedHeight = minimumSize.minHeight
   }
 
   nodeStates.value[id] = nextNode
@@ -3066,7 +3401,7 @@ const startResizeNode = (event: PointerEvent, id: string) => {
   selectedNodeId.value = id
   const node = nodeStates.value[id]
 
-  if (!node) {
+  if (!node || node.kind !== 'object') {
     return
   }
 
@@ -3332,29 +3667,150 @@ defineExpose<{
               </div>
 
               <div class="grid gap-px bg-[color:var(--studio-divider)]">
-                <div
-                  v-for="column in table.columns"
-                  :key="`${table.fullName}.${column.name}`"
-                  :data-column-anchor="getColumnAnchorKey(table.fullName, column.name)"
-                  class="flex items-start justify-between gap-2 bg-[color:var(--studio-row-surface)] px-2 py-1.5"
+                <template
+                  v-for="row in getTableRows(table.fullName)"
+                  :key="row.key"
                 >
                   <div
-                    :data-column-label-anchor="getColumnLabelAnchorKey(table.fullName, column.name)"
-                    class="min-w-0"
+                    v-if="row.kind === 'column'"
+                    :data-table-row-anchor="row.key"
+                    data-table-row-kind="column"
+                    :data-column-anchor="getColumnAnchorKey(table.fullName, row.column.name)"
+                    class="flex items-start justify-between gap-2 bg-[color:var(--studio-row-surface)] px-2 py-1.5"
                   >
-                    <strong class="block truncate font-mono text-[0.68rem] font-medium text-[color:var(--studio-shell-text)]">{{ column.name }}</strong>
-                    <span class="mt-0.5 block truncate text-[0.64rem] text-[color:var(--studio-shell-muted)]">{{ column.type }}</span>
-                  </div>
-                  <div class="grid max-w-[8.5rem] shrink-0 justify-items-end gap-0.5 text-right">
-                    <span
-                      v-for="modifier in column.modifiers.slice(0, 2)"
-                      :key="modifier"
-                      class="inline-flex min-h-[1rem] max-w-full items-center justify-end border border-[color:var(--studio-rail)] px-1 py-0.5 font-mono text-[0.52rem] uppercase leading-[1.15] tracking-[0.04em] whitespace-normal break-all text-[color:var(--studio-shell-muted)]"
+                    <div
+                      :data-column-label-anchor="getColumnLabelAnchorKey(table.fullName, row.column.name)"
+                      class="min-w-0"
                     >
-                      {{ modifier }}
-                    </span>
+                      <strong
+                        data-table-row-title
+                        class="block truncate font-mono text-[0.68rem] font-medium text-[color:var(--studio-shell-text)]"
+                      >
+                        {{ row.column.name }}
+                      </strong>
+                      <span
+                        data-table-row-subtitle
+                        class="mt-0.5 block truncate text-[0.64rem] text-[color:var(--studio-shell-muted)]"
+                      >
+                        {{ row.column.type }}
+                      </span>
+                    </div>
+                    <div class="grid max-w-[8.5rem] shrink-0 justify-items-end gap-0.5 text-right">
+                      <span
+                        v-for="modifier in row.column.modifiers.slice(0, 2)"
+                        :key="modifier"
+                        data-table-row-badge
+                        class="inline-flex min-h-[1rem] max-w-full items-center justify-end border border-[color:var(--studio-rail)] px-1 py-0.5 font-mono text-[0.52rem] uppercase leading-[1.15] tracking-[0.04em] whitespace-normal break-all text-[color:var(--studio-shell-muted)]"
+                      >
+                        {{ modifier }}
+                      </span>
+                    </div>
                   </div>
-                </div>
+
+                  <UPopover
+                    v-else
+                    mode="click"
+                    :content="attachmentPopoverContent"
+                    :ui="attachmentPopoverUi"
+                  >
+                    <button
+                      type="button"
+                      :data-table-row-anchor="row.key"
+                      data-table-row-kind="attachment"
+                      :data-attachment-row="row.attachment.id"
+                      class="flex w-full items-start justify-between gap-2 px-2 py-1.5 text-left"
+                      :style="getAttachmentRowStyle(row.attachment)"
+                      :aria-label="`${row.attachment.kind} ${row.attachment.title}`"
+                      @pointerdown.stop
+                      @click.stop
+                    >
+                      <div class="flex min-w-0 items-start gap-2">
+                        <span
+                          data-table-row-badge
+                          class="mt-0.5 inline-flex h-4 shrink-0 items-center border px-1 font-mono text-[0.48rem] uppercase tracking-[0.06em]"
+                          :style="getAttachmentKindBadgeStyle(row.attachment)"
+                        >
+                          {{ row.attachment.kind }}
+                        </span>
+                        <div class="min-w-0">
+                          <strong
+                            data-table-row-title
+                            class="block truncate font-mono text-[0.66rem] font-medium text-[color:var(--studio-shell-text)]"
+                          >
+                            {{ row.attachment.title }}
+                          </strong>
+                          <span
+                            v-if="row.attachment.subtitle"
+                            data-table-row-subtitle
+                            class="mt-0.5 block truncate text-[0.62rem] text-[color:var(--studio-shell-muted)]"
+                          >
+                            {{ row.attachment.subtitle }}
+                          </span>
+                        </div>
+                      </div>
+
+                      <div class="flex max-w-[8.5rem] shrink-0 flex-wrap justify-end gap-0.5 text-right">
+                        <span
+                          v-for="flag in row.attachment.flags"
+                          :key="flag.key"
+                          data-table-row-badge
+                          class="inline-flex min-h-[1rem] max-w-full items-center justify-end border px-1 py-0.5 font-mono text-[0.5rem] uppercase leading-[1.15] tracking-[0.04em] whitespace-normal break-all"
+                          :style="getAttachmentFlagStyle(flag)"
+                        >
+                          {{ flag.label }}
+                        </span>
+                      </div>
+                    </button>
+
+                    <template #content>
+                      <div
+                        :data-attachment-popover="row.attachment.id"
+                        class="grid gap-3"
+                      >
+                        <div class="flex items-start justify-between gap-3">
+                          <div class="min-w-0">
+                            <span
+                              class="mb-1 inline-flex items-center border px-1.5 font-mono text-[0.56rem] uppercase tracking-[0.08em]"
+                              :style="getAttachmentKindBadgeStyle(row.attachment)"
+                            >
+                              {{ row.attachment.kind }}
+                            </span>
+                            <h5 class="truncate text-[0.82rem] font-semibold text-[color:var(--studio-shell-text)]">
+                              {{ row.attachment.title }}
+                            </h5>
+                            <p
+                              v-if="row.attachment.subtitle"
+                              class="mt-1 text-[0.68rem] leading-5 text-[color:var(--studio-shell-muted)]"
+                            >
+                              {{ row.attachment.subtitle }}
+                            </p>
+                          </div>
+
+                          <div class="flex shrink-0 flex-wrap justify-end gap-1">
+                            <span
+                              v-for="flag in row.attachment.flags"
+                              :key="flag.key"
+                              class="inline-flex items-center border px-1.5 py-0.5 font-mono text-[0.54rem] uppercase tracking-[0.06em]"
+                              :style="getAttachmentFlagStyle(flag)"
+                            >
+                              {{ flag.label }}
+                            </span>
+                          </div>
+                        </div>
+
+                        <div class="grid max-h-64 gap-1 overflow-auto border border-[color:var(--studio-rail)] bg-[color:var(--studio-input-bg)] px-2 py-2">
+                          <p
+                            v-for="detail in row.attachment.details"
+                            :key="detail"
+                            class="break-words whitespace-pre-wrap font-mono text-[0.62rem] leading-5 text-[color:var(--studio-shell-muted)] [overflow-wrap:anywhere]"
+                          >
+                            {{ detail }}
+                          </p>
+                        </div>
+                      </div>
+                    </template>
+                  </UPopover>
+                </template>
               </div>
             </article>
           </div>
@@ -3386,7 +3842,7 @@ defineExpose<{
         </div>
 
         <button
-          v-if="node.kind === 'group' || !node.collapsed"
+          v-if="node.kind !== 'group' && !node.collapsed"
           class="absolute bottom-1.5 right-1.5 h-4 w-4 cursor-nwse-resize border-none bg-transparent"
           :style="{
             borderRight: `2px solid ${getNodeAccentColor(node)}`,
@@ -3472,7 +3928,7 @@ defineExpose<{
         </label>
 
         <label
-          v-if="selectedNode.kind === 'group' || !selectedNode.collapsed"
+          v-if="selectedNode.kind !== 'group' && !selectedNode.collapsed"
           class="grid gap-1"
         >
           <span class="font-mono text-[0.58rem] uppercase tracking-[0.08em] text-[color:var(--studio-shell-label)]">Width</span>
@@ -3487,7 +3943,7 @@ defineExpose<{
         </label>
 
         <label
-          v-if="selectedNode.kind === 'group' || !selectedNode.collapsed"
+          v-if="selectedNode.kind !== 'group' && !selectedNode.collapsed"
           class="grid gap-1"
         >
           <span class="font-mono text-[0.58rem] uppercase tracking-[0.08em] text-[color:var(--studio-shell-label)]">Height</span>

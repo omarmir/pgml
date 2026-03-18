@@ -499,7 +499,7 @@ onMounted(() => {
                 size="sm"
                 :disabled="!canEmbedLayout"
                 label="Include current layout"
-                description="Embed x, y, width, height, and table column settings into the PGML text."
+                description="Embed canvas positions, floating object sizes, and table column settings into the PGML text."
                 :ui="{
                   wrapper: 'gap-1',
                   label: 'text-[0.78rem] text-[color:var(--studio-shell-text)]',

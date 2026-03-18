@@ -23,6 +23,24 @@ Sequence user_number_seq {
 }`
 
 describe('PGML node properties', () => {
+  it('parses group properties blocks without explicit width and height', () => {
+    const source = `${baseSource}
+
+Properties "group:Core" {
+  x: 144
+  y: 96
+  table_columns: 2
+}`
+
+    const model = parsePgml(source)
+
+    expect(model.nodeProperties['group:Core']).toEqual({
+      x: 144,
+      y: 96,
+      tableColumns: 2
+    })
+  })
+
   it('parses embedded node properties blocks', () => {
     const source = `${baseSource}
 
@@ -90,8 +108,6 @@ Properties "group:Core" {
       'group:Core': {
         x: 240,
         y: 180,
-        width: 520,
-        height: 420,
         tableColumns: 2
       },
       'sequence:user_number_seq': {
@@ -105,6 +121,7 @@ Properties "group:Core" {
 
     expect(built).not.toContain('Properties "group:Core" {\n  x: 12')
     expect(built).toContain('Properties "group:Core" {')
+    expect(built).not.toContain('Properties "group:Core" {\n  x: 240\n  y: 180\n  width:')
     expect(built).toContain('table_columns: 2')
     expect(built).toContain('Properties "sequence:user_number_seq" {')
 
@@ -112,6 +129,7 @@ Properties "group:Core" {
 
     expect(reparsed.nodeProperties['group:Core']?.x).toBe(240)
     expect(reparsed.nodeProperties['group:Core']?.tableColumns).toBe(2)
+    expect(reparsed.nodeProperties['group:Core']?.width).toBeUndefined()
     expect(reparsed.nodeProperties['sequence:user_number_seq']?.height).toBe(156)
   })
 })

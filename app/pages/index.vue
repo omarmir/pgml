@@ -354,7 +354,7 @@ const roadmap = [
                   <p><span class="text-[color:var(--studio-shell-text)]">1.</span> Use <span class="font-mono text-[color:var(--studio-shell-text)]">TableGroup</span> to describe the domain cluster.</p>
                   <p><span class="text-[color:var(--studio-shell-text)]">2.</span> Define the tables with inline refs and local constraints.</p>
                   <p><span class="text-[color:var(--studio-shell-text)]">3.</span> Use <span class="font-mono text-[color:var(--studio-shell-text)]">source</span> for executable SQL, then add <span class="font-mono text-[color:var(--studio-shell-text)]">docs</span> or <span class="font-mono text-[color:var(--studio-shell-text)]">affects</span> only when you want extra explanation or stronger impact hints.</p>
-                  <p><span class="text-[color:var(--studio-shell-text)]">4.</span> Open the studio to inspect connector impact, grouped layout, and richer routine/trigger/sequence cards.</p>
+                  <p><span class="text-[color:var(--studio-shell-text)]">4.</span> Open the studio to inspect connector impact, grouped layout, and table-attached constraint, routine, trigger, and sequence rows with popovers.</p>
                 </div>
               </div>
             </div>
