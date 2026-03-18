@@ -13,6 +13,10 @@ const writingPrinciples = [
     description: 'Reuse familiar DBML shapes where possible, then extend them only when Postgres needs more structure.'
   },
   {
+    title: 'Keep source authoritative',
+    description: 'Use source blocks for verbatim SQL or PL/pgSQL, let PGML derive the routine or trigger metadata it can, and add docs or affects only when you need more clarity.'
+  },
+  {
     title: 'Treat Postgres objects as schema assets',
     description: 'Indexes, triggers, sequences, functions, procedures, and types live in the same source artifact as tables.'
   },
@@ -46,42 +50,98 @@ const syntaxCards = [
 }`
   },
   {
-    title: 'Routine blocks',
-    description: 'Functions and procedures are schema objects, not footnotes in migrations.',
-    code: `Function recalc_order_total(order_uuid uuid) returns void {
-  language: plpgsql
-  volatility: volatile
+    title: 'Executable source',
+    description: 'Functions, triggers, and sequences can stay source-first: PGML derives the operational metadata it can, while docs and affects stay optional overlays.',
+    code: `Function register_entity(entity_kind text) returns trigger [replace] {
+  docs {
+    summary: "Allocates a Common_Entity row and assigns NEW.id."
+  }
+
+  affects {
+    writes: [public.common_entity]
+    sets: [public.funding_opportunity_profile.id]
+  }
+
+  source: $sql$
+    CREATE OR REPLACE FUNCTION public.register_entity(entity_kind text)
+    RETURNS trigger AS $$
+    BEGIN
+      RETURN NEW;
+    END;
+    $$ LANGUAGE plpgsql;
+  $sql$
 }`
   },
   {
     title: 'Operational objects',
-    description: 'Triggers, sequences, enums, domains, and composites describe the operational edge of the schema.',
-    code: `Trigger trg_orders_audit on public.orders {
-  timing: after
-  events: [insert, update]
-  execute: audit_order_changes()
+    description: 'A trigger or sequence can rely on source for execution details, then add only the extra narrative or impact hints you care about.',
+    code: `Trigger trg_register_fundingopportunity on public.funding_opportunity_profile {
+  docs {
+    summary: "Allocates a shared entity id before insert."
+  }
+
+  source: $sql$
+    CREATE TRIGGER trg_register_fundingopportunity
+      BEFORE INSERT ON public.funding_opportunity_profile
+      FOR EACH ROW
+      EXECUTE FUNCTION public.register_entity('fundingopportunity');
+  $sql$
 }`
   }
 ]
 
-const quickStartCode = `TableGroup Commerce {
-  products
-  orders
-  order_items
-  Note: Buying flow and inventory edges
+const quickStartCode = `TableGroup Programs {
+  common_entity
+  funding_opportunity_profile
+  Note: Shared entity registration hooks
 }
 
-Table public.orders {
-  id uuid [pk]
-  tenant_id uuid [not null, ref: > public.tenants.id]
-  customer_id uuid [ref: > public.users.id]
-  total_cents integer [not null]
-  Constraint chk_orders_total: total_cents >= 0
+Sequence common_entity_id_seq {
+  docs {
+    summary: "Allocates ids for the shared Common_Entity table."
+  }
+
+  source: $sql$
+    CREATE SEQUENCE public.common_entity_id_seq
+      AS bigint
+      START WITH 1000
+      INCREMENT BY 1
+      CACHE 25
+      OWNED BY public.common_entity.id;
+  $sql$
 }
 
-Function recalc_order_total(order_uuid uuid) returns void {
-  language: plpgsql
-  volatility: volatile
+Function register_entity(entity_kind text) returns trigger [replace] {
+  docs {
+    summary: "Allocates a Common_Entity row and assigns NEW.id."
+  }
+
+  affects {
+    writes: [public.common_entity]
+    sets: [public.funding_opportunity_profile.id]
+  }
+
+  source: $sql$
+    CREATE OR REPLACE FUNCTION public.register_entity(entity_kind text)
+    RETURNS trigger AS $$
+    BEGIN
+      RETURN NEW;
+    END;
+    $$ LANGUAGE plpgsql;
+  $sql$
+}
+
+Trigger trg_register_fundingopportunity on public.funding_opportunity_profile {
+  docs {
+    summary: "Runs the shared entity registration function before insert."
+  }
+
+  source: $sql$
+    CREATE TRIGGER trg_register_fundingopportunity
+      BEFORE INSERT ON public.funding_opportunity_profile
+      FOR EACH ROW
+      EXECUTE FUNCTION public.register_entity('fundingopportunity');
+  $sql$
 }`
 
 const supportedFeatures = [
@@ -95,11 +155,11 @@ const supportedFeatures = [
   },
   {
     label: 'Functions and procedures',
-    detail: 'Routine catalog blocks with signature and execution metadata.'
+    detail: 'Routine blocks can stay source-first while still carrying prose docs, extracted metadata, and explicit impact hints when needed.'
   },
   {
     label: 'Triggers and sequences',
-    detail: 'Operational objects that can be traced back to the tables and fields they affect.'
+    detail: 'Operational objects can expose timing, ownership, and target tables from full CREATE statements while still linking back to tables and fields.'
   },
   {
     label: 'Custom Postgres types',
@@ -133,7 +193,9 @@ const roadmap = [
           <p class="max-w-2xl text-sm leading-7 text-[color:var(--studio-shell-muted)] sm:text-[0.97rem]">
             PGML starts with DBML ergonomics, then adds the Postgres objects that matter once a schema becomes real:
             indexes, triggers, functions, procedures, sequences, constraints, and custom types. The source stays compact enough
-            to read in a pull request and structured enough to drive a full visual model.
+            to read in a pull request and structured enough to drive a full visual model. For executable objects, PGML can now keep
+            verbatim SQL or PL/pgSQL in a <span class="font-mono text-[color:var(--studio-shell-text)]">source</span> block alongside
+            optional <span class="font-mono text-[color:var(--studio-shell-text)]">docs</span> and <span class="font-mono text-[color:var(--studio-shell-text)]">affects</span> sections, with routine, trigger, and sequence metadata derived from source when possible.
           </p>
         </div>
 
@@ -191,7 +253,7 @@ const roadmap = [
               Quick Start
             </div>
             <p class="mt-1 text-sm text-[color:var(--studio-shell-muted)]">
-              A minimal PGML document with group, table, constraint, and function.
+              A source-first PGML document with a group, sequence, function, and trigger.
             </p>
           </div>
           <span class="border border-[color:var(--studio-shell-border)] px-2 py-1 font-mono text-[0.68rem] uppercase tracking-[0.14em] text-[color:var(--studio-shell-muted)]">
@@ -291,8 +353,8 @@ const roadmap = [
                 <div class="mt-4 flex flex-col gap-4 text-sm leading-6 text-[color:var(--studio-shell-muted)]">
                   <p><span class="text-[color:var(--studio-shell-text)]">1.</span> Use <span class="font-mono text-[color:var(--studio-shell-text)]">TableGroup</span> to describe the domain cluster.</p>
                   <p><span class="text-[color:var(--studio-shell-text)]">2.</span> Define the tables with inline refs and local constraints.</p>
-                  <p><span class="text-[color:var(--studio-shell-text)]">3.</span> Add routines, triggers, sequences, and types as sibling schema objects.</p>
-                  <p><span class="text-[color:var(--studio-shell-text)]">4.</span> Open the studio to inspect connector impact and grouped layout.</p>
+                  <p><span class="text-[color:var(--studio-shell-text)]">3.</span> Use <span class="font-mono text-[color:var(--studio-shell-text)]">source</span> for executable SQL, then add <span class="font-mono text-[color:var(--studio-shell-text)]">docs</span> or <span class="font-mono text-[color:var(--studio-shell-text)]">affects</span> only when you want extra explanation or stronger impact hints.</p>
+                  <p><span class="text-[color:var(--studio-shell-text)]">4.</span> Open the studio to inspect connector impact, grouped layout, and richer routine/trigger/sequence cards.</p>
                 </div>
               </div>
             </div>
@@ -311,6 +373,12 @@ const roadmap = [
               <h2 class="mt-2 text-2xl font-semibold tracking-[-0.02em] text-[color:var(--studio-shell-text)]">
                 The current language surface stays compact and block-based.
               </h2>
+              <p class="mt-3 max-w-3xl text-sm leading-7 text-[color:var(--studio-shell-muted)]">
+                The recommended pattern is: keep executable SQL in <span class="font-mono text-[color:var(--studio-shell-text)]">source</span>,
+                let PGML extract routine, trigger, and sequence metadata where it can, add human explanation in
+                <span class="font-mono text-[color:var(--studio-shell-text)]">docs</span>, and use
+                <span class="font-mono text-[color:var(--studio-shell-text)]">affects</span> only when you want to make table or field impact explicit.
+              </p>
             </div>
 
             <div class="grid gap-4 xl:grid-cols-2">

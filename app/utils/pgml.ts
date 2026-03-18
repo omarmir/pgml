@@ -44,21 +44,64 @@ export type PgmlGroup = {
   note: string | null
 }
 
+export type PgmlMetadataEntry = {
+  key: string
+  value: string
+}
+
+export type PgmlDocumentationEntry = {
+  key: string
+  value: string
+}
+
+export type PgmlDocumentation = {
+  summary: string | null
+  entries: PgmlDocumentationEntry[]
+}
+
+export type PgmlAffectsExtraEntry = {
+  key: string
+  values: string[]
+}
+
+export type PgmlAffects = {
+  writes: string[]
+  sets: string[]
+  dependsOn: string[]
+  reads: string[]
+  calls: string[]
+  uses: string[]
+  ownedBy: string[]
+  extras: PgmlAffectsExtraEntry[]
+}
+
 export type PgmlRoutine = {
   name: string
   signature: string
   details: string[]
+  metadata: PgmlMetadataEntry[]
+  docs: PgmlDocumentation | null
+  affects: PgmlAffects | null
+  source: string | null
 }
 
 export type PgmlTrigger = {
   name: string
   tableName: string
   details: string[]
+  metadata: PgmlMetadataEntry[]
+  docs: PgmlDocumentation | null
+  affects: PgmlAffects | null
+  source: string | null
 }
 
 export type PgmlSequence = {
   name: string
   details: string[]
+  metadata: PgmlMetadataEntry[]
+  docs: PgmlDocumentation | null
+  affects: PgmlAffects | null
+  source: string | null
 }
 
 export type PgmlCustomType = {
@@ -84,14 +127,315 @@ type NamedBlock = {
   body: string[]
 }
 
+type ParsedExecutableBody = {
+  metadata: PgmlMetadataEntry[]
+  docs: PgmlDocumentation | null
+  affects: PgmlAffects | null
+  source: string | null
+  details: string[]
+}
+
+type DerivedRoutineSource = {
+  name: string | null
+  signature: string | null
+  metadata: PgmlMetadataEntry[]
+}
+
+type DerivedTriggerSource = {
+  name: string | null
+  tableName: string | null
+  metadata: PgmlMetadataEntry[]
+}
+
+type DerivedSequenceSource = {
+  name: string | null
+  metadata: PgmlMetadataEntry[]
+}
+
 const cleanName = (value: string) => value.replaceAll('"', '').trim()
+const cleanText = (value: string) => value.trim().replace(/^"(.*)"$/, '$1').replace(/^'(.*)'$/, '$1')
 const readMatch = (value: string | undefined) => value || ''
+const trimMultiline = (value: string) => value.replace(/^\n+|\n+$/g, '')
+const normalizeEffectKey = (value: string) => cleanName(value).toLowerCase().replaceAll(/[^\w]+/g, '_')
+const normalizeSource = (value: string) => value.replaceAll('\n', ' ').replace(/\s+/g, ' ').trim()
 
 const parseBracketParts = (value: string) => {
   return value
     .split(',')
     .map(part => part.trim())
     .filter(part => part.length > 0)
+}
+
+const parseListValue = (value: string) => {
+  const trimmed = value.trim()
+  const listMatch = trimmed.match(/^\[(.*)\]$/)
+
+  if (listMatch) {
+    return readMatch(listMatch[1])
+      .split(',')
+      .map(entry => cleanText(entry))
+      .filter(entry => entry.length > 0)
+  }
+
+  return [cleanText(trimmed)]
+}
+
+const parseSqlArgumentList = (value: string) => {
+  const entries: string[] = []
+  let current = ''
+  let quote: '"' | '\'' | null = null
+  let depth = 0
+
+  for (let index = 0; index < value.length; index += 1) {
+    const character = value[index] || ''
+    const previous = index > 0 ? value[index - 1] : ''
+
+    if (quote) {
+      current += character
+
+      if (character === quote && previous !== '\\') {
+        quote = null
+      }
+
+      continue
+    }
+
+    if (character === '\'' || character === '"') {
+      quote = character
+      current += character
+      continue
+    }
+
+    if (character === '(') {
+      depth += 1
+      current += character
+      continue
+    }
+
+    if (character === ')') {
+      depth = Math.max(0, depth - 1)
+      current += character
+      continue
+    }
+
+    if (character === ',' && depth === 0) {
+      const entry = current.trim()
+
+      if (entry.length > 0) {
+        entries.push(entry)
+      }
+
+      current = ''
+      continue
+    }
+
+    current += character
+  }
+
+  const trailingEntry = current.trim()
+
+  if (trailingEntry.length > 0) {
+    entries.push(trailingEntry)
+  }
+
+  return entries
+}
+
+const buildListLiteral = (values: string[]) => `[${values.join(', ')}]`
+
+const mergeMetadataEntries = (metadata: PgmlMetadataEntry[], derived: PgmlMetadataEntry[]) => {
+  const existingKeys = new Set(metadata.map(entry => normalizeEffectKey(entry.key)))
+
+  return [
+    ...metadata,
+    ...derived.filter(entry => !existingKeys.has(normalizeEffectKey(entry.key)))
+  ]
+}
+
+const extractRoutineSource = (keyword: 'Function' | 'Procedure', source: string | null): DerivedRoutineSource => {
+  if (!source) {
+    return {
+      name: null,
+      signature: null,
+      metadata: []
+    }
+  }
+
+  const normalized = normalizeSource(source)
+  const derived: PgmlMetadataEntry[] = []
+  const replaceMatch = normalized.match(new RegExp(`^create\\s+(or\\s+replace\\s+)?${keyword.toLowerCase()}\\s+`, 'i'))
+  const nameMatch = normalized.match(new RegExp(`^create\\s+(?:or\\s+replace\\s+)?${keyword.toLowerCase()}\\s+([^\\s(]+)\\s*\\((.*?)\\)`, 'i'))
+  const languageMatch = normalized.match(/\blanguage\s+([a-zA-Z_]\w*)\b/i)
+  const volatilityMatch = normalized.match(/\b(immutable|stable|volatile)\b/i)
+  const securityMatch = normalized.match(/\bsecurity\s+(definer|invoker)\b/i)
+  let name: string | null = null
+  let signature: string | null = null
+
+  if (nameMatch) {
+    const sourceName = cleanName(readMatch(nameMatch[1]))
+    const parameters = readMatch(nameMatch[2]).trim()
+    name = sourceName.split('.').at(-1) || sourceName
+
+    if (keyword === 'Function') {
+      const returnsMatch = normalized.match(/\breturns\s+(.+?)\s+as\s+\$(?:[A-Za-z0-9_]+)?\$/i)
+
+      if (returnsMatch) {
+        const replaceSuffix = replaceMatch?.[1] ? ' [replace]' : ''
+        signature = `${name}(${parameters}) returns ${cleanText(readMatch(returnsMatch[1]))}${replaceSuffix}`
+      }
+    } else {
+      const replaceSuffix = replaceMatch?.[1] ? ' [replace]' : ''
+      signature = `${name}(${parameters})${replaceSuffix}`
+    }
+  }
+
+  if (languageMatch) {
+    derived.push({
+      key: 'language',
+      value: readMatch(languageMatch[1]).toLowerCase()
+    })
+  }
+
+  if (volatilityMatch) {
+    derived.push({
+      key: 'volatility',
+      value: readMatch(volatilityMatch[1]).toLowerCase()
+    })
+  }
+
+  if (securityMatch) {
+    derived.push({
+      key: 'security',
+      value: readMatch(securityMatch[1]).toLowerCase()
+    })
+  }
+
+  return {
+    name,
+    signature,
+    metadata: derived
+  }
+}
+
+const extractTriggerSource = (source: string | null): DerivedTriggerSource => {
+  if (!source) {
+    return {
+      name: null,
+      tableName: null,
+      metadata: []
+    }
+  }
+
+  const normalized = normalizeSource(source)
+  const match = normalized.match(/create\s+trigger\s+([^\s]+)\s+(before|after|instead\s+of)\s+(.+?)\s+on\s+([^\s]+)\s+(?:for\s+each\s+(row|statement)\s+)?execute\s+(?:function|procedure)\s+([^(;\s]+)\s*(?:\((.*?)\))?\s*;/i)
+
+  if (!match) {
+    return {
+      name: null,
+      tableName: null,
+      metadata: []
+    }
+  }
+
+  const events = readMatch(match[3])
+    .split(/\s+or\s+/i)
+    .map(eventName => cleanText(eventName).toLowerCase())
+    .filter(eventName => eventName.length > 0)
+  const functionName = cleanName(readMatch(match[6])).split('.').at(-1) || cleanName(readMatch(match[6]))
+  const argumentsValue = readMatch(match[7]).trim()
+  const metadata: PgmlMetadataEntry[] = [
+    {
+      key: 'timing',
+      value: cleanText(readMatch(match[2])).toLowerCase()
+    },
+    {
+      key: 'events',
+      value: buildListLiteral(events)
+    },
+    {
+      key: 'function',
+      value: functionName
+    }
+  ]
+
+  if (readMatch(match[5]).length > 0) {
+    metadata.push({
+      key: 'level',
+      value: readMatch(match[5]).toLowerCase()
+    })
+  }
+
+  if (argumentsValue.length > 0) {
+    metadata.push({
+      key: 'arguments',
+      value: buildListLiteral(parseSqlArgumentList(argumentsValue))
+    })
+  }
+
+  return {
+    name: cleanName(readMatch(match[1])),
+    tableName: cleanName(readMatch(match[4])),
+    metadata
+  }
+}
+
+const extractSequenceSource = (source: string | null): DerivedSequenceSource => {
+  if (!source) {
+    return {
+      name: null,
+      metadata: []
+    }
+  }
+
+  const normalized = normalizeSource(source)
+  const metadata: PgmlMetadataEntry[] = []
+  const nameMatch = normalized.match(/create\s+sequence\s+([^\s;]+)/i)
+  const typeMatch = normalized.match(/\bas\s+([^\s;]+)/i)
+  const startMatch = normalized.match(/\bstart\s+with\s+([^\s;]+)/i)
+  const incrementMatch = normalized.match(/\bincrement\s+by\s+([^\s;]+)/i)
+  const minMatch = normalized.match(/\bminvalue\s+([^\s;]+)/i)
+  const maxMatch = normalized.match(/\bmaxvalue\s+([^\s;]+)/i)
+  const cacheMatch = normalized.match(/\bcache\s+([^\s;]+)/i)
+  const ownedByMatch = normalized.match(/\bowned\s+by\s+([^\s;]+)/i)
+
+  if (typeMatch) {
+    metadata.push({ key: 'as', value: cleanText(readMatch(typeMatch[1])) })
+  }
+
+  if (startMatch) {
+    metadata.push({ key: 'start', value: cleanText(readMatch(startMatch[1])) })
+  }
+
+  if (incrementMatch) {
+    metadata.push({ key: 'increment', value: cleanText(readMatch(incrementMatch[1])) })
+  }
+
+  if (minMatch) {
+    metadata.push({ key: 'min', value: cleanText(readMatch(minMatch[1])) })
+  }
+
+  if (maxMatch) {
+    metadata.push({ key: 'max', value: cleanText(readMatch(maxMatch[1])) })
+  }
+
+  if (cacheMatch) {
+    metadata.push({ key: 'cache', value: cleanText(readMatch(cacheMatch[1])) })
+  }
+
+  if (/\bno\s+cycle\b/i.test(normalized)) {
+    metadata.push({ key: 'cycle', value: 'false' })
+  } else if (/\bcycle\b/i.test(normalized)) {
+    metadata.push({ key: 'cycle', value: 'true' })
+  }
+
+  if (ownedByMatch) {
+    metadata.push({ key: 'owned_by', value: cleanText(readMatch(ownedByMatch[1])) })
+  }
+
+  return {
+    name: nameMatch ? cleanName(readMatch(nameMatch[1])) : null,
+    metadata
+  }
 }
 
 const parseTableName = (value: string) => {
@@ -202,6 +546,344 @@ const collectBlocks = (source: string) => {
     topLevel,
     blocks
   }
+}
+
+const parseMetadataEntryLine = (line: string) => {
+  const match = line.trim().match(/^([^:]+):\s*(.+)$/)
+
+  if (!match) {
+    return null
+  }
+
+  return {
+    key: cleanName(readMatch(match[1])),
+    value: cleanText(readMatch(match[2]))
+  } satisfies PgmlMetadataEntry
+}
+
+const collectNestedBlockBody = (lines: string[], startIndex: number) => {
+  const body: string[] = []
+  let index = startIndex + 1
+  let depth = 1
+
+  while (index < lines.length && depth > 0) {
+    const nextLine = lines[index] || ''
+    const nextTrimmed = nextLine.trim()
+
+    if (nextTrimmed.endsWith('{')) {
+      depth += 1
+    }
+
+    if (nextTrimmed === '}') {
+      depth -= 1
+
+      if (depth === 0) {
+        index += 1
+        break
+      }
+    }
+
+    if (depth > 0) {
+      body.push(nextLine)
+    }
+
+    index += 1
+  }
+
+  return {
+    body,
+    nextIndex: index
+  }
+}
+
+const collectDollarQuotedSource = (lines: string[], startIndex: number) => {
+  const firstLine = lines[startIndex] || ''
+  const trimmed = firstLine.trim()
+  const match = trimmed.match(/^(source|definition):\s*(\$(?:[A-Za-z0-9_]+)?\$)(.*)$/)
+
+  if (!match) {
+    return null
+  }
+
+  const chunks: string[] = []
+  const delimiter = readMatch(match[2])
+  const remainder = readMatch(match[3])
+  const remainderEndIndex = remainder.indexOf(delimiter)
+
+  if (remainderEndIndex >= 0) {
+    chunks.push(remainder.slice(0, remainderEndIndex))
+
+    return {
+      source: trimMultiline(chunks.join('\n')),
+      nextIndex: startIndex + 1
+    }
+  }
+
+  if (remainder.length > 0) {
+    chunks.push(remainder)
+  }
+
+  let index = startIndex + 1
+
+  while (index < lines.length) {
+    const nextLine = lines[index] || ''
+    const endIndex = nextLine.indexOf(delimiter)
+
+    if (endIndex >= 0) {
+      chunks.push(nextLine.slice(0, endIndex))
+
+      return {
+        source: trimMultiline(chunks.join('\n')),
+        nextIndex: index + 1
+      }
+    }
+
+    chunks.push(nextLine)
+    index += 1
+  }
+
+  return {
+    source: trimMultiline(chunks.join('\n')),
+    nextIndex: lines.length
+  }
+}
+
+const parseDocumentationBlock = (lines: string[]) => {
+  const entries: PgmlDocumentationEntry[] = []
+  let summary: string | null = null
+
+  for (const line of lines) {
+    const trimmed = line.trim()
+
+    if (trimmed.length === 0 || trimmed.startsWith('//')) {
+      continue
+    }
+
+    const entry = parseMetadataEntryLine(trimmed)
+
+    if (!entry) {
+      continue
+    }
+
+    if (normalizeEffectKey(entry.key) === 'summary') {
+      summary = entry.value
+      continue
+    }
+
+    entries.push(entry)
+  }
+
+  if (!summary && !entries.length) {
+    return null
+  }
+
+  return {
+    summary,
+    entries
+  } satisfies PgmlDocumentation
+}
+
+const parseAffectsBlock = (lines: string[]) => {
+  const affects: PgmlAffects = {
+    writes: [],
+    sets: [],
+    dependsOn: [],
+    reads: [],
+    calls: [],
+    uses: [],
+    ownedBy: [],
+    extras: []
+  }
+
+  for (const line of lines) {
+    const trimmed = line.trim()
+
+    if (trimmed.length === 0 || trimmed.startsWith('//')) {
+      continue
+    }
+
+    const entry = parseMetadataEntryLine(trimmed)
+
+    if (!entry) {
+      continue
+    }
+
+    const key = normalizeEffectKey(entry.key)
+    const values = parseListValue(entry.value)
+
+    if (key === 'writes') {
+      affects.writes.push(...values)
+      continue
+    }
+
+    if (key === 'sets') {
+      affects.sets.push(...values)
+      continue
+    }
+
+    if (key === 'depends_on' || key === 'depends' || key === 'dependson') {
+      affects.dependsOn.push(...values)
+      continue
+    }
+
+    if (key === 'reads') {
+      affects.reads.push(...values)
+      continue
+    }
+
+    if (key === 'calls') {
+      affects.calls.push(...values)
+      continue
+    }
+
+    if (key === 'uses') {
+      affects.uses.push(...values)
+      continue
+    }
+
+    if (key === 'owned_by' || key === 'ownedby') {
+      affects.ownedBy.push(...values)
+      continue
+    }
+
+    affects.extras.push({
+      key: entry.key,
+      values
+    })
+  }
+
+  const hasValues = (
+    affects.writes.length
+    || affects.sets.length
+    || affects.dependsOn.length
+    || affects.reads.length
+    || affects.calls.length
+    || affects.uses.length
+    || affects.ownedBy.length
+    || affects.extras.length
+  )
+
+  return hasValues ? affects : null
+}
+
+const buildExecutableDetails = (
+  metadata: PgmlMetadataEntry[],
+  docs: PgmlDocumentation | null,
+  affects: PgmlAffects | null,
+  source: string | null
+) => {
+  const details: string[] = []
+
+  metadata.forEach((entry) => {
+    details.push(`${entry.key}: ${entry.value}`)
+  })
+
+  if (docs?.summary) {
+    details.push(`summary: ${docs.summary}`)
+  }
+
+  docs?.entries.forEach((entry) => {
+    details.push(`${entry.key}: ${entry.value}`)
+  })
+
+  if (affects) {
+    if (affects.writes.length) {
+      details.push(`writes: ${affects.writes.join(', ')}`)
+    }
+
+    if (affects.sets.length) {
+      details.push(`sets: ${affects.sets.join(', ')}`)
+    }
+
+    if (affects.dependsOn.length) {
+      details.push(`depends_on: ${affects.dependsOn.join(', ')}`)
+    }
+
+    if (affects.reads.length) {
+      details.push(`reads: ${affects.reads.join(', ')}`)
+    }
+
+    if (affects.calls.length) {
+      details.push(`calls: ${affects.calls.join(', ')}`)
+    }
+
+    if (affects.uses.length) {
+      details.push(`uses: ${affects.uses.join(', ')}`)
+    }
+
+    if (affects.ownedBy.length) {
+      details.push(`owned_by: ${affects.ownedBy.join(', ')}`)
+    }
+
+    affects.extras.forEach((entry) => {
+      details.push(`${entry.key}: ${entry.values.join(', ')}`)
+    })
+  }
+
+  if (source) {
+    details.push('source:')
+    details.push(...source.split('\n'))
+  }
+
+  return details.filter(detail => detail.length > 0)
+}
+
+const parseExecutableBody = (lines: string[]) => {
+  const metadata: PgmlMetadataEntry[] = []
+  let docs: PgmlDocumentation | null = null
+  let affects: PgmlAffects | null = null
+  let source: string | null = null
+  let index = 0
+
+  while (index < lines.length) {
+    const line = lines[index] || ''
+    const trimmed = line.trim()
+
+    if (trimmed.length === 0 || trimmed.startsWith('//')) {
+      index += 1
+      continue
+    }
+
+    if (trimmed === 'docs {' || trimmed.startsWith('docs {')) {
+      const nestedBlock = collectNestedBlockBody(lines, index)
+      docs = parseDocumentationBlock(nestedBlock.body)
+      index = nestedBlock.nextIndex
+      continue
+    }
+
+    if (trimmed === 'affects {' || trimmed.startsWith('affects {')) {
+      const nestedBlock = collectNestedBlockBody(lines, index)
+      affects = parseAffectsBlock(nestedBlock.body)
+      index = nestedBlock.nextIndex
+      continue
+    }
+
+    if (trimmed.startsWith('source:') || trimmed.startsWith('definition:')) {
+      const sourceBlock = collectDollarQuotedSource(lines, index)
+
+      if (sourceBlock) {
+        source = sourceBlock.source
+        index = sourceBlock.nextIndex
+        continue
+      }
+    }
+
+    const entry = parseMetadataEntryLine(trimmed)
+
+    if (entry) {
+      metadata.push(entry)
+    }
+
+    index += 1
+  }
+
+  return {
+    metadata,
+    docs,
+    affects,
+    source,
+    details: buildExecutableDetails(metadata, docs, affects, source)
+  } satisfies ParsedExecutableBody
 }
 
 const parseTable = (block: NamedBlock) => {
@@ -371,30 +1053,50 @@ const parseRoutine = (block: NamedBlock, keyword: 'Function' | 'Procedure') => {
   }
 
   const signature = readMatch(headerMatch[1]).trim()
-  const routineName = readMatch(signature.split('(')[0])
+  const executable = parseExecutableBody(block.body)
+  const derived = extractRoutineSource(keyword, executable.source)
+  const mergedMetadata = mergeMetadataEntries(executable.metadata, derived.metadata)
+  const normalizedSignature = signature.includes('returns') || keyword === 'Procedure'
+    ? signature
+    : (derived.signature || signature)
+  const routineName = cleanName(readMatch(normalizedSignature.split('(')[0] || derived.name || ''))
 
   return {
-    name: cleanName(routineName),
-    signature,
-    details: block.body
-      .map(line => line.trim())
-      .filter(line => line.length > 0)
+    name: routineName,
+    signature: normalizedSignature,
+    details: buildExecutableDetails(mergedMetadata, executable.docs, executable.affects, executable.source),
+    metadata: mergedMetadata,
+    docs: executable.docs,
+    affects: executable.affects,
+    source: executable.source
   } satisfies PgmlRoutine
 }
 
 const parseTrigger = (block: NamedBlock) => {
-  const headerMatch = block.header.match(/^Trigger\s+([^\s]+)\s+on\s+([^\s]+)$/)
+  const headerMatch = block.header.match(/^Trigger\s+([^\s]+)(?:\s+on\s+([^\s]+))?$/)
 
   if (!headerMatch) {
     return null
   }
 
+  const executable = parseExecutableBody(block.body)
+  const derived = extractTriggerSource(executable.source)
+  const tableName = cleanName(readMatch(headerMatch[2]) || derived.tableName || '')
+
+  if (tableName.length === 0) {
+    return null
+  }
+
+  const mergedMetadata = mergeMetadataEntries(executable.metadata, derived.metadata)
+
   return {
-    name: cleanName(readMatch(headerMatch[1])),
-    tableName: cleanName(readMatch(headerMatch[2])),
-    details: block.body
-      .map(line => line.trim())
-      .filter(line => line.length > 0)
+    name: cleanName(readMatch(headerMatch[1]) || derived.name || ''),
+    tableName,
+    details: buildExecutableDetails(mergedMetadata, executable.docs, executable.affects, executable.source),
+    metadata: mergedMetadata,
+    docs: executable.docs,
+    affects: executable.affects,
+    source: executable.source
   } satisfies PgmlTrigger
 }
 
@@ -405,11 +1107,17 @@ const parseSequence = (block: NamedBlock) => {
     return null
   }
 
+  const executable = parseExecutableBody(block.body)
+  const derived = extractSequenceSource(executable.source)
+  const mergedMetadata = mergeMetadataEntries(executable.metadata, derived.metadata)
+
   return {
-    name: cleanName(readMatch(headerMatch[1])),
-    details: block.body
-      .map(line => line.trim())
-      .filter(line => line.length > 0)
+    name: cleanName(readMatch(headerMatch[1]) || derived.name || ''),
+    details: buildExecutableDetails(mergedMetadata, executable.docs, executable.affects, executable.source),
+    metadata: mergedMetadata,
+    docs: executable.docs,
+    affects: executable.affects,
+    source: executable.source
   } satisfies PgmlSequence
 }
 
@@ -580,10 +1288,22 @@ TableGroup Commerce {
   Note: Buying flow and inventory edges
 }
 
+TableGroup Programs {
+  common_entity
+  funding_opportunity_profile
+  Note: Shared entity registration hooks for programs
+}
+
 Enum role_kind {
   owner
   analyst
   operator
+}
+
+Enum entity_type {
+  fundingopportunity
+  order
+  user
 }
 
 Domain email_address {
@@ -592,8 +1312,36 @@ Domain email_address {
 }
 
 Sequence order_number_seq {
-  start: 1200
-  increment: 1
+  docs {
+    summary: "Allocates friendly order numbers for the commerce workflow."
+    purpose: "Keeps user-facing order numbers separate from internal ids."
+  }
+
+  source: $sql$
+    CREATE SEQUENCE public.order_number_seq
+      AS bigint
+      START WITH 1200
+      INCREMENT BY 1
+      MINVALUE 1200
+      CACHE 20
+      OWNED BY public.orders.order_number;
+  $sql$
+}
+
+Sequence common_entity_id_seq {
+  docs {
+    summary: "Primary allocator for rows in Common_Entity."
+    purpose: "Supports entity-backed trigger functions shared across domains."
+  }
+
+  source: $sql$
+    CREATE SEQUENCE public.common_entity_id_seq
+      AS bigint
+      START WITH 1000
+      INCREMENT BY 1
+      CACHE 25
+      OWNED BY public.common_entity.id;
+  $sql$
 }
 
 Table public.tenants {
@@ -649,19 +1397,141 @@ Table public.order_items {
   unit_price_cents integer [not null]
 }
 
-Function recalc_order_total(order_uuid uuid) returns void {
-  language: plpgsql
-  volatility: volatile
+Table public.common_entity {
+  id bigint [pk, default: nextval('common_entity_id_seq')]
+  entity_type entity_type [not null]
+  created_at timestamptz [default: now()]
+}
+
+Table public.funding_opportunity_profile {
+  id bigint [pk]
+  tenant_id uuid [not null, ref: > public.tenants.id]
+  owner_id uuid [ref: > public.users.id]
+  title text [not null]
+  status text [not null]
+  published_at timestamptz
+}
+
+Function recalc_order_total(order_uuid uuid) returns void [replace] {
+  docs {
+    summary: "Recomputes total_cents from the current order_items rows."
+    purpose: "Keeps order totals synchronized with line item changes."
+  }
+
+  affects {
+    reads: [public.order_items.quantity, public.order_items.unit_price_cents]
+    writes: [public.orders.total_cents]
+    depends_on: [public.orders, public.order_items]
+  }
+
+  source: $sql$
+    CREATE OR REPLACE FUNCTION public.recalc_order_total(order_uuid uuid)
+    RETURNS void AS $$
+    BEGIN
+      UPDATE public.orders
+      SET total_cents = (
+        SELECT COALESCE(SUM(quantity * unit_price_cents), 0)
+        FROM public.order_items
+        WHERE order_id = order_uuid
+      )
+      WHERE id = order_uuid;
+    END;
+    $$ LANGUAGE plpgsql;
+  $sql$
+}
+
+Function sync_order_total() returns trigger [replace] {
+  docs {
+    summary: "Trigger wrapper that delegates order total recomputation."
+  }
+
+  affects {
+    reads: [public.order_items.order_id]
+    writes: [public.orders.total_cents]
+    calls: [recalc_order_total]
+    depends_on: [public.order_items, public.orders]
+  }
+
+  source: $sql$
+    CREATE OR REPLACE FUNCTION public.sync_order_total()
+    RETURNS trigger AS $$
+    BEGIN
+      PERFORM public.recalc_order_total(COALESCE(NEW.order_id, OLD.order_id));
+      RETURN COALESCE(NEW, OLD);
+    END;
+    $$ LANGUAGE plpgsql;
+  $sql$
+}
+
+Function register_entity(entity_kind text) returns trigger [replace] {
+  docs {
+    summary: "Allocates a Common_Entity row and assigns the generated id to NEW.id."
+    purpose: "Used by BEFORE INSERT triggers on entity-backed program tables."
+  }
+
+  affects {
+    writes: [public.common_entity]
+    sets: [public.funding_opportunity_profile.id]
+    depends_on: [entity_type, common_entity_id_seq]
+  }
+
+  source: $sql$
+    CREATE OR REPLACE FUNCTION public.register_entity(entity_kind text)
+    RETURNS trigger AS $$
+    DECLARE
+      allocated_id bigint;
+    BEGIN
+      INSERT INTO public.common_entity (entity_type)
+      VALUES (entity_kind::entity_type)
+      RETURNING id INTO allocated_id;
+
+      NEW.id := allocated_id;
+      RETURN NEW;
+    END;
+    $$ LANGUAGE plpgsql;
+  $sql$
 }
 
 Procedure archive_orders(retention_days integer) {
   language: plpgsql
 }
 
-Trigger trg_orders_audit on public.orders {
-  timing: after
-  events: [insert, update]
-  execute: audit_order_changes()
+Trigger trg_order_items_total_sync on public.order_items {
+  docs {
+    summary: "Recalculates the parent order total whenever line items change."
+  }
+
+  affects {
+    writes: [public.orders.total_cents]
+    depends_on: [sync_order_total, recalc_order_total, public.order_items]
+  }
+
+  source: $sql$
+    CREATE TRIGGER trg_order_items_total_sync
+      AFTER INSERT OR UPDATE OR DELETE ON public.order_items
+      FOR EACH ROW
+      EXECUTE FUNCTION public.sync_order_total();
+  $sql$
+}
+
+Trigger trg_register_fundingopportunity on public.funding_opportunity_profile {
+  docs {
+    summary: "Registers a Common_Entity id before a funding opportunity is inserted."
+    purpose: "Ensures the Programs domain participates in the shared entity registry."
+  }
+
+  affects {
+    writes: [public.common_entity]
+    sets: [public.funding_opportunity_profile.id]
+    depends_on: [register_entity]
+  }
+
+  source: $sql$
+    CREATE TRIGGER trg_register_fundingopportunity
+      BEFORE INSERT ON public.funding_opportunity_profile
+      FOR EACH ROW
+      EXECUTE FUNCTION public.register_entity('fundingopportunity');
+  $sql$
 }
 
 Ref: public.orders.customer_id > public.users.id

@@ -2,9 +2,20 @@
 import PgmlDiagramCanvas from '~/components/pgml/PgmlDiagramCanvas.vue'
 import { parsePgml, pgmlExample } from '~/utils/pgml'
 
+type PgmlDiagramCanvasExposed = {
+  exportDiagram: (format: 'svg' | 'png', scaleFactor?: number) => Promise<void>
+  exportPng: (scaleFactor: number) => Promise<void>
+  exportSvg: () => Promise<void>
+}
+
 const source: Ref<string> = ref(pgmlExample)
 const lineNumberRef: Ref<HTMLDivElement | null> = ref(null)
 const textareaRef: Ref<HTMLTextAreaElement | null> = ref(null)
+const canvasRef: Ref<PgmlDiagramCanvasExposed | null> = ref(null)
+const exportMenuRef: Ref<HTMLDivElement | null> = ref(null)
+const exportMenuOpen: Ref<boolean> = ref(false)
+const isExporting: Ref<boolean> = ref(false)
+const exportScales = [1, 2, 3, 4, 8]
 const { studioThemeIcon, studioThemeLabel, toggleStudioTheme } = useStudioTheme()
 
 const parsedState = computed(() => {
@@ -35,6 +46,27 @@ const clearSchema = () => {
   source.value = ''
 }
 
+const toggleExportMenu = () => {
+  exportMenuOpen.value = !exportMenuOpen.value
+}
+
+const runExport = async (format: 'svg' | 'png', scaleFactor?: number) => {
+  if (!canvasRef.value || isExporting.value) {
+    return
+  }
+
+  exportMenuOpen.value = false
+  isExporting.value = true
+
+  try {
+    await canvasRef.value.exportDiagram(format, scaleFactor)
+  } catch (error) {
+    console.error(error)
+  } finally {
+    isExporting.value = false
+  }
+}
+
 const syncLineNumberScroll = () => {
   if (!lineNumberRef.value || !textareaRef.value) {
     return
@@ -42,6 +74,10 @@ const syncLineNumberScroll = () => {
 
   lineNumberRef.value.scrollTop = textareaRef.value.scrollTop
 }
+
+onClickOutside(exportMenuRef, () => {
+  exportMenuOpen.value = false
+})
 </script>
 
 <template>
@@ -87,6 +123,44 @@ const syncLineNumberScroll = () => {
               :title="studioThemeLabel"
               @click="toggleStudioTheme"
             />
+
+            <div
+              ref="exportMenuRef"
+              class="relative"
+            >
+              <UButton
+                icon="i-lucide-download"
+                color="neutral"
+                variant="ghost"
+                class="rounded-none text-[color:var(--studio-shell-muted)] hover:bg-[color:var(--studio-surface-hover)] hover:text-[color:var(--studio-shell-text)]"
+                aria-label="Export diagram"
+                :disabled="isExporting"
+                @click.stop="toggleExportMenu"
+              />
+
+              <div
+                v-if="exportMenuOpen"
+                class="absolute right-0 top-[calc(100%+4px)] z-20 grid min-w-[140px] gap-px border border-[color:var(--studio-shell-border)] bg-[color:var(--studio-shell-border)]"
+              >
+                <button
+                  v-for="scaleOption in exportScales"
+                  :key="scaleOption"
+                  type="button"
+                  class="bg-[color:var(--studio-control-bg)] px-3 py-2 text-left font-mono text-[0.72rem] uppercase tracking-[0.08em] text-[color:var(--studio-shell-text)] transition-colors duration-150 hover:bg-[color:var(--studio-surface-hover)]"
+                  @click="runExport('png', scaleOption)"
+                >
+                  PNG {{ scaleOption }}x
+                </button>
+
+                <button
+                  type="button"
+                  class="bg-[color:var(--studio-control-bg)] px-3 py-2 text-left font-mono text-[0.72rem] uppercase tracking-[0.08em] text-[color:var(--studio-shell-text)] transition-colors duration-150 hover:bg-[color:var(--studio-surface-hover)]"
+                  @click="runExport('svg')"
+                >
+                  SVG
+                </button>
+              </div>
+            </div>
           </div>
         </div>
 
@@ -125,7 +199,10 @@ const syncLineNumberScroll = () => {
     </aside>
 
     <section class="min-h-0 w-full overflow-hidden p-0">
-      <PgmlDiagramCanvas :model="parsedModel" />
+      <PgmlDiagramCanvas
+        ref="canvasRef"
+        :model="parsedModel"
+      />
     </section>
   </div>
 </template>

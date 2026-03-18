@@ -5,6 +5,7 @@ import type {
   PgmlSchemaModel,
   PgmlSequence
 } from '~/utils/pgml'
+import { getRasterExportPlan } from '~/utils/diagram-export'
 
 const { model } = defineProps<{
   model: PgmlSchemaModel
@@ -85,6 +86,8 @@ type AnchorPoint = {
   count: number
 }
 
+type DiagramExportFormat = 'svg' | 'png'
+
 const planeRef: Ref<HTMLDivElement | null> = ref(null)
 const viewportRef: Ref<HTMLDivElement | null> = ref(null)
 const scale: Ref<number> = ref(0.62)
@@ -108,6 +111,7 @@ const objectColumnX = 1060
 const objectColumnGapX = 320
 const objectRowGapY = 180
 const layoutPadding = 88
+const exportPadding = 96
 
 const canvasNodes = computed(() => Object.values(nodeStates.value))
 const selectedNode = computed(() => {
@@ -180,6 +184,523 @@ const getCanvasBounds = () => {
     minY,
     width: maxX - minX,
     height: maxY - minY
+  }
+}
+
+const waitForCanvasRender = async () => {
+  await nextTick()
+  updateConnections()
+  await nextTick()
+
+  await new Promise<void>((resolve) => {
+    requestAnimationFrame(() => resolve())
+  })
+
+  updateConnections()
+}
+
+const escapeXml = (value: string) => {
+  return value
+    .replaceAll('&', '&amp;')
+    .replaceAll('<', '&lt;')
+    .replaceAll('>', '&gt;')
+    .replaceAll('"', '&quot;')
+    .replaceAll('\'', '&apos;')
+}
+
+const getPlaneRelativeRect = (element: Element) => {
+  if (!(planeRef.value instanceof HTMLDivElement)) {
+    return null
+  }
+
+  const planeBounds = planeRef.value.getBoundingClientRect()
+  const elementBounds = element.getBoundingClientRect()
+
+  return {
+    x: (elementBounds.left - planeBounds.left) / scale.value,
+    y: (elementBounds.top - planeBounds.top) / scale.value,
+    width: elementBounds.width / scale.value,
+    height: elementBounds.height / scale.value
+  }
+}
+
+const readStudioToken = (token: string, fallback: string) => {
+  const value = window.getComputedStyle(document.documentElement).getPropertyValue(token).trim()
+
+  return value.length > 0 ? value : fallback
+}
+
+const translatePathData = (path: string, offsetX: number, offsetY: number) => {
+  return path.replace(/([ML])\s*(-?\d+(?:\.\d+)?)\s+(-?\d+(?:\.\d+)?)/g, (_match, command, xValue, yValue) => {
+    const nextX = Number.parseFloat(xValue) + offsetX
+    const nextY = Number.parseFloat(yValue) + offsetY
+
+    return `${command} ${nextX} ${nextY}`
+  })
+}
+
+const chunkLongWord = (value: string, maxCharacters: number) => {
+  const chunks: string[] = []
+  let index = 0
+
+  while (index < value.length) {
+    chunks.push(value.slice(index, index + maxCharacters))
+    index += maxCharacters
+  }
+
+  return chunks
+}
+
+const wrapSvgText = (value: string, maxWidth: number, fontSize: number, mono = false) => {
+  const normalizedValue = value.trim()
+
+  if (normalizedValue.length === 0) {
+    return ['']
+  }
+
+  const averageCharacterWidth = fontSize * (mono ? 0.62 : 0.56)
+  const maxCharacters = Math.max(8, Math.floor(maxWidth / averageCharacterWidth))
+  const words = normalizedValue.split(/\s+/)
+  const lines: string[] = []
+  let currentLine = ''
+
+  for (const word of words) {
+    if (word.length > maxCharacters) {
+      if (currentLine.length > 0) {
+        lines.push(currentLine)
+        currentLine = ''
+      }
+
+      lines.push(...chunkLongWord(word, maxCharacters))
+      continue
+    }
+
+    const nextLine = currentLine.length > 0 ? `${currentLine} ${word}` : word
+
+    if (nextLine.length > maxCharacters) {
+      lines.push(currentLine)
+      currentLine = word
+      continue
+    }
+
+    currentLine = nextLine
+  }
+
+  if (currentLine.length > 0) {
+    lines.push(currentLine)
+  }
+
+  return lines.length > 0 ? lines : [normalizedValue]
+}
+
+const buildSvgText = (
+  lines: string[],
+  x: number,
+  y: number,
+  lineHeight: number,
+  style: string,
+  anchor: 'start' | 'middle' | 'end' = 'start'
+) => {
+  return [
+    `<text x="${x}" y="${y}" text-anchor="${anchor}" style="${style}">`,
+    ...lines.map((line, index) => {
+      const dy = index === 0 ? 0 : lineHeight
+
+      return `<tspan x="${x}" dy="${dy}">${escapeXml(line)}</tspan>`
+    }),
+    '</text>'
+  ].join('')
+}
+
+const buildExportSvgString = async (padding = exportPadding) => {
+  await waitForCanvasRender()
+
+  if (!(planeRef.value instanceof HTMLDivElement) || !(viewportRef.value instanceof HTMLDivElement)) {
+    throw new Error('Canvas is not ready for export.')
+  }
+
+  const bounds = getCanvasBounds()
+
+  if (!bounds) {
+    throw new Error('Nothing is available to export.')
+  }
+
+  const exportWidth = Math.ceil(bounds.width + padding * 2)
+  const exportHeight = Math.ceil(bounds.height + padding * 2)
+  const offsetX = padding - bounds.minX
+  const offsetY = padding - bounds.minY
+  const monoFont = 'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, Liberation Mono, Courier New, monospace'
+  const sansFont = 'ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif'
+  const backgroundColor = readStudioToken('--studio-canvas-bg', '#0b141a')
+  const dotColor = readStudioToken('--studio-canvas-dot', 'rgba(148, 163, 184, 0.24)')
+  const shellText = readStudioToken('--studio-shell-text', '#e2e8f0')
+  const shellMuted = readStudioToken('--studio-shell-muted', '#94a3b8')
+  const railColor = readStudioToken('--studio-rail', 'rgba(148, 163, 184, 0.25)')
+  const dividerColor = readStudioToken('--studio-divider', 'rgba(148, 163, 184, 0.16)')
+  const tableSurface = readStudioToken('--studio-table-surface', '#101c24')
+  const rowSurface = readStudioToken('--studio-row-surface', '#0d1820')
+  const parts: string[] = [
+    '<?xml version="1.0" encoding="UTF-8"?>',
+    `<svg xmlns="http://www.w3.org/2000/svg" width="${exportWidth}" height="${exportHeight}" viewBox="0 0 ${exportWidth} ${exportHeight}">`,
+    '<defs>',
+    '<pattern id="pgml-grid" width="18" height="18" patternUnits="userSpaceOnUse">',
+    `<circle cx="9" cy="9" r="1" fill="${escapeXml(dotColor)}" />`,
+    '</pattern>',
+    '</defs>',
+    `<rect x="0" y="0" width="${exportWidth}" height="${exportHeight}" fill="${escapeXml(backgroundColor)}" />`,
+    `<rect x="0" y="0" width="${exportWidth}" height="${exportHeight}" fill="url(#pgml-grid)" />`
+  ]
+
+  connectionLines.value.forEach((line) => {
+    parts.push(
+      `<path d="${escapeXml(translatePathData(line.path, offsetX, offsetY))}" fill="none" stroke="${escapeXml(line.color)}" stroke-width="2" stroke-dasharray="${line.dashed ? '10 7' : '0'}" stroke-linecap="square" stroke-linejoin="miter" opacity="0.9" />`
+    )
+  })
+
+  canvasNodes.value.forEach((node) => {
+    const nodeElement = planeRef.value?.querySelector(`[data-node-anchor="${node.id}"]`)
+    const headerElement = planeRef.value?.querySelector(`[data-node-header="${node.id}"]`)
+
+    if (!(nodeElement instanceof HTMLElement) || !(headerElement instanceof HTMLElement)) {
+      return
+    }
+
+    const nodeStyles = window.getComputedStyle(nodeElement)
+    const headerRect = getPlaneRelativeRect(headerElement)
+
+    if (!headerRect) {
+      return
+    }
+
+    const x = node.x + offsetX
+    const y = node.y + offsetY
+    const outerRadius = node.kind === 'group' ? 2 : 0
+    const headerBottom = headerRect.y + headerRect.height + offsetY
+    const badgeText = node.kind === 'group'
+      ? `${node.tableCount || node.tableIds.length} tables`
+      : `${node.tableIds.length} impact`
+
+    parts.push(
+      `<rect x="${x}" y="${y}" width="${node.width}" height="${node.height}" rx="${outerRadius}" ry="${outerRadius}" fill="${escapeXml(nodeStyles.backgroundColor)}" stroke="${escapeXml(nodeStyles.borderColor)}" stroke-width="1" />`
+    )
+    parts.push(
+      `<line x1="${x}" y1="${headerBottom}" x2="${x + node.width}" y2="${headerBottom}" stroke="${escapeXml(dividerColor)}" stroke-width="1" />`
+    )
+    parts.push(
+      buildSvgText(
+        [node.kind === 'group' ? 'TABLE GROUP' : (node.objectKind || '').toUpperCase()],
+        x + 10,
+        y + 14,
+        8,
+        `font: 600 8px ${monoFont}; letter-spacing: 0.9px; fill: ${getNodeAccentColor(node)};`
+      )
+    )
+    parts.push(
+      buildSvgText(
+        [node.title],
+        x + 10,
+        y + 30,
+        10,
+        `font: 600 14px ${sansFont}; fill: ${shellText};`
+      )
+    )
+
+    if (node.subtitle.length > 0) {
+      parts.push(
+        buildSvgText(
+          wrapSvgText(node.subtitle, node.width - 90, 10),
+          x + 10,
+          y + 44,
+          12,
+          `font: 400 10px ${sansFont}; fill: ${shellMuted};`
+        )
+      )
+    }
+
+    parts.push(
+      `<rect x="${x + node.width - 72}" y="${y + 8}" width="62" height="18" fill="transparent" stroke="${escapeXml(railColor)}" stroke-width="1" />`
+    )
+    parts.push(
+      buildSvgText(
+        [badgeText.toUpperCase()],
+        x + node.width - 41,
+        y + 20,
+        8,
+        `font: 500 8px ${monoFont}; letter-spacing: 0.45px; fill: ${shellMuted};`,
+        'middle'
+      )
+    )
+
+    if (node.kind === 'group') {
+      const tables = model.tables.filter(table => node.tableIds.includes(table.fullName))
+
+      tables.forEach((table) => {
+        const tableElement = planeRef.value?.querySelector(`[data-table-anchor="${table.fullName}"]`)
+
+        if (!(tableElement instanceof HTMLElement)) {
+          return
+        }
+
+        const tableRect = getPlaneRelativeRect(tableElement)
+        const tableHeaderElement = tableElement.firstElementChild
+        const tableHeaderRect = tableHeaderElement ? getPlaneRelativeRect(tableHeaderElement) : null
+        const tableStyles = window.getComputedStyle(tableElement)
+
+        if (!tableRect || !tableHeaderRect) {
+          return
+        }
+
+        const tableX = tableRect.x + offsetX
+        const tableY = tableRect.y + offsetY
+
+        parts.push(
+          `<rect x="${tableX}" y="${tableY}" width="${tableRect.width}" height="${tableRect.height}" rx="2" ry="2" fill="${escapeXml(tableSurface)}" stroke="${escapeXml(tableStyles.borderColor)}" stroke-width="1" />`
+        )
+        parts.push(
+          `<line x1="${tableX}" y1="${tableHeaderRect.y + tableHeaderRect.height + offsetY}" x2="${tableX + tableRect.width}" y2="${tableHeaderRect.y + tableHeaderRect.height + offsetY}" stroke="${escapeXml(dividerColor)}" stroke-width="1" />`
+        )
+        parts.push(
+          buildSvgText(
+            [table.name],
+            tableX + 8,
+            tableY + 16,
+            10,
+            `font: 600 11px ${sansFont}; fill: ${shellText};`
+          )
+        )
+        parts.push(
+          buildSvgText(
+            [`${table.schema.toUpperCase()} SCHEMA`],
+            tableX + 8,
+            tableY + 29,
+            8,
+            `font: 500 8px ${monoFont}; letter-spacing: 0.6px; fill: ${shellMuted};`
+          )
+        )
+        parts.push(
+          `<rect x="${tableX + tableRect.width - 48}" y="${tableY + 8}" width="40" height="16" fill="transparent" stroke="${escapeXml(railColor)}" stroke-width="1" />`
+        )
+        parts.push(
+          buildSvgText(
+            [`${table.columns.length} COLS`],
+            tableX + tableRect.width - 28,
+            tableY + 19,
+            8,
+            `font: 500 8px ${monoFont}; letter-spacing: 0.35px; fill: ${shellMuted};`,
+            'middle'
+          )
+        )
+
+        table.columns.forEach((column, columnIndex) => {
+          const rowElement = tableElement.querySelector(`[data-column-anchor="${getColumnAnchorKey(table.fullName, column.name)}"]`)
+
+          if (!(rowElement instanceof HTMLElement)) {
+            return
+          }
+
+          const rowRect = getPlaneRelativeRect(rowElement)
+
+          if (!rowRect) {
+            return
+          }
+
+          const rowX = rowRect.x + offsetX
+          const rowY = rowRect.y + offsetY
+          const rowHeight = rowRect.height
+          const modifierWidth = Math.min(118, rowRect.width * 0.44)
+          let modifierCursorY = rowY + 5
+
+          parts.push(
+            `<rect x="${rowX}" y="${rowY}" width="${rowRect.width}" height="${rowHeight}" fill="${escapeXml(rowSurface)}" />`
+          )
+
+          parts.push(
+            buildSvgText(
+              [column.name],
+              rowX + 8,
+              rowY + 13,
+              9,
+              `font: 600 9px ${monoFont}; fill: ${shellText};`
+            )
+          )
+          parts.push(
+            buildSvgText(
+              [column.type],
+              rowX + 8,
+              rowY + 24,
+              8,
+              `font: 400 8px ${sansFont}; fill: ${shellMuted};`
+            )
+          )
+
+          column.modifiers.slice(0, 2).forEach((modifier) => {
+            const modifierLines = wrapSvgText(modifier.toUpperCase(), modifierWidth - 8, 7.5, true)
+            const modifierHeight = Math.max(14, modifierLines.length * 8 + 4)
+            const modifierX = rowX + rowRect.width - modifierWidth - 6
+
+            parts.push(
+              `<rect x="${modifierX}" y="${modifierCursorY}" width="${modifierWidth}" height="${modifierHeight}" fill="transparent" stroke="${escapeXml(railColor)}" stroke-width="1" />`
+            )
+            parts.push(
+              buildSvgText(
+                modifierLines,
+                modifierX + modifierWidth - 4,
+                modifierCursorY + 9,
+                8,
+                `font: 500 7.5px ${monoFont}; letter-spacing: 0.25px; fill: ${shellMuted};`,
+                'end'
+              )
+            )
+
+            modifierCursorY += modifierHeight + 2
+          })
+
+          if (columnIndex < table.columns.length - 1) {
+            parts.push(
+              `<line x1="${rowX}" y1="${rowY + rowHeight}" x2="${rowX + rowRect.width}" y2="${rowY + rowHeight}" stroke="${escapeXml(dividerColor)}" stroke-width="1" />`
+            )
+          }
+        })
+      })
+
+      return
+    }
+
+    const bodyElement = planeRef.value?.querySelector(`[data-node-body="${node.id}"]`)
+
+    if (!(bodyElement instanceof HTMLElement)) {
+      return
+    }
+
+    bodyElement.querySelectorAll('p').forEach((paragraph) => {
+      const paragraphRect = getPlaneRelativeRect(paragraph)
+
+      if (!paragraphRect) {
+        return
+      }
+
+      const paragraphLines = wrapSvgText(paragraph.textContent || '', paragraphRect.width, 9, true)
+
+      parts.push(
+        buildSvgText(
+          paragraphLines,
+          paragraphRect.x + offsetX,
+          paragraphRect.y + offsetY + 8,
+          10,
+          `font: 400 9px ${monoFont}; fill: ${shellMuted};`
+        )
+      )
+    })
+
+    bodyElement.querySelectorAll('[data-impact-anchor]').forEach((chip) => {
+      const chipRect = getPlaneRelativeRect(chip)
+
+      if (!chipRect) {
+        return
+      }
+
+      parts.push(
+        `<rect x="${chipRect.x + offsetX}" y="${chipRect.y + offsetY}" width="${chipRect.width}" height="${chipRect.height}" fill="transparent" stroke="${escapeXml(railColor)}" stroke-width="1" />`
+      )
+      parts.push(
+        buildSvgText(
+          [chip.textContent || ''],
+          chipRect.x + offsetX + chipRect.width / 2,
+          chipRect.y + offsetY + chipRect.height / 2 + 3,
+          8,
+          `font: 500 8px ${monoFont}; letter-spacing: 0.35px; fill: ${shellMuted};`,
+          'middle'
+        )
+      )
+    })
+  })
+
+  parts.push('</svg>')
+
+  return {
+    width: exportWidth,
+    height: exportHeight,
+    svg: parts.join('')
+  }
+}
+
+const downloadBlob = (blob: Blob, fileName: string) => {
+  const objectUrl = URL.createObjectURL(blob)
+  const anchor = document.createElement('a')
+
+  anchor.href = objectUrl
+  anchor.download = fileName
+  document.body.appendChild(anchor)
+  anchor.click()
+  anchor.remove()
+
+  window.setTimeout(() => {
+    URL.revokeObjectURL(objectUrl)
+  }, 0)
+}
+
+const exportSvg = async () => {
+  const result = await buildExportSvgString()
+  const blob = new Blob([result.svg], {
+    type: 'image/svg+xml;charset=utf-8'
+  })
+
+  downloadBlob(blob, 'pgml-diagram.svg')
+}
+
+const exportPng = async (scaleFactor: number) => {
+  await waitForCanvasRender()
+
+  const bounds = getCanvasBounds()
+
+  if (!bounds) {
+    throw new Error('Nothing is available to export.')
+  }
+
+  const { padding, rasterWidth, rasterHeight } = getRasterExportPlan(bounds.width, bounds.height, scaleFactor, 24)
+  const result = await buildExportSvgString(padding)
+
+  const blob = new Blob([result.svg], {
+    type: 'image/svg+xml;charset=utf-8'
+  })
+  const objectUrl = URL.createObjectURL(blob)
+
+  try {
+    const image = await new Promise<HTMLImageElement>((resolve, reject) => {
+      const nextImage = new Image()
+
+      nextImage.onload = () => resolve(nextImage)
+      nextImage.onerror = () => reject(new Error('Unable to render the diagram export.'))
+      nextImage.src = objectUrl
+    })
+    const canvas = document.createElement('canvas')
+    const context = canvas.getContext('2d')
+
+    if (!context) {
+      throw new Error('Unable to create a canvas for export.')
+    }
+
+    canvas.width = rasterWidth
+    canvas.height = rasterHeight
+    context.setTransform(scaleFactor, 0, 0, scaleFactor, 0, 0)
+    context.imageSmoothingEnabled = true
+    context.imageSmoothingQuality = 'high'
+    context.drawImage(image, 0, 0, result.width, result.height)
+
+    const pngBlob = await new Promise<Blob>((resolve, reject) => {
+      canvas.toBlob((output) => {
+        if (output) {
+          resolve(output)
+          return
+        }
+
+        reject(new Error('Unable to create a PNG export.'))
+      }, 'image/png')
+    })
+
+    downloadBlob(pngBlob, `pgml-diagram-${scaleFactor}x.png`)
+  } finally {
+    URL.revokeObjectURL(objectUrl)
   }
 }
 
@@ -629,6 +1150,134 @@ const getUniqueImpactTargets = (targets: ImpactTarget[]) => {
   })
 }
 
+const sanitizeReferenceValue = (value: string) => {
+  return value
+    .trim()
+    .replaceAll('"', '')
+    .replaceAll('\'', '')
+    .replace(/[(),;]/g, '')
+}
+
+const resolveTableIdentifier = (value: string) => {
+  const normalized = sanitizeReferenceValue(value).toLowerCase()
+
+  if (!normalized) {
+    return null
+  }
+
+  const directMatch = model.tables.find(table => table.fullName.toLowerCase() === normalized)
+
+  if (directMatch) {
+    return directMatch.fullName
+  }
+
+  const byName = model.tables.find(table => table.name.toLowerCase() === normalized)
+
+  return byName?.fullName || null
+}
+
+const resolveImpactTargetsFromValue = (value: string, defaultTableId: string | null = null): ImpactTarget[] => {
+  const normalized = sanitizeReferenceValue(value)
+
+  if (!normalized) {
+    return []
+  }
+
+  const parts = normalized.split('.')
+
+  if (
+    parts.length === 2
+    && defaultTableId
+    && (parts[0]?.toLowerCase() === 'new' || parts[0]?.toLowerCase() === 'old')
+  ) {
+    return [{
+      tableId: defaultTableId,
+      columnName: parts[1] || null
+    }]
+  }
+
+  if (parts.length === 3) {
+    const tableId = resolveTableIdentifier(`${parts[0]}.${parts[1]}`)
+
+    if (tableId) {
+      return [{
+        tableId,
+        columnName: parts[2] || null
+      }]
+    }
+  }
+
+  if (parts.length === 2) {
+    const fullTableMatch = resolveTableIdentifier(`${parts[0]}.${parts[1]}`)
+
+    if (fullTableMatch) {
+      return [{
+        tableId: fullTableMatch,
+        columnName: null
+      }]
+    }
+
+    const matchingTable = model.tables.find((table) => {
+      return table.name.toLowerCase() === (parts[0] || '').toLowerCase()
+    })
+
+    if (matchingTable && matchingTable.columns.some(column => column.name.toLowerCase() === (parts[1] || '').toLowerCase())) {
+      return [{
+        tableId: matchingTable.fullName,
+        columnName: parts[1] || null
+      }]
+    }
+  }
+
+  const directTable = resolveTableIdentifier(normalized)
+
+  if (directTable) {
+    return [{
+      tableId: directTable,
+      columnName: null
+    }]
+  }
+
+  if (defaultTableId) {
+    const defaultTable = model.tables.find(table => table.fullName === defaultTableId)
+
+    if (defaultTable?.columns.some(column => column.name.toLowerCase() === normalized.toLowerCase())) {
+      return [{
+        tableId: defaultTableId,
+        columnName: normalized
+      }]
+    }
+  }
+
+  return []
+}
+
+const getImpactTargetsFromValues = (values: string[], defaultTableId: string | null = null) => {
+  return getUniqueImpactTargets(values.flatMap(value => resolveImpactTargetsFromValue(value, defaultTableId)))
+}
+
+const inferSourceTargets = (source: string, defaultTableId: string | null = null) => {
+  const values: string[] = []
+
+  Array.from(source.matchAll(/\b(?:insert\s+into|update|delete\s+from|from|join|on|owned\s+by)\s+([a-zA-Z_"][\w."]*)/gi)).forEach((match) => {
+    const identifier = match[1] || ''
+
+    if (identifier.length > 0) {
+      values.push(identifier)
+    }
+  })
+
+  Array.from(source.matchAll(/\b(?:NEW|OLD)\.([a-zA-Z_]\w*)/g)).forEach((match) => {
+    const columnName = match[1] || ''
+
+    if (columnName.length > 0) {
+      values.push(`NEW.${columnName}`)
+    }
+  })
+
+  return getImpactTargetsFromValues(values, defaultTableId)
+}
+
 const inferColumnsFromText = (tableId: string, text: string) => {
   const table = model.tables.find(entry => entry.fullName === tableId)
 
@@ -658,8 +1307,21 @@ const inferConstraintTargets = (tableId: string, expression: string) => {
 }
 
 const inferRoutineTargets = (routine: PgmlRoutine) => {
+  const explicitTargets = routine.affects
+    ? getImpactTargetsFromValues([
+        ...routine.affects.writes,
+        ...routine.affects.sets,
+        ...routine.affects.dependsOn,
+        ...routine.affects.reads,
+        ...routine.affects.uses,
+        ...routine.affects.ownedBy
+      ])
+    : []
+  const sourceTargets = routine.source
+    ? inferSourceTargets(routine.source)
+    : []
   const tableIds = inferRoutineTables(routine)
-  const haystack = `${routine.signature} ${routine.details.join(' ')}`
+  const haystack = `${routine.signature} ${routine.details.join(' ')} ${routine.source || ''}`
   const targets: ImpactTarget[] = tableIds.flatMap((tableId): ImpactTarget[] => {
     const matchedColumns = inferColumnsFromText(tableId, haystack)
 
@@ -676,25 +1338,52 @@ const inferRoutineTargets = (routine: PgmlRoutine) => {
     }))
   })
 
-  return getUniqueImpactTargets(targets)
+  return getUniqueImpactTargets([...explicitTargets, ...sourceTargets, ...targets])
 }
 
-const inferTriggerTargets = (tableId: string, details: string[]) => {
-  const haystack = details.join(' ')
+const inferTriggerTargets = (tableId: string, trigger: PgmlSchemaModel['triggers'][number]) => {
+  const explicitTargets = trigger.affects
+    ? getImpactTargetsFromValues([
+        ...trigger.affects.writes,
+        ...trigger.affects.sets,
+        ...trigger.affects.dependsOn,
+        ...trigger.affects.reads,
+        ...trigger.affects.uses,
+        ...trigger.affects.ownedBy
+      ], tableId)
+    : []
+  const sourceTargets = trigger.source
+    ? inferSourceTargets(trigger.source, tableId)
+    : []
+  const haystack = `${trigger.details.join(' ')} ${trigger.source || ''}`
   const matchedColumns = inferColumnsFromText(tableId, haystack)
 
   if (!matchedColumns.length) {
-    return [{ tableId, columnName: null }]
+    return getUniqueImpactTargets([...explicitTargets, ...sourceTargets, { tableId, columnName: null }])
   }
 
-  return matchedColumns.map(columnName => ({
-    tableId,
-    columnName
-  }))
+  return getUniqueImpactTargets([
+    ...explicitTargets,
+    ...sourceTargets,
+    ...matchedColumns.map(columnName => ({
+      tableId,
+      columnName
+    }))
+  ])
 }
 
 const inferSequenceTargets = (sequence: PgmlSequence) => {
-  const targets = model.tables.flatMap((table) => {
+  const explicitTargets = sequence.affects
+    ? getImpactTargetsFromValues([
+        ...sequence.affects.ownedBy,
+        ...sequence.affects.writes,
+        ...sequence.affects.dependsOn
+      ])
+    : []
+  const sourceTargets = sequence.source
+    ? inferSourceTargets(sequence.source)
+    : []
+  const modifierTargets = model.tables.flatMap((table) => {
     return table.columns
       .filter((column) => {
         return column.modifiers.some(modifier => modifier.includes(sequence.name))
@@ -705,7 +1394,7 @@ const inferSequenceTargets = (sequence: PgmlSequence) => {
       }))
   })
 
-  return getUniqueImpactTargets(targets)
+  return getUniqueImpactTargets([...explicitTargets, ...sourceTargets, ...modifierTargets])
 }
 
 const inferCustomTypeTargets = (customType: PgmlCustomType) => {
@@ -1278,8 +1967,8 @@ const buildObjectNodes = (groupStates: Record<string, CanvasNodeState>) => {
       title: pgFunction.name,
       subtitle: pgFunction.signature,
       details: pgFunction.details,
-      width: 272,
-      height: 122,
+      width: 336,
+      height: 176,
       color: '#c084fc',
       tableIds: uniqueValues(impactTargets.map(target => target.tableId)),
       impactTargets
@@ -1296,8 +1985,8 @@ const buildObjectNodes = (groupStates: Record<string, CanvasNodeState>) => {
       title: procedure.name,
       subtitle: procedure.signature,
       details: procedure.details,
-      width: 272,
-      height: 122,
+      width: 320,
+      height: 156,
       color: '#f97316',
       tableIds: uniqueValues(impactTargets.map(target => target.tableId)),
       impactTargets
@@ -1314,11 +2003,11 @@ const buildObjectNodes = (groupStates: Record<string, CanvasNodeState>) => {
       title: trigger.name,
       subtitle: `On ${trigger.tableName}`,
       details: trigger.details,
-      width: 264,
-      height: 114,
+      width: 332,
+      height: 168,
       color: '#22c55e',
       tableIds: [tableId],
-      impactTargets: inferTriggerTargets(tableId, trigger.details)
+      impactTargets: inferTriggerTargets(tableId, trigger)
     })
   }
 
@@ -1332,8 +2021,8 @@ const buildObjectNodes = (groupStates: Record<string, CanvasNodeState>) => {
       title: sequence.name,
       subtitle: 'Sequence',
       details: sequence.details,
-      width: 240,
-      height: 106,
+      width: 308,
+      height: 156,
       color: '#eab308',
       tableIds: uniqueValues(impactTargets.map(target => target.tableId)),
       impactTargets
@@ -2254,6 +2943,23 @@ onMounted(() => {
 onBeforeUnmount(() => {
   resizeObserver?.disconnect()
 })
+
+defineExpose<{
+  exportDiagram: (format: DiagramExportFormat, scaleFactor?: number) => Promise<void>
+  exportPng: (scaleFactor: number) => Promise<void>
+  exportSvg: () => Promise<void>
+}>({
+  exportDiagram: async (format, scaleFactor = 1) => {
+    if (format === 'svg') {
+      await exportSvg()
+      return
+    }
+
+    await exportPng(scaleFactor)
+  },
+  exportPng,
+  exportSvg
+})
 </script>
 
 <template>
@@ -2407,7 +3113,7 @@ onBeforeUnmount(() => {
           <p
             v-for="detail in node.details"
             :key="detail"
-            class="break-words text-[0.68rem] leading-5 text-[color:var(--studio-shell-muted)] [overflow-wrap:anywhere]"
+            class="break-words whitespace-pre-wrap font-mono text-[0.64rem] leading-5 text-[color:var(--studio-shell-muted)] [overflow-wrap:anywhere]"
           >
             {{ detail }}
           </p>
