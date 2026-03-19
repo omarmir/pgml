@@ -288,10 +288,13 @@ Table public.orders in Commerce {
       return (entry.getAttribute('stroke') || '').length > 0
     })
 
+    const contentForeground = content?.parentElement
+
     if (
       !(group instanceof HTMLElement)
       || !(groupSurface instanceof HTMLElement)
       || !(content instanceof HTMLElement)
+      || !(contentForeground instanceof HTMLElement)
       || !(tenantsTable instanceof HTMLElement)
       || !(tenantsIdLabel instanceof HTMLElement)
       || connectionLayers.length === 0
@@ -412,6 +415,7 @@ Table public.orders in Commerce {
     return {
       groupOverflow: window.getComputedStyle(group).overflow,
       groupZIndex: Number.parseInt(window.getComputedStyle(groupSurface).zIndex || '0', 10),
+      contentZIndex: Number.parseInt(window.getComputedStyle(contentForeground).zIndex || '0', 10),
       maxLineZIndex: Math.max(...connectionLayers.map((layer) => {
         return Number.parseInt(window.getComputedStyle(layer).zIndex || '0', 10)
       })),
@@ -427,6 +431,7 @@ Table public.orders in Commerce {
   expect(diagnostics).not.toBeNull()
   expect(diagnostics?.groupOverflow).toBe('hidden')
   expect(diagnostics?.maxLineZIndex || 0).toBeGreaterThan(diagnostics?.groupZIndex || 0)
+  expect(diagnostics?.maxLineZIndex || 0).toBeLessThan(diagnostics?.contentZIndex || 0)
   expect(diagnostics?.stroke).toBe('#8b5cf6')
   expect(diagnostics?.pointCount || 0).toBeLessThanOrEqual(4)
   expect(diagnostics?.overlapsHeader).toBe(false)

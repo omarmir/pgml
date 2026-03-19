@@ -17,11 +17,12 @@ describe('diagram layering utilities', () => {
     expect(getDiagramNodeZIndex(3)).toBe(1006)
   })
 
-  it('keeps connection lines above all group backgrounds, above the back owner, and below later foreground nodes', () => {
-    expect(getDiagramConnectionZIndex(1, 1)).toBe(1003)
-    expect(getDiagramConnectionZIndex(1, 4)).toBe(1003)
-    expect(getDiagramConnectionZIndex(3, 4)).toBe(1007)
+  it('keeps connection lines above all group backgrounds and below every node foreground layer', () => {
+    expect(getDiagramConnectionZIndex(1, 1)).toBe(1001)
+    expect(getDiagramConnectionZIndex(1, 4)).toBe(1001)
+    expect(getDiagramConnectionZIndex(3, 4)).toBe(1001)
     expect(getDiagramConnectionZIndex(1, 4)).toBeGreaterThan(getDiagramGroupBackgroundZIndex(5000))
+    expect(getDiagramConnectionZIndex(1, 4)).toBeLessThan(getDiagramNodeZIndex(1))
     expect(getDiagramConnectionZIndex(1, 4)).toBeLessThan(getDiagramNodeZIndex(4))
   })
 })
