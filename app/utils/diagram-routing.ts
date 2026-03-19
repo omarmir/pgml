@@ -21,8 +21,10 @@ export type DiagramVerticalLaneReservation = {
 const pointTolerance = 0.01
 const fieldRowAnchorOffsets = [0.22, 0.5, 0.78] as const
 const sameSideLaneOffset = 18
-const verticalLaneShiftPattern = [0, 4, -4, 8, -8, 12, -12] as const
 const verticalLaneOverlapPadding = 6
+const diagramIntervalPrecision = 100
+
+export const diagramVerticalLaneShiftPattern = [0, 4, -4, 8, -8, 12, -12] as const
 
 export const isHorizontalDiagramSide = (side: DiagramAnchorSide) => side === 'left' || side === 'right'
 
@@ -90,7 +92,118 @@ export const pickDiagramVerticalLaneShift = (
     return Math.min(segment.end, maximum) - Math.max(segment.start, minimum) > verticalLaneOverlapPadding
   }).map(segment => segment.shift))
 
-  return verticalLaneShiftPattern.find(shift => !overlappingShifts.has(shift)) ?? 0
+  return diagramVerticalLaneShiftPattern.find(shift => !overlappingShifts.has(shift)) ?? 0
+}
+
+export const hasDiagramVerticalLaneOverlap = (
+  existingSegments: DiagramVerticalLaneReservation[],
+  start: number,
+  end: number
+) => {
+  const minimum = Math.min(start, end)
+  const maximum = Math.max(start, end)
+
+  return existingSegments.some((segment) => {
+    return Math.min(segment.end, maximum) - Math.max(segment.start, minimum) > verticalLaneOverlapPadding
+  })
+}
+
+const roundDiagramIntervalEdge = (value: number) => {
+  return Math.round(value * diagramIntervalPrecision) / diagramIntervalPrecision
+}
+
+export const getDiagramVerticalObstacleIntervals = (
+  start: number,
+  end: number,
+  obstacleRects: DiagramRect[],
+  clearance = 0
+) => {
+  const minimum = Math.min(start, end)
+  const maximum = Math.max(start, end)
+  const intervals = obstacleRects.filter((rect) => {
+    return Math.min(rect.bottom, maximum) - Math.max(rect.top, minimum) > pointTolerance
+  }).map((rect) => {
+    return {
+      start: rect.left - clearance,
+      end: rect.right + clearance
+    }
+  }).sort((left, right) => left.start - right.start)
+
+  if (!intervals.length) {
+    return []
+  }
+
+  return intervals.reduce<Array<{ start: number, end: number }>>((merged, interval) => {
+    const previous = merged.at(-1)
+
+    if (!previous || interval.start > previous.end) {
+      merged.push({
+        start: roundDiagramIntervalEdge(interval.start),
+        end: roundDiagramIntervalEdge(interval.end)
+      })
+      return merged
+    }
+
+    previous.end = roundDiagramIntervalEdge(Math.max(previous.end, interval.end))
+    return merged
+  }, [])
+}
+
+export const isDiagramVerticalLaneBlockedByRects = (
+  x: number,
+  start: number,
+  end: number,
+  obstacleRects: DiagramRect[],
+  clearance = 0
+) => {
+  return getDiagramVerticalObstacleIntervals(start, end, obstacleRects, clearance).some((interval) => {
+    return x > interval.start && x < interval.end
+  })
+}
+
+export const getDiagramVerticalLaneCandidateXs = (
+  baseX: number,
+  start: number,
+  end: number,
+  obstacleRects: DiagramRect[],
+  clearance = 0
+) => {
+  const intervals = getDiagramVerticalObstacleIntervals(start, end, obstacleRects, clearance)
+
+  if (!intervals.length) {
+    return [baseX]
+  }
+
+  const rawCandidates = [baseX, ...intervals.flatMap((interval) => {
+    return [interval.start, interval.end]
+  })]
+
+  const normalizedCandidates = rawCandidates.map((candidateX) => {
+    const blockingInterval = intervals.find((interval) => {
+      return candidateX > interval.start && candidateX < interval.end
+    })
+
+    if (!blockingInterval) {
+      return roundDiagramIntervalEdge(candidateX)
+    }
+
+    return roundDiagramIntervalEdge(
+      Math.abs(baseX - blockingInterval.start) <= Math.abs(baseX - blockingInterval.end)
+        ? blockingInterval.start
+        : blockingInterval.end
+    )
+  })
+
+  return Array.from(new Set(normalizedCandidates)).sort((left, right) => {
+    const leftDistance = Math.abs(left - baseX)
+    const rightDistance = Math.abs(right - baseX)
+
+    if (leftDistance !== rightDistance) {
+      return leftDistance - rightDistance
+    }
+
+    return left - right
+  })
 }
 
 export const buildOrthogonalMiddlePoints = (

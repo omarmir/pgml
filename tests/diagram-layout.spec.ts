@@ -40,6 +40,7 @@ test('studio canvas stays viewport-bound and starts centered on the diagram', as
   await goto('/diagram')
 
   await expect(page.locator('[data-node-anchor="group:Core"]')).toBeVisible()
+  await expect(page.locator('[data-grid-snap-toggle="true"]')).toHaveAttribute('aria-pressed', 'true')
 
   const diagnostics = await page.evaluate(() => {
     const documentElement = document.documentElement
@@ -617,4 +618,157 @@ Table public.order_items in Commerce {
   expect(diagnostics).not.toBeNull()
   expect(diagnostics?.bendDistances).toHaveLength(2)
   expect(Math.max(...(diagnostics?.bendDistances || [0]))).toBeLessThanOrEqual(24)
+})
+
+test('connection lines stay out of every table group header and do not run along group borders', async ({ goto, page }) => {
+  await goto('/diagram')
+  await expect(page.locator('[data-node-anchor="group:Core"]')).toBeVisible()
+
+  let diagnostics: { headerHits: Array<{ groupId: string, pathIndex: number }>, borderHits: Array<{ groupId: string, pathIndex: number }> } | null = null
+
+  await expect.poll(async () => {
+    diagnostics = await page.evaluate(() => {
+      const groups = Array.from(document.querySelectorAll('[data-node-anchor^="group:"]')).filter((element): element is HTMLElement => {
+        return element instanceof HTMLElement
+      })
+      const connectionLayers = Array.from(document.querySelectorAll('[data-connection-layer="true"]'))
+      const paths = connectionLayers.flatMap((layer) => {
+        return Array.from(layer.querySelectorAll('path'))
+      })
+
+      if (!groups.length || !paths.length) {
+        return null
+      }
+
+      const plane = groups[0]?.parentElement
+
+      if (!(plane instanceof HTMLElement)) {
+        return null
+      }
+
+      const getOffsetWithinPlane = (element: HTMLElement) => {
+        let current: HTMLElement | null = element
+        let x = 0
+        let y = 0
+
+        while (current && current !== plane) {
+          x += current.offsetLeft
+          y += current.offsetTop
+          current = current.offsetParent instanceof HTMLElement ? current.offsetParent : null
+        }
+
+        return { x, y }
+      }
+
+      const segmentHitsRect = (
+        from: { x: number, y: number },
+        to: { x: number, y: number },
+        rect: { left: number, right: number, top: number, bottom: number }
+      ) => {
+        if (Math.abs(from.x - to.x) < 0.5) {
+          const x = from.x
+
+          if (x < rect.left || x > rect.right) {
+            return false
+          }
+
+          const minY = Math.min(from.y, to.y)
+          const maxY = Math.max(from.y, to.y)
+
+          return maxY > rect.top && minY < rect.bottom
+        }
+
+        if (Math.abs(from.y - to.y) < 0.5) {
+          const y = from.y
+
+          if (y < rect.top || y > rect.bottom) {
+            return false
+          }
+
+          const minX = Math.min(from.x, to.x)
+          const maxX = Math.max(from.x, to.x)
+
+          return maxX > rect.left && minX < rect.right
+        }
+
+        return false
+      }
+
+      const groupDiagnostics = groups.flatMap((group) => {
+        const groupId = group.getAttribute('data-node-anchor') || ''
+        const content = document.querySelector(`[data-group-content="${groupId}"]`)
+
+        if (!(content instanceof HTMLElement)) {
+          return []
+        }
+
+        const groupOffset = getOffsetWithinPlane(group)
+        const contentOffset = getOffsetWithinPlane(content)
+        const groupBounds = {
+          left: groupOffset.x,
+          right: groupOffset.x + group.offsetWidth,
+          top: groupOffset.y,
+          bottom: groupOffset.y + group.offsetHeight
+        }
+        const headerBand = {
+          left: groupBounds.left,
+          right: groupBounds.right,
+          top: groupBounds.top,
+          bottom: contentOffset.y
+        }
+        const borderTolerance = 1.5
+
+        return paths.map((path, pathIndex) => {
+          const points = Array.from((path.getAttribute('d') || '').matchAll(/[ML]\s*(-?\d+(?:\.\d+)?)\s+(-?\d+(?:\.\d+)?)/g)).map((match) => {
+            return {
+              x: Number.parseFloat(match[1] || '0'),
+              y: Number.parseFloat(match[2] || '0')
+            }
+          })
+          const hitsHeader = points.slice(1).some((point, index) => {
+            return segmentHitsRect(points[index]!, point, headerBand)
+          })
+          const runsAlongBorder = points.slice(1).some((point, index) => {
+            const previous = points[index]!
+
+            if (Math.abs(previous.x - point.x) < 0.5) {
+              const overlapsVertically = Math.max(Math.min(previous.y, point.y), groupBounds.top) < Math.min(Math.max(previous.y, point.y), groupBounds.bottom)
+
+              return overlapsVertically && (
+                Math.abs(point.x - groupBounds.left) < borderTolerance
+                || Math.abs(point.x - groupBounds.right) < borderTolerance
+              )
+            }
+
+            if (Math.abs(previous.y - point.y) < 0.5) {
+              const overlapsHorizontally = Math.max(Math.min(previous.x, point.x), groupBounds.left) < Math.min(Math.max(previous.x, point.x), groupBounds.right)
+
+              return overlapsHorizontally && (
+                Math.abs(point.y - groupBounds.top) < borderTolerance
+                || Math.abs(point.y - groupBounds.bottom) < borderTolerance
+              )
+            }
+
+            return false
+          })
+
+          return {
+            groupId,
+            pathIndex,
+            hitsHeader,
+            runsAlongBorder
+          }
+        })
+      })
+
+      return {
+        headerHits: groupDiagnostics.filter(entry => entry.hitsHeader).map(({ groupId, pathIndex }) => ({ groupId, pathIndex })),
+        borderHits: groupDiagnostics.filter(entry => entry.runsAlongBorder).map(({ groupId, pathIndex }) => ({ groupId, pathIndex }))
+      }
+    })
+    return diagnostics
+  }).not.toBeNull()
+
+  expect(diagnostics?.headerHits).toEqual([])
+  expect(diagnostics?.borderHits).toEqual([])
 })

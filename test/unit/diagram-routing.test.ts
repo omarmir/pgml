@@ -2,6 +2,8 @@ import { describe, expect, it } from 'vitest'
 
 import {
   buildOrthogonalMiddlePoints,
+  getDiagramVerticalLaneCandidateXs,
+  getDiagramVerticalObstacleIntervals,
   getFieldRowAnchorRatios,
   getHeaderSafeGroupLaneSide,
   pickDiagramVerticalLaneShift,
@@ -146,5 +148,43 @@ describe('diagram routing utilities', () => {
     expect(pickDiagramVerticalLaneShift([
       { start: 120, end: 180, shift: 0 }
     ], 220, 280)).toBe(0)
+  })
+
+  it('merges overlapping header obstacles before evaluating vertical lane clearance', () => {
+    expect(getDiagramVerticalObstacleIntervals(
+      120,
+      360,
+      [
+        { left: 120, right: 220, top: 150, bottom: 220 },
+        { left: 210, right: 320, top: 180, bottom: 260 },
+        { left: 400, right: 460, top: 500, bottom: 560 }
+      ],
+      10
+    )).toEqual([
+      { start: 110, end: 330 }
+    ])
+  })
+
+  it('offers the nearest clear vertical lane outside any overlapping group header band', () => {
+    expect(getDiagramVerticalLaneCandidateXs(
+      240,
+      120,
+      420,
+      [
+        { left: 120, right: 300, top: 180, bottom: 260 },
+        { left: 320, right: 390, top: 200, bottom: 280 }
+      ],
+      10
+    )).toEqual([110, 400])
+
+    expect(getDiagramVerticalLaneCandidateXs(
+      90,
+      120,
+      420,
+      [
+        { left: 120, right: 300, top: 180, bottom: 260 }
+      ],
+      10
+    )).toEqual([90, 110, 310])
   })
 })
