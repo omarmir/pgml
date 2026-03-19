@@ -107,6 +107,7 @@ type ConnectionLine = {
   path: string
   color: string
   dashed: boolean
+  dashPattern: string
   animated: boolean
   zIndex: number
 }
@@ -361,6 +362,27 @@ const selectedTableOutgoingReferences = computed(() => {
 const selectedTableRelationalRowKeys = computed(() => {
   return new Set(selectedTableOutgoingReferences.value.map((reference) => {
     return getColumnAnchorKey(reference.toTable, reference.toColumn)
+  }))
+})
+const selectedObjectImpactTargets = computed(() => {
+  if (!selectedNode.value || selectedNode.value.kind !== 'object') {
+    return []
+  }
+
+  return selectedNode.value.impactTargets?.length
+    ? selectedNode.value.impactTargets
+    : selectedNode.value.tableIds.map(tableId => ({
+        tableId,
+        columnName: null
+      }))
+})
+const selectedObjectImpactRowKeys = computed(() => {
+  return new Set(selectedObjectImpactTargets.value.flatMap((impactTarget) => {
+    if (!impactTarget.columnName) {
+      return []
+    }
+
+    return [getColumnAnchorKey(impactTarget.tableId, impactTarget.columnName)]
   }))
 })
 const isCollapsibleNode = (node: CanvasNodeState) => node.kind === 'object'
@@ -3082,8 +3104,21 @@ const isAttachmentSelectionActive = (tableId: string, attachmentId: string) => {
     && selectedCanvasSelection.value.attachmentId === attachmentId
   )
 }
-const isSelectedTableRelationalRow = (tableId: string, columnName: string) => {
-  return selectedTableRelationalRowKeys.value.has(getColumnAnchorKey(tableId, columnName))
+const getRelationalRowHighlightColor = (tableId: string, columnName: string) => {
+  const rowKey = getColumnAnchorKey(tableId, columnName)
+
+  if (selectedTableRelationalRowKeys.value.has(rowKey)) {
+    return tableGroupColorByTableId.value[selectedTable.value?.fullName || ''] || '#79e3ea'
+  }
+
+  if (selectedObjectImpactRowKeys.value.has(rowKey)) {
+    return selectedNode.value?.color || '#14b8a6'
+  }
+
+  return null
+}
+const isHighlightedRelationalRow = (tableId: string, columnName: string) => {
+  return getRelationalRowHighlightColor(tableId, columnName) !== null
 }
 
 const getAnchorSlotCount = (element: HTMLElement, side: AnchorSide) => {
@@ -4220,6 +4255,7 @@ const updateConnections = () => {
     key: string
     color: string
     dashed: boolean
+    dashPattern: string
     animated: boolean
     fromElement: HTMLElement
     toElement: HTMLElement
@@ -4250,6 +4286,7 @@ const updateConnections = () => {
         ? (selectedTableColor || tableColors[reference.toTable] || '#79e3ea')
         : (tableColors[reference.toTable] || '#79e3ea'),
       dashed: isSelectedOutgoingReference,
+      dashPattern: isSelectedOutgoingReference ? '10 7' : '0',
       animated: isSelectedOutgoingReference,
       fromElement,
       toElement
@@ -4274,11 +4311,14 @@ const updateConnections = () => {
         continue
       }
 
+      const isSelectedNodeImpact = selectedNode.value?.id === node.id
+
       descriptors.push({
         key: `${node.id}->${impactTarget.tableId}:${impactTarget.columnName || '*'}`,
         color: node.color,
         dashed: true,
-        animated: false,
+        dashPattern: node.objectKind === 'Custom Type' && !isSelectedNodeImpact ? '2 5' : '10 7',
+        animated: isSelectedNodeImpact,
         fromElement,
         toElement
       })
@@ -4306,6 +4346,7 @@ const updateConnections = () => {
         path: result.path,
         color: result.color,
         dashed: result.dashed,
+        dashPattern: descriptor.dashPattern,
         animated: descriptor.animated,
         zIndex: getDiagramConnectionZIndex(
           nodeOrders[getConnectionOwnerNodeId(descriptor.fromElement) || ''] || 1,
@@ -5054,10 +5095,10 @@ defineExpose<{
                     :data-column-anchor="getColumnAnchorKey(table.fullName, row.column.name)"
                     :class="[
                       'relative flex min-w-0 items-start justify-between gap-2 bg-[color:var(--studio-row-surface)] px-2 py-1.5',
-                      isSelectedTableRelationalRow(table.fullName, row.column.name) ? 'pgml-selection-glow pgml-selection-glow-subtle' : ''
+                      isHighlightedRelationalRow(table.fullName, row.column.name) ? 'pgml-selection-glow pgml-selection-glow-subtle' : ''
                     ]"
-                    :style="isSelectedTableRelationalRow(table.fullName, row.column.name) ? getSelectionGlowStyle(tableGroupColorByTableId[selectedTable?.fullName || ''] || '#79e3ea') : undefined"
-                    :data-relational-highlighted="isSelectedTableRelationalRow(table.fullName, row.column.name) ? 'true' : undefined"
+                    :style="getRelationalRowHighlightColor(table.fullName, row.column.name) ? getSelectionGlowStyle(getRelationalRowHighlightColor(table.fullName, row.column.name) || '#79e3ea') : undefined"
+                    :data-relational-highlighted="isHighlightedRelationalRow(table.fullName, row.column.name) ? 'true' : undefined"
                   >
                     <div
                       :data-column-label-anchor="getColumnLabelAnchorKey(table.fullName, row.column.name)"
@@ -5261,7 +5302,7 @@ defineExpose<{
           fill="none"
           :stroke="line.color"
           stroke-width="2"
-          :stroke-dasharray="line.dashed ? '10 7' : '0'"
+          :stroke-dasharray="line.dashPattern"
           :style="line.animated ? getReferenceRaceStyle(line.color) : undefined"
           :data-connection-key="line.key"
           :data-connection-highlighted="line.animated ? 'true' : undefined"
@@ -5432,18 +5473,16 @@ defineExpose<{
 }
 
 .pgml-selection-glow::before {
-  border: 1px solid color-mix(in srgb, var(--pgml-selection-border) 44%, transparent);
-  animation: pgml-selection-aura 1.05s ease-in-out infinite;
+  content: none;
 }
 
 .pgml-selection-glow::after {
   border: 2px solid var(--pgml-selection-border);
-  animation: pgml-selection-pulse 1.2s ease-in-out infinite;
   box-shadow:
-    inset 0 0 0 1px color-mix(in srgb, var(--pgml-selection-border) 46%, transparent),
-    0 0 0 1px color-mix(in srgb, var(--pgml-selection-border) 62%, transparent),
-    0 0 16px var(--pgml-selection-shadow-near),
-    0 0 30px var(--pgml-selection-shadow-far);
+    inset 0 0 0 1px color-mix(in srgb, var(--pgml-selection-border) 30%, transparent),
+    0 0 0 1px color-mix(in srgb, var(--pgml-selection-border) 38%, transparent),
+    0 0 8px color-mix(in srgb, var(--pgml-selection-shadow-near) 78%, transparent),
+    0 0 14px color-mix(in srgb, var(--pgml-selection-shadow-far) 82%, transparent);
 }
 
 .pgml-selection-glow-subtle::before,
@@ -5458,10 +5497,10 @@ defineExpose<{
 .pgml-selection-glow-subtle::after {
   border-width: 1px;
   box-shadow:
-    inset 0 0 0 1px color-mix(in srgb, var(--pgml-selection-border) 26%, transparent),
-    0 0 0 1px color-mix(in srgb, var(--pgml-selection-border) 34%, transparent),
-    0 0 6px color-mix(in srgb, var(--pgml-selection-shadow-near) 58%, transparent),
-    0 0 12px color-mix(in srgb, var(--pgml-selection-shadow-far) 68%, transparent);
+    inset 0 0 0 1px color-mix(in srgb, var(--pgml-selection-border) 18%, transparent),
+    0 0 0 1px color-mix(in srgb, var(--pgml-selection-border) 24%, transparent),
+    0 0 3px color-mix(in srgb, var(--pgml-selection-shadow-near) 36%, transparent),
+    0 0 6px color-mix(in srgb, var(--pgml-selection-shadow-far) 42%, transparent);
 }
 
 .pgml-reference-race-path {
@@ -5476,44 +5515,6 @@ defineExpose<{
     drop-shadow(0 0 6px var(--pgml-reference-race-soft))
     drop-shadow(0 0 16px var(--pgml-reference-race-strong))
     drop-shadow(0 0 28px var(--pgml-reference-race-strong));
-}
-
-@keyframes pgml-selection-pulse {
-  0%,
-  100% {
-    opacity: 0.84;
-    box-shadow:
-      inset 0 0 0 1px color-mix(in srgb, var(--pgml-selection-border) 38%, transparent),
-      0 0 0 1px color-mix(in srgb, var(--pgml-selection-border) 52%, transparent),
-      0 0 10px var(--pgml-selection-shadow-near),
-      0 0 20px var(--pgml-selection-shadow-far);
-  }
-
-  50% {
-    opacity: 1;
-    box-shadow:
-      inset 0 0 0 1px color-mix(in srgb, var(--pgml-selection-border) 58%, transparent),
-      0 0 0 2px color-mix(in srgb, var(--pgml-selection-border) 84%, transparent),
-      0 0 24px var(--pgml-selection-shadow-near),
-      0 0 42px var(--pgml-selection-shadow-far);
-  }
-}
-
-@keyframes pgml-selection-aura {
-  0%,
-  100% {
-    opacity: 0.24;
-    box-shadow:
-      0 0 0 0 color-mix(in srgb, var(--pgml-selection-border) 0%, transparent),
-      0 0 0 0 color-mix(in srgb, var(--pgml-selection-border) 0%, transparent);
-  }
-
-  50% {
-    opacity: 0.9;
-    box-shadow:
-      0 0 0 1px color-mix(in srgb, var(--pgml-selection-border) 44%, transparent),
-      0 0 28px var(--pgml-selection-shadow-near);
-  }
 }
 
 @keyframes pgml-reference-race-line {

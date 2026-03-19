@@ -183,7 +183,7 @@ Function orphan_report() {
   }).toBeGreaterThan(0)
 })
 
-test('single click applies a pulsing selection glow to schema objects, grouped tables, and attachment rows', async ({ goto, page }) => {
+test('single click applies a glowing selection border to schema objects, grouped tables, and attachment rows', async ({ goto, page }) => {
   await goto('/diagram')
 
   const customTypeNode = page.locator('[data-node-anchor="custom-type:Domain:email_address"]')
@@ -199,12 +199,14 @@ test('single click applies a pulsing selection glow to schema objects, grouped t
       const overlayStyles = getComputedStyle(element as HTMLElement, '::after')
 
       return {
-        animationName: overlayStyles.animationName.includes('pgml-selection-pulse'),
+        animationName: overlayStyles.animationName,
+        borderWidth: overlayStyles.borderTopWidth,
         selectionColor: styles.getPropertyValue('--pgml-selection-color').trim()
       }
     })
   }).toEqual({
-    animationName: true,
+    animationName: 'none',
+    borderWidth: '2px',
     selectionColor: '#14b8a6'
   })
 
@@ -218,12 +220,14 @@ test('single click applies a pulsing selection glow to schema objects, grouped t
       const overlayStyles = getComputedStyle(element as HTMLElement, '::after')
 
       return {
-        animationName: overlayStyles.animationName.includes('pgml-selection-pulse'),
+        animationName: overlayStyles.animationName,
+        borderWidth: overlayStyles.borderTopWidth,
         selectionColor: styles.getPropertyValue('--pgml-selection-color').trim().length > 0
       }
     })
   }).toEqual({
-    animationName: true,
+    animationName: 'none',
+    borderWidth: '1px',
     selectionColor: true
   })
 
@@ -237,12 +241,14 @@ test('single click applies a pulsing selection glow to schema objects, grouped t
       const overlayStyles = getComputedStyle(element as HTMLElement, '::after')
 
       return {
-        animationName: overlayStyles.animationName.includes('pgml-selection-pulse'),
+        animationName: overlayStyles.animationName,
+        borderWidth: overlayStyles.borderTopWidth,
         selectionColor: styles.getPropertyValue('--pgml-selection-color').trim()
       }
     })
   }).toEqual({
-    animationName: true,
+    animationName: 'none',
+    borderWidth: '2px',
     selectionColor: '#fb7185'
   })
 })
@@ -279,12 +285,74 @@ test('selecting a table animates its outgoing references and target relational r
       const overlayStyles = getComputedStyle(element as HTMLElement, '::after')
 
       return {
-        animationName: overlayStyles.animationName.includes('pgml-selection-pulse'),
+        animationName: overlayStyles.animationName,
+        borderWidth: overlayStyles.borderTopWidth,
         selectionColor: styles.getPropertyValue('--pgml-selection-color').trim().length > 0
       }
     })
   }).toEqual({
-    animationName: true,
+    animationName: 'none',
+    borderWidth: '1px',
     selectionColor: true
+  })
+})
+
+test('selecting a custom type animates its impact lines and highlights impacted rows', async ({ goto, page }) => {
+  await goto('/diagram')
+
+  const customTypeNode = page.locator('[data-node-anchor="custom-type:Domain:email_address"]')
+  const usersEmailRow = page.locator('[data-column-anchor="public.users.email"]')
+  const customTypeImpactLine = page.locator('[data-connection-key="custom-type:Domain:email_address->public.users:email"]')
+  const highlightedConnections = page.locator('[data-connection-highlighted="true"]')
+
+  await expect.poll(async () => {
+    return customTypeImpactLine.evaluate((element) => {
+      const styles = getComputedStyle(element as SVGPathElement)
+
+      return {
+        animationName: styles.animationName,
+        strokeDasharray: styles.strokeDasharray
+      }
+    })
+  }).toEqual({
+    animationName: 'none',
+    strokeDasharray: '2px, 5px'
+  })
+
+  await customTypeNode.click()
+
+  await expect(customTypeNode).toHaveAttribute('data-selection-active', 'true')
+  await expect(highlightedConnections).toHaveCount(1)
+  await expect(usersEmailRow).toHaveAttribute('data-relational-highlighted', 'true')
+
+  await expect.poll(async () => {
+    return highlightedConnections.first().evaluate((element) => {
+      const styles = getComputedStyle(element as SVGPathElement)
+
+      return {
+        animationName: styles.animationName.includes('pgml-reference-race-line'),
+        strokeDasharray: styles.strokeDasharray
+      }
+    })
+  }).toEqual({
+    animationName: true,
+    strokeDasharray: '14px, 10px'
+  })
+
+  await expect.poll(async () => {
+    return usersEmailRow.evaluate((element) => {
+      const styles = getComputedStyle(element as HTMLElement)
+      const overlayStyles = getComputedStyle(element as HTMLElement, '::after')
+
+      return {
+        animationName: overlayStyles.animationName,
+        borderWidth: overlayStyles.borderTopWidth,
+        selectionColor: styles.getPropertyValue('--pgml-selection-color').trim()
+      }
+    })
+  }).toEqual({
+    animationName: 'none',
+    borderWidth: '1px',
+    selectionColor: '#14b8a6'
   })
 })
