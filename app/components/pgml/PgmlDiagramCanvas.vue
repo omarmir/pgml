@@ -110,6 +110,18 @@ type ConnectionLine = {
   zIndex: number
 }
 
+type CanvasSelection = {
+  kind: 'node'
+  id: string
+} | {
+  kind: 'table'
+  tableId: string
+} | {
+  kind: 'attachment'
+  tableId: string
+  attachmentId: string
+}
+
 type LayoutRect = {
   id: string
   x: number
@@ -173,6 +185,7 @@ const pan: Ref<{ x: number, y: number }> = ref({
 })
 const snapToGrid: Ref<boolean> = ref(true)
 const selectedNodeId: Ref<string | null> = ref(null)
+const selectedCanvasSelection: Ref<CanvasSelection | null> = ref(null)
 const nodeStates: Ref<Record<string, CanvasNodeState>> = ref({})
 const connectionLines: Ref<ConnectionLine[]> = ref([])
 let resizeObserver: ResizeObserver | null = null
@@ -284,6 +297,56 @@ const selectedNode = computed(() => {
   }
 
   return nodeStates.value[selectedNodeId.value] || null
+})
+const selectedTable = computed(() => {
+  const selection = selectedCanvasSelection.value
+
+  if (selection?.kind !== 'table') {
+    return null
+  }
+
+  return model.tables.find(table => table.fullName === selection.tableId) || null
+})
+const selectedAttachment = computed(() => {
+  const selection = selectedCanvasSelection.value
+
+  if (selection?.kind !== 'attachment') {
+    return null
+  }
+
+  const attachments = tableAttachmentState.value.attachmentsByTableId[selection.tableId] || []
+
+  return attachments.find(attachment => attachment.id === selection.attachmentId) || null
+})
+const selectedCanvasEntityTitle = computed(() => {
+  if (selectedNode.value) {
+    return selectedNode.value.title
+  }
+
+  if (selectedTable.value) {
+    return selectedTable.value.name
+  }
+
+  if (selectedAttachment.value) {
+    return selectedAttachment.value.title
+  }
+
+  return 'Select a shape'
+})
+const selectedCanvasEntityDescription = computed(() => {
+  if (selectedNode.value) {
+    return 'Adjust the selected node.'
+  }
+
+  if (selectedTable.value) {
+    return `${selectedTable.value.schema} schema table.`
+  }
+
+  if (selectedAttachment.value) {
+    return `${selectedAttachment.value.kind} on ${selectedAttachment.value.tableId}.`
+  }
+
+  return 'Select a node.'
 })
 const isCollapsibleNode = (node: CanvasNodeState) => node.kind === 'object'
 const tablesByGroup = computed(() => {
@@ -2856,6 +2919,30 @@ const syncNodeStates = () => {
   if (selectedNodeId.value && !nodeStates.value[selectedNodeId.value]) {
     selectedNodeId.value = null
   }
+
+  if (selectedCanvasSelection.value?.kind === 'node' && !nodeStates.value[selectedCanvasSelection.value.id]) {
+    selectedCanvasSelection.value = null
+  }
+
+  const tableSelection = selectedCanvasSelection.value
+
+  if (
+    tableSelection?.kind === 'table'
+    && !model.tables.some(table => table.fullName === tableSelection.tableId)
+  ) {
+    selectedCanvasSelection.value = null
+  }
+
+  const attachmentSelection = selectedCanvasSelection.value
+
+  if (attachmentSelection?.kind === 'attachment') {
+    const attachments = tableAttachmentState.value.attachmentsByTableId[attachmentSelection.tableId] || []
+    const hasAttachment = attachments.some(attachment => attachment.id === attachmentSelection.attachmentId)
+
+    if (!hasAttachment) {
+      selectedCanvasSelection.value = null
+    }
+  }
 }
 
 const getElementIdentity = (element: HTMLElement) => {
@@ -2913,6 +3000,15 @@ const floatingPanelStyle = {
   backgroundColor: 'var(--studio-control-bg)',
   boxShadow: 'var(--studio-floating-shadow)'
 }
+const getSelectionGlowStyle = (color: string, baseShadow = 'none') => {
+  return {
+    '--pgml-selection-color': color,
+    '--pgml-selection-base-shadow': baseShadow,
+    '--pgml-selection-border': `color-mix(in srgb, ${color} 78%, white 22%)`,
+    '--pgml-selection-shadow-near': `color-mix(in srgb, ${color} 48%, transparent)`,
+    '--pgml-selection-shadow-far': `color-mix(in srgb, ${color} 24%, transparent)`
+  }
+}
 const getNodeBorderColor = (node: CanvasNodeState) => {
   return node.kind === 'group'
     ? `color-mix(in srgb, ${node.color} 38%, var(--studio-node-border-neutral) 62%)`
@@ -2928,8 +3024,9 @@ const getNodeAccentColor = (node: CanvasNodeState) => {
 }
 const getAttachmentRowStyle = (attachment: TableAttachment) => {
   return {
-    backgroundColor: `color-mix(in srgb, ${attachment.color} 8%, var(--studio-row-surface) 92%)`,
-    boxShadow: `inset 3px 0 0 color-mix(in srgb, ${attachment.color} 58%, transparent)`
+    'backgroundColor': `color-mix(in srgb, ${attachment.color} 8%, var(--studio-row-surface) 92%)`,
+    '--pgml-selection-base-shadow': `inset 3px 0 0 color-mix(in srgb, ${attachment.color} 58%, transparent)`,
+    'boxShadow': 'var(--pgml-selection-base-shadow)'
   }
 }
 const getAttachmentKindBadgeStyle = (attachment: TableAttachment) => {
@@ -2945,6 +3042,19 @@ const getAttachmentFlagStyle = (flag: TableAttachmentFlag) => {
     backgroundColor: `color-mix(in srgb, ${flag.color} 14%, transparent)`,
     color: `color-mix(in srgb, ${flag.color} 72%, var(--studio-shell-text) 28%)`
   }
+}
+const isNodeSelectionActive = (nodeId: string) => {
+  return selectedCanvasSelection.value?.kind === 'node' && selectedCanvasSelection.value.id === nodeId
+}
+const isTableSelectionActive = (tableId: string) => {
+  return selectedCanvasSelection.value?.kind === 'table' && selectedCanvasSelection.value.tableId === tableId
+}
+const isAttachmentSelectionActive = (tableId: string, attachmentId: string) => {
+  return (
+    selectedCanvasSelection.value?.kind === 'attachment'
+    && selectedCanvasSelection.value.tableId === tableId
+    && selectedCanvasSelection.value.attachmentId === attachmentId
+  )
 }
 
 const getAnchorSlotCount = (element: HTMLElement, side: AnchorSide) => {
@@ -4468,6 +4578,10 @@ const startPan = (event: PointerEvent) => {
 const startDragNode = (event: PointerEvent, id: string) => {
   event.stopPropagation()
   selectedNodeId.value = id
+  selectedCanvasSelection.value = {
+    kind: 'node',
+    id
+  }
   const node = nodeStates.value[id]
 
   if (!node) {
@@ -4504,6 +4618,10 @@ const startDragNode = (event: PointerEvent, id: string) => {
 const startResizeNode = (event: PointerEvent, id: string) => {
   event.stopPropagation()
   selectedNodeId.value = id
+  selectedCanvasSelection.value = {
+    kind: 'node',
+    id
+  }
   const node = nodeStates.value[id]
 
   if (!node || node.kind !== 'object') {
@@ -4548,6 +4666,27 @@ const focusSourceRange = (sourceRange?: PgmlSourceRange) => {
 
 const handleNodeClick = (node: CanvasNodeState) => {
   selectedNodeId.value = node.id
+  selectedCanvasSelection.value = {
+    kind: 'node',
+    id: node.id
+  }
+}
+
+const handleTableClick = (tableId: string) => {
+  selectedNodeId.value = null
+  selectedCanvasSelection.value = {
+    kind: 'table',
+    tableId
+  }
+}
+
+const handleAttachmentClick = (tableId: string, attachment: TableAttachment) => {
+  selectedNodeId.value = null
+  selectedCanvasSelection.value = {
+    kind: 'attachment',
+    tableId,
+    attachmentId: attachment.id
+  }
 }
 
 const handleNodeDoubleClick = (node: CanvasNodeState) => {
@@ -4702,18 +4841,22 @@ defineExpose<{
           'absolute select-none',
           node.kind === 'group' ? 'overflow-hidden rounded-[2px]' : 'overflow-hidden rounded-none border',
           node.kind === 'object' ? 'transition-transform duration-150 hover:-translate-y-0.5 hover:ring-1 hover:ring-[color:var(--studio-ring)]' : '',
-          selectedNodeId === node.id && node.kind !== 'group' ? 'ring-1 ring-[color:var(--studio-ring)]' : ''
+          isNodeSelectionActive(node.id) && node.kind !== 'group' ? 'pgml-selection-glow' : ''
         ]"
-        :style="{
-          left: `${node.x}px`,
-          top: `${node.y}px`,
-          width: `${node.width}px`,
-          height: `${node.height}px`,
-          zIndex: node.kind === 'group' ? 'auto' : getNodeForegroundLayerZIndex(node.id),
-          borderColor: node.kind === 'group' ? 'transparent' : getNodeBorderColor(node),
-          background: node.kind === 'group' ? 'transparent' : getNodeBackground(node)
-        }"
+        :style="[
+          {
+            left: `${node.x}px`,
+            top: `${node.y}px`,
+            width: `${node.width}px`,
+            height: `${node.height}px`,
+            zIndex: node.kind === 'group' ? 'auto' : getNodeForegroundLayerZIndex(node.id),
+            borderColor: node.kind === 'group' ? 'transparent' : getNodeBorderColor(node),
+            background: node.kind === 'group' ? 'transparent' : getNodeBackground(node)
+          },
+          node.kind === 'object' ? getSelectionGlowStyle(node.color) : undefined
+        ]"
         :data-node-anchor="node.id"
+        :data-selection-active="isNodeSelectionActive(node.id) ? 'true' : undefined"
         @pointerdown.capture="selectedNodeId = node.id"
         @click.stop="handleNodeClick(node)"
         @dblclick.stop="handleNodeDoubleClick(node)"
@@ -4808,9 +4951,17 @@ defineExpose<{
             <article
               v-for="table in model.tables.filter((table) => node.tableIds.includes(table.fullName))"
               :key="table.fullName"
-              class="min-w-0 self-start overflow-hidden rounded-[2px] border border-[color:var(--studio-shell-border)] bg-[color:var(--studio-table-surface)] transition-transform duration-150 hover:-translate-y-0.5 hover:ring-1 hover:ring-[color:var(--studio-ring)]"
-              :style="{ width: `${groupTableWidth}px` }"
+              :class="[
+                'min-w-0 self-start overflow-hidden rounded-[2px] border border-[color:var(--studio-shell-border)] bg-[color:var(--studio-table-surface)] transition-transform duration-150 hover:-translate-y-0.5 hover:ring-1 hover:ring-[color:var(--studio-ring)]',
+                isTableSelectionActive(table.fullName) ? 'pgml-selection-glow' : ''
+              ]"
+              :style="[
+                { width: `${groupTableWidth}px` },
+                getSelectionGlowStyle(tableGroupColorByTableId[table.fullName] || '#38bdf8')
+              ]"
               :data-table-anchor="table.fullName"
+              :data-selection-active="isTableSelectionActive(table.fullName) ? 'true' : undefined"
+              @click.stop="handleTableClick(table.fullName)"
               @dblclick.stop="handleTableDoubleClick(table.fullName)"
             >
               <div class="flex items-start justify-between gap-2 border-b border-[color:var(--studio-divider)] px-2 py-1.5">
@@ -4892,11 +5043,18 @@ defineExpose<{
                       :data-table-row-anchor="row.key"
                       data-table-row-kind="attachment"
                       :data-attachment-row="row.attachment.id"
-                      class="flex min-w-0 w-full items-start justify-between gap-2 px-2 py-1.5 text-left transition-[filter,transform] duration-150 hover:brightness-105"
-                      :style="getAttachmentRowStyle(row.attachment)"
+                      :class="[
+                        'flex min-w-0 w-full items-start justify-between gap-2 px-2 py-1.5 text-left transition-[filter,transform] duration-150 hover:brightness-105',
+                        isAttachmentSelectionActive(table.fullName, row.attachment.id) ? 'pgml-selection-glow' : ''
+                      ]"
+                      :style="[
+                        getAttachmentRowStyle(row.attachment),
+                        getSelectionGlowStyle(row.attachment.color, `inset 3px 0 0 color-mix(in srgb, ${row.attachment.color} 58%, transparent)`)
+                      ]"
                       :aria-label="`${row.attachment.kind} ${row.attachment.title}`"
+                      :data-selection-active="isAttachmentSelectionActive(table.fullName, row.attachment.id) ? 'true' : undefined"
                       @pointerdown.stop
-                      @click.stop
+                      @click.stop="handleAttachmentClick(table.fullName, row.attachment)"
                       @dblclick.stop="handleAttachmentDoubleClick(row.attachment)"
                     >
                       <div class="flex min-w-0 items-start gap-2">
@@ -5110,10 +5268,10 @@ defineExpose<{
         Inspector
       </div>
       <h3 class="text-[0.82rem] font-semibold leading-5 text-[color:var(--studio-shell-text)]">
-        {{ selectedNode?.title || 'Select a shape' }}
+        {{ selectedCanvasEntityTitle }}
       </h3>
       <p class="text-[0.64rem] leading-4 text-[color:var(--studio-shell-muted)]">
-        {{ selectedNode ? 'Adjust the selected node.' : 'Select a node.' }}
+        {{ selectedCanvasEntityDescription }}
       </p>
 
       <div
@@ -5196,3 +5354,37 @@ defineExpose<{
     </aside>
   </div>
 </template>
+
+<style scoped>
+.pgml-selection-glow {
+  border-color: var(--pgml-selection-border) !important;
+  animation: pgml-selection-pulse 1.55s ease-in-out infinite;
+  box-shadow:
+    var(--pgml-selection-base-shadow, none),
+    inset 0 0 0 1px var(--pgml-selection-border),
+    0 0 0 1px var(--pgml-selection-border),
+    0 0 14px var(--pgml-selection-shadow-near),
+    0 0 24px var(--pgml-selection-shadow-far);
+}
+
+@keyframes pgml-selection-pulse {
+  0%,
+  100% {
+    box-shadow:
+      var(--pgml-selection-base-shadow, none),
+      inset 0 0 0 1px var(--pgml-selection-border),
+      0 0 0 1px var(--pgml-selection-border),
+      0 0 12px var(--pgml-selection-shadow-near),
+      0 0 22px var(--pgml-selection-shadow-far);
+  }
+
+  50% {
+    box-shadow:
+      var(--pgml-selection-base-shadow, none),
+      inset 0 0 0 1px var(--pgml-selection-border),
+      0 0 0 1px var(--pgml-selection-border),
+      0 0 18px var(--pgml-selection-shadow-near),
+      0 0 32px var(--pgml-selection-shadow-far);
+  }
+}
+</style>

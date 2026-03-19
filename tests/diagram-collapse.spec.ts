@@ -182,3 +182,64 @@ Function orphan_report() {
     return editor.evaluate((element: HTMLTextAreaElement) => element.scrollTop)
   }).toBeGreaterThan(0)
 })
+
+test('single click applies a pulsing selection glow to schema objects, grouped tables, and attachment rows', async ({ goto, page }) => {
+  await goto('/diagram')
+
+  const customTypeNode = page.locator('[data-node-anchor="custom-type:Domain:email_address"]')
+  const ordersTable = page.locator('[data-table-anchor="public.orders"]')
+  const ordersConstraint = page.locator('[data-table-anchor="public.orders"] [data-attachment-row="constraint:chk_orders_total"]')
+
+  await customTypeNode.click()
+
+  await expect(customTypeNode).toHaveAttribute('data-selection-active', 'true')
+  await expect.poll(async () => {
+    return customTypeNode.evaluate((element) => {
+      const styles = getComputedStyle(element as HTMLElement)
+
+      return {
+        animationName: styles.animationName.includes('pgml-selection-pulse'),
+        selectionColor: styles.getPropertyValue('--pgml-selection-color').trim()
+      }
+    })
+  }).toEqual({
+    animationName: true,
+    selectionColor: '#14b8a6'
+  })
+
+  await ordersTable.click()
+
+  await expect(ordersTable).toHaveAttribute('data-selection-active', 'true')
+  await expect(customTypeNode).not.toHaveAttribute('data-selection-active', 'true')
+  await expect.poll(async () => {
+    return ordersTable.evaluate((element) => {
+      const styles = getComputedStyle(element as HTMLElement)
+
+      return {
+        animationName: styles.animationName.includes('pgml-selection-pulse'),
+        selectionColor: styles.getPropertyValue('--pgml-selection-color').trim().length > 0
+      }
+    })
+  }).toEqual({
+    animationName: true,
+    selectionColor: true
+  })
+
+  await ordersConstraint.click()
+
+  await expect(ordersConstraint).toHaveAttribute('data-selection-active', 'true')
+  await expect(ordersTable).not.toHaveAttribute('data-selection-active', 'true')
+  await expect.poll(async () => {
+    return ordersConstraint.evaluate((element) => {
+      const styles = getComputedStyle(element as HTMLElement)
+
+      return {
+        animationName: styles.animationName.includes('pgml-selection-pulse'),
+        selectionColor: styles.getPropertyValue('--pgml-selection-color').trim()
+      }
+    })
+  }).toEqual({
+    animationName: true,
+    selectionColor: '#fb7185'
+  })
+})
