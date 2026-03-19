@@ -36,6 +36,7 @@ const emit = defineEmits<{
   createTable: [groupName: string]
   editTable: [tableId: string]
   focusSource: [sourceRange: PgmlSourceRange]
+  nodePropertiesChange: [properties: Record<string, PgmlNodeProperties>]
 }>()
 
 type CanvasNodeKind = 'group' | 'object'
@@ -4289,11 +4290,16 @@ const getNodeLayoutProperties = () => {
   }, {})
 }
 
+const emitNodePropertiesChange = () => {
+  emit('nodePropertiesChange', getNodeLayoutProperties())
+}
+
 const updateNode = (
   id: string,
   partial: Partial<CanvasNodeState>,
   options: {
     remeasure?: boolean
+    emitNodeProperties?: boolean
   } = {}
 ) => {
   const current = nodeStates.value[id]
@@ -4303,6 +4309,7 @@ const updateNode = (
   }
 
   const remeasure = options.remeasure !== false
+  const emitNodeProperties = options.emitNodeProperties !== false
 
   const nextNode = {
     ...current,
@@ -4347,6 +4354,10 @@ const updateNode = (
   }
 
   nodeStates.value[id] = nextNode
+
+  if (emitNodeProperties) {
+    emitNodePropertiesChange()
+  }
 
   nextTick(() => {
     if (remeasure) {
@@ -4434,13 +4445,15 @@ const startDragNode = (event: PointerEvent, id: string) => {
       x: snapCoordinate(origin.nodeX + (moveEvent.clientX - origin.x) / scale.value),
       y: snapCoordinate(origin.nodeY + (moveEvent.clientY - origin.y) / scale.value)
     }, {
-      remeasure: false
+      remeasure: false,
+      emitNodeProperties: false
     })
   }
 
   const onUp = () => {
     window.removeEventListener('pointermove', onMove)
     window.removeEventListener('pointerup', onUp)
+    emitNodePropertiesChange()
   }
 
   window.addEventListener('pointermove', onMove)
@@ -4469,12 +4482,15 @@ const startResizeNode = (event: PointerEvent, id: string) => {
     updateNode(id, {
       width: Math.max(origin.minWidth, origin.width + (moveEvent.clientX - origin.x) / scale.value),
       height: Math.max(origin.minHeight, origin.height + (moveEvent.clientY - origin.y) / scale.value)
+    }, {
+      emitNodeProperties: false
     })
   }
 
   const onUp = () => {
     window.removeEventListener('pointermove', onMove)
     window.removeEventListener('pointerup', onUp)
+    emitNodePropertiesChange()
   }
 
   window.addEventListener('pointermove', onMove)

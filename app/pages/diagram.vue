@@ -127,6 +127,23 @@ const buildSchemaText = (includeLayout: boolean) => {
   return buildPgmlWithNodeProperties(strippedSource, canvasRef.value.getNodeLayoutProperties())
 }
 
+const syncSourceWithNodeProperties = (nodeProperties: Record<string, PgmlNodeProperties>) => {
+  if (parseError.value) {
+    return
+  }
+
+  const nextSource = buildPgmlWithNodeProperties(
+    stripPgmlPropertiesBlocks(source.value),
+    nodeProperties
+  )
+
+  if (nextSource === source.value) {
+    return
+  }
+
+  source.value = nextSource
+}
+
 const {
   clearSchema,
   currentSchemaName,
@@ -460,6 +477,7 @@ onBeforeUnmount(() => {
           @focus-source="focusEditorSourceRange"
           @create-table="openTableCreator"
           @edit-table="openTableEditor"
+          @node-properties-change="syncSourceWithNodeProperties"
         />
       </section>
     </div>
