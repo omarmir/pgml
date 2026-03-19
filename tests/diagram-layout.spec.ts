@@ -451,6 +451,7 @@ test('field rows expose multiple side anchors and prefer unused points on the sa
 TableGroup Commerce {
   orders
   invoices
+  payments
 }
 
 Table public.tenants in Core {
@@ -464,6 +465,11 @@ Table public.orders in Commerce {
 }
 
 Table public.invoices in Commerce {
+  id uuid [pk]
+  tenant_id uuid [ref: > public.tenants.id]
+}
+
+Table public.payments in Commerce {
   id uuid [pk]
   tenant_id uuid [ref: > public.tenants.id]
 }`
@@ -486,7 +492,7 @@ Table public.invoices in Commerce {
       !(coreGroup instanceof HTMLElement)
       || !(tenantsTable instanceof HTMLElement)
       || !(tenantsIdLabel instanceof HTMLElement)
-      || paths.length < 2
+      || paths.length < 3
     ) {
       return null
     }
@@ -543,5 +549,72 @@ Table public.invoices in Commerce {
   })
 
   expect(diagnostics).not.toBeNull()
-  expect(diagnostics?.endpointYs.length || 0).toBeGreaterThanOrEqual(2)
+  expect(diagnostics?.endpointYs.length || 0).toBeGreaterThanOrEqual(3)
+})
+
+test('shared-group reference lanes keep their first bend close to the table edge', async ({ goto, page }) => {
+  await goto('/diagram')
+
+  const editor = page.locator('[data-pgml-editor="true"]')
+  const source = `TableGroup Commerce {
+  products
+  orders
+  order_items
+}
+
+Table public.products in Commerce {
+  id uuid [pk]
+}
+
+Table public.orders in Commerce {
+  id uuid [pk]
+}
+
+Table public.order_items in Commerce {
+  id uuid [pk]
+  order_id uuid [ref: > public.orders.id]
+  product_id uuid [ref: > public.products.id]
+}`
+
+  await editor.fill(source)
+  await expect(page.locator('[data-table-anchor="public.products"]')).toBeVisible()
+
+  const diagnostics = await page.evaluate(() => {
+    const connectionLayers = Array.from(document.querySelectorAll('[data-connection-layer="true"]'))
+    const paths = connectionLayers.flatMap((layer) => {
+      return Array.from(layer.querySelectorAll('path'))
+    }).filter((entry) => {
+      return entry.getAttribute('stroke') === '#f59e0b'
+    })
+
+    if (paths.length < 2) {
+      return null
+    }
+
+    const bendDistances = paths.map((path) => {
+      const points = Array.from((path.getAttribute('d') || '').matchAll(/[ML]\s*(-?\d+(?:\.\d+)?)\s+(-?\d+(?:\.\d+)?)/g)).map((match) => {
+        return {
+          x: Number.parseFloat(match[1] || '0'),
+          y: Number.parseFloat(match[2] || '0')
+        }
+      })
+
+      if (points.length < 4) {
+        return null
+      }
+
+      const startBendDistance = Math.abs(points[1]!.x - points[0]!.x) + Math.abs(points[1]!.y - points[0]!.y)
+      const endBendDistance = Math.abs(points.at(-2)!.x - points.at(-1)!.x) + Math.abs(points.at(-2)!.y - points.at(-1)!.y)
+
+      return Math.min(startBendDistance, endBendDistance)
+    }).filter((distance): distance is number => Number.isFinite(distance))
+
+    return {
+      bendDistances
+    }
+  })
+
+  expect(diagnostics).not.toBeNull()
+  expect(diagnostics?.bendDistances).toHaveLength(2)
+  expect(Math.max(...(diagnostics?.bendDistances || [0]))).toBeLessThanOrEqual(24)
 })

@@ -16,9 +16,11 @@ import {
 } from '~/utils/diagram-layering'
 import {
   buildOrthogonalMiddlePoints,
+  type DiagramVerticalLaneReservation,
   getFieldRowAnchorRatios,
   getHeaderSafeGroupLaneSide,
   isHorizontalDiagramSide,
+  pickDiagramVerticalLaneShift,
   pickDiagramAnchorSlot
 } from '~/utils/diagram-routing'
 import { normalizeSvgColor, normalizeSvgPaint, parseCssLinearGradient } from '~/utils/svg-paint'
@@ -151,6 +153,8 @@ type RouteLeg = {
   grouped: boolean
 }
 
+type VerticalSegmentUsage = Map<string, DiagramVerticalLaneReservation[]>
+
 type DiagramExportFormat = 'svg' | 'png'
 
 const planeRef: Ref<HTMLDivElement | null> = ref(null)
@@ -180,9 +184,12 @@ const minCanvasScale = 0.28
 const maxCanvasScale = 1.3
 const zoomStep = 0.08
 const gridSize = 18
+const groupLaneBaseOffset = 12
+const groupLaneGap = 8
 const layoutPadding = 88
 const exportPadding = 96
 const collapsedObjectHeight = 56
+const verticalSegmentKeyScale = 2
 const triggerCallFlagColor = '#38bdf8'
 const attachmentPopoverContent = {
   side: 'right' as const,
@@ -3233,7 +3240,7 @@ const reserveFieldRowAnchorPoint = (
 }
 
 const getRouteOffset = (fromAnchor: AnchorPoint, toAnchor: AnchorPoint) => {
-  const baseOffset = 18 + (fromAnchor.slot % 4) * 6 + (toAnchor.slot % 4) * 4
+  const baseOffset = 10 + (fromAnchor.slot % 4) * 4 + (toAnchor.slot % 4) * 3
 
   if (isHorizontalDiagramSide(fromAnchor.side) && isHorizontalDiagramSide(toAnchor.side) && fromAnchor.side !== toAnchor.side) {
     return Math.min(baseOffset, Math.max(0, Math.abs(toAnchor.x - fromAnchor.x) / 2 - 1))
@@ -3289,6 +3296,74 @@ const buildPathFromPoints = (points: LayoutPoint[]) => {
   return points.map((point, index) => {
     return `${index === 0 ? 'M' : 'L'} ${point.x} ${point.y}`
   }).join(' ')
+}
+
+const getVerticalSegmentUsageKey = (x: number) => {
+  return `vertical:${Math.round(x * verticalSegmentKeyScale) / verticalSegmentKeyScale}`
+}
+
+const reserveVerticalSegmentShift = (
+  x: number,
+  startY: number,
+  endY: number,
+  verticalUsage: VerticalSegmentUsage
+) => {
+  const key = getVerticalSegmentUsageKey(x)
+  const segments = verticalUsage.get(key) || []
+  const shift = pickDiagramVerticalLaneShift(segments, startY, endY)
+
+  segments.push({
+    start: Math.min(startY, endY),
+    end: Math.max(startY, endY),
+    shift
+  })
+  verticalUsage.set(key, segments)
+
+  return shift
+}
+
+const offsetOverlappingVerticalSegments = (
+  points: LayoutPoint[],
+  verticalUsage: VerticalSegmentUsage
+) => {
+  const basePoints = points.map(point => ({ ...point }))
+  const adjustedPoints = points.map(point => ({ ...point }))
+
+  for (let index = 0; index < basePoints.length - 1; index += 1) {
+    const fromPoint = basePoints[index]
+    const toPoint = basePoints[index + 1]
+    const previousPoint = basePoints[index - 1]
+    const nextPoint = basePoints[index + 2]
+
+    if (!fromPoint || !toPoint || !previousPoint || !nextPoint) {
+      continue
+    }
+
+    if (Math.abs(fromPoint.x - toPoint.x) >= 0.5 || Math.abs(fromPoint.y - toPoint.y) < 0.5) {
+      continue
+    }
+
+    if (Math.abs(previousPoint.y - fromPoint.y) >= 0.5 || Math.abs(toPoint.y - nextPoint.y) >= 0.5) {
+      continue
+    }
+
+    const shift = reserveVerticalSegmentShift(fromPoint.x, fromPoint.y, toPoint.y, verticalUsage)
+
+    if (shift === 0) {
+      continue
+    }
+
+    adjustedPoints[index] = {
+      ...adjustedPoints[index]!,
+      x: adjustedPoints[index]!.x + shift
+    }
+    adjustedPoints[index + 1] = {
+      ...adjustedPoints[index + 1]!,
+      x: adjustedPoints[index + 1]!.x + shift
+    }
+  }
+
+  return adjustedPoints
 }
 
 const reserveRouteLegAnchor = (
@@ -3375,8 +3450,8 @@ const finalizeRouteLeg = (
   const laneOffset = reserveLaneOffset(
     `group-lane:${pendingLeg.groupElement.getAttribute('data-node-anchor')}:${pendingLeg.side}`,
     usage,
-    28,
-    18
+    groupLaneBaseOffset,
+    groupLaneGap
   )
   const groupLeft = (groupBounds.left - planeBounds.left) / scale.value
   const groupRight = (groupBounds.right - planeBounds.left) / scale.value
@@ -3413,7 +3488,7 @@ const projectLegToSharedLane = (leg: RouteLeg, laneSide: AnchorSide, lanePoint: 
   }
 }
 
-const buildPathFromLegs = (fromLeg: RouteLeg, toLeg: RouteLeg) => {
+const buildPathFromLegs = (fromLeg: RouteLeg, toLeg: RouteLeg, verticalUsage: VerticalSegmentUsage) => {
   const laneLeg = fromLeg.grouped !== toLeg.grouped
     ? (fromLeg.grouped ? fromLeg : toLeg)
     : null
@@ -3438,7 +3513,7 @@ const buildPathFromLegs = (fromLeg: RouteLeg, toLeg: RouteLeg) => {
   appendRoutePoint(points, nextToLeg.exit)
   appendRoutePoint(points, { x: nextToLeg.anchor.x, y: nextToLeg.anchor.y })
 
-  return buildPathFromPoints(points)
+  return buildPathFromPoints(offsetOverlappingVerticalSegments(points, verticalUsage))
 }
 
 const buildSharedGroupPath = (
@@ -3446,7 +3521,8 @@ const buildSharedGroupPath = (
   toElement: HTMLElement,
   groupElement: HTMLElement,
   planeBounds: DOMRect,
-  usage: Map<string, number[]>
+  usage: Map<string, number[]>,
+  verticalUsage: VerticalSegmentUsage
 ) => {
   const fromBounds = fromElement.getBoundingClientRect()
   const toBounds = toElement.getBoundingClientRect()
@@ -3500,35 +3576,32 @@ const buildSharedGroupPath = (
   const laneOffset = reserveLaneOffset(
     `group-lane:${groupElement.getAttribute('data-node-anchor')}:${laneSide}`,
     usage,
-    28,
-    18
+    groupLaneBaseOffset,
+    groupLaneGap
   )
-  const groupLeft = (groupBounds.left - planeBounds.left) / scale.value
-  const groupRight = (groupBounds.right - planeBounds.left) / scale.value
-  const groupBottom = (groupBounds.bottom - planeBounds.top) / scale.value
   const points: LayoutPoint[] = []
 
   appendRoutePoint(points, { x: fromAnchor.x, y: fromAnchor.y })
 
   if (laneSide === 'left' || laneSide === 'right') {
     const laneX = laneSide === 'left'
-      ? groupLeft - laneOffset
-      : groupRight + laneOffset
+      ? Math.min(fromAnchor.x, toAnchor.x) - laneOffset
+      : Math.max(fromAnchor.x, toAnchor.x) + laneOffset
 
     appendRoutePoint(points, { x: laneX, y: fromAnchor.y })
     appendRoutePoint(points, { x: laneX, y: toAnchor.y })
     appendRoutePoint(points, { x: toAnchor.x, y: toAnchor.y })
 
-    return buildPathFromPoints(points)
+    return buildPathFromPoints(offsetOverlappingVerticalSegments(points, verticalUsage))
   }
 
-  const laneY = groupBottom + laneOffset
+  const laneY = Math.max(fromAnchor.y, toAnchor.y) + laneOffset
 
   appendRoutePoint(points, { x: fromAnchor.x, y: laneY })
   appendRoutePoint(points, { x: toAnchor.x, y: laneY })
   appendRoutePoint(points, { x: toAnchor.x, y: toAnchor.y })
 
-  return buildPathFromPoints(points)
+  return buildPathFromPoints(offsetOverlappingVerticalSegments(points, verticalUsage))
 }
 
 const decideAnchorSides = (fromElement: HTMLElement, toElement: HTMLElement): { from: AnchorSide, to: AnchorSide } => {
@@ -3557,7 +3630,8 @@ const buildPathBetween = (
   toElement: HTMLElement,
   color: string,
   dashed: boolean,
-  usage: Map<string, number[]>
+  usage: Map<string, number[]>,
+  verticalUsage: VerticalSegmentUsage
 ) => {
   if (!planeRef.value) {
     return null
@@ -3568,7 +3642,7 @@ const buildPathBetween = (
 
   if (sharedGroupElement) {
     return {
-      path: buildSharedGroupPath(fromElement, toElement, sharedGroupElement, planeBounds, usage),
+      path: buildSharedGroupPath(fromElement, toElement, sharedGroupElement, planeBounds, usage, verticalUsage),
       color,
       dashed
     }
@@ -3582,7 +3656,7 @@ const buildPathBetween = (
   const toLeg = finalizeRouteLeg(toPendingLeg, planeBounds, usage, routeOffset)
 
   return {
-    path: buildPathFromLegs(fromLeg, toLeg),
+    path: buildPathFromLegs(fromLeg, toLeg, verticalUsage),
     color,
     dashed
   }
@@ -3601,6 +3675,7 @@ const updateConnections = () => {
     toElement: HTMLElement
   }> = []
   const usage = new Map<string, number[]>()
+  const verticalUsage: VerticalSegmentUsage = new Map()
   const nodeOrders = nodeLayerOrderById.value
   const tableColors = tableGroupColorByTableId.value
 
@@ -3656,7 +3731,8 @@ const updateConnections = () => {
         descriptor.toElement,
         descriptor.color,
         descriptor.dashed,
-        usage
+        usage,
+        verticalUsage
       )
 
       if (!result) {

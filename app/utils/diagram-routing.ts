@@ -12,8 +12,17 @@ export type DiagramRect = {
   bottom: number
 }
 
+export type DiagramVerticalLaneReservation = {
+  start: number
+  end: number
+  shift: number
+}
+
 const pointTolerance = 0.01
 const fieldRowAnchorOffsets = [0.22, 0.5, 0.78] as const
+const sameSideLaneOffset = 18
+const verticalLaneShiftPattern = [0, 4, -4, 8, -8, 12, -12] as const
+const verticalLaneOverlapPadding = 6
 
 export const isHorizontalDiagramSide = (side: DiagramAnchorSide) => side === 'left' || side === 'right'
 
@@ -52,20 +61,36 @@ export const pickDiagramAnchorSlot = (
     ? candidateRatios[Math.floor(candidateRatios.length / 2)] ?? desiredRatio
     : desiredRatio
   let bestSlot = 0
+  let bestUsage = Number.POSITIVE_INFINITY
   let bestScore = Number.POSITIVE_INFINITY
 
   for (let slot = 0; slot < candidateRatios.length; slot += 1) {
     const candidateRatio = candidateRatios[slot] ?? 0.5
     const usage = slotUsage[slot] || 0
-    const score = Math.abs(candidateRatio - normalizedDesiredRatio) + usage * 0.35
+    const score = Math.abs(candidateRatio - normalizedDesiredRatio)
 
-    if (score < bestScore) {
+    if (usage < bestUsage || (usage === bestUsage && score < bestScore)) {
+      bestUsage = usage
       bestScore = score
       bestSlot = slot
     }
   }
 
   return bestSlot
+}
+
+export const pickDiagramVerticalLaneShift = (
+  existingSegments: DiagramVerticalLaneReservation[],
+  start: number,
+  end: number
+) => {
+  const minimum = Math.min(start, end)
+  const maximum = Math.max(start, end)
+  const overlappingShifts = new Set(existingSegments.filter((segment) => {
+    return Math.min(segment.end, maximum) - Math.max(segment.start, minimum) > verticalLaneOverlapPadding
+  }).map(segment => segment.shift))
+
+  return verticalLaneShiftPattern.find(shift => !overlappingShifts.has(shift)) ?? 0
 }
 
 export const buildOrthogonalMiddlePoints = (
@@ -84,8 +109,8 @@ export const buildOrthogonalMiddlePoints = (
   if (isHorizontalDiagramSide(fromSide) && isHorizontalDiagramSide(toSide)) {
     if (fromSide === toSide) {
       const midX = fromSide === 'right'
-        ? Math.max(fromPoint.x, toPoint.x) + 28
-        : Math.min(fromPoint.x, toPoint.x) - 28
+        ? Math.max(fromPoint.x, toPoint.x) + sameSideLaneOffset
+        : Math.min(fromPoint.x, toPoint.x) - sameSideLaneOffset
 
       return [
         { x: midX, y: fromPoint.y },
@@ -104,8 +129,8 @@ export const buildOrthogonalMiddlePoints = (
   if (!isHorizontalDiagramSide(fromSide) && !isHorizontalDiagramSide(toSide)) {
     if (fromSide === toSide) {
       const midY = fromSide === 'bottom'
-        ? Math.max(fromPoint.y, toPoint.y) + 28
-        : Math.min(fromPoint.y, toPoint.y) - 28
+        ? Math.max(fromPoint.y, toPoint.y) + sameSideLaneOffset
+        : Math.min(fromPoint.y, toPoint.y) - sameSideLaneOffset
 
       return [
         { x: fromPoint.x, y: midY },

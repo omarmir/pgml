@@ -4,6 +4,7 @@ import {
   buildOrthogonalMiddlePoints,
   getFieldRowAnchorRatios,
   getHeaderSafeGroupLaneSide,
+  pickDiagramVerticalLaneShift,
   pickDiagramAnchorSlot
 } from '../../app/utils/diagram-routing'
 
@@ -122,5 +123,28 @@ describe('diagram routing utilities', () => {
       1,
       [0, 0, 0]
     )).toBe(1)
+
+    expect(pickDiagramAnchorSlot(
+      [0.444, 0.5, 0.556],
+      0.444,
+      [1, 0, 0]
+    )).toBe(1)
+  })
+
+  it('nudges overlapping vertical lane reservations while leaving non-overlapping spans on the base lane', () => {
+    expect(pickDiagramVerticalLaneShift([], 120, 220)).toBe(0)
+
+    expect(pickDiagramVerticalLaneShift([
+      { start: 120, end: 220, shift: 0 }
+    ], 140, 240)).toBe(4)
+
+    expect(pickDiagramVerticalLaneShift([
+      { start: 120, end: 220, shift: 0 },
+      { start: 140, end: 240, shift: 4 }
+    ], 150, 260)).toBe(-4)
+
+    expect(pickDiagramVerticalLaneShift([
+      { start: 120, end: 180, shift: 0 }
+    ], 220, 280)).toBe(0)
   })
 })
