@@ -1,4 +1,5 @@
 import type { ComputedRef, Ref } from 'vue'
+import { watchDebounced } from '@vueuse/core'
 import { nanoid } from 'nanoid'
 import { readBrowserStorageItem, writeBrowserStorageItem } from '../utils/browser-storage'
 
@@ -14,6 +15,13 @@ export type PgmlStudioSchemaDialogMode = 'save' | 'download'
 const savedSchemaStorageKey = 'pgml-studio-schemas-v1'
 const exampleSchemaName = 'Example schema'
 const untitledSchemaName = 'Untitled schema'
+const schemaAutosaveDebounceMs = 5000
+
+const orderSavedSchemas = (schemas: SavedPgmlSchema[]) => {
+  return [...schemas].sort((left, right) => {
+    return new Date(right.updatedAt).getTime() - new Date(left.updatedAt).getTime()
+  })
+}
 
 const isSavedPgmlSchema = (value: unknown): value is SavedPgmlSchema => {
   if (!value || typeof value !== 'object') {
@@ -78,10 +86,13 @@ export const usePgmlStudioSchemas = ({
 }: UsePgmlStudioSchemasOptions) => {
   const currentSchemaId: Ref<string | null> = ref(null)
   const currentSchemaName: Ref<string> = ref(exampleSchemaName)
+  const currentSchemaUpdatedAt: Ref<string | null> = ref(null)
   const schemaDialogOpen: Ref<boolean> = ref(false)
   const loadDialogOpen: Ref<boolean> = ref(false)
   const schemaDialogMode: Ref<PgmlStudioSchemaDialogMode> = ref('save')
   const includeLayoutInSchema: Ref<boolean> = ref(true)
+  const isSavingToLocalStorage: Ref<boolean> = ref(false)
+  const lastPersistedSnapshot: Ref<string | null> = ref(null)
   const savedSchemas: Ref<SavedPgmlSchema[]> = ref([])
   const saveSchemaTargetId: Ref<string | null> = ref(null)
 
@@ -98,15 +109,36 @@ export const usePgmlStudioSchemas = ({
     return saveSchemaTarget.value ? 'Overwrite saved schema' : 'Save to browser'
   })
   const orderedSavedSchemas = computed(() => {
-    return [...savedSchemas.value].sort((left, right) => {
-      return new Date(right.updatedAt).getTime() - new Date(left.updatedAt).getTime()
+    return orderSavedSchemas(savedSchemas.value)
+  })
+  const getSnapshot = (name: string, text: string) => {
+    return JSON.stringify({
+      name,
+      text
     })
+  }
+  const getAutosaveName = () => {
+    return normalizeSchemaName(currentSchemaName.value)
+  }
+  const getAutosaveText = () => {
+    return source.value
+  }
+  const getCurrentSnapshot = () => {
+    return getSnapshot(getAutosaveName(), getAutosaveText())
+  }
+  const hasPendingLocalChanges = computed(() => {
+    return lastPersistedSnapshot.value !== getCurrentSnapshot()
+  })
+  const isSavedToLocalStorage = computed(() => {
+    return currentSchemaId.value !== null && !hasPendingLocalChanges.value
   })
 
   const loadExample = () => {
     source.value = initialSource
     currentSchemaId.value = null
     currentSchemaName.value = exampleSchemaName
+    currentSchemaUpdatedAt.value = null
+    lastPersistedSnapshot.value = null
     saveSchemaTargetId.value = null
   }
 
@@ -114,6 +146,8 @@ export const usePgmlStudioSchemas = ({
     source.value = ''
     currentSchemaId.value = null
     currentSchemaName.value = untitledSchemaName
+    currentSchemaUpdatedAt.value = null
+    lastPersistedSnapshot.value = null
     saveSchemaTargetId.value = null
   }
 
@@ -123,6 +157,14 @@ export const usePgmlStudioSchemas = ({
 
   const persistSavedSchemas = () => {
     writeBrowserStorageItem(savedSchemaStorageKey, JSON.stringify(savedSchemas.value))
+  }
+
+  const syncPersistedState = (schema: SavedPgmlSchema) => {
+    currentSchemaId.value = schema.id
+    currentSchemaName.value = schema.name
+    currentSchemaUpdatedAt.value = schema.updatedAt
+    saveSchemaTargetId.value = schema.id
+    lastPersistedSnapshot.value = getSnapshot(schema.name, schema.text)
   }
 
   const openSchemaDialog = (mode: PgmlStudioSchemaDialogMode) => {
@@ -162,20 +204,31 @@ export const usePgmlStudioSchemas = ({
     }, 0)
   }
 
-  const saveSchemaToBrowser = () => {
-    const name = normalizeSchemaName(currentSchemaName.value)
-    const text = buildSchemaText(includeLayoutInSchema.value)
+  const persistSchemaToBrowser = (
+    name: string,
+    text: string,
+    options: {
+      closeDialog: boolean
+    }
+  ) => {
     const updatedAt = new Date().toISOString()
     const matchingSchema = savedSchemas.value.find((entry) => {
-      return entry.id === saveSchemaTargetId.value || (!saveSchemaTargetId.value && entry.name.toLowerCase() === name.toLowerCase())
+      return (
+        entry.id === saveSchemaTargetId.value
+        || entry.id === currentSchemaId.value
+        || (
+          !saveSchemaTargetId.value
+          && !currentSchemaId.value
+          && entry.name.toLowerCase() === name.toLowerCase()
+        )
+      )
     })
 
     if (matchingSchema) {
       matchingSchema.name = name
       matchingSchema.text = text
       matchingSchema.updatedAt = updatedAt
-      currentSchemaId.value = matchingSchema.id
-      saveSchemaTargetId.value = matchingSchema.id
+      syncPersistedState(matchingSchema)
     } else {
       const nextSchema: SavedPgmlSchema = {
         id: nanoid(),
@@ -185,13 +238,27 @@ export const usePgmlStudioSchemas = ({
       }
 
       savedSchemas.value = [nextSchema, ...savedSchemas.value]
-      currentSchemaId.value = nextSchema.id
-      saveSchemaTargetId.value = nextSchema.id
+      syncPersistedState(nextSchema)
     }
 
     currentSchemaName.value = name
     persistSavedSchemas()
-    schemaDialogOpen.value = false
+
+    if (options.closeDialog) {
+      schemaDialogOpen.value = false
+    }
+  }
+
+  const saveSchemaToBrowser = async () => {
+    const name = normalizeSchemaName(currentSchemaName.value)
+    const text = buildSchemaText(includeLayoutInSchema.value)
+
+    isSavingToLocalStorage.value = true
+    persistSchemaToBrowser(name, text, {
+      closeDialog: true
+    })
+    await nextTick()
+    isSavingToLocalStorage.value = false
   }
 
   const downloadSchema = () => {
@@ -204,10 +271,8 @@ export const usePgmlStudioSchemas = ({
   }
 
   const loadSavedSchema = (schema: SavedPgmlSchema) => {
-    currentSchemaId.value = schema.id
-    currentSchemaName.value = schema.name
-    saveSchemaTargetId.value = schema.id
     source.value = schema.text
+    syncPersistedState(schema)
     loadDialogOpen.value = false
   }
 
@@ -216,6 +281,8 @@ export const usePgmlStudioSchemas = ({
 
     if (currentSchemaId.value === schemaId) {
       currentSchemaId.value = null
+      currentSchemaUpdatedAt.value = null
+      lastPersistedSnapshot.value = null
     }
 
     if (saveSchemaTargetId.value === schemaId) {
@@ -238,19 +305,53 @@ export const usePgmlStudioSchemas = ({
     }).format(date)
   }
 
-  onMounted(() => {
+  if (import.meta.client) {
     readSavedSchemas()
+    const latestSavedSchema = orderSavedSchemas(savedSchemas.value)[0]
+
+    if (latestSavedSchema) {
+      source.value = latestSavedSchema.text
+      syncPersistedState(latestSavedSchema)
+    }
+  }
+
+  watchDebounced([source, currentSchemaName], async () => {
+    if (!import.meta.client) {
+      return
+    }
+
+    const name = getAutosaveName()
+    const text = getAutosaveText()
+    const nextSnapshot = getSnapshot(name, text)
+
+    if (nextSnapshot === lastPersistedSnapshot.value) {
+      return
+    }
+
+    isSavingToLocalStorage.value = true
+    persistSchemaToBrowser(name, text, {
+      closeDialog: false
+    })
+    await nextTick()
+    isSavingToLocalStorage.value = false
+  }, {
+    debounce: schemaAutosaveDebounceMs,
+    maxWait: schemaAutosaveDebounceMs
   })
 
   return {
     clearSchema,
     currentSchemaId,
     currentSchemaName,
+    currentSchemaUpdatedAt,
     deleteSavedSchema,
     downloadSchema,
     clearSaveSchemaTarget,
     formatSavedAt,
+    hasPendingLocalChanges,
     includeLayoutInSchema,
+    isSavedToLocalStorage,
+    isSavingToLocalStorage,
     loadDialogOpen,
     loadExample,
     loadSavedSchema,

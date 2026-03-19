@@ -100,6 +100,68 @@ test('save modal lists existing schemas as explicit overwrite targets', async ({
   await expect(page.getByRole('button', { name: 'Overwrite saved schema' })).toBeVisible()
 })
 
+test('studio restores the most recently saved schema after reload and shows its name in the header', async ({ goto, page }) => {
+  await goto('/diagram')
+
+  await page.evaluate(() => {
+    window.localStorage.setItem('pgml-studio-schemas-v1', JSON.stringify([
+      {
+        id: 'older-schema',
+        name: 'Older schema',
+        text: 'Table public.older {\\n  id uuid [pk]\\n}',
+        updatedAt: '2026-03-18T16:00:00.000Z'
+      },
+      {
+        id: 'latest-schema',
+        name: 'Latest schema',
+        text: 'Table public.latest {\\n  id uuid [pk]\\n}',
+        updatedAt: '2026-03-19T10:30:00.000Z'
+      }
+    ]))
+  })
+
+  await page.reload()
+
+  await expect(page.getByPlaceholder('Paste PGML here...')).toHaveValue(/Table public\.latest \{/)
+  await expect(page.locator('[data-studio-schema-name="true"]')).toHaveText('Latest schema')
+  await expect(page.locator('[data-studio-schema-status]')).toHaveAttribute('data-studio-schema-status', 'saved')
+})
+
+test('studio autosaves changes to local storage and updates the header status icon', async ({ goto, page }) => {
+  await goto('/diagram')
+
+  const editor = page.getByPlaceholder('Paste PGML here...')
+
+  await expect(page.locator('[data-studio-schema-name="true"]')).toHaveText('Example schema')
+  await expect(page.locator('[data-studio-schema-status]')).toHaveAttribute('data-studio-schema-status', 'unsaved')
+
+  await editor.evaluate((element: HTMLTextAreaElement) => {
+    element.value = `${element.value}\n// autosave change`
+    element.dispatchEvent(new Event('input', { bubbles: true }))
+  })
+
+  await expect(page.locator('[data-studio-schema-status]')).toHaveAttribute('data-studio-schema-status', 'unsaved')
+
+  await expect.poll(async () => {
+    const savedSchemas = await page.evaluate(() => {
+      return JSON.parse(window.localStorage.getItem('pgml-studio-schemas-v1') || '[]')
+    })
+    const status = await page.locator('[data-studio-schema-status]').getAttribute('data-studio-schema-status')
+
+    return {
+      count: savedSchemas.length,
+      status,
+      updatedAt: typeof savedSchemas[0]?.updatedAt === 'string'
+    }
+  }, {
+    timeout: 8000
+  }).toEqual({
+    count: 1,
+    status: 'saved',
+    updatedAt: true
+  })
+})
+
 test('light mode keeps modal secondary actions and select highlights readable', async ({ goto, page }) => {
   await goto('/diagram')
 

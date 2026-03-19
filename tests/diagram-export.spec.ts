@@ -45,6 +45,15 @@ test('studio exports svg and png downloads', async ({ goto, page }) => {
   expect(svgText).toContain('chk_orders_total')
   expect(svgText).toContain('TRIGGER')
   expect(svgText).toContain('email_address')
+  expect(svgText).toContain('id="pgml-table-public-products-base"')
+
+  const coreGroupBaseIndex = svgText.indexOf('id="pgml-node-group-Core-base"')
+  const connectorPathIndex = svgText.indexOf('<path d="M')
+  const productsTableBaseIndex = svgText.indexOf('id="pgml-table-public-products-base"')
+
+  expect(coreGroupBaseIndex).toBeGreaterThanOrEqual(0)
+  expect(connectorPathIndex).toBeGreaterThan(coreGroupBaseIndex)
+  expect(productsTableBaseIndex).toBeGreaterThan(connectorPathIndex)
 
   await studioActionsButton.click()
 

@@ -226,6 +226,7 @@ const attachmentKindColors: Record<TableAttachmentKind, string> = {
   Trigger: '#22c55e',
   Sequence: '#eab308'
 }
+let suppressLayoutObserverUntil = 0
 
 const canvasNodes = computed(() => Object.values(nodeStates.value))
 const tableGroupColorByTableId = computed(() => {
@@ -554,15 +555,19 @@ const buildExportSvgString = async (padding = exportPadding) => {
   const dividerColor = readStudioToken('--studio-divider', 'rgba(148, 163, 184, 0.16)')
   const tableSurface = readStudioToken('--studio-table-surface', '#101c24')
   const rowSurface = readStudioToken('--studio-row-surface', '#0d1820')
+  const getExportElementId = (value: string) => value.replaceAll(/[^\w-]+/g, '-')
   const defs: string[] = [
     '<pattern id="pgml-grid" width="18" height="18" patternUnits="userSpaceOnUse">',
     `<circle cx="9" cy="9" r="1" ${buildSvgPaintAttributes('fill', dotColor, '#94a3b8')} />`,
     '</pattern>'
   ]
-  const parts: string[] = [
+  const sceneParts: string[] = [
     `<rect x="0" y="0" width="${exportWidth}" height="${exportHeight}" ${buildSvgPaintAttributes('fill', backgroundColor, '#0b141a')} />`,
     `<rect x="0" y="0" width="${exportWidth}" height="${exportHeight}" fill="url(#pgml-grid)" />`
   ]
+  const backgroundParts: string[] = []
+  const connectionParts: string[] = []
+  const foregroundParts: string[] = []
 
   canvasNodes.value.forEach((node) => {
     const nodeElement = planeRef.value?.querySelector(`[data-node-anchor="${node.id}"]`)
@@ -605,9 +610,10 @@ const buildExportSvgString = async (padding = exportPadding) => {
     const badgeText = node.kind === 'group'
       ? `${node.tableCount || node.tableIds.length} tables`
       : `${node.tableIds.length} impact`
+    const nodeExportId = getExportElementId(node.id)
 
     const gradientId = nodeGradientStops?.length
-      ? `pgml-node-gradient-${node.id.replaceAll(/[^\w-]+/g, '-')}`
+      ? `pgml-node-gradient-${nodeExportId}`
       : null
 
     if (gradientId && nodeGradientStops) {
@@ -620,22 +626,24 @@ const buildExportSvgString = async (padding = exportPadding) => {
       )
     }
 
-    parts.push(
-      `<rect id="pgml-node-${node.id.replaceAll(/[^\w-]+/g, '-')}-base" x="${x}" y="${y}" width="${nodeWidth}" height="${nodeHeight}" rx="${outerRadius}" ry="${outerRadius}" ${buildSvgPaintAttributes('fill', nodeFillColor, node.kind === 'group' ? tableSurface : rowSurface)} ${buildSvgPaintAttributes('stroke', nodeBorderColor, railColor)} stroke-width="1" />`
+    const nodeBaseParts = node.kind === 'group' ? backgroundParts : foregroundParts
+
+    nodeBaseParts.push(
+      `<rect id="pgml-node-${nodeExportId}-base" x="${x}" y="${y}" width="${nodeWidth}" height="${nodeHeight}" rx="${outerRadius}" ry="${outerRadius}" ${buildSvgPaintAttributes('fill', nodeFillColor, node.kind === 'group' ? tableSurface : rowSurface)} ${buildSvgPaintAttributes('stroke', nodeBorderColor, railColor)} stroke-width="1" />`
     )
 
     if (gradientId) {
-      parts.push(
-        `<rect id="pgml-node-${node.id.replaceAll(/[^\w-]+/g, '-')}-gradient" x="${x}" y="${y}" width="${nodeWidth}" height="${nodeHeight}" rx="${outerRadius}" ry="${outerRadius}" fill="url(#${gradientId})" stroke="none" />`
+      nodeBaseParts.push(
+        `<rect id="pgml-node-${nodeExportId}-gradient" x="${x}" y="${y}" width="${nodeWidth}" height="${nodeHeight}" rx="${outerRadius}" ry="${outerRadius}" fill="url(#${gradientId})" stroke="none" />`
       )
     }
 
     if (node.kind === 'group' || !node.collapsed) {
-      parts.push(
+      foregroundParts.push(
         `<line x1="${x}" y1="${headerBottom}" x2="${x + nodeWidth}" y2="${headerBottom}" ${buildSvgPaintAttributes('stroke', dividerColor, dividerColor)} stroke-width="1" />`
       )
     }
-    parts.push(
+    foregroundParts.push(
       buildSvgText(
         [node.kind === 'group' ? 'TABLE GROUP' : (node.objectKind || '').toUpperCase()],
         x + 10,
@@ -644,7 +652,7 @@ const buildExportSvgString = async (padding = exportPadding) => {
         `font: 600 8px ${monoFont}; letter-spacing: 0.9px; ${buildSvgTextPaintStyle(accentColor, accentColor)}`
       )
     )
-    parts.push(
+    foregroundParts.push(
       buildSvgText(
         [node.title],
         x + 10,
@@ -655,7 +663,7 @@ const buildExportSvgString = async (padding = exportPadding) => {
     )
 
     if (node.subtitle.length > 0) {
-      parts.push(
+      foregroundParts.push(
         buildSvgText(
           wrapSvgText(node.subtitle, nodeWidth - 90, 10),
           x + 10,
@@ -666,10 +674,10 @@ const buildExportSvgString = async (padding = exportPadding) => {
       )
     }
 
-    parts.push(
+    foregroundParts.push(
       `<rect x="${x + nodeWidth - 72}" y="${y + 8}" width="62" height="18" fill="none" ${buildSvgPaintAttributes('stroke', railColor, railColor)} stroke-width="1" />`
     )
-    parts.push(
+    foregroundParts.push(
       buildSvgText(
         [badgeText.toUpperCase()],
         x + nodeWidth - 41,
@@ -702,14 +710,15 @@ const buildExportSvgString = async (padding = exportPadding) => {
 
         const tableX = tableRect.x + offsetX
         const tableY = tableRect.y + offsetY
+        const tableExportId = getExportElementId(table.fullName)
 
-        parts.push(
-          `<rect x="${tableX}" y="${tableY}" width="${tableRect.width}" height="${tableRect.height}" rx="2" ry="2" ${buildSvgPaintAttributes('fill', window.getComputedStyle(tableElement).backgroundColor, tableSurface)} ${buildSvgPaintAttributes('stroke', tableBorderColor, railColor)} stroke-width="1" />`
+        foregroundParts.push(
+          `<rect id="pgml-table-${tableExportId}-base" x="${tableX}" y="${tableY}" width="${tableRect.width}" height="${tableRect.height}" rx="2" ry="2" ${buildSvgPaintAttributes('fill', window.getComputedStyle(tableElement).backgroundColor, tableSurface)} ${buildSvgPaintAttributes('stroke', tableBorderColor, railColor)} stroke-width="1" />`
         )
-        parts.push(
+        foregroundParts.push(
           `<line x1="${tableX}" y1="${tableHeaderRect.y + tableHeaderRect.height + offsetY}" x2="${tableX + tableRect.width}" y2="${tableHeaderRect.y + tableHeaderRect.height + offsetY}" ${buildSvgPaintAttributes('stroke', dividerColor, dividerColor)} stroke-width="1" />`
         )
-        parts.push(
+        foregroundParts.push(
           buildSvgText(
             [table.name],
             tableX + 8,
@@ -718,7 +727,7 @@ const buildExportSvgString = async (padding = exportPadding) => {
             `font: 600 11px ${sansFont}; ${buildSvgTextPaintStyle(shellText, '#e2e8f0')}`
           )
         )
-        parts.push(
+        foregroundParts.push(
           buildSvgText(
             [`${table.schema.toUpperCase()} SCHEMA`],
             tableX + 8,
@@ -727,10 +736,10 @@ const buildExportSvgString = async (padding = exportPadding) => {
             `font: 500 8px ${monoFont}; letter-spacing: 0.6px; ${buildSvgTextPaintStyle(shellMuted, '#94a3b8')}`
           )
         )
-        parts.push(
+        foregroundParts.push(
           `<rect x="${tableX + tableRect.width - 48}" y="${tableY + 8}" width="40" height="16" fill="none" ${buildSvgPaintAttributes('stroke', railColor, railColor)} stroke-width="1" />`
         )
-        parts.push(
+        foregroundParts.push(
           buildSvgText(
             [`${table.columns.length} COLS`],
             tableX + tableRect.width - 28,
@@ -756,7 +765,7 @@ const buildExportSvgString = async (padding = exportPadding) => {
           const rowHeight = rowRect.height
           const rowStyles = window.getComputedStyle(rowElement)
 
-          parts.push(
+          foregroundParts.push(
             `<rect x="${rowX}" y="${rowY}" width="${rowRect.width}" height="${rowHeight}" ${buildSvgPaintAttributes('fill', rowStyles.backgroundColor, rowSurface)} />`
           )
 
@@ -767,7 +776,7 @@ const buildExportSvgString = async (padding = exportPadding) => {
             const titleRect = getPlaneRelativeRect(titleElement)
 
             if (titleRect) {
-              parts.push(
+              foregroundParts.push(
                 buildSvgText(
                   [titleElement.textContent || ''],
                   titleRect.x + offsetX,
@@ -783,7 +792,7 @@ const buildExportSvgString = async (padding = exportPadding) => {
             const subtitleRect = getPlaneRelativeRect(subtitleElement)
 
             if (subtitleRect) {
-              parts.push(
+              foregroundParts.push(
                 buildSvgText(
                   [subtitleElement.textContent || ''],
                   subtitleRect.x + offsetX,
@@ -809,10 +818,10 @@ const buildExportSvgString = async (padding = exportPadding) => {
             const badgeStyles = window.getComputedStyle(badgeElement)
             const badgeFill = normalizeSvgColor(badgeStyles.backgroundColor, 'transparent')
 
-            parts.push(
+            foregroundParts.push(
               `<rect x="${badgeRect.x + offsetX}" y="${badgeRect.y + offsetY}" width="${badgeRect.width}" height="${badgeRect.height}" ${buildSvgPaintAttributes('fill', badgeFill, 'transparent')} ${buildSvgPaintAttributes('stroke', badgeStyles.borderColor, railColor)} stroke-width="1" />`
             )
-            parts.push(
+            foregroundParts.push(
               buildSvgText(
                 [badgeElement.textContent || ''],
                 badgeRect.x + offsetX + badgeRect.width / 2,
@@ -825,7 +834,7 @@ const buildExportSvgString = async (padding = exportPadding) => {
           })
 
           if (rowIndex < rowElements.length - 1) {
-            parts.push(
+            foregroundParts.push(
               `<line x1="${rowX}" y1="${rowY + rowHeight}" x2="${rowX + rowRect.width}" y2="${rowY + rowHeight}" ${buildSvgPaintAttributes('stroke', dividerColor, dividerColor)} stroke-width="1" />`
             )
           }
@@ -852,7 +861,7 @@ const buildExportSvgString = async (padding = exportPadding) => {
       const preserveParagraphWhitespace = /^\s+/.test(paragraphText) || paragraphText.length === 0
       const paragraphLines = wrapSvgText(paragraphText, paragraphRect.width, 9, true, preserveParagraphWhitespace)
 
-      parts.push(
+      foregroundParts.push(
         buildSvgText(
           paragraphLines,
           paragraphRect.x + offsetX,
@@ -870,10 +879,10 @@ const buildExportSvgString = async (padding = exportPadding) => {
         return
       }
 
-      parts.push(
+      foregroundParts.push(
         `<rect x="${chipRect.x + offsetX}" y="${chipRect.y + offsetY}" width="${chipRect.width}" height="${chipRect.height}" fill="none" ${buildSvgPaintAttributes('stroke', railColor, railColor)} stroke-width="1" />`
       )
-      parts.push(
+      foregroundParts.push(
         buildSvgText(
           [chip.textContent || ''],
           chipRect.x + offsetX + chipRect.width / 2,
@@ -894,17 +903,17 @@ const buildExportSvgString = async (padding = exportPadding) => {
       const handleWidth = resizeHandleRect.width
       const handleHeight = resizeHandleRect.height
 
-      parts.push(
+      foregroundParts.push(
         `<line x1="${handleX + handleWidth}" y1="${handleY}" x2="${handleX + handleWidth}" y2="${handleY + handleHeight}" ${buildSvgPaintAttributes('stroke', accentColor, accentColor)} stroke-width="2" />`
       )
-      parts.push(
+      foregroundParts.push(
         `<line x1="${handleX}" y1="${handleY + handleHeight}" x2="${handleX + handleWidth}" y2="${handleY + handleHeight}" ${buildSvgPaintAttributes('stroke', accentColor, accentColor)} stroke-width="2" />`
       )
     }
   })
 
   connectionLines.value.forEach((line) => {
-    parts.push(
+    connectionParts.push(
       `<path d="${escapeXml(translatePathData(line.path, offsetX, offsetY))}" fill="none" ${buildSvgPaintAttributes('stroke', line.color, line.color)} stroke-width="2" stroke-dasharray="${line.dashed ? '10 7' : '0'}" stroke-linecap="square" stroke-linejoin="miter" opacity="0.9" />`
     )
   })
@@ -918,7 +927,10 @@ const buildExportSvgString = async (padding = exportPadding) => {
       '<defs>',
       ...defs,
       '</defs>',
-      ...parts,
+      ...sceneParts,
+      ...backgroundParts,
+      ...connectionParts,
+      ...foregroundParts,
       '</svg>'
     ].join('')
   }
@@ -4203,8 +4215,14 @@ const getViewportRelativePoint = (clientX: number, clientY: number) => {
   }
 }
 
+const suppressLayoutObserver = (durationMs = 180) => {
+  suppressLayoutObserverUntil = Date.now() + durationMs
+}
+
 const zoomToScale = (nextScale: number, pivot: { x: number, y: number } | null = null) => {
   const normalizedScale = Number(clamp(nextScale, minCanvasScale, maxCanvasScale).toFixed(2))
+
+  suppressLayoutObserver()
 
   if (!pivot) {
     scale.value = normalizedScale
@@ -4252,6 +4270,7 @@ const fitView = () => {
     )
   )
 
+  suppressLayoutObserver()
   scale.value = nextScale
   pan.value = {
     x: Math.round(padding.left + (availableWidth - bounds.width * nextScale) / 2 - bounds.minX * nextScale),
@@ -4562,13 +4581,12 @@ watch(
   { deep: true, immediate: true }
 )
 
-watch([scale, pan], async () => {
-  await nextTick()
-  updateConnections()
-})
-
 onMounted(() => {
   resizeObserver = new ResizeObserver(() => {
+    if (Date.now() < suppressLayoutObserverUntil) {
+      return
+    }
+
     if (syncMeasuredNodeSizes()) {
       if (!hasEmbeddedLayout.value) {
         reflowAutoLayout()
@@ -4595,15 +4613,6 @@ onMounted(() => {
       fitView()
       updateConnections()
     })
-    window.setTimeout(() => {
-      observeCanvasLayout()
-      if (syncMeasuredNodeSizes()) {
-        reflowAutoLayout()
-        updateConnections()
-      }
-      fitView()
-      updateConnections()
-    }, 120)
   })
 })
 
@@ -4634,6 +4643,7 @@ defineExpose<{
 <template>
   <div
     ref="viewportRef"
+    data-diagram-viewport="true"
     class="relative h-full min-h-0 select-none overflow-hidden border"
     :style="canvasViewportStyle"
     @pointerdown="startPan"

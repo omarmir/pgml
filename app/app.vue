@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { useStudioHeaderActions } from './composables/useStudioHeaderActions'
+import { useStudioSchemaStatus } from './composables/useStudioSchemaStatus'
 
 const title = 'PGML'
 const description = 'A Postgres-first markup language and live diagram studio built on top of DBML ideas.'
@@ -39,6 +40,7 @@ const route = useRoute()
 const isStudioRoute = computed(() => route.path.startsWith('/diagram'))
 const { studioTheme, studioThemeIcon, studioThemeLabel, toggleStudioTheme } = useStudioTheme()
 const { state: studioHeaderActions } = useStudioHeaderActions()
+const { state: studioSchemaStatus } = useStudioSchemaStatus()
 const studioHeaderActionContent = {
   align: 'end' as const,
   side: 'bottom' as const,
@@ -56,7 +58,7 @@ const shellContainerClass = computed(() => {
 })
 const headerInnerClass = computed(() => {
   return isStudioRoute.value
-    ? 'flex min-h-16 items-center justify-between gap-4 px-4 py-3 sm:px-6 lg:px-8'
+    ? 'relative flex min-h-16 items-center justify-between gap-4 px-4 py-3 sm:px-6 lg:px-8'
     : 'flex min-h-16 items-center justify-between gap-4 py-3'
 })
 const mainClass = computed(() => {
@@ -72,6 +74,18 @@ const navLinkClass = (to: string) => {
     ? 'border-[color:var(--studio-shell-text)] text-[color:var(--studio-shell-text)]'
     : 'border-transparent text-[color:var(--studio-shell-muted)] hover:border-[color:var(--studio-shell-border)] hover:text-[color:var(--studio-shell-text)]'
 }
+
+const studioSchemaStatusIcon = computed(() => {
+  if (studioSchemaStatus.value.saveState === 'saving') {
+    return 'i-lucide-loader-circle'
+  }
+
+  if (studioSchemaStatus.value.saveState === 'saved') {
+    return 'i-lucide-hard-drive-download'
+  }
+
+  return 'i-lucide-hard-drive-upload'
+})
 </script>
 
 <template>
@@ -114,6 +128,31 @@ const navLinkClass = (to: string) => {
                 {{ item.label }}
               </NuxtLink>
             </nav>
+          </div>
+
+          <div
+            v-if="isStudioRoute && studioSchemaStatus.name"
+            class="pointer-events-none absolute left-1/2 top-1/2 flex max-w-[26rem] min-w-0 -translate-x-1/2 -translate-y-1/2 items-center gap-2 px-4 text-center"
+            :data-studio-schema-status="studioSchemaStatus.saveState"
+            :title="studioSchemaStatus.detail"
+          >
+            <UIcon
+              :name="studioSchemaStatusIcon"
+              class="h-4 w-4 shrink-0 text-[color:var(--studio-shell-label)]"
+              :class="studioSchemaStatus.saveState === 'saving' ? 'animate-spin' : ''"
+              data-studio-schema-status-icon="true"
+            />
+            <div class="min-w-0">
+              <p
+                data-studio-schema-name="true"
+                class="truncate font-mono text-[0.78rem] uppercase tracking-[0.12em] text-[color:var(--studio-shell-text)]"
+              >
+                {{ studioSchemaStatus.name }}
+              </p>
+              <p class="truncate text-[0.63rem] text-[color:var(--studio-shell-muted)]">
+                {{ studioSchemaStatus.detail }}
+              </p>
+            </div>
           </div>
 
           <div class="flex shrink-0 items-center gap-1.5">

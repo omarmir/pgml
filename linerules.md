@@ -49,5 +49,6 @@ This file tracks the current routing rules for diagram connector lines.
 
 - Route choices should be deterministic for the same geometry.
 - Small layout changes should not cause unnecessary anchor churn.
+- Viewport-only changes such as zoom and pan must not change routing choices.
 - When multiple endpoint-side candidates are viable, prefer the settled route with no inward table-face re-entry before considering shorter length or fewer forced side overrides.
 - Snap-to-grid is on by default for node movement.

@@ -5,6 +5,7 @@ import { nanoid } from 'nanoid'
 import PgmlDiagramCanvas from '~/components/pgml/PgmlDiagramCanvas.vue'
 import { usePgmlColumnDefaultSuggestions } from '~/composables/usePgmlColumnDefaultSuggestions'
 import { useStudioHeaderActions } from '~/composables/useStudioHeaderActions'
+import { useStudioSchemaStatus } from '~/composables/useStudioSchemaStatus'
 import {
   buildPgmlWithNodeProperties,
   parsePgml,
@@ -36,6 +37,7 @@ const tableEditorDraft: Ref<PgmlEditableTableDraft | null> = ref(null)
 const tableEditorOpen: Ref<boolean> = ref(false)
 const exportScales = [1, 2, 3, 4, 8]
 const { clearStudioHeaderActions, setStudioHeaderActions } = useStudioHeaderActions()
+const { clearStudioSchemaStatus, setStudioSchemaStatus } = useStudioSchemaStatus()
 const { getColumnDefaultPlaceholder, getColumnDefaultSuggestions } = usePgmlColumnDefaultSuggestions()
 const {
   focusEditorSourceRange,
@@ -147,11 +149,15 @@ const syncSourceWithNodeProperties = (nodeProperties: Record<string, PgmlNodePro
 const {
   clearSchema,
   currentSchemaName,
+  currentSchemaUpdatedAt,
   clearSaveSchemaTarget,
   deleteSavedSchema,
   downloadSchema,
   formatSavedAt,
+  hasPendingLocalChanges,
   includeLayoutInSchema,
+  isSavedToLocalStorage,
+  isSavingToLocalStorage,
   loadDialogOpen,
   loadExample,
   loadSavedSchema,
@@ -400,8 +406,29 @@ watchEffect(() => {
   })
 })
 
+watchEffect(() => {
+  const detail = isSavingToLocalStorage.value
+    ? 'Saving to local storage...'
+    : isSavedToLocalStorage.value && currentSchemaUpdatedAt.value
+      ? `Saved to local storage at ${formatSavedAt(currentSchemaUpdatedAt.value)}`
+      : hasPendingLocalChanges.value
+        ? 'Not saved to local storage'
+        : 'Ready to save to local storage'
+
+  setStudioSchemaStatus({
+    detail,
+    name: currentSchemaName.value,
+    saveState: isSavingToLocalStorage.value
+      ? 'saving'
+      : isSavedToLocalStorage.value
+        ? 'saved'
+        : 'unsaved'
+  })
+})
+
 onBeforeUnmount(() => {
   clearStudioHeaderActions()
+  clearStudioSchemaStatus()
 })
 </script>
 

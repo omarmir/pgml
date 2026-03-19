@@ -119,6 +119,43 @@ test('canvas snaps dragged nodes to the grid and zooms around the mouse position
   expect(Math.abs(projectedPoint.y - zoomPoint.y)).toBeLessThan(8)
 })
 
+test('connection routing stays stable when zoom changes', async ({ goto, page }) => {
+  await goto('/diagram')
+
+  const getConnectionPaths = () => {
+    return page.evaluate(() => {
+      return Array.from(document.querySelectorAll('[data-connection-layer="true"] path'))
+        .map(path => path.getAttribute('d') || '')
+        .filter(path => path.length > 0)
+    })
+  }
+
+  await expect(page.locator('[data-connection-layer="true"] path').first()).toBeVisible()
+
+  const viewport = page.locator('[data-diagram-viewport="true"]')
+  const viewportBox = await viewport.boundingBox()
+
+  if (!viewportBox) {
+    throw new Error('Diagram viewport is not measurable.')
+  }
+
+  const zoomPoint = {
+    x: viewportBox.x + viewportBox.width * 0.65,
+    y: viewportBox.y + viewportBox.height * 0.35
+  }
+
+  const beforeZoomPaths = await getConnectionPaths()
+
+  await page.mouse.move(zoomPoint.x, zoomPoint.y)
+  await page.mouse.wheel(0, -180)
+
+  await expect.poll(getConnectionPaths).toEqual(beforeZoomPaths)
+
+  await page.mouse.wheel(0, 180)
+
+  await expect.poll(getConnectionPaths).toEqual(beforeZoomPaths)
+})
+
 test('canvas interactions keep the PGML editor source in sync', async ({ goto, page }) => {
   await goto('/diagram')
 
