@@ -3000,10 +3000,9 @@ const floatingPanelStyle = {
   backgroundColor: 'var(--studio-control-bg)',
   boxShadow: 'var(--studio-floating-shadow)'
 }
-const getSelectionGlowStyle = (color: string, baseShadow = 'none') => {
+const getSelectionGlowStyle = (color: string) => {
   return {
     '--pgml-selection-color': color,
-    '--pgml-selection-base-shadow': baseShadow,
     '--pgml-selection-border': `color-mix(in srgb, ${color} 78%, white 22%)`,
     '--pgml-selection-shadow-near': `color-mix(in srgb, ${color} 48%, transparent)`,
     '--pgml-selection-shadow-far': `color-mix(in srgb, ${color} 24%, transparent)`
@@ -3024,9 +3023,13 @@ const getNodeAccentColor = (node: CanvasNodeState) => {
 }
 const getAttachmentRowStyle = (attachment: TableAttachment) => {
   return {
-    'backgroundColor': `color-mix(in srgb, ${attachment.color} 8%, var(--studio-row-surface) 92%)`,
-    '--pgml-selection-base-shadow': `inset 3px 0 0 color-mix(in srgb, ${attachment.color} 58%, transparent)`,
-    'boxShadow': 'var(--pgml-selection-base-shadow)'
+    backgroundColor: `color-mix(in srgb, ${attachment.color} 8%, var(--studio-row-surface) 92%)`,
+    boxShadow: `inset 3px 0 0 color-mix(in srgb, ${attachment.color} 58%, transparent)`
+  }
+}
+const getSelectedAttachmentRowStyle = () => {
+  return {
+    boxShadow: 'none'
   }
 }
 const getAttachmentKindBadgeStyle = (attachment: TableAttachment) => {
@@ -4952,7 +4955,7 @@ defineExpose<{
               v-for="table in model.tables.filter((table) => node.tableIds.includes(table.fullName))"
               :key="table.fullName"
               :class="[
-                'min-w-0 self-start overflow-hidden rounded-[2px] border border-[color:var(--studio-shell-border)] bg-[color:var(--studio-table-surface)] transition-transform duration-150 hover:-translate-y-0.5 hover:ring-1 hover:ring-[color:var(--studio-ring)]',
+                'relative min-w-0 self-start overflow-hidden rounded-[2px] border border-[color:var(--studio-shell-border)] bg-[color:var(--studio-table-surface)] transition-transform duration-150 hover:-translate-y-0.5 hover:ring-1 hover:ring-[color:var(--studio-ring)]',
                 isTableSelectionActive(table.fullName) ? 'pgml-selection-glow' : ''
               ]"
               :style="[
@@ -5044,12 +5047,13 @@ defineExpose<{
                       data-table-row-kind="attachment"
                       :data-attachment-row="row.attachment.id"
                       :class="[
-                        'flex min-w-0 w-full items-start justify-between gap-2 px-2 py-1.5 text-left transition-[filter,transform] duration-150 hover:brightness-105',
+                        'relative flex min-w-0 w-full items-start justify-between gap-2 px-2 py-1.5 text-left transition-[filter,transform] duration-150 hover:brightness-105',
                         isAttachmentSelectionActive(table.fullName, row.attachment.id) ? 'pgml-selection-glow' : ''
                       ]"
                       :style="[
                         getAttachmentRowStyle(row.attachment),
-                        getSelectionGlowStyle(row.attachment.color, `inset 3px 0 0 color-mix(in srgb, ${row.attachment.color} 58%, transparent)`)
+                        isAttachmentSelectionActive(table.fullName, row.attachment.id) ? getSelectedAttachmentRowStyle() : undefined,
+                        getSelectionGlowStyle(row.attachment.color)
                       ]"
                       :aria-label="`${row.attachment.kind} ${row.attachment.title}`"
                       :data-selection-active="isAttachmentSelectionActive(table.fullName, row.attachment.id) ? 'true' : undefined"
@@ -5357,34 +5361,69 @@ defineExpose<{
 
 <style scoped>
 .pgml-selection-glow {
-  border-color: var(--pgml-selection-border) !important;
-  animation: pgml-selection-pulse 1.55s ease-in-out infinite;
+  border-color: transparent !important;
+}
+
+.pgml-selection-glow::before,
+.pgml-selection-glow::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  box-sizing: border-box;
+  pointer-events: none;
+  border-radius: 0;
+}
+
+.pgml-selection-glow::before {
+  border: 1px solid color-mix(in srgb, var(--pgml-selection-border) 44%, transparent);
+  animation: pgml-selection-aura 1.05s ease-in-out infinite;
+}
+
+.pgml-selection-glow::after {
+  border: 2px solid var(--pgml-selection-border);
+  animation: pgml-selection-pulse 1.2s ease-in-out infinite;
   box-shadow:
-    var(--pgml-selection-base-shadow, none),
-    inset 0 0 0 1px var(--pgml-selection-border),
-    0 0 0 1px var(--pgml-selection-border),
-    0 0 14px var(--pgml-selection-shadow-near),
-    0 0 24px var(--pgml-selection-shadow-far);
+    inset 0 0 0 1px color-mix(in srgb, var(--pgml-selection-border) 46%, transparent),
+    0 0 0 1px color-mix(in srgb, var(--pgml-selection-border) 62%, transparent),
+    0 0 16px var(--pgml-selection-shadow-near),
+    0 0 30px var(--pgml-selection-shadow-far);
 }
 
 @keyframes pgml-selection-pulse {
   0%,
   100% {
+    opacity: 0.84;
     box-shadow:
-      var(--pgml-selection-base-shadow, none),
-      inset 0 0 0 1px var(--pgml-selection-border),
-      0 0 0 1px var(--pgml-selection-border),
-      0 0 12px var(--pgml-selection-shadow-near),
-      0 0 22px var(--pgml-selection-shadow-far);
+      inset 0 0 0 1px color-mix(in srgb, var(--pgml-selection-border) 38%, transparent),
+      0 0 0 1px color-mix(in srgb, var(--pgml-selection-border) 52%, transparent),
+      0 0 10px var(--pgml-selection-shadow-near),
+      0 0 20px var(--pgml-selection-shadow-far);
   }
 
   50% {
+    opacity: 1;
     box-shadow:
-      var(--pgml-selection-base-shadow, none),
-      inset 0 0 0 1px var(--pgml-selection-border),
-      0 0 0 1px var(--pgml-selection-border),
-      0 0 18px var(--pgml-selection-shadow-near),
-      0 0 32px var(--pgml-selection-shadow-far);
+      inset 0 0 0 1px color-mix(in srgb, var(--pgml-selection-border) 58%, transparent),
+      0 0 0 2px color-mix(in srgb, var(--pgml-selection-border) 84%, transparent),
+      0 0 24px var(--pgml-selection-shadow-near),
+      0 0 42px var(--pgml-selection-shadow-far);
+  }
+}
+
+@keyframes pgml-selection-aura {
+  0%,
+  100% {
+    opacity: 0.24;
+    box-shadow:
+      0 0 0 0 color-mix(in srgb, var(--pgml-selection-border) 0%, transparent),
+      0 0 0 0 color-mix(in srgb, var(--pgml-selection-border) 0%, transparent);
+  }
+
+  50% {
+    opacity: 0.9;
+    box-shadow:
+      0 0 0 1px color-mix(in srgb, var(--pgml-selection-border) 44%, transparent),
+      0 0 28px var(--pgml-selection-shadow-near);
   }
 }
 </style>

@@ -196,9 +196,10 @@ test('single click applies a pulsing selection glow to schema objects, grouped t
   await expect.poll(async () => {
     return customTypeNode.evaluate((element) => {
       const styles = getComputedStyle(element as HTMLElement)
+      const overlayStyles = getComputedStyle(element as HTMLElement, '::after')
 
       return {
-        animationName: styles.animationName.includes('pgml-selection-pulse'),
+        animationName: overlayStyles.animationName.includes('pgml-selection-pulse'),
         selectionColor: styles.getPropertyValue('--pgml-selection-color').trim()
       }
     })
@@ -214,9 +215,10 @@ test('single click applies a pulsing selection glow to schema objects, grouped t
   await expect.poll(async () => {
     return ordersTable.evaluate((element) => {
       const styles = getComputedStyle(element as HTMLElement)
+      const overlayStyles = getComputedStyle(element as HTMLElement, '::after')
 
       return {
-        animationName: styles.animationName.includes('pgml-selection-pulse'),
+        animationName: overlayStyles.animationName.includes('pgml-selection-pulse'),
         selectionColor: styles.getPropertyValue('--pgml-selection-color').trim().length > 0
       }
     })
@@ -232,9 +234,10 @@ test('single click applies a pulsing selection glow to schema objects, grouped t
   await expect.poll(async () => {
     return ordersConstraint.evaluate((element) => {
       const styles = getComputedStyle(element as HTMLElement)
+      const overlayStyles = getComputedStyle(element as HTMLElement, '::after')
 
       return {
-        animationName: styles.animationName.includes('pgml-selection-pulse'),
+        animationName: overlayStyles.animationName.includes('pgml-selection-pulse'),
         selectionColor: styles.getPropertyValue('--pgml-selection-color').trim()
       }
     })
