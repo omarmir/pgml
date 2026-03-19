@@ -279,12 +279,12 @@ test('selecting a table animates its outgoing references and target relational r
       const overlayStyles = getComputedStyle(element as HTMLElement, '::after')
 
       return {
-        animationName: overlayStyles.animationName.includes('pgml-reference-race-frame'),
-        raceColor: styles.getPropertyValue('--pgml-reference-race-color').trim().length > 0
+        animationName: overlayStyles.animationName.includes('pgml-selection-pulse'),
+        selectionColor: styles.getPropertyValue('--pgml-selection-color').trim().length > 0
       }
     })
   }).toEqual({
     animationName: true,
-    raceColor: true
+    selectionColor: true
   })
 })

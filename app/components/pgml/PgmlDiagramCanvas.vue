@@ -5004,7 +5004,7 @@ defineExpose<{
               :key="table.fullName"
               :class="[
                 'relative min-w-0 self-start overflow-hidden rounded-[2px] border border-[color:var(--studio-shell-border)] bg-[color:var(--studio-table-surface)] transition-transform duration-150 hover:-translate-y-0.5 hover:ring-1 hover:ring-[color:var(--studio-ring)]',
-                isTableSelectionActive(table.fullName) ? 'pgml-selection-glow' : ''
+                isTableSelectionActive(table.fullName) ? 'pgml-selection-glow pgml-selection-glow-subtle' : ''
               ]"
               :style="[
                 { width: `${groupTableWidth}px` },
@@ -5054,9 +5054,9 @@ defineExpose<{
                     :data-column-anchor="getColumnAnchorKey(table.fullName, row.column.name)"
                     :class="[
                       'relative flex min-w-0 items-start justify-between gap-2 bg-[color:var(--studio-row-surface)] px-2 py-1.5',
-                      isSelectedTableRelationalRow(table.fullName, row.column.name) ? 'pgml-reference-race-frame' : ''
+                      isSelectedTableRelationalRow(table.fullName, row.column.name) ? 'pgml-selection-glow pgml-selection-glow-subtle' : ''
                     ]"
-                    :style="isSelectedTableRelationalRow(table.fullName, row.column.name) ? getReferenceRaceStyle(tableGroupColorByTableId[selectedTable?.fullName || ''] || '#79e3ea') : undefined"
+                    :style="isSelectedTableRelationalRow(table.fullName, row.column.name) ? getSelectionGlowStyle(tableGroupColorByTableId[selectedTable?.fullName || ''] || '#79e3ea') : undefined"
                     :data-relational-highlighted="isSelectedTableRelationalRow(table.fullName, row.column.name) ? 'true' : undefined"
                   >
                     <div
@@ -5446,9 +5446,27 @@ defineExpose<{
     0 0 30px var(--pgml-selection-shadow-far);
 }
 
+.pgml-selection-glow-subtle::before,
+.pgml-selection-glow-subtle::after {
+  inset: 1px;
+}
+
+.pgml-selection-glow-subtle::before {
+  content: none;
+}
+
+.pgml-selection-glow-subtle::after {
+  border-width: 1px;
+  box-shadow:
+    inset 0 0 0 1px color-mix(in srgb, var(--pgml-selection-border) 26%, transparent),
+    0 0 0 1px color-mix(in srgb, var(--pgml-selection-border) 34%, transparent),
+    0 0 6px color-mix(in srgb, var(--pgml-selection-shadow-near) 58%, transparent),
+    0 0 12px color-mix(in srgb, var(--pgml-selection-shadow-far) 68%, transparent);
+}
+
 .pgml-reference-race-path {
   stroke: var(--pgml-reference-race-solid);
-  stroke-width: 4px !important;
+  stroke-width: 2px !important;
   opacity: 1 !important;
   stroke-dasharray: 14 10;
   stroke-dashoffset: 0;
@@ -5458,26 +5476,6 @@ defineExpose<{
     drop-shadow(0 0 6px var(--pgml-reference-race-soft))
     drop-shadow(0 0 16px var(--pgml-reference-race-strong))
     drop-shadow(0 0 28px var(--pgml-reference-race-strong));
-}
-
-.pgml-reference-race-frame::after {
-  content: '';
-  position: absolute;
-  inset: 0;
-  pointer-events: none;
-  border: 3px solid transparent;
-  border-radius: 0;
-  box-sizing: border-box;
-  background:
-    repeating-linear-gradient(90deg, var(--pgml-reference-race-solid) 0 14px, transparent 14px 24px) top / 100% 3px no-repeat,
-    repeating-linear-gradient(180deg, var(--pgml-reference-race-solid) 0 14px, transparent 14px 24px) right / 3px 100% no-repeat,
-    repeating-linear-gradient(90deg, var(--pgml-reference-race-solid) 0 14px, transparent 14px 24px) bottom / 100% 3px no-repeat,
-    repeating-linear-gradient(180deg, var(--pgml-reference-race-solid) 0 14px, transparent 14px 24px) left / 3px 100% no-repeat;
-  animation: pgml-reference-race-frame 0.58s linear infinite;
-  box-shadow:
-    inset 0 0 0 1px color-mix(in srgb, var(--pgml-reference-race-solid) 40%, transparent),
-    0 0 14px var(--pgml-reference-race-soft),
-    0 0 26px var(--pgml-reference-race-strong);
 }
 
 @keyframes pgml-selection-pulse {
@@ -5521,24 +5519,6 @@ defineExpose<{
 @keyframes pgml-reference-race-line {
   to {
     stroke-dashoffset: -24;
-  }
-}
-
-@keyframes pgml-reference-race-frame {
-  from {
-    background-position:
-      0 0,
-      100% 0,
-      0 100%,
-      0 0;
-  }
-
-  to {
-    background-position:
-      -24px 0,
-      100% -24px,
-      24px 100%,
-      0 24px;
   }
 }
 </style>
