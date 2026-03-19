@@ -15,6 +15,8 @@ This file tracks the current routing rules for diagram connector lines.
 - Field rows expose multiple anchor points on the same side.
 - Unused anchors on the same row/side are preferred before reusing a busy anchor.
 - When multiple lines target the same row-side, they should spread across the available row anchors.
+- The first horizontal segment after leaving a table border, and the last horizontal segment before arriving at a table border, must move outward from that border instead of re-entering the table face.
+- If a routed lane ends up on the opposite side of a table from the initially chosen anchor, the endpoint should flip sides instead of backtracking through the table surface.
 - Table-level impacts may terminate on the table shell when no specific field target exists.
 
 ## Group Behavior
@@ -47,4 +49,5 @@ This file tracks the current routing rules for diagram connector lines.
 
 - Route choices should be deterministic for the same geometry.
 - Small layout changes should not cause unnecessary anchor churn.
+- When multiple endpoint-side candidates are viable, prefer the settled route with no inward table-face re-entry before considering shorter length or fewer forced side overrides.
 - Snap-to-grid is on by default for node movement.

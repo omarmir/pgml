@@ -620,6 +620,354 @@ Table public.order_items in Commerce {
   expect(Math.max(...(diagnostics?.bendDistances || [0]))).toBeLessThanOrEqual(24)
 })
 
+test('external table references flip endpoint sides instead of backtracking through the table when groups are packed closely', async ({ goto, page }) => {
+  await goto('/diagram')
+
+  const editor = page.locator('[data-pgml-editor="true"]')
+  const source = `TableGroup Core {
+  tenants
+  roles
+  users
+}
+
+TableGroup Programs {
+  common_entity
+  funding_opportunity_profile
+}
+
+Table public.tenants in Core {
+  id uuid [pk]
+}
+
+Table public.roles in Core {
+  id uuid [pk]
+}
+
+Table public.users in Core {
+  id uuid [pk]
+  tenant_id uuid [ref: > public.tenants.id]
+}
+
+Table public.common_entity in Programs {
+  id bigint [pk]
+}
+
+Table public.funding_opportunity_profile in Programs {
+  id bigint [pk]
+  tenant_id uuid [ref: > public.tenants.id]
+  owner_id uuid [ref: > public.users.id]
+}
+
+Properties "group:Core" {
+  x: 360
+  y: 40
+}
+
+Properties "group:Programs" {
+  x: 220
+  y: 200
+}`
+
+  await editor.fill(source)
+  await expect(page.locator('[data-table-anchor="public.funding_opportunity_profile"]')).toBeVisible()
+
+  const diagnostics = await page.evaluate(() => {
+    const coreGroup = document.querySelector('[data-node-anchor="group:Core"]')
+    const fundingTable = document.querySelector('[data-table-anchor="public.funding_opportunity_profile"]')
+    const tenantsTable = document.querySelector('[data-table-anchor="public.tenants"]')
+    const usersTable = document.querySelector('[data-table-anchor="public.users"]')
+
+    if (
+      !(coreGroup instanceof HTMLElement)
+      || !(fundingTable instanceof HTMLElement)
+      || !(tenantsTable instanceof HTMLElement)
+      || !(usersTable instanceof HTMLElement)
+    ) {
+      return null
+    }
+
+    const plane = coreGroup.parentElement
+
+    if (!(plane instanceof HTMLElement)) {
+      return null
+    }
+
+    const getOffsetWithinPlane = (element: HTMLElement) => {
+      let current: HTMLElement | null = element
+      let x = 0
+      let y = 0
+
+      while (current && current !== plane) {
+        x += current.offsetLeft
+        y += current.offsetTop
+        current = current.offsetParent instanceof HTMLElement ? current.offsetParent : null
+      }
+
+      return { x, y }
+    }
+
+    const getBounds = (element: HTMLElement) => {
+      const offset = getOffsetWithinPlane(element)
+
+      return {
+        left: offset.x,
+        right: offset.x + element.offsetWidth,
+        top: offset.y,
+        bottom: offset.y + element.offsetHeight,
+        centerX: offset.x + element.offsetWidth / 2
+      }
+    }
+
+    const fundingBounds = getBounds(fundingTable)
+    const tenantsBounds = getBounds(tenantsTable)
+    const usersBounds = getBounds(usersTable)
+    const paths = Array.from(document.querySelectorAll('[data-connection-layer="true"] path')).map((path) => {
+      const points = Array.from((path.getAttribute('d') || '').matchAll(/[ML]\s*(-?\d+(?:\.\d+)?)\s+(-?\d+(?:\.\d+)?)/g)).map((match) => {
+        return {
+          x: Number.parseFloat(match[1] || '0'),
+          y: Number.parseFloat(match[2] || '0')
+        }
+      })
+
+      return {
+        stroke: path.getAttribute('stroke') || '',
+        points
+      }
+    }).filter(entry => entry.stroke === '#8b5cf6')
+
+    const mismatches = paths.flatMap((path) => {
+      const start = path.points[0]
+      const end = path.points.at(-1)
+
+      if (!start || !end) {
+        return []
+      }
+
+      const startsFromFunding = Math.abs(start.x - fundingBounds.left) < 1 || Math.abs(start.x - fundingBounds.right) < 1
+
+      if (!startsFromFunding) {
+        return []
+      }
+
+      const firstVerticalIndex = path.points.slice(1).findIndex((point, index) => {
+        const previous = path.points[index]
+
+        return Boolean(
+          previous
+          && Math.abs(previous.x - point.x) < 0.5
+          && Math.abs(previous.y - point.y) > 0.5
+        )
+      })
+      const lastVerticalIndex = [...path.points.keys()].slice(1).reverse().find((index) => {
+        const previous = path.points[index - 1]
+        const point = path.points[index]
+
+        return Boolean(
+          previous
+          && point
+          && Math.abs(previous.x - point.x) < 0.5
+          && Math.abs(previous.y - point.y) > 0.5
+        )
+      })
+
+      const startSide = Math.abs(start.x - fundingBounds.left) < 1 ? 'left' : 'right'
+      const startLaneX = firstVerticalIndex >= 0 ? path.points[firstVerticalIndex + 1]?.x : null
+      const endBounds = (
+        Math.abs(end.x - tenantsBounds.left) < 1 || Math.abs(end.x - tenantsBounds.right) < 1
+      )
+        ? tenantsBounds
+        : (
+            Math.abs(end.x - usersBounds.left) < 1 || Math.abs(end.x - usersBounds.right) < 1
+          )
+            ? usersBounds
+            : null
+      const endSide = !endBounds
+        ? null
+        : Math.abs(end.x - endBounds.left) < 1
+          ? 'left'
+          : 'right'
+      const endLaneX = typeof lastVerticalIndex === 'number' ? path.points[lastVerticalIndex]?.x : null
+      const startMismatch = typeof startLaneX === 'number' && (
+        startLaneX < fundingBounds.centerX ? startSide !== 'left' : startSide !== 'right'
+      )
+      const endMismatch = Boolean(
+        endBounds
+        && endSide
+        && typeof endLaneX === 'number'
+        && (endLaneX < endBounds.centerX ? endSide !== 'left' : endSide !== 'right')
+      )
+
+      return startMismatch || endMismatch
+        ? [{
+            startSide,
+            startLaneX,
+            fundingCenterX: fundingBounds.centerX,
+            endSide,
+            endLaneX,
+            endCenterX: endBounds?.centerX || null,
+            points: path.points
+          }]
+        : []
+    })
+
+    return {
+      mismatchCount: mismatches.length,
+      mismatches
+    }
+  })
+
+  expect(diagnostics).not.toBeNull()
+  expect(diagnostics?.mismatchCount).toBe(0)
+})
+
+test('full-sample program references keep their endpoint segments moving outward when Programs is packed near Core', async ({ goto, page }) => {
+  await goto('/diagram')
+
+  const editor = page.locator('[data-pgml-editor="true"]')
+  const baseSource = await editor.inputValue()
+  const source = `${baseSource}
+
+Properties "group:Programs" {
+  x: 220
+  y: 200
+}`
+
+  await editor.fill(source)
+  await expect(page.locator('[data-table-anchor="public.funding_opportunity_profile"]')).toBeVisible()
+
+  const diagnostics = await page.evaluate(() => {
+    const plane = document.querySelector('[data-connection-layer="true"]')?.parentElement
+
+    if (!(plane instanceof HTMLElement)) {
+      return null
+    }
+
+    const planeRect = plane.getBoundingClientRect()
+    const scaleMatch = (plane.getAttribute('style') || '').match(/scale\(([^)]+)\)/)
+    const scale = scaleMatch ? Number.parseFloat(scaleMatch[1] || '1') : 1
+
+    const getBounds = (element: HTMLElement) => {
+      const rect = element.getBoundingClientRect()
+
+      return {
+        left: (rect.left - planeRect.left) / scale,
+        right: (rect.right - planeRect.left) / scale,
+        top: (rect.top - planeRect.top) / scale,
+        bottom: (rect.bottom - planeRect.top) / scale,
+        label: element.getAttribute('data-table-anchor') || element.getAttribute('data-node-anchor') || ''
+      }
+    }
+
+    const hosts = Array.from(document.querySelectorAll('[data-table-anchor], [data-node-anchor]')).filter((element): element is HTMLElement => {
+      return element instanceof HTMLElement
+    }).map(getBounds)
+
+    const resolveHost = (point: { x: number, y: number }) => {
+      return hosts.find((bounds) => {
+        return point.x >= bounds.left - 1
+          && point.x <= bounds.right + 1
+          && point.y >= bounds.top - 1
+          && point.y <= bounds.bottom + 1
+          && (
+            Math.abs(point.x - bounds.left) < 1
+            || Math.abs(point.x - bounds.right) < 1
+            || Math.abs(point.y - bounds.top) < 1
+            || Math.abs(point.y - bounds.bottom) < 1
+          )
+      }) || null
+    }
+
+    const issues = Array.from(document.querySelectorAll('[data-connection-layer="true"] path')).flatMap((path, index) => {
+      const points = Array.from((path.getAttribute('d') || '').matchAll(/[ML]\s*(-?\d+(?:\.\d+)?)\s+(-?\d+(?:\.\d+)?)/g)).map((match) => {
+        return {
+          x: Number.parseFloat(match[1] || '0'),
+          y: Number.parseFloat(match[2] || '0')
+        }
+      })
+      const stroke = path.getAttribute('stroke') || ''
+      const start = points[0]
+      const next = points[1]
+      const end = points.at(-1)
+      const previous = points.at(-2)
+      const fromHost = start ? resolveHost(start) : null
+      const toHost = end ? resolveHost(end) : null
+      const touchesFundingProfile = fromHost?.label === 'public.funding_opportunity_profile' || toHost?.label === 'public.funding_opportunity_profile'
+
+      if (stroke !== '#8b5cf6' || !touchesFundingProfile || !start || !end) {
+        return []
+      }
+
+      const pathIssues: Array<{ at: 'from' | 'to', host: string, side: 'left' | 'right', adjacentX: number, anchorX: number }> = []
+
+      if (fromHost && next && Math.abs(start.y - next.y) < 0.5) {
+        const fromSide = Math.abs(start.x - fromHost.left) < 1 ? 'left' : Math.abs(start.x - fromHost.right) < 1 ? 'right' : null
+
+        if (fromSide === 'left' && next.x > start.x + 0.5) {
+          pathIssues.push({
+            at: 'from',
+            host: fromHost.label,
+            side: fromSide,
+            adjacentX: next.x,
+            anchorX: start.x
+          })
+        }
+
+        if (fromSide === 'right' && next.x < start.x - 0.5) {
+          pathIssues.push({
+            at: 'from',
+            host: fromHost.label,
+            side: fromSide,
+            adjacentX: next.x,
+            anchorX: start.x
+          })
+        }
+      }
+
+      if (toHost && previous && Math.abs(previous.y - end.y) < 0.5) {
+        const toSide = Math.abs(end.x - toHost.left) < 1 ? 'left' : Math.abs(end.x - toHost.right) < 1 ? 'right' : null
+
+        if (toSide === 'left' && previous.x > end.x + 0.5) {
+          pathIssues.push({
+            at: 'to',
+            host: toHost.label,
+            side: toSide,
+            adjacentX: previous.x,
+            anchorX: end.x
+          })
+        }
+
+        if (toSide === 'right' && previous.x < end.x - 0.5) {
+          pathIssues.push({
+            at: 'to',
+            host: toHost.label,
+            side: toSide,
+            adjacentX: previous.x,
+            anchorX: end.x
+          })
+        }
+      }
+
+      return pathIssues.length
+        ? [{
+            index,
+            from: fromHost?.label || null,
+            to: toHost?.label || null,
+            issues: pathIssues,
+            points
+          }]
+        : []
+    })
+
+    return {
+      issueCount: issues.length,
+      issues
+    }
+  })
+
+  expect(diagnostics).not.toBeNull()
+  expect(diagnostics?.issueCount).toBe(0)
+})
+
 test('connection lines stay out of every table group header and do not run along group borders', async ({ goto, page }) => {
   await goto('/diagram')
   await expect(page.locator('[data-node-anchor="group:Core"]')).toBeVisible()

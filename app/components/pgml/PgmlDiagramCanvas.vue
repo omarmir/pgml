@@ -155,6 +155,7 @@ type RouteLeg = {
   side: AnchorSide
   outerSide: AnchorSide
   grouped: boolean
+  hostCenterX: number
 }
 
 type VerticalSegmentUsage = Map<string, DiagramVerticalLaneReservation[]>
@@ -3185,6 +3186,26 @@ const reserveLaneOffset = (
   return baseOffset + laneIndex * gap
 }
 
+const cloneUsageMap = (usage: Map<string, number[]>) => {
+  return new Map(Array.from(usage.entries()).map(([key, slots]) => {
+    return [key, [...slots]]
+  }))
+}
+
+const cloneVerticalSegmentUsage = (verticalUsage: VerticalSegmentUsage) => {
+  return new Map(Array.from(verticalUsage.entries()).map(([key, segments]) => {
+    return [key, segments.map(segment => ({ ...segment }))]
+  }))
+}
+
+function replaceUsageMap<T>(target: Map<string, T>, source: Map<string, T>) {
+  target.clear()
+
+  for (const [key, value] of source.entries()) {
+    target.set(key, value)
+  }
+}
+
 const getDesiredAnchorRatio = (
   side: AnchorSide,
   elementBounds: DOMRect,
@@ -3461,12 +3482,172 @@ const offsetOverlappingVerticalSegments = (
   return adjustedPoints
 }
 
+const getHorizontalSideBacktrack = (
+  points: LayoutPoint[],
+  leg: RouteLeg,
+  direction: 'from' | 'to'
+): 'left' | 'right' | null => {
+  if (!isHorizontalDiagramSide(leg.outerSide)) {
+    return null
+  }
+
+  const lanePoint = direction === 'from'
+    ? points.slice(1).find((point, index) => {
+        const previous = points[index]
+
+        return Boolean(
+          previous
+          && Math.abs(previous.x - point.x) < 0.5
+          && Math.abs(previous.y - point.y) > 0.5
+        )
+      })
+    : [...points.keys()].slice(1).reverse().map((index) => {
+        const previous = points[index - 1]
+        const point = points[index]
+
+        if (
+          !previous
+          || !point
+          || Math.abs(previous.x - point.x) >= 0.5
+          || Math.abs(previous.y - point.y) <= 0.5
+        ) {
+          return null
+        }
+
+        return point
+      }).find(point => Boolean(point)) || null
+
+  if (lanePoint) {
+    const horizontalCenterX = leg.hostCenterX
+
+    if (lanePoint.x < horizontalCenterX - 0.5) {
+      return 'left'
+    }
+
+    if (lanePoint.x > horizontalCenterX + 0.5) {
+      return 'right'
+    }
+  }
+
+  const pointIndex = direction === 'from'
+    ? points.findIndex(point => pointsMatch(point, leg.outer))
+    : points.findLastIndex(point => pointsMatch(point, leg.outer))
+
+  if (pointIndex < 0) {
+    return null
+  }
+
+  const adjacentPoint = direction === 'from'
+    ? points[pointIndex + 1]
+    : points[pointIndex - 1]
+
+  if (!adjacentPoint || Math.abs(adjacentPoint.y - leg.outer.y) >= 0.5) {
+    return null
+  }
+
+  if (leg.outerSide === 'right' && adjacentPoint.x < leg.outer.x - 0.5) {
+    return 'left'
+  }
+
+  if (leg.outerSide === 'left' && adjacentPoint.x > leg.outer.x + 0.5) {
+    return 'right'
+  }
+
+  return null
+}
+
+const getHorizontalAnchorInwardSide = (
+  points: LayoutPoint[],
+  leg: RouteLeg,
+  direction: 'from' | 'to'
+): 'left' | 'right' | null => {
+  if (!isHorizontalDiagramSide(leg.side)) {
+    return null
+  }
+
+  const pointIndex = direction === 'from'
+    ? points.findIndex(point => pointsMatch(point, leg.anchor))
+    : points.findLastIndex(point => pointsMatch(point, leg.anchor))
+
+  if (pointIndex < 0) {
+    return null
+  }
+
+  const adjacentPoint = direction === 'from'
+    ? points[pointIndex + 1]
+    : points[pointIndex - 1]
+
+  if (!adjacentPoint || Math.abs(adjacentPoint.y - leg.anchor.y) >= 0.5) {
+    return null
+  }
+
+  if (leg.side === 'left' && adjacentPoint.x > leg.anchor.x + 0.5) {
+    return 'right'
+  }
+
+  if (leg.side === 'right' && adjacentPoint.x < leg.anchor.x - 0.5) {
+    return 'left'
+  }
+
+  return null
+}
+
+const countPathBends = (points: LayoutPoint[]) => {
+  let bends = 0
+
+  for (let index = 1; index < points.length - 1; index += 1) {
+    const previous = points[index - 1]
+    const point = points[index]
+    const next = points[index + 1]
+
+    if (!previous || !point || !next) {
+      continue
+    }
+
+    const entersHorizontally = Math.abs(previous.y - point.y) < 0.5 && Math.abs(previous.x - point.x) > 0.5
+    const exitsHorizontally = Math.abs(next.y - point.y) < 0.5 && Math.abs(next.x - point.x) > 0.5
+    const entersVertically = Math.abs(previous.x - point.x) < 0.5 && Math.abs(previous.y - point.y) > 0.5
+    const exitsVertically = Math.abs(next.x - point.x) < 0.5 && Math.abs(next.y - point.y) > 0.5
+
+    if ((entersHorizontally && exitsVertically) || (entersVertically && exitsHorizontally)) {
+      bends += 1
+    }
+  }
+
+  return bends
+}
+
+const getPathLength = (points: LayoutPoint[]) => {
+  return points.slice(1).reduce((total, point, index) => {
+    const previous = points[index]
+
+    if (!previous) {
+      return total
+    }
+
+    return total + Math.abs(point.x - previous.x) + Math.abs(point.y - previous.y)
+  }, 0)
+}
+
+const getOppositeHorizontalSide = (side: AnchorSide) => {
+  if (side === 'left') {
+    return 'right'
+  }
+
+  if (side === 'right') {
+    return 'left'
+  }
+
+  return null
+}
+
 const reserveRouteLegAnchor = (
   element: HTMLElement,
   otherElement: HTMLElement,
   fallbackSide: AnchorSide,
   planeBounds: DOMRect,
-  usage: Map<string, number[]>
+  usage: Map<string, number[]>,
+  forcedSide: AnchorSide | null = null
 ) => {
   const elementBounds = element.getBoundingClientRect()
   const otherBounds = otherElement.getBoundingClientRect()
@@ -3477,11 +3658,11 @@ const reserveRouteLegAnchor = (
   const anchorBounds = anchorHost.getBoundingClientRect()
   const groupElement = getOwningGroupElement(anchorHost)
   const groupBounds = groupElement?.getBoundingClientRect()
-  let side: AnchorSide = fallbackSide
+  let side: AnchorSide = forcedSide || fallbackSide
 
-  if (tableElement) {
+  if (tableElement && !forcedSide) {
     side = targetCenterX >= anchorBounds.left + anchorBounds.width / 2 ? 'right' : 'left'
-  } else if (groupBounds) {
+  } else if (groupBounds && !forcedSide) {
     side = getHeaderSafeGroupLaneSide(
       {
         x: anchorBounds.left + anchorBounds.width / 2,
@@ -3514,7 +3695,8 @@ const reserveRouteLegAnchor = (
         ? getExactAnchorPoint(anchorHost, side, ratio, planeBounds)
         : reserveAnchorPoint(anchorHost, side, ratio, planeBounds, usage),
     side,
-    groupElement
+    groupElement,
+    hostCenterX: ((anchorBounds.left - planeBounds.left) / scale.value) + (anchorBounds.width / (2 * scale.value))
   }
 }
 
@@ -3523,6 +3705,7 @@ const finalizeRouteLeg = (
     anchor: AnchorPoint
     side: AnchorSide
     groupElement: HTMLElement | null
+    hostCenterX: number
   },
   planeBounds: DOMRect,
   usage: Map<string, number[]>,
@@ -3537,7 +3720,8 @@ const finalizeRouteLeg = (
       outer: exit,
       side: pendingLeg.side,
       outerSide: pendingLeg.side,
-      grouped: false
+      grouped: false,
+      hostCenterX: pendingLeg.hostCenterX
     }
   }
 
@@ -3563,7 +3747,8 @@ const finalizeRouteLeg = (
     outer,
     side: pendingLeg.side,
     outerSide: pendingLeg.side,
-    grouped: true
+    grouped: true,
+    hostCenterX: pendingLeg.hostCenterX
   }
 }
 
@@ -3583,37 +3768,47 @@ const projectLegToSharedLane = (leg: RouteLeg, laneSide: AnchorSide, lanePoint: 
   }
 }
 
-const buildPathFromLegs = (
+const buildRawPathPointsFromLegs = (
   fromLeg: RouteLeg,
-  toLeg: RouteLeg,
-  verticalUsage: VerticalSegmentUsage,
-  headerBands: DiagramRect[]
+  toLeg: RouteLeg
 ) => {
   const laneLeg = fromLeg.grouped !== toLeg.grouped
     ? (fromLeg.grouped ? fromLeg : toLeg)
     : null
   const nextFromLeg = laneLeg ? projectLegToSharedLane(fromLeg, laneLeg.side, laneLeg.outer) : fromLeg
   const nextToLeg = laneLeg ? projectLegToSharedLane(toLeg, laneLeg.side, laneLeg.outer) : toLeg
-  const points: LayoutPoint[] = []
-
-  appendRoutePoint(points, { x: nextFromLeg.anchor.x, y: nextFromLeg.anchor.y })
-  appendRoutePoint(points, nextFromLeg.exit)
-  appendRoutePoint(points, nextFromLeg.outer)
-
-  buildOrthogonalMiddlePoints(
+  const middlePoints = buildOrthogonalMiddlePoints(
     nextFromLeg.outer,
     nextFromLeg.outerSide,
     nextToLeg.outer,
     nextToLeg.outerSide
-  ).forEach((point) => {
+  )
+
+  return [
+    { x: nextFromLeg.anchor.x, y: nextFromLeg.anchor.y },
+    nextFromLeg.exit,
+    nextFromLeg.outer,
+    ...middlePoints,
+    nextToLeg.outer,
+    nextToLeg.exit,
+    { x: nextToLeg.anchor.x, y: nextToLeg.anchor.y }
+  ]
+}
+
+const buildPathPointsFromLegs = (
+  fromLeg: RouteLeg,
+  toLeg: RouteLeg,
+  verticalUsage: VerticalSegmentUsage,
+  headerBands: DiagramRect[]
+) => {
+  const points: LayoutPoint[] = []
+  const rawPoints = buildRawPathPointsFromLegs(fromLeg, toLeg)
+
+  rawPoints.forEach((point) => {
     appendRoutePoint(points, point)
   })
 
-  appendRoutePoint(points, nextToLeg.outer)
-  appendRoutePoint(points, nextToLeg.exit)
-  appendRoutePoint(points, { x: nextToLeg.anchor.x, y: nextToLeg.anchor.y })
-
-  return buildPathFromPoints(offsetOverlappingVerticalSegments(points, verticalUsage, headerBands))
+  return offsetOverlappingVerticalSegments(points, verticalUsage, headerBands)
 }
 
 const buildSharedGroupPath = (
@@ -3756,15 +3951,99 @@ const buildPathBetween = (
     }
   }
 
-  const sides = decideAnchorSides(fromElement, toElement)
-  const fromPendingLeg = reserveRouteLegAnchor(fromElement, toElement, sides.from, planeBounds, usage)
-  const toPendingLeg = reserveRouteLegAnchor(toElement, fromElement, sides.to, planeBounds, usage)
-  const routeOffset = getRouteOffset(fromPendingLeg.anchor, toPendingLeg.anchor)
-  const fromLeg = finalizeRouteLeg(fromPendingLeg, planeBounds, usage, routeOffset)
-  const toLeg = finalizeRouteLeg(toPendingLeg, planeBounds, usage, routeOffset)
+  const defaultSides = decideAnchorSides(fromElement, toElement)
+  const buildCandidate = (forcedSides: Partial<{ from: AnchorSide, to: AnchorSide }> = {}) => {
+    const localUsage = cloneUsageMap(usage)
+    const localVerticalUsage = cloneVerticalSegmentUsage(verticalUsage)
+    const sides = {
+      from: forcedSides.from || defaultSides.from,
+      to: forcedSides.to || defaultSides.to
+    }
+    const fromPendingLeg = reserveRouteLegAnchor(fromElement, toElement, sides.from, planeBounds, localUsage, forcedSides.from || null)
+    const toPendingLeg = reserveRouteLegAnchor(toElement, fromElement, sides.to, planeBounds, localUsage, forcedSides.to || null)
+    const routeOffset = getRouteOffset(fromPendingLeg.anchor, toPendingLeg.anchor)
+    const fromLeg = finalizeRouteLeg(fromPendingLeg, planeBounds, localUsage, routeOffset)
+    const toLeg = finalizeRouteLeg(toPendingLeg, planeBounds, localUsage, routeOffset)
+    const points = buildPathPointsFromLegs(fromLeg, toLeg, localVerticalUsage, headerBands)
+
+    return {
+      localUsage,
+      localVerticalUsage,
+      fromLeg,
+      toLeg,
+      points,
+      forcedSides
+    }
+  }
+
+  const describeCandidate = (candidate: ReturnType<typeof buildCandidate>) => {
+    const fromInwardSide = getHorizontalAnchorInwardSide(candidate.points, candidate.fromLeg, 'from')
+    const toInwardSide = getHorizontalAnchorInwardSide(candidate.points, candidate.toLeg, 'to')
+    const fromBacktrackSide = getHorizontalSideBacktrack(candidate.points, candidate.fromLeg, 'from')
+    const toBacktrackSide = getHorizontalSideBacktrack(candidate.points, candidate.toLeg, 'to')
+
+    return {
+      candidate,
+      inwardCount: Number(Boolean(fromInwardSide)) + Number(Boolean(toInwardSide)),
+      backtrackCount: Number(Boolean(fromBacktrackSide)) + Number(Boolean(toBacktrackSide)),
+      bendCount: countPathBends(candidate.points),
+      pathLength: getPathLength(candidate.points),
+      forcedCount: Number(Boolean(candidate.forcedSides.from)) + Number(Boolean(candidate.forcedSides.to))
+    }
+  }
+
+  const initialCandidate = buildCandidate()
+  const candidates = [initialCandidate]
+  const forcedFromSide = getOppositeHorizontalSide(initialCandidate.fromLeg.side)
+  const forcedToSide = getOppositeHorizontalSide(initialCandidate.toLeg.side)
+  const seenCandidateKeys = new Set<string>(['default'])
+
+  for (const fromSide of [null, forcedFromSide] as Array<'left' | 'right' | null>) {
+    for (const toSide of [null, forcedToSide] as Array<'left' | 'right' | null>) {
+      if (!fromSide && !toSide) {
+        continue
+      }
+
+      const key = `${fromSide || 'default'}:${toSide || 'default'}`
+
+      if (seenCandidateKeys.has(key)) {
+        continue
+      }
+
+      seenCandidateKeys.add(key)
+      candidates.push(buildCandidate({
+        ...(fromSide ? { from: fromSide } : {}),
+        ...(toSide ? { to: toSide } : {})
+      }))
+    }
+  }
+
+  const scoredCandidates = candidates.map(describeCandidate)
+  const chosenCandidate = scoredCandidates.sort((left, right) => {
+    if (left.inwardCount !== right.inwardCount) {
+      return left.inwardCount - right.inwardCount
+    }
+
+    if (left.backtrackCount !== right.backtrackCount) {
+      return left.backtrackCount - right.backtrackCount
+    }
+
+    if (left.bendCount !== right.bendCount) {
+      return left.bendCount - right.bendCount
+    }
+
+    if (Math.abs(left.pathLength - right.pathLength) > 0.5) {
+      return left.pathLength - right.pathLength
+    }
+
+    return left.forcedCount - right.forcedCount
+  })[0]?.candidate || initialCandidate
+
+  replaceUsageMap(usage, chosenCandidate.localUsage)
+  replaceUsageMap(verticalUsage, chosenCandidate.localVerticalUsage)
 
   return {
-    path: buildPathFromLegs(fromLeg, toLeg, verticalUsage, headerBands),
+    path: buildPathFromPoints(chosenCandidate.points),
     color,
     dashed
   }
