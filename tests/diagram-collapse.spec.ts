@@ -246,3 +246,45 @@ test('single click applies a pulsing selection glow to schema objects, grouped t
     selectionColor: '#fb7185'
   })
 })
+
+test('selecting a table animates its outgoing references and target relational rows', async ({ goto, page }) => {
+  await goto('/diagram')
+
+  const ordersTable = page.locator('[data-table-anchor="public.orders"]')
+  const usersIdRow = page.locator('[data-column-anchor="public.users.id"]')
+  const highlightedConnections = page.locator('[data-connection-highlighted="true"]')
+
+  await ordersTable.click()
+
+  await expect(highlightedConnections).toHaveCount(2)
+  await expect(usersIdRow).toHaveAttribute('data-relational-highlighted', 'true')
+
+  await expect.poll(async () => {
+    return highlightedConnections.first().evaluate((element) => {
+      const styles = getComputedStyle(element as SVGPathElement)
+
+      return {
+        animationName: styles.animationName.includes('pgml-reference-race-line'),
+        strokeDasharray: styles.strokeDasharray
+      }
+    })
+  }).toEqual({
+    animationName: true,
+    strokeDasharray: '14px, 10px'
+  })
+
+  await expect.poll(async () => {
+    return usersIdRow.evaluate((element) => {
+      const styles = getComputedStyle(element as HTMLElement)
+      const overlayStyles = getComputedStyle(element as HTMLElement, '::after')
+
+      return {
+        animationName: overlayStyles.animationName.includes('pgml-reference-race-frame'),
+        raceColor: styles.getPropertyValue('--pgml-reference-race-color').trim().length > 0
+      }
+    })
+  }).toEqual({
+    animationName: true,
+    raceColor: true
+  })
+})

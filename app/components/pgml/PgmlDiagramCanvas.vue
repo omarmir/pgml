@@ -107,6 +107,7 @@ type ConnectionLine = {
   path: string
   color: string
   dashed: boolean
+  animated: boolean
   zIndex: number
 }
 
@@ -347,6 +348,20 @@ const selectedCanvasEntityDescription = computed(() => {
   }
 
   return 'Select a node.'
+})
+const selectedTableOutgoingReferences = computed(() => {
+  if (!selectedTable.value) {
+    return []
+  }
+
+  return model.references.filter((reference) => {
+    return reference.fromTable === selectedTable.value?.fullName && reference.toTable !== selectedTable.value?.fullName
+  })
+})
+const selectedTableRelationalRowKeys = computed(() => {
+  return new Set(selectedTableOutgoingReferences.value.map((reference) => {
+    return getColumnAnchorKey(reference.toTable, reference.toColumn)
+  }))
 })
 const isCollapsibleNode = (node: CanvasNodeState) => node.kind === 'object'
 const tablesByGroup = computed(() => {
@@ -3008,6 +3023,14 @@ const getSelectionGlowStyle = (color: string) => {
     '--pgml-selection-shadow-far': `color-mix(in srgb, ${color} 24%, transparent)`
   }
 }
+const getReferenceRaceStyle = (color: string) => {
+  return {
+    '--pgml-reference-race-color': color,
+    '--pgml-reference-race-soft': `color-mix(in srgb, ${color} 32%, transparent)`,
+    '--pgml-reference-race-strong': `color-mix(in srgb, ${color} 68%, transparent)`,
+    '--pgml-reference-race-solid': `color-mix(in srgb, ${color} 88%, white 12%)`
+  }
+}
 const getNodeBorderColor = (node: CanvasNodeState) => {
   return node.kind === 'group'
     ? `color-mix(in srgb, ${node.color} 38%, var(--studio-node-border-neutral) 62%)`
@@ -3058,6 +3081,9 @@ const isAttachmentSelectionActive = (tableId: string, attachmentId: string) => {
     && selectedCanvasSelection.value.tableId === tableId
     && selectedCanvasSelection.value.attachmentId === attachmentId
   )
+}
+const isSelectedTableRelationalRow = (tableId: string, columnName: string) => {
+  return selectedTableRelationalRowKeys.value.has(getColumnAnchorKey(tableId, columnName))
 }
 
 const getAnchorSlotCount = (element: HTMLElement, side: AnchorSide) => {
@@ -4194,6 +4220,7 @@ const updateConnections = () => {
     key: string
     color: string
     dashed: boolean
+    animated: boolean
     fromElement: HTMLElement
     toElement: HTMLElement
   }> = []
@@ -4202,6 +4229,10 @@ const updateConnections = () => {
   const nodeOrders = nodeLayerOrderById.value
   const tableColors = tableGroupColorByTableId.value
   const groupHeaderBands = collectGroupHeaderBands()
+  const selectedTableId = selectedTable.value?.fullName || null
+  const selectedTableColor = selectedTableId
+    ? (tableColors[selectedTableId] || '#79e3ea')
+    : null
 
   for (const reference of model.references) {
     const fromElement = getFieldAnchorElement(reference.fromTable, reference.fromColumn)
@@ -4211,10 +4242,15 @@ const updateConnections = () => {
       continue
     }
 
+    const isSelectedOutgoingReference = selectedTableId !== null && reference.fromTable === selectedTableId
+
     descriptors.push({
       key: `ref:${reference.fromTable}:${reference.fromColumn}:${reference.toTable}:${reference.toColumn}`,
-      color: tableColors[reference.toTable] || '#79e3ea',
-      dashed: false,
+      color: isSelectedOutgoingReference
+        ? (selectedTableColor || tableColors[reference.toTable] || '#79e3ea')
+        : (tableColors[reference.toTable] || '#79e3ea'),
+      dashed: isSelectedOutgoingReference,
+      animated: isSelectedOutgoingReference,
       fromElement,
       toElement
     })
@@ -4242,6 +4278,7 @@ const updateConnections = () => {
         key: `${node.id}->${impactTarget.tableId}:${impactTarget.columnName || '*'}`,
         color: node.color,
         dashed: true,
+        animated: false,
         fromElement,
         toElement
       })
@@ -4269,6 +4306,7 @@ const updateConnections = () => {
         path: result.path,
         color: result.color,
         dashed: result.dashed,
+        animated: descriptor.animated,
         zIndex: getDiagramConnectionZIndex(
           nodeOrders[getConnectionOwnerNodeId(descriptor.fromElement) || ''] || 1,
           nodeOrders[getConnectionOwnerNodeId(descriptor.toElement) || ''] || 1
@@ -4761,6 +4799,16 @@ watch(
   { deep: true, immediate: true }
 )
 
+watch(
+  selectedCanvasSelection,
+  () => {
+    nextTick(() => {
+      updateConnections()
+    })
+  },
+  { deep: true }
+)
+
 onMounted(() => {
   resizeObserver = new ResizeObserver(() => {
     if (Date.now() < suppressLayoutObserverUntil) {
@@ -5004,7 +5052,12 @@ defineExpose<{
                     :data-table-row-anchor="row.key"
                     data-table-row-kind="column"
                     :data-column-anchor="getColumnAnchorKey(table.fullName, row.column.name)"
-                    class="flex min-w-0 items-start justify-between gap-2 bg-[color:var(--studio-row-surface)] px-2 py-1.5"
+                    :class="[
+                      'relative flex min-w-0 items-start justify-between gap-2 bg-[color:var(--studio-row-surface)] px-2 py-1.5',
+                      isSelectedTableRelationalRow(table.fullName, row.column.name) ? 'pgml-reference-race-frame' : ''
+                    ]"
+                    :style="isSelectedTableRelationalRow(table.fullName, row.column.name) ? getReferenceRaceStyle(tableGroupColorByTableId[selectedTable?.fullName || ''] || '#79e3ea') : undefined"
+                    :data-relational-highlighted="isSelectedTableRelationalRow(table.fullName, row.column.name) ? 'true' : undefined"
                   >
                     <div
                       :data-column-label-anchor="getColumnLabelAnchorKey(table.fullName, row.column.name)"
@@ -5203,11 +5256,15 @@ defineExpose<{
         <path
           v-for="line in layer.lines"
           :key="line.key"
+          :class="line.animated ? 'pgml-reference-race-path' : undefined"
           :d="line.path"
           fill="none"
           :stroke="line.color"
           stroke-width="2"
           :stroke-dasharray="line.dashed ? '10 7' : '0'"
+          :style="line.animated ? getReferenceRaceStyle(line.color) : undefined"
+          :data-connection-key="line.key"
+          :data-connection-highlighted="line.animated ? 'true' : undefined"
           stroke-linecap="square"
           stroke-linejoin="miter"
           opacity="0.9"
@@ -5389,6 +5446,40 @@ defineExpose<{
     0 0 30px var(--pgml-selection-shadow-far);
 }
 
+.pgml-reference-race-path {
+  stroke: var(--pgml-reference-race-solid);
+  stroke-width: 4px !important;
+  opacity: 1 !important;
+  stroke-dasharray: 14 10;
+  stroke-dashoffset: 0;
+  stroke-linecap: round;
+  animation: pgml-reference-race-line 0.58s linear infinite;
+  filter:
+    drop-shadow(0 0 6px var(--pgml-reference-race-soft))
+    drop-shadow(0 0 16px var(--pgml-reference-race-strong))
+    drop-shadow(0 0 28px var(--pgml-reference-race-strong));
+}
+
+.pgml-reference-race-frame::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  border: 3px solid transparent;
+  border-radius: 0;
+  box-sizing: border-box;
+  background:
+    repeating-linear-gradient(90deg, var(--pgml-reference-race-solid) 0 14px, transparent 14px 24px) top / 100% 3px no-repeat,
+    repeating-linear-gradient(180deg, var(--pgml-reference-race-solid) 0 14px, transparent 14px 24px) right / 3px 100% no-repeat,
+    repeating-linear-gradient(90deg, var(--pgml-reference-race-solid) 0 14px, transparent 14px 24px) bottom / 100% 3px no-repeat,
+    repeating-linear-gradient(180deg, var(--pgml-reference-race-solid) 0 14px, transparent 14px 24px) left / 3px 100% no-repeat;
+  animation: pgml-reference-race-frame 0.58s linear infinite;
+  box-shadow:
+    inset 0 0 0 1px color-mix(in srgb, var(--pgml-reference-race-solid) 40%, transparent),
+    0 0 14px var(--pgml-reference-race-soft),
+    0 0 26px var(--pgml-reference-race-strong);
+}
+
 @keyframes pgml-selection-pulse {
   0%,
   100% {
@@ -5424,6 +5515,30 @@ defineExpose<{
     box-shadow:
       0 0 0 1px color-mix(in srgb, var(--pgml-selection-border) 44%, transparent),
       0 0 28px var(--pgml-selection-shadow-near);
+  }
+}
+
+@keyframes pgml-reference-race-line {
+  to {
+    stroke-dashoffset: -24;
+  }
+}
+
+@keyframes pgml-reference-race-frame {
+  from {
+    background-position:
+      0 0,
+      100% 0,
+      0 100%,
+      0 0;
+  }
+
+  to {
+    background-position:
+      -24px 0,
+      100% -24px,
+      24px 100%,
+      0 24px;
   }
 }
 </style>
