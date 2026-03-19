@@ -50,6 +50,23 @@ const syntaxCards = [
 }`
   },
   {
+    title: 'Properties',
+    description: 'Use Properties blocks to persist studio layout and presentation state back into PGML so a saved schema can reopen with the same positions, colors, and collapsed state.',
+    code: `Properties "group:Commerce" {
+  x: 540
+  y: 120
+  color: #f59e0b
+  table_columns: 1
+}
+
+Properties "custom-type:Domain:email_address" {
+  x: 1180
+  y: 460
+  color: #14b8a6
+  collapsed: false
+}`
+  },
+  {
     title: 'Executable source',
     description: 'Functions, triggers, and sequences can stay source-first: PGML derives the operational metadata it can, while docs and affects stay optional overlays.',
     code: `Function register_entity(entity_kind text) returns trigger [replace] {
@@ -184,6 +201,10 @@ const supportedFeatures = [
   {
     label: 'Custom Postgres types',
     detail: 'Enums, domains, and composites represented as first-class schema definitions.'
+  },
+  {
+    label: 'Embedded layout properties',
+    detail: 'Properties blocks persist canvas position, color, collapsed state, and group column count directly in PGML.'
   }
 ]
 
@@ -404,6 +425,7 @@ const roadmap = [
                 let PGML extract routine, trigger, and sequence metadata where it can, add human explanation in
                 <span class="font-mono text-[color:var(--studio-shell-text)]">docs</span>, and use
                 <span class="font-mono text-[color:var(--studio-shell-text)]">affects</span> only when you want to make table or field impact explicit.
+                When the diagram studio saves layout, it writes that state back into <span class="font-mono text-[color:var(--studio-shell-text)]">Properties</span> blocks in the same document.
               </p>
             </div>
 
@@ -472,6 +494,7 @@ const roadmap = [
                 <p>Tables with columns, notes, inline refs, constraints, and indexes.</p>
                 <p>DBML-style table groups for domain clustering and grouped layout.</p>
                 <p>Functions, procedures, triggers, sequences, enums, domains, and composite types.</p>
+                <p>Embedded <span class="font-mono text-[color:var(--studio-shell-text)]">Properties</span> blocks for persisted studio layout and node presentation state.</p>
                 <p>Canvas visualization that shows how non-table objects attach back to the relational model.</p>
               </div>
             </div>

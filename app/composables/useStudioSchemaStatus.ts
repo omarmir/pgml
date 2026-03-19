@@ -1,7 +1,7 @@
 import type { Ref } from 'vue'
 import { createSharedComposable } from '@vueuse/core'
 
-export type StudioSchemaSaveState = 'saved' | 'unsaved' | 'saving'
+export type StudioSchemaSaveState = 'saved' | 'pending' | 'saving' | 'error'
 
 type StudioSchemaStatusState = {
   detail: string
@@ -12,7 +12,7 @@ type StudioSchemaStatusState = {
 const defaultStudioSchemaStatusState = (): StudioSchemaStatusState => ({
   detail: '',
   name: '',
-  saveState: 'unsaved'
+  saveState: 'pending'
 })
 
 const useSharedStudioSchemaStatus = createSharedComposable(() => {

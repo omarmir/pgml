@@ -16,6 +16,7 @@ const savedSchemaStorageKey = 'pgml-studio-schemas-v1'
 const exampleSchemaName = 'Example schema'
 const untitledSchemaName = 'Untitled schema'
 const schemaAutosaveDebounceMs = 5000
+const localStorageSaveErrorMessage = 'Unable to save to local storage.'
 
 const orderSavedSchemas = (schemas: SavedPgmlSchema[]) => {
   return [...schemas].sort((left, right) => {
@@ -92,6 +93,7 @@ export const usePgmlStudioSchemas = ({
   const schemaDialogMode: Ref<PgmlStudioSchemaDialogMode> = ref('save')
   const includeLayoutInSchema: Ref<boolean> = ref(true)
   const isSavingToLocalStorage: Ref<boolean> = ref(false)
+  const localStorageSaveError: Ref<string | null> = ref(null)
   const lastPersistedSnapshot: Ref<string | null> = ref(null)
   const savedSchemas: Ref<SavedPgmlSchema[]> = ref([])
   const saveSchemaTargetId: Ref<string | null> = ref(null)
@@ -138,6 +140,7 @@ export const usePgmlStudioSchemas = ({
     currentSchemaId.value = null
     currentSchemaName.value = exampleSchemaName
     currentSchemaUpdatedAt.value = null
+    localStorageSaveError.value = null
     lastPersistedSnapshot.value = null
     saveSchemaTargetId.value = null
   }
@@ -147,16 +150,18 @@ export const usePgmlStudioSchemas = ({
     currentSchemaId.value = null
     currentSchemaName.value = untitledSchemaName
     currentSchemaUpdatedAt.value = null
+    localStorageSaveError.value = null
     lastPersistedSnapshot.value = null
     saveSchemaTargetId.value = null
   }
 
   const readSavedSchemas = () => {
     savedSchemas.value = parseSavedPgmlSchemas(readBrowserStorageItem(savedSchemaStorageKey))
+    localStorageSaveError.value = null
   }
 
-  const persistSavedSchemas = () => {
-    writeBrowserStorageItem(savedSchemaStorageKey, JSON.stringify(savedSchemas.value))
+  const persistSavedSchemas = (schemas: SavedPgmlSchema[]) => {
+    return writeBrowserStorageItem(savedSchemaStorageKey, JSON.stringify(schemas))
   }
 
   const syncPersistedState = (schema: SavedPgmlSchema) => {
@@ -223,30 +228,44 @@ export const usePgmlStudioSchemas = ({
         )
       )
     })
+    let nextSchema: SavedPgmlSchema
+    let nextSavedSchemas: SavedPgmlSchema[]
 
     if (matchingSchema) {
-      matchingSchema.name = name
-      matchingSchema.text = text
-      matchingSchema.updatedAt = updatedAt
-      syncPersistedState(matchingSchema)
+      nextSchema = {
+        ...matchingSchema,
+        name,
+        text,
+        updatedAt
+      }
+      nextSavedSchemas = savedSchemas.value.map((entry) => {
+        return entry.id === nextSchema.id ? nextSchema : entry
+      })
     } else {
-      const nextSchema: SavedPgmlSchema = {
+      nextSchema = {
         id: nanoid(),
         name,
         text,
         updatedAt
       }
-
-      savedSchemas.value = [nextSchema, ...savedSchemas.value]
-      syncPersistedState(nextSchema)
+      nextSavedSchemas = [nextSchema, ...savedSchemas.value]
     }
 
+    if (!persistSavedSchemas(nextSavedSchemas)) {
+      localStorageSaveError.value = localStorageSaveErrorMessage
+      return false
+    }
+
+    savedSchemas.value = nextSavedSchemas
     currentSchemaName.value = name
-    persistSavedSchemas()
+    localStorageSaveError.value = null
+    syncPersistedState(nextSchema)
 
     if (options.closeDialog) {
       schemaDialogOpen.value = false
     }
+
+    return true
   }
 
   const saveSchemaToBrowser = async () => {
@@ -277,7 +296,14 @@ export const usePgmlStudioSchemas = ({
   }
 
   const deleteSavedSchema = (schemaId: string) => {
-    savedSchemas.value = savedSchemas.value.filter(entry => entry.id !== schemaId)
+    const nextSavedSchemas = savedSchemas.value.filter(entry => entry.id !== schemaId)
+
+    if (!persistSavedSchemas(nextSavedSchemas)) {
+      localStorageSaveError.value = localStorageSaveErrorMessage
+      return
+    }
+
+    savedSchemas.value = nextSavedSchemas
 
     if (currentSchemaId.value === schemaId) {
       currentSchemaId.value = null
@@ -289,7 +315,7 @@ export const usePgmlStudioSchemas = ({
       saveSchemaTargetId.value = null
     }
 
-    persistSavedSchemas()
+    localStorageSaveError.value = null
   }
 
   const formatSavedAt = (value: string) => {
@@ -352,6 +378,7 @@ export const usePgmlStudioSchemas = ({
     includeLayoutInSchema,
     isSavedToLocalStorage,
     isSavingToLocalStorage,
+    localStorageSaveError,
     loadDialogOpen,
     loadExample,
     loadSavedSchema,

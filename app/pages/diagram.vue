@@ -158,6 +158,7 @@ const {
   includeLayoutInSchema,
   isSavedToLocalStorage,
   isSavingToLocalStorage,
+  localStorageSaveError,
   loadDialogOpen,
   loadExample,
   loadSavedSchema,
@@ -407,22 +408,27 @@ watchEffect(() => {
 })
 
 watchEffect(() => {
-  const detail = isSavingToLocalStorage.value
-    ? 'Saving to local storage...'
-    : isSavedToLocalStorage.value && currentSchemaUpdatedAt.value
-      ? `Saved to local storage at ${formatSavedAt(currentSchemaUpdatedAt.value)}`
-      : hasPendingLocalChanges.value
-        ? 'Not saved to local storage'
-        : 'Ready to save to local storage'
+  const isWaitingToSave = hasPendingLocalChanges.value && !isSavingToLocalStorage.value
+  const detail = localStorageSaveError.value
+    ? localStorageSaveError.value
+    : isSavingToLocalStorage.value
+      ? 'Saving to local storage...'
+      : isWaitingToSave
+        ? 'Waiting to save to local storage...'
+        : isSavedToLocalStorage.value && currentSchemaUpdatedAt.value
+          ? `Saved to local storage at ${formatSavedAt(currentSchemaUpdatedAt.value)}`
+          : 'Saved to local storage'
 
   setStudioSchemaStatus({
     detail,
     name: currentSchemaName.value,
-    saveState: isSavingToLocalStorage.value
-      ? 'saving'
-      : isSavedToLocalStorage.value
-        ? 'saved'
-        : 'unsaved'
+    saveState: localStorageSaveError.value
+      ? 'error'
+      : isSavingToLocalStorage.value
+        ? 'saving'
+        : isWaitingToSave
+          ? 'pending'
+          : 'saved'
   })
 })
 

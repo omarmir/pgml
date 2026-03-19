@@ -199,7 +199,84 @@ test('canvas interactions keep the PGML editor source in sync', async ({ goto, p
     return editor.inputValue()
   }).toContain(`Properties "group:Core" {\n  x: ${groupPosition.x}\n  y: ${groupPosition.y}`)
 
+  const customTypeNode = page.locator('[data-node-anchor="custom-type:Domain:email_address"]')
+  const customTypeHeader = page.locator('[data-node-header="custom-type:Domain:email_address"]')
+
   await page.getByRole('button', { name: 'Expand email_address' }).click()
 
-  await expect(editor).toHaveValue(/Properties "custom-type:Domain:email_address" \{\n\s{2}collapsed: false\n\}/)
+  const customTypeHeaderBox = await customTypeHeader.boundingBox()
+
+  if (!customTypeHeaderBox) {
+    throw new Error('Custom type header is not measurable.')
+  }
+
+  await page.mouse.move(customTypeHeaderBox.x + customTypeHeaderBox.width / 2, customTypeHeaderBox.y + 16)
+  await page.mouse.down()
+  await page.mouse.move(customTypeHeaderBox.x + customTypeHeaderBox.width / 2 + 52, customTypeHeaderBox.y + 64)
+  await page.mouse.up()
+
+  const customTypePosition = await customTypeNode.evaluate((element) => {
+    return {
+      x: Number.parseInt(element.style.left || '0', 10),
+      y: Number.parseInt(element.style.top || '0', 10)
+    }
+  })
+
+  await expect(editor).toHaveValue(new RegExp(`Properties "custom-type:Domain:email_address" \\{[\\s\\S]*x: ${customTypePosition.x}[\\s\\S]*y: ${customTypePosition.y}[\\s\\S]*collapsed: false`))
+})
+
+test('dragging a group or custom type preserves the current zoom and pan', async ({ goto, page }) => {
+  await goto('/diagram')
+
+  await page.getByRole('button', { name: 'Expand email_address' }).click()
+
+  const plane = page.locator('[data-diagram-plane="true"]')
+  const viewport = page.locator('[data-diagram-viewport="true"]')
+  const viewportBox = await viewport.boundingBox()
+
+  if (!viewportBox) {
+    throw new Error('Diagram viewport is not measurable.')
+  }
+
+  const zoomPoint = {
+    x: viewportBox.x + viewportBox.width * 0.5,
+    y: viewportBox.y + viewportBox.height * 0.35
+  }
+
+  await page.mouse.move(zoomPoint.x, zoomPoint.y)
+  await page.mouse.wheel(0, -180)
+
+  const zoomedTransform = await plane.evaluate((element) => {
+    return (element as HTMLElement).style.transform
+  })
+
+  const dragNodeBy = async (nodeId: string, deltaX: number, deltaY: number) => {
+    const header = page.locator(`[data-node-header="${nodeId}"]`)
+    const headerBox = await header.boundingBox()
+
+    if (!headerBox) {
+      throw new Error(`Node header is not measurable for ${nodeId}.`)
+    }
+
+    await page.mouse.move(headerBox.x + headerBox.width / 2, headerBox.y + 16)
+    await page.mouse.down()
+    await page.mouse.move(headerBox.x + headerBox.width / 2 + deltaX, headerBox.y + 16 + deltaY, { steps: 8 })
+    await page.mouse.up()
+  }
+
+  await dragNodeBy('group:Core', 54, 36)
+
+  await expect.poll(async () => {
+    return plane.evaluate((element) => {
+      return (element as HTMLElement).style.transform
+    })
+  }).toBe(zoomedTransform)
+
+  await dragNodeBy('custom-type:Domain:email_address', 48, 42)
+
+  await expect.poll(async () => {
+    return plane.evaluate((element) => {
+      return (element as HTMLElement).style.transform
+    })
+  }).toBe(zoomedTransform)
 })

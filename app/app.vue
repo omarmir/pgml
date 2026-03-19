@@ -80,11 +80,35 @@ const studioSchemaStatusIcon = computed(() => {
     return 'i-lucide-loader-circle'
   }
 
+  if (studioSchemaStatus.value.saveState === 'pending') {
+    return 'i-lucide-hard-drive-download'
+  }
+
+  if (studioSchemaStatus.value.saveState === 'error') {
+    return 'i-lucide-circle-alert'
+  }
+
   if (studioSchemaStatus.value.saveState === 'saved') {
     return 'i-lucide-hard-drive-download'
   }
 
-  return 'i-lucide-hard-drive-upload'
+  return 'i-lucide-loader-circle'
+})
+
+const studioSchemaStatusIconClass = computed(() => {
+  if (studioSchemaStatus.value.saveState === 'pending') {
+    return 'animate-bounce text-emerald-500'
+  }
+
+  if (studioSchemaStatus.value.saveState === 'saving') {
+    return 'animate-spin text-[color:var(--studio-shell-label)]'
+  }
+
+  if (studioSchemaStatus.value.saveState === 'error') {
+    return 'text-red-500'
+  }
+
+  return 'text-emerald-500'
 })
 </script>
 
@@ -132,24 +156,24 @@ const studioSchemaStatusIcon = computed(() => {
 
           <div
             v-if="isStudioRoute && studioSchemaStatus.name"
-            class="pointer-events-none absolute left-1/2 top-1/2 flex max-w-[26rem] min-w-0 -translate-x-1/2 -translate-y-1/2 items-center gap-2 px-4 text-center"
+            class="pointer-events-none absolute left-1/2 top-1/2 flex max-w-[26rem] min-w-0 -translate-x-1/2 -translate-y-1/2 px-4 text-center"
             :data-studio-schema-status="studioSchemaStatus.saveState"
             :title="studioSchemaStatus.detail"
           >
-            <UIcon
-              :name="studioSchemaStatusIcon"
-              class="h-4 w-4 shrink-0 text-[color:var(--studio-shell-label)]"
-              :class="studioSchemaStatus.saveState === 'saving' ? 'animate-spin' : ''"
-              data-studio-schema-status-icon="true"
-            />
             <div class="min-w-0">
               <p
                 data-studio-schema-name="true"
-                class="truncate font-mono text-[0.78rem] uppercase tracking-[0.12em] text-[color:var(--studio-shell-text)]"
+                class="truncate font-mono text-sm uppercase tracking-[0.12em] text-[color:var(--studio-shell-text)]"
               >
                 {{ studioSchemaStatus.name }}
               </p>
-              <p class="truncate text-[0.63rem] text-[color:var(--studio-shell-muted)]">
+              <p class="inline-flex max-w-full items-center justify-center gap-1.5 truncate text-[0.63rem] text-[color:var(--studio-shell-muted)]">
+                <UIcon
+                  :name="studioSchemaStatusIcon"
+                  class="h-3.5 w-3.5 shrink-0"
+                  :class="studioSchemaStatusIconClass"
+                  data-studio-schema-status-icon="true"
+                />
                 {{ studioSchemaStatus.detail }}
               </p>
             </div>

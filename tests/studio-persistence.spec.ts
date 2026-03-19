@@ -41,13 +41,14 @@ test('studio saves, reloads, and downloads PGML with embedded layout', async ({ 
   expect(savedSchemas[0]?.text).toContain('Properties "group:Core" {')
   expect(savedSchemas[0]?.text).toContain('color: #14b8a6')
   expect(savedSchemas[0]?.text).toContain('Properties "custom-type:Domain:email_address" {')
+  expect(savedSchemas[0]?.text).toContain('x:')
+  expect(savedSchemas[0]?.text).toContain('y:')
   expect(savedSchemas[0]?.text).toContain('collapsed: false')
   expect(savedSchemas[0]?.text).not.toContain('width:')
   expect(savedSchemas[0]?.text).not.toContain('height:')
   expect(savedSchemas[0]?.text).not.toContain('Properties "index:idx_products_search" {')
   expect(savedSchemas[0]?.text).not.toContain('Properties "constraint:chk_orders_total" {')
   expect(savedSchemas[0]?.text).not.toContain('Properties "function:register_entity" {')
-  expect(savedSchemas[0]?.text).not.toContain('Properties "custom-type:Domain:email_address" {\n  x:')
 
   await studioActionsButton.click()
   await page.getByRole('menuitem', { name: 'Clear schema' }).click()
@@ -133,32 +134,37 @@ test('studio autosaves changes to local storage and updates the header status ic
   const editor = page.getByPlaceholder('Paste PGML here...')
 
   await expect(page.locator('[data-studio-schema-name="true"]')).toHaveText('Example schema')
-  await expect(page.locator('[data-studio-schema-status]')).toHaveAttribute('data-studio-schema-status', 'unsaved')
+  await expect(page.locator('[data-studio-schema-status]')).toHaveAttribute('data-studio-schema-status', 'pending')
+  await expect(page.locator('[data-studio-schema-status-icon="true"]')).toHaveClass(/animate-bounce/)
 
   await editor.evaluate((element: HTMLTextAreaElement) => {
     element.value = `${element.value}\n// autosave change`
     element.dispatchEvent(new Event('input', { bubbles: true }))
   })
 
-  await expect(page.locator('[data-studio-schema-status]')).toHaveAttribute('data-studio-schema-status', 'unsaved')
+  await expect(page.locator('[data-studio-schema-status]')).toHaveAttribute('data-studio-schema-status', 'pending')
+  await expect(page.locator('[data-studio-schema-status-icon="true"]')).toHaveClass(/animate-bounce/)
 
   await expect.poll(async () => {
     const savedSchemas = await page.evaluate(() => {
       return JSON.parse(window.localStorage.getItem('pgml-studio-schemas-v1') || '[]')
     })
     const status = await page.locator('[data-studio-schema-status]').getAttribute('data-studio-schema-status')
+    const iconClass = await page.locator('[data-studio-schema-status-icon="true"]').getAttribute('class')
 
     return {
       count: savedSchemas.length,
       status,
-      updatedAt: typeof savedSchemas[0]?.updatedAt === 'string'
+      updatedAt: typeof savedSchemas[0]?.updatedAt === 'string',
+      iconClass
     }
   }, {
     timeout: 8000
   }).toEqual({
     count: 1,
     status: 'saved',
-    updatedAt: true
+    updatedAt: true,
+    iconClass: expect.not.stringContaining('animate-spin')
   })
 })
 

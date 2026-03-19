@@ -82,16 +82,22 @@ Properties "sequence:user_number_seq" {
     })
   })
 
-  it('parses custom type properties blocks with collapsed state only', () => {
+  it('parses custom type properties blocks with layout and collapsed state', () => {
     const source = `${baseSource}
 
 Properties "custom-type:Domain:email_address" {
+  color: #14b8a6
+  x: 1188
+  y: 612
   collapsed: false
 }`
 
     const model = parsePgml(source)
 
     expect(model.nodeProperties['custom-type:Domain:email_address']).toEqual({
+      color: '#14b8a6',
+      x: 1188,
+      y: 612,
       collapsed: false
     })
   })
@@ -129,6 +135,9 @@ Properties "group:Core" {
         tableColumns: 2
       },
       'custom-type:Domain:email_address': {
+        color: '#f97316',
+        x: 1188,
+        y: 612,
         collapsed: false
       },
       'sequence:user_number_seq': {
@@ -145,7 +154,11 @@ Properties "group:Core" {
     expect(built).not.toContain('width:')
     expect(built).not.toContain('height:')
     expect(built).toContain('table_columns: 2')
-    expect(built).toContain('Properties "custom-type:Domain:email_address" {\n  collapsed: false\n}')
+    expect(built).toContain('Properties "custom-type:Domain:email_address" {')
+    expect(built).toContain('color: #f97316')
+    expect(built).toContain('x: 1188')
+    expect(built).toContain('y: 612')
+    expect(built).toContain('collapsed: false')
     expect(built).toContain('Properties "sequence:user_number_seq" {')
 
     const reparsed = parsePgml(built)
@@ -155,7 +168,9 @@ Properties "group:Core" {
     expect(reparsed.nodeProperties['group:Core']?.tableColumns).toBe(2)
     expect(reparsed.nodeProperties['group:Core']?.width).toBeUndefined()
     expect(reparsed.nodeProperties['custom-type:Domain:email_address']?.collapsed).toBe(false)
-    expect(reparsed.nodeProperties['custom-type:Domain:email_address']?.x).toBeUndefined()
+    expect(reparsed.nodeProperties['custom-type:Domain:email_address']?.x).toBe(1188)
+    expect(reparsed.nodeProperties['custom-type:Domain:email_address']?.y).toBe(612)
+    expect(reparsed.nodeProperties['custom-type:Domain:email_address']?.color).toBe('#f97316')
     expect(reparsed.nodeProperties['sequence:user_number_seq']?.height).toBeUndefined()
   })
 })

@@ -223,4 +223,37 @@ describe('usePgmlStudioSchemas', () => {
     expect(api?.isSavedToLocalStorage.value).toBe(true)
     expect(api?.hasPendingLocalChanges.value).toBe(false)
   })
+
+  it('keeps pending changes and exposes an error when local storage saving fails', async () => {
+    vi.useFakeTimers()
+
+    const source = ref('Table public.users {\n  id uuid [pk]\n}')
+    let api: ReturnType<typeof usePgmlStudioSchemas> | null = null
+    const setItemSpy = vi.spyOn(window.localStorage, 'setItem').mockImplementation(() => {
+      throw new Error('Storage quota exceeded.')
+    })
+
+    await mountSuspended(defineComponent({
+      setup() {
+        api = usePgmlStudioSchemas({
+          buildSchemaText: () => source.value,
+          canEmbedLayout: computed(() => true),
+          initialSource: 'Table public.example {\n  id uuid [pk]\n}',
+          source
+        })
+
+        return () => null
+      }
+    }))
+
+    source.value = 'Table public.users {\n  id uuid [pk]\n  email text\n}'
+
+    await vi.advanceTimersByTimeAsync(5000)
+
+    expect(api?.localStorageSaveError.value).toBe('Unable to save to local storage.')
+    expect(api?.hasPendingLocalChanges.value).toBe(true)
+    expect(api?.isSavedToLocalStorage.value).toBe(false)
+
+    setItemSpy.mockRestore()
+  })
 })

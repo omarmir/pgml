@@ -227,6 +227,7 @@ const attachmentKindColors: Record<TableAttachmentKind, string> = {
   Sequence: '#eab308'
 }
 let suppressLayoutObserverUntil = 0
+let previousModelContentSnapshot: string | null = null
 
 const canvasNodes = computed(() => Object.values(nodeStates.value))
 const tableGroupColorByTableId = computed(() => {
@@ -4282,6 +4283,20 @@ const resetView = () => {
   fitView()
 }
 
+const getModelContentSnapshot = (value: PgmlSchemaModel) => {
+  return JSON.stringify({
+    customTypes: value.customTypes,
+    functions: value.functions,
+    groups: value.groups,
+    procedures: value.procedures,
+    references: value.references,
+    schemas: value.schemas,
+    sequences: value.sequences,
+    tables: value.tables,
+    triggers: value.triggers
+  })
+}
+
 const getNodeLayoutProperties = () => {
   return Object.values(nodeStates.value).reduce<Record<string, PgmlNodeProperties>>((properties, node) => {
     const nextProperties: PgmlNodeProperties = {}
@@ -4293,7 +4308,7 @@ const getNodeLayoutProperties = () => {
       nextProperties.tableColumns = Math.max(1, Math.round(node.columnCount || 1))
     }
 
-    if (node.kind === 'object' && node.objectKind !== 'Custom Type') {
+    if (node.kind === 'object') {
       nextProperties.color = node.color
       nextProperties.x = Math.round(node.x)
       nextProperties.y = Math.round(node.y)
@@ -4552,6 +4567,9 @@ const handleWheel = (event: WheelEvent) => {
 watch(
   () => model,
   async () => {
+    const nextModelContentSnapshot = getModelContentSnapshot(model)
+    const shouldFitViewport = previousModelContentSnapshot === null || previousModelContentSnapshot !== nextModelContentSnapshot
+
     syncNodeStates()
     await nextTick()
     observeCanvasLayout()
@@ -4573,10 +4591,13 @@ watch(
       await nextTick()
       observeCanvasLayout()
     }
-    fitView()
+    if (shouldFitViewport) {
+      fitView()
+    }
     await nextTick()
     observeCanvasLayout()
     updateConnections()
+    previousModelContentSnapshot = nextModelContentSnapshot
   },
   { deep: true, immediate: true }
 )
@@ -4651,6 +4672,7 @@ defineExpose<{
   >
     <div
       ref="planeRef"
+      data-diagram-plane="true"
       class="relative h-[1800px] w-[2600px] origin-top-left"
       :style="{
         transform: `translate(${pan.x}px, ${pan.y}px) scale(${scale})`
