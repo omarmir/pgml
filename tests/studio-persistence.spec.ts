@@ -10,6 +10,8 @@ test('studio saves, reloads, and downloads PGML with embedded layout', async ({ 
 
   await page.locator('[data-node-anchor="group:Core"]').click()
   await page.locator('input[type="color"]').fill('#14b8a6')
+  await page.getByRole('button', { name: 'Expand email_address' }).click()
+  await expect(page.locator('[data-node-body="custom-type:Domain:email_address"]')).toBeVisible()
 
   await studioActionsButton.click()
   await page.getByRole('menuitem', { name: 'Save schema' }).click()
@@ -39,11 +41,13 @@ test('studio saves, reloads, and downloads PGML with embedded layout', async ({ 
   expect(savedSchemas[0]?.text).toContain('Properties "group:Core" {')
   expect(savedSchemas[0]?.text).toContain('color: #14b8a6')
   expect(savedSchemas[0]?.text).toContain('Properties "custom-type:Domain:email_address" {')
+  expect(savedSchemas[0]?.text).toContain('collapsed: false')
   expect(savedSchemas[0]?.text).not.toContain('width:')
   expect(savedSchemas[0]?.text).not.toContain('height:')
   expect(savedSchemas[0]?.text).not.toContain('Properties "index:idx_products_search" {')
   expect(savedSchemas[0]?.text).not.toContain('Properties "constraint:chk_orders_total" {')
   expect(savedSchemas[0]?.text).not.toContain('Properties "function:register_entity" {')
+  expect(savedSchemas[0]?.text).not.toContain('Properties "custom-type:Domain:email_address" {\n  x:')
 
   await studioActionsButton.click()
   await page.getByRole('menuitem', { name: 'Clear schema' }).click()
@@ -54,6 +58,7 @@ test('studio saves, reloads, and downloads PGML with embedded layout', async ({ 
   await page.getByRole('button', { name: 'Load' }).click()
 
   await expect(page.getByPlaceholder('Paste PGML here...')).toHaveValue(/Properties "group:Core" \{/)
+  await expect(page.locator('[data-node-body="custom-type:Domain:email_address"]')).toBeVisible()
 
   await studioActionsButton.click()
   await page.getByRole('menuitem', { name: 'Download schema' }).click()

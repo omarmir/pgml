@@ -55,11 +55,12 @@ export type PgmlGroup = {
 
 export type PgmlNodeProperties = {
   color?: string
-  x: number
-  y: number
+  x?: number
+  y?: number
   width?: number
   height?: number
-  tableColumns: number | null
+  tableColumns?: number | null
+  collapsed?: boolean
 }
 
 export type PgmlMetadataEntry = {
@@ -1295,6 +1296,18 @@ const parseNodePropertiesBlock = (block: NamedBlock): { id: string, properties: 
 
     const key = normalizeEffectKey(entry.key)
 
+    if (key === 'collapsed') {
+      if (entry.value.trim() === 'true') {
+        entries.collapsed = true
+      }
+
+      if (entry.value.trim() === 'false') {
+        entries.collapsed = false
+      }
+
+      continue
+    }
+
     if (key === 'color') {
       if (/^#(?:[\da-f]{3}|[\da-f]{6})$/i.test(entry.value.trim())) {
         entries.color = entry.value.trim()
@@ -1337,20 +1350,28 @@ const parseNodePropertiesBlock = (block: NamedBlock): { id: string, properties: 
   const x = entries.x
   const y = entries.y
   if (
-    x === undefined
-    || y === undefined
+    (x === undefined || y === undefined)
+    && entries.collapsed === undefined
   ) {
     return null
   }
 
-  const properties: PgmlNodeProperties = {
-    x,
-    y,
-    tableColumns: Number.isFinite(entries.tableColumns) ? Math.max(1, Math.round(entries.tableColumns || 1)) : null
+  const properties: PgmlNodeProperties = {}
+
+  if (x !== undefined) {
+    properties.x = x
+  }
+
+  if (y !== undefined) {
+    properties.y = y
   }
 
   if (typeof entries.color === 'string') {
     properties.color = entries.color
+  }
+
+  if (typeof entries.collapsed === 'boolean') {
+    properties.collapsed = entries.collapsed
   }
 
   if (Number.isFinite(entries.width)) {
@@ -1359,6 +1380,10 @@ const parseNodePropertiesBlock = (block: NamedBlock): { id: string, properties: 
 
   if (Number.isFinite(entries.height)) {
     properties.height = entries.height
+  }
+
+  if (Number.isFinite(entries.tableColumns)) {
+    properties.tableColumns = Math.max(1, Math.round(entries.tableColumns || 1))
   }
 
   return {
@@ -1411,19 +1436,36 @@ export const buildPgmlWithNodeProperties = (
 ) => {
   const strippedSource = stripPgmlPropertiesBlocks(source)
   const propertyBlocks = Object.entries(nodeProperties)
+    .filter(([, properties]) => {
+      return [
+        typeof properties.x === 'number',
+        typeof properties.y === 'number',
+        typeof properties.color === 'string' && properties.color.length > 0,
+        typeof properties.collapsed === 'boolean',
+        typeof properties.tableColumns === 'number'
+      ].some(Boolean)
+    })
     .sort(([leftId], [rightId]) => leftId.localeCompare(rightId))
     .map(([id, properties]) => {
-      const lines = [
-        `Properties "${id}" {`,
-        `  x: ${formatPgmlNumber(properties.x)}`,
-        `  y: ${formatPgmlNumber(properties.y)}`
-      ]
+      const lines = [`Properties "${id}" {`]
+
+      if (typeof properties.x === 'number') {
+        lines.push(`  x: ${formatPgmlNumber(properties.x)}`)
+      }
+
+      if (typeof properties.y === 'number') {
+        lines.push(`  y: ${formatPgmlNumber(properties.y)}`)
+      }
 
       if (typeof properties.color === 'string' && properties.color.length > 0) {
         lines.push(`  color: ${properties.color}`)
       }
 
-      if (properties.tableColumns) {
+      if (typeof properties.collapsed === 'boolean') {
+        lines.push(`  collapsed: ${properties.collapsed}`)
+      }
+
+      if (typeof properties.tableColumns === 'number') {
         lines.push(`  table_columns: ${Math.max(1, Math.round(properties.tableColumns))}`)
       }
 

@@ -481,6 +481,7 @@ Supported properties:
 - `y`
 - `width` for floating nodes
 - `height` for floating nodes
+- `collapsed` for persisted open/closed node state
 - `table_columns`
 
 These blocks are intended for studio persistence, not hand-authoring.

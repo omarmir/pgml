@@ -77,9 +77,22 @@ Properties "sequence:user_number_seq" {
         x: 1188,
         y: 612,
         width: 308,
-        height: 156,
-        tableColumns: null
+        height: 156
       }
+    })
+  })
+
+  it('parses custom type properties blocks with collapsed state only', () => {
+    const source = `${baseSource}
+
+Properties "custom-type:Domain:email_address" {
+  collapsed: false
+}`
+
+    const model = parsePgml(source)
+
+    expect(model.nodeProperties['custom-type:Domain:email_address']).toEqual({
+      collapsed: false
     })
   })
 
@@ -115,12 +128,14 @@ Properties "group:Core" {
         y: 180,
         tableColumns: 2
       },
+      'custom-type:Domain:email_address': {
+        collapsed: false
+      },
       'sequence:user_number_seq': {
         x: 1260,
         y: 702,
         width: 308,
-        height: 156,
-        tableColumns: null
+        height: 156
       }
     })
 
@@ -130,6 +145,7 @@ Properties "group:Core" {
     expect(built).not.toContain('width:')
     expect(built).not.toContain('height:')
     expect(built).toContain('table_columns: 2')
+    expect(built).toContain('Properties "custom-type:Domain:email_address" {\n  collapsed: false\n}')
     expect(built).toContain('Properties "sequence:user_number_seq" {')
 
     const reparsed = parsePgml(built)
@@ -138,6 +154,8 @@ Properties "group:Core" {
     expect(reparsed.nodeProperties['group:Core']?.color).toBe('#14b8a6')
     expect(reparsed.nodeProperties['group:Core']?.tableColumns).toBe(2)
     expect(reparsed.nodeProperties['group:Core']?.width).toBeUndefined()
+    expect(reparsed.nodeProperties['custom-type:Domain:email_address']?.collapsed).toBe(false)
+    expect(reparsed.nodeProperties['custom-type:Domain:email_address']?.x).toBeUndefined()
     expect(reparsed.nodeProperties['sequence:user_number_seq']?.height).toBeUndefined()
   })
 })

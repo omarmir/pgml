@@ -2804,7 +2804,9 @@ const syncNodeStates = () => {
   for (const objectNode of objectNodes) {
     const existing = nodeStates.value[objectNode.id]
     const storedLayout = model.nodeProperties[objectNode.id]
-    const collapsed = existing?.collapsed ?? true
+    const collapsed = objectNode.objectKind === 'Custom Type'
+      ? storedLayout?.collapsed ?? existing?.collapsed ?? true
+      : existing?.collapsed ?? true
     const expandedHeight = Math.max(
       existing?.expandedHeight
       ?? (existing?.collapsed ? objectNode.expandedHeight || objectNode.height : existing?.height)
@@ -4262,11 +4264,23 @@ const resetView = () => {
 
 const getNodeLayoutProperties = () => {
   return Object.values(nodeStates.value).reduce<Record<string, PgmlNodeProperties>>((properties, node) => {
-    const nextProperties: PgmlNodeProperties = {
-      color: node.color,
-      x: Math.round(node.x),
-      y: Math.round(node.y),
-      tableColumns: node.kind === 'group' ? Math.max(1, Math.round(node.columnCount || 1)) : null
+    const nextProperties: PgmlNodeProperties = {}
+
+    if (node.kind === 'group') {
+      nextProperties.color = node.color
+      nextProperties.x = Math.round(node.x)
+      nextProperties.y = Math.round(node.y)
+      nextProperties.tableColumns = Math.max(1, Math.round(node.columnCount || 1))
+    }
+
+    if (node.kind === 'object' && node.objectKind !== 'Custom Type') {
+      nextProperties.color = node.color
+      nextProperties.x = Math.round(node.x)
+      nextProperties.y = Math.round(node.y)
+    }
+
+    if (node.kind === 'object' && node.objectKind === 'Custom Type') {
+      nextProperties.collapsed = node.collapsed
     }
 
     properties[node.id] = nextProperties
