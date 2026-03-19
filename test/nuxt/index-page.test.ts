@@ -3,15 +3,16 @@ import { readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
 
 describe('Landing page source', () => {
-  it('keeps the hero quick start preview focused on the function and trigger snippet', () => {
+  it('keeps the hero preview and the current documentation sections on the page', () => {
     const file = readFileSync('/home/omar/Code/pgml/app/pages/index.vue', 'utf8')
 
     expect(file).toContain('data-testid="hero-quick-start"')
+    expect(file).toContain('TableGroup Commerce')
+    expect(file).toContain('Table public.orders')
     expect(file).toContain('Function register_entity(entity_kind text) returns trigger [replace]')
-    expect(file).toContain('Trigger trg_register_fundingopportunity on public.funding_opportunity_profile')
-    expect(file).not.toContain('heroQuickStartCode = `TableGroup Programs {')
-    expect(file).toContain('data-testid="quick-start-example"')
-    expect(file).toContain('TableGroup Programs')
-    expect(file).toContain('Sequence common_entity_id_seq')
+    expect(file).toContain('id: \'reasons\'')
+    expect(file).toContain('id: \'dbml\'')
+    expect(file).toContain('id: \'documentation\'')
+    expect(file).toContain('Layout properties')
   })
 })

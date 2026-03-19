@@ -52,7 +52,7 @@ test('studio attaches table-scoped rows to tables and still lets floating nodes 
   expect(collapsedHeight).toBeLessThan(expandedHeight)
 })
 
-test('studio scrolls the editor to clicked floating cards and grouped tables', async ({ goto, page }) => {
+test('studio only scrolls the editor on double click for floating cards, grouped tables, and attachment rows', async ({ goto, page }) => {
   await goto('/diagram')
 
   const filler = Array.from({ length: 80 }, (_, index) => `// filler ${index + 1}`).join('\n')
@@ -60,6 +60,11 @@ test('studio scrolls the editor to clicked floating cards and grouped tables', a
 
 TableGroup Core {
   orders
+}
+
+Domain email_address {
+  base: text
+  check: VALUE <> ''
 }
 
 Table orders in Core {
@@ -75,23 +80,54 @@ Function orphan_report() {
   $sql$
 }`
   const editor = page.locator('[data-pgml-editor="true"]')
-
-  await editor.fill(source)
-  await expect(page.locator('[data-node-anchor="function:orphan_report"]')).toBeVisible()
-  await expect(page.locator('[data-table-anchor="public.orders"]')).toBeVisible()
-
-  await editor.evaluate((element: HTMLTextAreaElement) => {
-    element.scrollTop = 0
-    element.setSelectionRange(0, 0)
-  })
-  await page.locator('[data-node-anchor="function:orphan_report"]').click()
-  await expect.poll(async () => {
+  const readEditorState = async () => {
     return editor.evaluate((element: HTMLTextAreaElement) => {
       return {
         scrollTop: element.scrollTop,
         selectedText: element.value.slice(element.selectionStart, element.selectionEnd)
       }
     })
+  }
+  const resetEditorState = async () => {
+    await editor.evaluate((element: HTMLTextAreaElement) => {
+      element.scrollTop = 0
+      element.setSelectionRange(0, 0)
+    })
+  }
+
+  await editor.fill(source)
+  await expect(page.locator('[data-node-anchor="function:orphan_report"]')).toBeVisible()
+  await expect(page.locator('[data-node-anchor="custom-type:Domain:email_address"]')).toBeVisible()
+  await expect(page.locator('[data-table-anchor="public.orders"]')).toBeVisible()
+  await expect(page.locator('[data-attachment-row="index:idx_orders_total"]')).toBeVisible()
+
+  await resetEditorState()
+  await page.locator('[data-node-anchor="custom-type:Domain:email_address"]').click()
+  await expect.poll(async () => {
+    return (await readEditorState()).selectedText
+  }).toBe('')
+
+  await page.locator('[data-node-anchor="custom-type:Domain:email_address"]').dblclick()
+  await expect.poll(async () => {
+    return readEditorState()
+  }).toEqual(expect.objectContaining({
+    scrollTop: expect.any(Number),
+    selectedText: expect.stringContaining('Domain email_address')
+  }))
+
+  await expect.poll(async () => {
+    return editor.evaluate((element: HTMLTextAreaElement) => element.scrollTop)
+  }).toBeGreaterThan(0)
+
+  await resetEditorState()
+  await page.locator('[data-node-anchor="function:orphan_report"]').click()
+  await expect.poll(async () => {
+    return (await readEditorState()).selectedText
+  }).toBe('')
+
+  await page.locator('[data-node-anchor="function:orphan_report"]').dblclick()
+  await expect.poll(async () => {
+    return readEditorState()
   }).toEqual(expect.objectContaining({
     scrollTop: expect.any(Number),
     selectedText: `Function orphan_report() {
@@ -106,18 +142,15 @@ Function orphan_report() {
     return editor.evaluate((element: HTMLTextAreaElement) => element.scrollTop)
   }).toBeGreaterThan(0)
 
-  await editor.evaluate((element: HTMLTextAreaElement) => {
-    element.scrollTop = 0
-    element.setSelectionRange(0, 0)
-  })
+  await resetEditorState()
   await page.locator('[data-table-anchor="public.orders"]').click()
   await expect.poll(async () => {
-    return editor.evaluate((element: HTMLTextAreaElement) => {
-      return {
-        scrollTop: element.scrollTop,
-        selectedText: element.value.slice(element.selectionStart, element.selectionEnd)
-      }
-    })
+    return (await readEditorState()).selectedText
+  }).toBe('')
+
+  await page.locator('[data-table-anchor="public.orders"]').dblclick()
+  await expect.poll(async () => {
+    return readEditorState()
   }).toEqual(expect.objectContaining({
     scrollTop: expect.any(Number),
     selectedText: `Table orders in Core {
@@ -125,6 +158,24 @@ Function orphan_report() {
   total_cents integer
   Index idx_orders_total (total_cents)
 }`
+  }))
+
+  await expect.poll(async () => {
+    return editor.evaluate((element: HTMLTextAreaElement) => element.scrollTop)
+  }).toBeGreaterThan(0)
+
+  await resetEditorState()
+  await page.locator('[data-attachment-row="index:idx_orders_total"]').click()
+  await expect.poll(async () => {
+    return (await readEditorState()).selectedText
+  }).toBe('')
+
+  await page.locator('[data-attachment-row="index:idx_orders_total"]').dblclick()
+  await expect.poll(async () => {
+    return readEditorState()
+  }).toEqual(expect.objectContaining({
+    scrollTop: expect.any(Number),
+    selectedText: expect.stringContaining('Index idx_orders_total (total_cents)')
   }))
 
   await expect.poll(async () => {

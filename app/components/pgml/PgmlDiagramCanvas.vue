@@ -62,6 +62,7 @@ type TableAttachment = {
   tableId: string
   color: string
   flags: TableAttachmentFlag[]
+  sourceRange?: PgmlSourceRange
 }
 
 type TableRow = {
@@ -1913,7 +1914,8 @@ const tableAttachmentState = computed(() => {
           ],
           tableId,
           color: attachmentKindColors.Index,
-          flags: []
+          flags: [],
+          sourceRange: index.sourceRange
         })
       })
     })
@@ -1928,7 +1930,8 @@ const tableAttachmentState = computed(() => {
           details: [constraint.expression],
           tableId,
           color: attachmentKindColors.Constraint,
-          flags: []
+          flags: [],
+          sourceRange: constraint.sourceRange
         })
       })
     })
@@ -1944,7 +1947,8 @@ const tableAttachmentState = computed(() => {
         details: trigger.details,
         tableId,
         color: attachmentKindColors.Trigger,
-        flags: []
+        flags: [],
+        sourceRange: trigger.sourceRange
       })
     })
   })
@@ -1965,7 +1969,8 @@ const tableAttachmentState = computed(() => {
         color: attachmentKindColors.Function,
         flags: triggerTableIds.length
           ? [{ key: 'trigger-call', label: 'TRIGGER', color: triggerCallFlagColor }]
-          : []
+          : [],
+        sourceRange: routine.sourceRange
       })
     })
   })
@@ -1986,7 +1991,8 @@ const tableAttachmentState = computed(() => {
         color: attachmentKindColors.Procedure,
         flags: triggerTableIds.length
           ? [{ key: 'trigger-call', label: 'TRIGGER', color: triggerCallFlagColor }]
-          : []
+          : [],
+        sourceRange: procedure.sourceRange
       })
     })
   })
@@ -2003,7 +2009,8 @@ const tableAttachmentState = computed(() => {
         details: sequence.details,
         tableId,
         color: attachmentKindColors.Sequence,
-        flags: []
+        flags: [],
+        sourceRange: sequence.sourceRange
       })
     })
   })
@@ -4531,24 +4538,34 @@ const startResizeNode = (event: PointerEvent, id: string) => {
   window.addEventListener('pointerup', onUp)
 }
 
+const focusSourceRange = (sourceRange?: PgmlSourceRange) => {
+  if (!sourceRange) {
+    return
+  }
+
+  emit('focusSource', sourceRange)
+}
+
 const handleNodeClick = (node: CanvasNodeState) => {
   selectedNodeId.value = node.id
+}
 
+const handleNodeDoubleClick = (node: CanvasNodeState) => {
   if (node.kind !== 'object' || !node.sourceRange) {
     return
   }
 
-  emit('focusSource', node.sourceRange)
+  focusSourceRange(node.sourceRange)
 }
 
-const handleTableClick = (tableId: string) => {
+const handleTableDoubleClick = (tableId: string) => {
   const table = model.tables.find(candidate => candidate.fullName === tableId)
 
-  if (!table?.sourceRange) {
-    return
-  }
+  focusSourceRange(table?.sourceRange)
+}
 
-  emit('focusSource', table.sourceRange)
+const handleAttachmentDoubleClick = (attachment: TableAttachment) => {
+  focusSourceRange(attachment.sourceRange)
 }
 
 const handleEditTable = (tableId: string) => {
@@ -4699,6 +4716,7 @@ defineExpose<{
         :data-node-anchor="node.id"
         @pointerdown.capture="selectedNodeId = node.id"
         @click.stop="handleNodeClick(node)"
+        @dblclick.stop="handleNodeDoubleClick(node)"
       >
         <div
           v-if="node.kind === 'group'"
@@ -4793,7 +4811,7 @@ defineExpose<{
               class="min-w-0 self-start overflow-hidden rounded-[2px] border border-[color:var(--studio-shell-border)] bg-[color:var(--studio-table-surface)] transition-transform duration-150 hover:-translate-y-0.5 hover:ring-1 hover:ring-[color:var(--studio-ring)]"
               :style="{ width: `${groupTableWidth}px` }"
               :data-table-anchor="table.fullName"
-              @click.stop="handleTableClick(table.fullName)"
+              @dblclick.stop="handleTableDoubleClick(table.fullName)"
             >
               <div class="flex items-start justify-between gap-2 border-b border-[color:var(--studio-divider)] px-2 py-1.5">
                 <div class="min-w-0">
@@ -4879,6 +4897,7 @@ defineExpose<{
                       :aria-label="`${row.attachment.kind} ${row.attachment.title}`"
                       @pointerdown.stop
                       @click.stop
+                      @dblclick.stop="handleAttachmentDoubleClick(row.attachment)"
                     >
                       <div class="flex min-w-0 items-start gap-2">
                         <span

@@ -37,19 +37,33 @@
 html {
   background: #0a151d;
   color: #e2edf3;
-  overflow-x: hidden;
+  overflow-x: clip;
 }
 
 body {
   min-height: 100vh;
   color: inherit;
-  overflow-x: hidden;
+  overflow-x: clip;
   background: transparent;
 }
 
 #__nuxt {
   min-height: 100vh;
   background: transparent;
+}
+
+[data-studio-theme='dark'] .spec-code-block {
+  background:
+    linear-gradient(180deg, color-mix(in srgb, var(--studio-control-bg) 86%, white 14%), color-mix(in srgb, var(--studio-control-bg) 92%, white 8%));
+  box-shadow:
+    inset 0 1px 0 color-mix(in srgb, var(--studio-shell-text) 6%, transparent);
+}
+
+[data-studio-theme='light'] .spec-code-block {
+  background:
+    linear-gradient(180deg, color-mix(in srgb, var(--studio-control-bg) 88%, #d9d2c5 12%), color-mix(in srgb, var(--studio-control-bg) 92%, #cfc7b8 8%));
+  box-shadow:
+    inset 0 1px 0 color-mix(in srgb, var(--studio-shell-text) 4%, transparent);
 }
 
 [data-pgml-editor='true'] {

@@ -1,47 +1,80 @@
 <script setup lang="ts">
 const pageOutline = [
-  { id: 'overview', label: 'Overview' },
-  { id: 'quick-start', label: 'Quick Start' },
-  { id: 'core-blocks', label: 'Core Blocks' },
-  { id: 'postgres-objects', label: 'Postgres Objects' },
-  { id: 'coverage', label: 'Coverage' }
+  { id: 'reasons', label: 'Why PGML' },
+  { id: 'dbml', label: 'DBML Compatibility' },
+  { id: 'documentation', label: 'Documentation' }
 ]
 
-const writingPrinciples = [
+const reasons = [
   {
-    title: 'Stay close to DBML',
-    description: 'Reuse familiar DBML shapes where possible, then extend them only when Postgres needs more structure.'
+    title: 'Keep schema reviews readable',
+    description: 'Use PGML when raw SQL migrations are too noisy for design review and you want one document that explains the shape of the system.'
   },
   {
-    title: 'Keep source authoritative',
-    description: 'Use source blocks for verbatim SQL or PL/pgSQL, let PGML derive the routine or trigger metadata it can, and add docs or affects only when you need more clarity.'
+    title: 'Diff the intent, not just the SQL',
+    description: 'PGML keeps structure, behavior, and layout in one textual format, which makes pull request diffs easier to scan so reviewers can see exactly what changed.'
   },
   {
-    title: 'Treat Postgres objects as schema assets',
-    description: 'Indexes, triggers, sequences, functions, procedures, and types live in the same source artifact as tables.'
+    title: 'Model operational Postgres objects with the tables',
+    description: 'Functions, procedures, triggers, sequences, constraints, and custom types stay next to the relational model instead of being scattered across migration files.'
   },
   {
-    title: 'Author for reading first',
-    description: 'The source should be easy to scan, easy to diff, and legible enough to explain the model before any SQL is generated.'
+    title: 'Drive the visual studio from the source',
+    description: 'The same PGML document powers the diagram canvas, connector routing, local persistence, and saved layout state.'
+  },
+  {
+    title: 'Generate migrations deterministically',
+    description: 'Because the schema is captured in a structured document instead of ad hoc SQL edits, PGML can be used as a deterministic input for migration generation and change planning.'
+  },
+  {
+    title: 'Reduce AI ambiguity',
+    description: 'PGML gives AI tooling a clearer, schema-specific representation of intent. With a repo-aware PGML skill, that means less room for misreading requirements than working from loosely described SQL changes.'
+  },
+  {
+    title: 'Preserve intent, not just DDL',
+    description: 'PGML can keep docs, affects metadata, and embedded Properties blocks so the saved source explains what matters beyond the CREATE statement.'
   }
 ]
 
-const syntaxCards = [
+const dbmlComparison = [
   {
-    title: 'Table',
-    description: 'Keep table blocks close to DBML: columns first, then table-scoped indexes and constraints.',
+    title: 'Stays close to DBML',
+    points: [
+      'Table blocks keep the familiar DBML shape.',
+      'Inline column attributes like pk, unique, not null, and ref stay compact.',
+      'TableGroup keeps the one-table-per-line pattern for domain grouping.',
+      'The source remains block-based and easy to diff.'
+    ]
+  },
+  {
+    title: 'Extends where Postgres needs more',
+    points: [
+      'Adds first-class functions, procedures, triggers, sequences, and custom types.',
+      'Supports source-first executable objects with embedded SQL or PL/pgSQL.',
+      'Allows docs and affects blocks when you need explicit narrative or dependency hints.',
+      'Persists studio state back into PGML with Properties blocks.'
+    ]
+  }
+]
+
+const documentationExamples = [
+  {
+    title: 'Tables and references',
+    description: 'Start with DBML-like table blocks. Keep columns first, then table-level indexes and constraints.',
     code: `Table public.orders {
   id uuid [pk]
   tenant_id uuid [not null, ref: > public.tenants.id]
   customer_id uuid [ref: > public.users.id]
   total_cents integer [not null]
+  status text [not null]
+
   Index idx_orders_status (status) [type: btree]
   Constraint chk_total: total_cents >= 0
 }`
   },
   {
-    title: 'TableGroup',
-    description: 'Use DBML-style group blocks with one table per line so related domains cluster in source and in the studio.',
+    title: 'Table groups',
+    description: 'Use TableGroup to cluster related tables in source and in the studio canvas.',
     code: `TableGroup Commerce {
   products
   orders
@@ -50,25 +83,8 @@ const syntaxCards = [
 }`
   },
   {
-    title: 'Properties',
-    description: 'Use Properties blocks to persist studio layout and presentation state back into PGML so a saved schema can reopen with the same positions, colors, and collapsed state.',
-    code: `Properties "group:Commerce" {
-  x: 540
-  y: 120
-  color: #f59e0b
-  table_columns: 1
-}
-
-Properties "custom-type:Domain:email_address" {
-  x: 1180
-  y: 460
-  color: #14b8a6
-  collapsed: false
-}`
-  },
-  {
-    title: 'Executable source',
-    description: 'Functions, triggers, and sequences can stay source-first: PGML derives the operational metadata it can, while docs and affects stay optional overlays.',
+    title: 'Executable objects',
+    description: 'Use source blocks for the real SQL, then layer docs or affects only when they help explain behavior.',
     code: `Function register_entity(entity_kind text) returns trigger [replace] {
   docs {
     summary: "Allocates a Common_Entity row and assigns NEW.id."
@@ -87,35 +103,6 @@ Properties "custom-type:Domain:email_address" {
     END;
     $$ LANGUAGE plpgsql;
   $sql$
-}`
-  },
-  {
-    title: 'Operational objects',
-    description: 'A trigger or sequence can rely on source for execution details, then add only the extra narrative or impact hints you care about.',
-    code: `Trigger trg_register_fundingopportunity on public.funding_opportunity_profile {
-  docs {
-    summary: "Allocates a shared entity id before insert."
-  }
-
-  source: $sql$
-    CREATE TRIGGER trg_register_fundingopportunity
-      BEFORE INSERT ON public.funding_opportunity_profile
-      FOR EACH ROW
-      EXECUTE FUNCTION public.register_entity('fundingopportunity');
-  $sql$
-}`
-  }
-]
-
-const heroQuickStartCode = `Function register_entity(entity_kind text) returns trigger [replace] {
-  source: $sql$
-    CREATE OR REPLACE FUNCTION public.register_entity(entity_kind text)
-    RETURNS trigger AS $$
-    BEGIN
-      RETURN NEW;
-    END;
-    $$ LANGUAGE plpgsql;
-  $sql$
 }
 
 Trigger trg_register_fundingopportunity on public.funding_opportunity_profile {
@@ -126,38 +113,40 @@ Trigger trg_register_fundingopportunity on public.funding_opportunity_profile {
       EXECUTE FUNCTION public.register_entity('fundingopportunity');
   $sql$
 }`
-
-const quickStartCode = `TableGroup Programs {
-  common_entity
-  funding_opportunity_profile
-  Note: Shared entity registration hooks
+  },
+  {
+    title: 'Layout properties',
+    description: 'The studio writes Properties blocks back into PGML so the document can reopen with the same layout and presentation state.',
+    code: `Properties "group:Commerce" {
+  x: 540
+  y: 120
+  color: #f59e0b
+  table_columns: 1
 }
 
-Sequence common_entity_id_seq {
-  docs {
-    summary: "Allocates ids for the shared Common_Entity table."
+Properties "custom-type:Domain:email_address" {
+  x: 1180
+  y: 460
+  color: #14b8a6
+  collapsed: false
+}`
   }
+]
 
-  source: $sql$
-    CREATE SEQUENCE public.common_entity_id_seq
-      AS bigint
-      START WITH 1000
-      INCREMENT BY 1
-      CACHE 25
-      OWNED BY public.common_entity.id;
-  $sql$
+const heroQuickStartCode = `TableGroup Commerce {
+  products
+  orders
+  order_items
+}
+
+Table public.orders {
+  id uuid [pk]
+  tenant_id uuid [not null, ref: > public.tenants.id]
+  customer_id uuid [ref: > public.users.id]
+  total_cents integer [not null]
 }
 
 Function register_entity(entity_kind text) returns trigger [replace] {
-  docs {
-    summary: "Allocates a Common_Entity row and assigns NEW.id."
-  }
-
-  affects {
-    writes: [public.common_entity]
-    sets: [public.funding_opportunity_profile.id]
-  }
-
   source: $sql$
     CREATE OR REPLACE FUNCTION public.register_entity(entity_kind text)
     RETURNS trigger AS $$
@@ -166,58 +155,7 @@ Function register_entity(entity_kind text) returns trigger [replace] {
     END;
     $$ LANGUAGE plpgsql;
   $sql$
-}
-
-Trigger trg_register_fundingopportunity on public.funding_opportunity_profile {
-  docs {
-    summary: "Runs the shared entity registration function before insert."
-  }
-
-  source: $sql$
-    CREATE TRIGGER trg_register_fundingopportunity
-      BEFORE INSERT ON public.funding_opportunity_profile
-      FOR EACH ROW
-      EXECUTE FUNCTION public.register_entity('fundingopportunity');
-  $sql$
 }`
-
-const supportedFeatures = [
-  {
-    label: 'Tables',
-    detail: 'Columns, notes, inline refs, table-level indexes, checks, unique constraints, and keys.'
-  },
-  {
-    label: 'Table groups',
-    detail: 'DBML-style table lists used to cluster domains and drive grouped layout on the canvas.'
-  },
-  {
-    label: 'Functions and procedures',
-    detail: 'Routine blocks can stay source-first while still carrying prose docs, extracted metadata, and explicit impact hints when needed.'
-  },
-  {
-    label: 'Triggers and sequences',
-    detail: 'Operational objects can expose timing, ownership, and target tables from full CREATE statements while still linking back to tables and fields.'
-  },
-  {
-    label: 'Custom Postgres types',
-    detail: 'Enums, domains, and composites represented as first-class schema definitions.'
-  },
-  {
-    label: 'Embedded layout properties',
-    detail: 'Properties blocks persist canvas position, color, collapsed state, and group column count directly in PGML.'
-  }
-]
-
-const roadmap = [
-  'Partitioned tables',
-  'GIN, GiST, BRIN, hash, and more index families',
-  'Views and materialized views',
-  'Schemas and extensions',
-  'Foreign tables and FDWs',
-  'Operators and operator classes',
-  'Collations and text search configuration',
-  'Rules, casts, publications, and subscriptions'
-]
 </script>
 
 <template>
@@ -232,11 +170,9 @@ const roadmap = [
             Write Postgres as a readable schema document instead of raw SQL.
           </h1>
           <p class="max-w-2xl text-sm leading-7 text-[color:var(--studio-shell-muted)] sm:text-[0.97rem]">
-            PGML starts with DBML ergonomics, then adds the Postgres objects that matter once a schema becomes real:
-            indexes, triggers, functions, procedures, sequences, constraints, and custom types. The source stays compact enough
-            to read in a pull request and structured enough to drive a full visual model. For executable objects, PGML can now keep
-            verbatim SQL or PL/pgSQL in a <span class="font-mono text-[color:var(--studio-shell-text)]">source</span> block alongside
-            optional <span class="font-mono text-[color:var(--studio-shell-text)]">docs</span> and <span class="font-mono text-[color:var(--studio-shell-text)]">affects</span> sections, with routine, trigger, and sequence metadata derived from source when possible.
+            PGML stays close to DBML for tables and references, then extends it for the Postgres objects that shape real systems:
+            functions, procedures, triggers, sequences, constraints, custom types, and embedded layout state. The goal is simple:
+            one source file that is easy to read in a pull request and useful enough to drive the diagram studio directly.
           </p>
         </div>
 
@@ -249,41 +185,12 @@ const roadmap = [
             class="rounded-none border border-[color:var(--studio-shell-border)] bg-[color:var(--studio-control-bg)] text-[color:var(--studio-shell-text)] hover:bg-[color:var(--studio-surface-hover)]"
           />
           <UButton
-            to="#quick-start"
-            label="Read the syntax"
+            to="#documentation"
+            label="Read the docs"
             color="neutral"
             variant="ghost"
             class="rounded-none border border-transparent text-[color:var(--studio-shell-muted)] hover:border-[color:var(--studio-shell-border)] hover:bg-[color:var(--studio-surface-hover)] hover:text-[color:var(--studio-shell-text)]"
           />
-        </div>
-
-        <div class="grid gap-3 sm:grid-cols-3">
-          <div class="border border-[color:var(--studio-shell-border)] bg-[color:var(--studio-control-bg)] px-4 py-3">
-            <div class="font-mono text-[0.68rem] uppercase tracking-[0.16em] text-[color:var(--studio-shell-label)]">
-              Format
-            </div>
-            <p class="mt-2 text-sm text-[color:var(--studio-shell-text)]">
-              DBML-like blocks with Postgres-native objects.
-            </p>
-          </div>
-
-          <div class="border border-[color:var(--studio-shell-border)] bg-[color:var(--studio-control-bg)] px-4 py-3">
-            <div class="font-mono text-[0.68rem] uppercase tracking-[0.16em] text-[color:var(--studio-shell-label)]">
-              Studio
-            </div>
-            <p class="mt-2 text-sm text-[color:var(--studio-shell-text)]">
-              Grouped canvas with object-to-table impact lines.
-            </p>
-          </div>
-
-          <div class="border border-[color:var(--studio-shell-border)] bg-[color:var(--studio-control-bg)] px-4 py-3">
-            <div class="font-mono text-[0.68rem] uppercase tracking-[0.16em] text-[color:var(--studio-shell-label)]">
-              Direction
-            </div>
-            <p class="mt-2 text-sm text-[color:var(--studio-shell-text)]">
-              Documentation first, SQL generation later.
-            </p>
-          </div>
         </div>
       </div>
 
@@ -291,20 +198,20 @@ const roadmap = [
         <div class="flex items-center justify-between border-b border-[color:var(--studio-shell-border)] px-4 py-3">
           <div>
             <div class="font-mono text-[0.68rem] uppercase tracking-[0.16em] text-[color:var(--studio-shell-label)]">
-              Quick Start
+              Example
             </div>
             <p class="mt-1 text-sm text-[color:var(--studio-shell-muted)]">
-              A compact function-and-trigger draft for the source-first workflow.
+              A compact PGML draft with groups, tables, and executable source.
             </p>
           </div>
           <span class="border border-[color:var(--studio-shell-border)] px-2 py-1 font-mono text-[0.68rem] uppercase tracking-[0.14em] text-[color:var(--studio-shell-muted)]">
-            Spec Draft
+            Spec
           </span>
         </div>
 
         <pre
           data-testid="hero-quick-start"
-          class="max-w-full overflow-x-auto px-4 py-4 font-mono text-[0.77rem] leading-6 text-[color:var(--studio-shell-text)] sm:text-[0.8rem]"
+          class="spec-code-block max-w-full overflow-x-auto px-4 py-4 font-mono text-[0.77rem] leading-6 text-[color:var(--studio-shell-text)] sm:text-[0.8rem]"
         >{{ heroQuickStartCode }}</pre>
       </div>
     </section>
@@ -331,186 +238,116 @@ const roadmap = [
 
       <div class="flex min-w-0 flex-col gap-10">
         <section
-          id="overview"
-          class="scroll-mt-24 border-t border-[color:var(--studio-shell-border)] pt-6"
+          id="reasons"
+          class="scroll-mt-24 pt-0"
         >
-          <div class="grid gap-5 lg:grid-cols-[minmax(0,1.1fr)_minmax(260px,0.9fr)]">
+          <div class="flex flex-col gap-6">
             <div class="flex flex-col gap-4">
               <div>
                 <div class="font-mono text-[0.72rem] uppercase tracking-[0.16em] text-[color:var(--studio-shell-label)]">
-                  Overview
+                  Why PGML
                 </div>
                 <h2 class="mt-2 text-2xl font-semibold tracking-[-0.02em] text-[color:var(--studio-shell-text)]">
-                  PGML is meant to read like architecture, not migration output.
+                  Use PGML when the schema is part structure, part behavior, and part documentation.
                 </h2>
               </div>
 
-              <p class="max-w-3xl text-sm leading-7 text-[color:var(--studio-shell-muted)]">
-                The goal is a source format that captures the shape of a Postgres system in one place. Tables and relationships remain central,
-                but the surrounding operational objects stay visible too, so a diagram can show what changes data, what constrains it, and what depends on it.
+              <p class="max-w-4xl text-sm leading-7 text-[color:var(--studio-shell-muted)]">
+                DBML is strong for relational structure. PGML is for the point where that structure is no longer enough on its own:
+                Postgres-specific behavior starts mattering, the diagram needs to stay in sync with the source, and the document needs
+                to explain more than tables and foreign keys. It is also much easier to diff in reviews, can act as a deterministic
+                source for migration generation, and gives AI tooling a format that carries intent more explicitly than free-form schema discussions.
               </p>
             </div>
 
-            <div class="grid gap-3">
-              <div
-                v-for="principle in writingPrinciples"
-                :key="principle.title"
-                class="border border-[color:var(--studio-shell-border)] bg-[color:var(--studio-control-bg)] px-4 py-3"
+            <div class="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+              <article
+                v-for="reason in reasons"
+                :key="reason.title"
+                class="border border-[color:var(--studio-shell-border)] bg-[color:var(--studio-control-bg)] px-4 py-4"
               >
                 <h3 class="text-sm font-semibold text-[color:var(--studio-shell-text)]">
-                  {{ principle.title }}
+                  {{ reason.title }}
                 </h3>
                 <p class="mt-2 text-sm leading-6 text-[color:var(--studio-shell-muted)]">
-                  {{ principle.description }}
+                  {{ reason.description }}
                 </p>
-              </div>
-            </div>
-          </div>
-        </section>
-
-        <section
-          id="quick-start"
-          class="scroll-mt-24 border-t border-[color:var(--studio-shell-border)] pt-6"
-        >
-          <div class="flex flex-col gap-4">
-            <div>
-              <div class="font-mono text-[0.72rem] uppercase tracking-[0.16em] text-[color:var(--studio-shell-label)]">
-                Quick Start
-              </div>
-              <h2 class="mt-2 text-2xl font-semibold tracking-[-0.02em] text-[color:var(--studio-shell-text)]">
-                Start with groups, then declare tables and Postgres objects around them.
-              </h2>
-            </div>
-
-            <div class="grid gap-4 lg:grid-cols-[minmax(0,1.15fr)_minmax(260px,0.85fr)]">
-              <div class="min-w-0 border border-[color:var(--studio-shell-border)] bg-[color:var(--studio-control-bg)]">
-                <div class="border-b border-[color:var(--studio-shell-border)] px-4 py-3 font-mono text-[0.68rem] uppercase tracking-[0.16em] text-[color:var(--studio-shell-label)]">
-                  Example
-                </div>
-                <pre
-                  data-testid="quick-start-example"
-                  class="max-w-full overflow-x-auto px-4 py-4 font-mono text-[0.77rem] leading-6 text-[color:var(--studio-shell-text)] sm:text-[0.8rem]"
-                >{{ quickStartCode }}</pre>
-              </div>
-
-              <div class="border border-[color:var(--studio-shell-border)] bg-[color:var(--studio-shell-bg)] p-4">
-                <div class="font-mono text-[0.68rem] uppercase tracking-[0.16em] text-[color:var(--studio-shell-label)]">
-                  Reading order
-                </div>
-                <div class="mt-4 flex flex-col gap-4 text-sm leading-6 text-[color:var(--studio-shell-muted)]">
-                  <p><span class="text-[color:var(--studio-shell-text)]">1.</span> Use <span class="font-mono text-[color:var(--studio-shell-text)]">TableGroup</span> to describe the domain cluster.</p>
-                  <p><span class="text-[color:var(--studio-shell-text)]">2.</span> Define the tables with inline refs and local constraints.</p>
-                  <p><span class="text-[color:var(--studio-shell-text)]">3.</span> Use <span class="font-mono text-[color:var(--studio-shell-text)]">source</span> for executable SQL, then add <span class="font-mono text-[color:var(--studio-shell-text)]">docs</span> or <span class="font-mono text-[color:var(--studio-shell-text)]">affects</span> only when you want extra explanation or stronger impact hints.</p>
-                  <p><span class="text-[color:var(--studio-shell-text)]">4.</span> Open the studio to inspect connector impact, grouped layout, and table-attached index, constraint, routine, trigger, and sequence rows with popovers.</p>
-                </div>
-              </div>
-            </div>
-          </div>
-        </section>
-
-        <section
-          id="core-blocks"
-          class="scroll-mt-24 border-t border-[color:var(--studio-shell-border)] pt-6"
-        >
-          <div class="flex flex-col gap-4">
-            <div>
-              <div class="font-mono text-[0.72rem] uppercase tracking-[0.16em] text-[color:var(--studio-shell-label)]">
-                Core Blocks
-              </div>
-              <h2 class="mt-2 text-2xl font-semibold tracking-[-0.02em] text-[color:var(--studio-shell-text)]">
-                The current language surface stays compact and block-based.
-              </h2>
-              <p class="mt-3 max-w-3xl text-sm leading-7 text-[color:var(--studio-shell-muted)]">
-                The recommended pattern is: keep executable SQL in <span class="font-mono text-[color:var(--studio-shell-text)]">source</span>,
-                let PGML extract routine, trigger, and sequence metadata where it can, add human explanation in
-                <span class="font-mono text-[color:var(--studio-shell-text)]">docs</span>, and use
-                <span class="font-mono text-[color:var(--studio-shell-text)]">affects</span> only when you want to make table or field impact explicit.
-                When the diagram studio saves layout, it writes that state back into <span class="font-mono text-[color:var(--studio-shell-text)]">Properties</span> blocks in the same document.
-              </p>
-            </div>
-
-            <div class="grid gap-4 xl:grid-cols-2">
-              <article
-                v-for="card in syntaxCards"
-                :key="card.title"
-                class="border border-[color:var(--studio-shell-border)] bg-[color:var(--studio-control-bg)]"
-              >
-                <div class="border-b border-[color:var(--studio-shell-border)] px-4 py-3">
-                  <h3 class="text-sm font-semibold text-[color:var(--studio-shell-text)]">
-                    {{ card.title }}
-                  </h3>
-                  <p class="mt-2 text-sm leading-6 text-[color:var(--studio-shell-muted)]">
-                    {{ card.description }}
-                  </p>
-                </div>
-
-                <pre class="max-w-full overflow-x-auto px-4 py-4 font-mono text-[0.77rem] leading-6 text-[color:var(--studio-shell-text)] sm:text-[0.8rem]">{{ card.code }}</pre>
               </article>
             </div>
           </div>
         </section>
 
         <section
-          id="postgres-objects"
+          id="dbml"
           class="scroll-mt-24 border-t border-[color:var(--studio-shell-border)] pt-6"
         >
           <div class="flex flex-col gap-4">
             <div>
               <div class="font-mono text-[0.72rem] uppercase tracking-[0.16em] text-[color:var(--studio-shell-label)]">
-                Postgres Objects
+                DBML Compatibility
               </div>
               <h2 class="mt-2 text-2xl font-semibold tracking-[-0.02em] text-[color:var(--studio-shell-text)]">
-                Model the objects that shape behavior around the tables.
+                PGML is intentionally close to DBML, then opinionated where Postgres needs more surface area.
               </h2>
             </div>
 
-            <div class="grid gap-3 lg:grid-cols-2">
-              <div
-                v-for="feature in supportedFeatures"
-                :key="feature.label"
-                class="border border-[color:var(--studio-shell-border)] bg-[color:var(--studio-shell-bg)] px-4 py-4"
+            <div class="grid gap-4 lg:grid-cols-2">
+              <article
+                v-for="section in dbmlComparison"
+                :key="section.title"
+                class="border border-[color:var(--studio-shell-border)] bg-[color:var(--studio-control-bg)] p-4"
               >
                 <h3 class="text-sm font-semibold text-[color:var(--studio-shell-text)]">
-                  {{ feature.label }}
+                  {{ section.title }}
                 </h3>
-                <p class="mt-2 text-sm leading-6 text-[color:var(--studio-shell-muted)]">
-                  {{ feature.detail }}
-                </p>
-              </div>
+                <div class="mt-4 flex flex-col gap-3 text-sm leading-6 text-[color:var(--studio-shell-muted)]">
+                  <p
+                    v-for="point in section.points"
+                    :key="point"
+                  >
+                    {{ point }}
+                  </p>
+                </div>
+              </article>
             </div>
           </div>
         </section>
 
         <section
-          id="coverage"
+          id="documentation"
           class="scroll-mt-24 border-t border-[color:var(--studio-shell-border)] pt-6"
         >
-          <div class="grid gap-4 lg:grid-cols-2">
-            <div class="border border-[color:var(--studio-shell-border)] bg-[color:var(--studio-control-bg)] p-4">
-              <div class="font-mono text-[0.68rem] uppercase tracking-[0.16em] text-[color:var(--studio-shell-label)]">
-                In This App Today
+          <div class="flex flex-col gap-4">
+            <div>
+              <div class="font-mono text-[0.72rem] uppercase tracking-[0.16em] text-[color:var(--studio-shell-label)]">
+                Documentation
               </div>
-              <div class="mt-4 flex flex-col gap-3 text-sm leading-6 text-[color:var(--studio-shell-muted)]">
-                <p>Tables with columns, notes, inline refs, constraints, and indexes.</p>
-                <p>DBML-style table groups for domain clustering and grouped layout.</p>
-                <p>Functions, procedures, triggers, sequences, enums, domains, and composite types.</p>
-                <p>Embedded <span class="font-mono text-[color:var(--studio-shell-text)]">Properties</span> blocks for persisted studio layout and node presentation state.</p>
-                <p>Canvas visualization that shows how non-table objects attach back to the relational model.</p>
-              </div>
+              <h2 class="mt-2 text-2xl font-semibold tracking-[-0.02em] text-[color:var(--studio-shell-text)]">
+                The language is block-based, readable, and meant to be learned from examples.
+              </h2>
+              <p class="mt-3 max-w-3xl text-sm leading-7 text-[color:var(--studio-shell-muted)]">
+                Start with table structure, add groups to cluster domains, use source blocks for executable objects, and let the studio
+                persist layout back into the same document with Properties. The examples below cover the current surface area used by this app.
+              </p>
             </div>
 
-            <div class="border border-[color:var(--studio-shell-border)] bg-[color:var(--studio-shell-bg)] p-4">
-              <div class="font-mono text-[0.68rem] uppercase tracking-[0.16em] text-[color:var(--studio-shell-label)]">
-                Coverage Roadmap
-              </div>
-              <div class="mt-4 flex flex-col gap-3 text-sm leading-6 text-[color:var(--studio-shell-muted)]">
-                <p
-                  v-for="item in roadmap"
-                  :key="item"
-                >
-                  {{ item }}
-                </p>
-              </div>
+            <div class="flex flex-col gap-4">
+              <article
+                v-for="example in documentationExamples"
+                :key="example.title"
+                class="grid gap-0 border border-[color:var(--studio-shell-border)] bg-[color:var(--studio-control-bg)] xl:grid-cols-[minmax(240px,0.34fr)_minmax(0,0.66fr)]"
+              >
+                <div class="border-b border-[color:var(--studio-shell-border)] px-4 py-4 xl:border-r xl:border-b-0">
+                  <h3 class="text-sm font-semibold text-[color:var(--studio-shell-text)]">
+                    {{ example.title }}
+                  </h3>
+                  <p class="mt-2 text-sm leading-6 text-[color:var(--studio-shell-muted)]">
+                    {{ example.description }}
+                  </p>
+                </div>
+
+                <pre class="spec-code-block max-w-full overflow-x-auto px-4 py-4 font-mono text-[0.77rem] leading-6 text-[color:var(--studio-shell-text)] sm:text-[0.8rem]">{{ example.code }}</pre>
+              </article>
             </div>
           </div>
         </section>

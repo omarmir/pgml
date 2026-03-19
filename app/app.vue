@@ -58,8 +58,8 @@ const shellContainerClass = computed(() => {
 })
 const headerInnerClass = computed(() => {
   return isStudioRoute.value
-    ? 'relative flex min-h-16 items-center justify-between gap-4 px-4 py-3 sm:px-6 lg:px-8'
-    : 'flex min-h-16 items-center justify-between gap-4 py-3'
+    ? 'relative flex min-h-[4.25rem] items-center justify-between gap-4 px-4 py-[0.9rem] sm:px-6 lg:px-8'
+    : 'flex min-h-[4.25rem] items-center justify-between gap-4 py-[0.9rem]'
 })
 const mainClass = computed(() => {
   return isStudioRoute.value
@@ -135,7 +135,7 @@ const studioSchemaStatusIconClass = computed(() => {
                 <span class="font-mono text-[0.72rem] uppercase tracking-[0.14em] text-[color:var(--studio-shell-label)]">
                   PGML
                 </span>
-                <span class="truncate text-base font-medium leading-[1.15] text-[color:var(--studio-shell-muted)] sm:text-[1.05rem]">
+                <span class="truncate pb-px text-base font-medium leading-[1.25] text-[color:var(--studio-shell-muted)] sm:text-[1.05rem]">
                   Postgres in markup
                 </span>
               </span>
