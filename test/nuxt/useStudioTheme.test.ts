@@ -71,6 +71,7 @@ describe('studio theme persistence', () => {
     expect(wrapper.get('[data-testid="theme-toggle"]').text()).toBe('light')
     expect(document.documentElement.dataset.studioTheme).toBe('light')
     expect(document.documentElement.style.getPropertyValue('--studio-shell-bg')).toBe('#f4f1ea')
+    expect(document.documentElement.style.getPropertyValue('--studio-editor-punctuation')).toBe('#475569')
 
     toggleTheme?.()
     await nextTick()
@@ -79,6 +80,7 @@ describe('studio theme persistence', () => {
     expect(window.localStorage.getItem('pgml-studio-theme')).toBe('dark')
     expect(document.documentElement.dataset.studioTheme).toBe('dark')
     expect(document.documentElement.style.getPropertyValue('--studio-shell-bg')).toBe('#0a151d')
+    expect(document.documentElement.style.getPropertyValue('--studio-editor-punctuation')).toBe('rgba(226, 232, 240, 0.72)')
   })
 
   it('keeps theme tokens on the document instead of duplicating them on the app shell', async () => {

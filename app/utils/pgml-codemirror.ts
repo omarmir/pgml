@@ -41,7 +41,7 @@ const pgmlHighlightStyle = HighlightStyle.define([
   { tag: tags.typeName, color: '#c084fc' },
   { tag: tags.className, color: 'color-mix(in srgb, var(--studio-shell-text) 52%, var(--studio-shell-label) 48%)', fontWeight: '500' },
   { tag: tags.operator, color: '#fb7185' },
-  { tag: [tags.punctuation, tags.separator], color: 'rgba(226,232,240,0.65)' }
+  { tag: [tags.punctuation, tags.separator], color: 'var(--studio-editor-punctuation)' }
 ])
 
 const pgmlEditorTheme = EditorView.theme({
@@ -80,6 +80,14 @@ const pgmlEditorTheme = EditorView.theme({
   },
   '.cm-activeLine': {
     backgroundColor: 'rgba(148, 163, 184, 0.05)'
+  },
+  '.cm-matchingBracket': {
+    color: 'var(--studio-shell-text)',
+    backgroundColor: 'color-mix(in srgb, var(--studio-shell-label) 12%, transparent)',
+    outline: '1px solid color-mix(in srgb, var(--studio-shell-label) 24%, transparent)'
+  },
+  '.cm-nonmatchingBracket': {
+    color: 'var(--studio-shell-error)'
   },
   '.cm-selectionBackground, ::selection': {
     backgroundColor: 'rgba(245, 158, 11, 0.22) !important'
