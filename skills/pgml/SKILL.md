@@ -10,6 +10,8 @@ Use this skill to interpret PGML documents in this repository and turn them into
 
 Treat PGML as a Postgres-first extension of DBML. Keep the language close to DBML for table structure, then extend the mental model for Postgres-native objects such as functions, procedures, triggers, sequences, constraints, and custom types. Favor the current parser behavior over speculative syntax. In this repo, the canonical runtime behavior lives in `app/utils/pgml.ts`; the public language narrative lives in `README.md` and the homepage examples in `app/pages/index.vue`.
 
+Treat `TableGroup` as a source-organization and studio-layout concept, not as a PostgreSQL schema namespace. PostgreSQL schema is carried by the table name itself, for example `public.orders` or `billing.invoices`. A group like `TableGroup Commerce { ... }` does not create, rename, or imply a PostgreSQL schema.
+
 ## When To Use This Skill
 
 Load this skill when the task involves any of the following:
@@ -96,6 +98,7 @@ When reconstructing SQL from declarative PGML instead of embedded source, mark t
 Keep these distinctions straight:
 
 - `Table`, `Enum`, `Domain`, `Composite`, `Sequence`, `Function`, `Procedure`, and `Trigger` describe schema assets.
+- `TableGroup` organizes tables in source and in the diagram studio; it does not map to a PostgreSQL schema.
 - `docs {}` explains why an asset exists.
 - `affects {}` describes operational impact and dependency hints.
 - `Properties "..." {}` persists studio layout and presentation state; it is not database DDL.
@@ -131,6 +134,7 @@ Apply these translation rules:
 - `Constraint chk_name: expr` -> `CONSTRAINT chk_name CHECK (expr)` unless the expression clearly indicates a different constraint form
 
 Treat `note:` as documentation, not automatic SQL. Only emit `COMMENT ON` statements if the task explicitly asks for comment DDL.
+Do not emit `CREATE SCHEMA` or infer table namespace changes from `TableGroup`; schema comes from the qualified table name, not group membership.
 
 Use `references/pgml-to-postgres-sql.md` for fuller translation rules and output ordering.
 

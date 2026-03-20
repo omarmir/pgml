@@ -20,6 +20,88 @@ test('table edit modal can rename a table and add a new grouped table', async ({
   await expect(page.getByPlaceholder('Paste PGML here...')).toHaveValue(/TableGroup Core \{\n {2}tenants\n {2}accounts\n {2}roles\n {2}audit_log/)
 })
 
+test('group editor can create and rename table groups from the diagram canvas', async ({ goto, page }) => {
+  await goto('/diagram')
+
+  const editor = page.getByPlaceholder('Paste PGML here...')
+
+  await page.locator('[data-diagram-create-group="true"]').click()
+  await page.locator('[data-group-editor-name="true"]').fill('Billing')
+  await page.locator('[data-group-editor-note="true"]').fill('Invoices and payouts')
+  await page.locator('[data-group-editor-save="true"]').click()
+
+  await expect(editor).toHaveValue(/TableGroup Billing \{\n {2}Note: Invoices and payouts\n\}/)
+  await expect(page.locator('[data-node-anchor="group:Billing"]')).toBeVisible()
+
+  await page.locator('[data-browser-group-edit="Billing"]').click()
+  await page.locator('[data-group-editor-name="true"]').fill('BillingOps')
+  await page.locator('[data-group-editor-note="true"]').fill('Revenue operations and settlement.')
+  await page.locator('[data-group-editor-save="true"]').click()
+
+  await expect(editor).toHaveValue(/TableGroup BillingOps \{\n {2}Note: Revenue operations and settlement\.\n\}/)
+  await expect(editor).not.toHaveValue(/TableGroup Billing \{/)
+  await expect(page.locator('[data-node-anchor="group:BillingOps"]')).toBeVisible()
+})
+
+test('ungrouped tables render as floating nodes instead of an Ungrouped lane', async ({ goto, page }) => {
+  await goto('/diagram')
+
+  const editor = page.getByPlaceholder('Paste PGML here...')
+  const baseSource = await editor.inputValue()
+
+  await editor.fill(`${baseSource}
+
+Table public.audit_entries {
+  id uuid [pk, not null]
+  body text
+}`)
+
+  await expect(page.locator('[data-node-anchor="group:Ungrouped"]')).toHaveCount(0)
+  await expect(page.locator('[data-node-anchor="public.audit_entries"]')).toBeVisible()
+  await expect(page.locator('[data-table-anchor="public.audit_entries"]')).toBeVisible()
+
+  await page.locator('[data-diagram-panel-tab="entities"]').click()
+
+  await expect(page.getByText('Ungrouped Tables')).toBeVisible()
+  await expect(page.locator('[data-browser-entity-row="public.audit_entries"]')).toBeVisible()
+  await expect(page.locator('[data-browser-entity-row="group:Ungrouped"]')).toHaveCount(0)
+})
+
+test('floating ungrouped tables grow tall enough to contain all rendered rows', async ({ goto, page }) => {
+  await goto('/diagram')
+
+  const editor = page.getByPlaceholder('Paste PGML here...')
+  const baseSource = await editor.inputValue()
+
+  await editor.fill(`${baseSource}
+
+Table public.audit_entries {
+  id uuid [pk, not null]
+  tenant_id uuid [not null]
+  actor_id uuid
+  event_name text [not null]
+  target_type text
+  target_id uuid
+  payload jsonb
+  created_at timestamp [not null]
+}`)
+
+  const tableNode = page.locator('[data-node-anchor="public.audit_entries"]')
+  const lastRow = page.locator('[data-table-anchor="public.audit_entries"] [data-table-row-anchor="public.audit_entries.created_at"]')
+
+  await expect(tableNode).toBeVisible()
+  await expect(lastRow).toBeVisible()
+
+  const tableBox = await tableNode.boundingBox()
+  const lastRowBox = await lastRow.boundingBox()
+
+  if (!tableBox || !lastRowBox) {
+    throw new Error('Floating ungrouped table is not measurable.')
+  }
+
+  expect(lastRowBox.y + lastRowBox.height).toBeLessThanOrEqual(tableBox.y + tableBox.height + 1)
+})
+
 test('table edit modal autocompletes default values from the column type', async ({ goto, page }) => {
   await goto('/diagram')
 
@@ -283,10 +365,26 @@ test('side panel can switch tabs, hide entities, and restore them from saved pro
   await expect(page.locator('[data-connection-key="ref:public.orders:customer_id:public.users:id"]')).toHaveCount(0)
   await expect(editor).toHaveValue(/Properties "public\.users" \{[\s\S]*visible: false/)
 
+  const tenantsTable = page.locator('[data-table-anchor="public.tenants"]')
+  const beforeToggleBox = await tenantsTable.boundingBox()
+
+  if (!beforeToggleBox) {
+    throw new Error('Tenants table is not measurable before panel toggle.')
+  }
+
   await panelToggle.click()
   await expect(panel).toHaveCount(0)
   await panelToggle.click()
   await expect(panel).toBeVisible()
+
+  const afterToggleBox = await tenantsTable.boundingBox()
+
+  if (!afterToggleBox) {
+    throw new Error('Tenants table is not measurable after panel toggle.')
+  }
+
+  expect(Math.abs(afterToggleBox.x - beforeToggleBox.x)).toBeLessThan(1)
+  expect(Math.abs(afterToggleBox.y - beforeToggleBox.y)).toBeLessThan(1)
 
   await page.locator('[data-diagram-panel-tab="entities"]').click()
   await page.locator('[data-browser-visibility-toggle="public.users"]').click()
@@ -295,6 +393,93 @@ test('side panel can switch tabs, hide entities, and restore them from saved pro
   await expect.poll(async () => {
     return editor.inputValue()
   }).not.toContain('Properties "public.users" {\n  visible: false')
+})
+
+test('scrolling inside the diagram panel scrolls the panel instead of the canvas', async ({ goto, page }) => {
+  await goto('/diagram')
+
+  await page.locator('[data-diagram-panel-tab="entities"]').click()
+
+  const panelScroll = page.locator('[data-diagram-panel-scroll="true"]')
+  const tenantsTable = page.locator('[data-table-anchor="public.tenants"]')
+  const beforeTableBox = await tenantsTable.boundingBox()
+
+  if (!beforeTableBox) {
+    throw new Error('Tenants table is not measurable before panel scroll.')
+  }
+
+  const initialScrollTop = await panelScroll.evaluate(element => element.scrollTop)
+
+  await panelScroll.hover()
+  await page.mouse.wheel(0, 480)
+
+  await expect.poll(async () => {
+    return panelScroll.evaluate(element => element.scrollTop)
+  }).toBeGreaterThan(initialScrollTop)
+
+  const afterTableBox = await tenantsTable.boundingBox()
+
+  if (!afterTableBox) {
+    throw new Error('Tenants table is not measurable after panel scroll.')
+  }
+
+  expect(Math.abs(afterTableBox.x - beforeTableBox.x)).toBeLessThan(1)
+  expect(Math.abs(afterTableBox.y - beforeTableBox.y)).toBeLessThan(1)
+})
+
+test('double clicking entity panel items focuses the matching PGML source block', async ({ goto, page }) => {
+  await goto('/diagram')
+
+  const editor = page.locator('[data-pgml-editor="true"]')
+  const readEditorState = async () => {
+    return editor.evaluate((element: HTMLTextAreaElement) => {
+      return {
+        scrollTop: element.scrollTop,
+        selectedText: element.value.slice(element.selectionStart, element.selectionEnd)
+      }
+    })
+  }
+  const resetEditorState = async () => {
+    await editor.evaluate((element: HTMLTextAreaElement) => {
+      element.scrollTop = 0
+      element.setSelectionRange(0, 0)
+    })
+  }
+
+  await page.locator('[data-diagram-panel-tab="entities"]').click()
+
+  await resetEditorState()
+  await page.locator('[data-browser-entity-row="group:Core"] button').first().dblclick()
+  await expect.poll(async () => {
+    return readEditorState()
+  }).toEqual(expect.objectContaining({
+    scrollTop: expect.any(Number),
+    selectedText: expect.stringContaining('TableGroup Core {')
+  }))
+
+  await resetEditorState()
+  await page.locator('[data-entity-search="true"]').fill('email')
+  await page.locator('[data-browser-entity-row="public.users.email"] button').first().dblclick()
+  await expect.poll(async () => {
+    return readEditorState()
+  }).toEqual(expect.objectContaining({
+    scrollTop: expect.any(Number),
+    selectedText: expect.stringContaining('Table public.users {')
+  }))
+  await expect.poll(async () => {
+    return readEditorState()
+  }).toEqual(expect.objectContaining({
+    selectedText: expect.stringContaining('email email_address')
+  }))
+
+  await resetEditorState()
+  await page.locator('[data-browser-entity-row="custom-type:Domain:email_address"] button').first().dblclick()
+  await expect.poll(async () => {
+    return readEditorState()
+  }).toEqual(expect.objectContaining({
+    scrollTop: expect.any(Number),
+    selectedText: expect.stringContaining('Domain email_address {')
+  }))
 })
 
 test('dragging a group or custom type preserves the current zoom and pan', async ({ goto, page }) => {

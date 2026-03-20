@@ -34,12 +34,14 @@ const { model } = defineProps<{
 }>()
 const emit = defineEmits<{
   createTable: [groupName: string]
+  createGroup: []
+  editGroup: [groupName: string]
   editTable: [tableId: string]
   focusSource: [sourceRange: PgmlSourceRange]
   nodePropertiesChange: [properties: Record<string, PgmlNodeProperties>]
 }>()
 
-type CanvasNodeKind = 'group' | 'object'
+type CanvasNodeKind = 'group' | 'table' | 'object'
 type ObjectKind = 'Index' | 'Constraint' | 'Function' | 'Procedure' | 'Trigger' | 'Sequence' | 'Custom Type'
 type TableAttachmentKind = 'Index' | 'Constraint' | 'Function' | 'Procedure' | 'Trigger' | 'Sequence'
 type ImpactTarget = {
@@ -136,6 +138,7 @@ type EntityBrowserItem = {
   searchText: string
   children: EntityBrowserItem[]
   selection: CanvasSelection
+  sourceRange?: PgmlSourceRange
 }
 
 type LayoutRect = {
@@ -265,10 +268,12 @@ let previousModelContentSnapshot: string | null = null
 const canvasNodes = computed(() => Object.values(nodeStates.value))
 const isEntityDirectlyVisible = (id: string) => model.nodeProperties[id]?.visible !== false
 const getStoredGroupId = (groupName: string) => `group:${groupName}`
-const getTableGroupName = (table: PgmlSchemaModel['tables'][number]) => table.groupName || 'Ungrouped'
+const getTableGroupName = (table: PgmlSchemaModel['tables'][number]) => table.groupName || null
 const isGroupDirectlyVisible = (groupName: string) => isEntityDirectlyVisible(getStoredGroupId(groupName))
 const isTableEffectivelyVisible = (table: PgmlSchemaModel['tables'][number]) => {
-  return isEntityDirectlyVisible(table.fullName) && isGroupDirectlyVisible(getTableGroupName(table))
+  const groupName = getTableGroupName(table)
+
+  return isEntityDirectlyVisible(table.fullName) && (!groupName || isGroupDirectlyVisible(groupName))
 }
 const isAttachmentEffectivelyVisible = (tableId: string, attachmentId: string) => {
   const table = model.tables.find(entry => entry.fullName === tableId)
@@ -285,6 +290,17 @@ const visibleTables = computed(() => {
 const tableGroupColorByTableId = computed(() => {
   return model.tables.reduce<Record<string, string>>((colors, table) => {
     const groupName = getTableGroupName(table)
+
+    if (!groupName) {
+      const tableNode = nodeStates.value[table.fullName]
+
+      if (tableNode?.color) {
+        colors[table.fullName] = tableNode.color
+      }
+
+      return colors
+    }
+
     const groupNode = nodeStates.value[`group:${groupName}`]
 
     if (groupNode?.color) {
@@ -428,6 +444,10 @@ const tablesByGroup = computed(() => {
   for (const table of visibleTables.value) {
     const groupName = getTableGroupName(table)
 
+    if (!groupName) {
+      continue
+    }
+
     if (!groups[groupName]) {
       groups[groupName] = []
     }
@@ -438,7 +458,7 @@ const tablesByGroup = computed(() => {
   return groups
 })
 const tableGroupById = computed(() => {
-  const groups: Record<string, string> = {}
+  const groups: Record<string, string | null> = {}
 
   for (const table of model.tables) {
     groups[table.fullName] = getTableGroupName(table)
@@ -729,7 +749,7 @@ const buildExportSvgString = async (padding = exportPadding) => {
       ? normalizeSvgColor(window.getComputedStyle(accentElement).color, node.color)
       : normalizeSvgColor(node.color, node.color)
     const nodeBorderColor = normalizeSvgColor(nodeStyles.borderColor, railColor)
-    const nodeFillColor = normalizeSvgColor(nodeStyles.backgroundColor, node.kind === 'group' ? tableSurface : rowSurface)
+    const nodeFillColor = normalizeSvgColor(nodeStyles.backgroundColor, node.kind === 'object' ? rowSurface : tableSurface)
     const nodeGradientStops = node.kind === 'group'
       ? parseCssLinearGradient(nodeStyles.backgroundImage)
       : null
@@ -747,7 +767,7 @@ const buildExportSvgString = async (padding = exportPadding) => {
     const headerBottom = headerRect.y + headerRect.height + offsetY
     const badgeText = node.kind === 'group'
       ? `${node.tableCount || node.tableIds.length} tables`
-      : `${node.tableIds.length} impact`
+      : (node.kind === 'table' ? `${getTableRows(node.id).length} rows` : `${node.tableIds.length} impact`)
     const nodeExportId = getExportElementId(node.id)
 
     const gradientId = nodeGradientStops?.length
@@ -783,7 +803,7 @@ const buildExportSvgString = async (padding = exportPadding) => {
     }
     foregroundParts.push(
       buildSvgText(
-        [node.kind === 'group' ? 'TABLE GROUP' : (node.objectKind || '').toUpperCase()],
+        [node.kind === 'group' ? 'TABLE GROUP' : (node.kind === 'table' ? 'TABLE' : (node.objectKind || '').toUpperCase())],
         x + 10,
         y + 14,
         8,
@@ -874,20 +894,6 @@ const buildExportSvgString = async (padding = exportPadding) => {
             `font: 500 8px ${monoFont}; letter-spacing: 0.6px; ${buildSvgTextPaintStyle(shellMuted, '#94a3b8')}`
           )
         )
-        foregroundParts.push(
-          `<rect x="${tableX + tableRect.width - 48}" y="${tableY + 8}" width="40" height="16" fill="none" ${buildSvgPaintAttributes('stroke', railColor, railColor)} stroke-width="1" />`
-        )
-        foregroundParts.push(
-          buildSvgText(
-            [`${table.columns.length} COLS`],
-            tableX + tableRect.width - 28,
-            tableY + 19,
-            8,
-            `font: 500 8px ${monoFont}; letter-spacing: 0.35px; ${buildSvgTextPaintStyle(shellMuted, '#94a3b8')}`,
-            'middle'
-          )
-        )
-
         const rowElements = Array.from(tableElement.querySelectorAll('[data-table-row-anchor]'))
           .filter((rowElement): rowElement is HTMLElement => rowElement instanceof HTMLElement)
 
@@ -977,6 +983,100 @@ const buildExportSvgString = async (padding = exportPadding) => {
             )
           }
         })
+      })
+
+      return
+    }
+
+    if (node.kind === 'table') {
+      const rowElements = Array.from(nodeElement.querySelectorAll('[data-table-row-anchor]'))
+        .filter((rowElement): rowElement is HTMLElement => rowElement instanceof HTMLElement)
+
+      rowElements.forEach((rowElement, rowIndex) => {
+        const rowRect = getPlaneRelativeRect(rowElement)
+
+        if (!rowRect) {
+          return
+        }
+
+        const rowX = rowRect.x + offsetX
+        const rowY = rowRect.y + offsetY
+        const rowHeight = rowRect.height
+        const rowStyles = window.getComputedStyle(rowElement)
+
+        foregroundParts.push(
+          `<rect x="${rowX}" y="${rowY}" width="${rowRect.width}" height="${rowHeight}" ${buildSvgPaintAttributes('fill', rowStyles.backgroundColor, rowSurface)} />`
+        )
+
+        const titleElement = rowElement.querySelector('[data-table-row-title]')
+        const subtitleElement = rowElement.querySelector('[data-table-row-subtitle]')
+
+        if (titleElement instanceof HTMLElement) {
+          const titleRect = getPlaneRelativeRect(titleElement)
+
+          if (titleRect) {
+            foregroundParts.push(
+              buildSvgText(
+                [titleElement.textContent || ''],
+                titleRect.x + offsetX,
+                titleRect.y + offsetY + titleRect.height - 2,
+                9,
+                `font: 600 9px ${monoFont}; ${buildSvgTextPaintStyle(shellText, '#e2e8f0')}`
+              )
+            )
+          }
+        }
+
+        if (subtitleElement instanceof HTMLElement) {
+          const subtitleRect = getPlaneRelativeRect(subtitleElement)
+
+          if (subtitleRect) {
+            foregroundParts.push(
+              buildSvgText(
+                [subtitleElement.textContent || ''],
+                subtitleRect.x + offsetX,
+                subtitleRect.y + offsetY + subtitleRect.height - 2,
+                8,
+                `font: 400 8px ${sansFont}; ${buildSvgTextPaintStyle(shellMuted, '#94a3b8')}`
+              )
+            )
+          }
+        }
+
+        rowElement.querySelectorAll('[data-table-row-badge]').forEach((badgeElement) => {
+          if (!(badgeElement instanceof HTMLElement)) {
+            return
+          }
+
+          const badgeRect = getPlaneRelativeRect(badgeElement)
+
+          if (!badgeRect) {
+            return
+          }
+
+          const badgeStyles = window.getComputedStyle(badgeElement)
+          const badgeFill = normalizeSvgColor(badgeStyles.backgroundColor, 'transparent')
+
+          foregroundParts.push(
+            `<rect x="${badgeRect.x + offsetX}" y="${badgeRect.y + offsetY}" width="${badgeRect.width}" height="${badgeRect.height}" ${buildSvgPaintAttributes('fill', badgeFill, 'transparent')} ${buildSvgPaintAttributes('stroke', badgeStyles.borderColor, railColor)} stroke-width="1" />`
+          )
+          foregroundParts.push(
+            buildSvgText(
+              [badgeElement.textContent || ''],
+              badgeRect.x + offsetX + badgeRect.width / 2,
+              badgeRect.y + offsetY + badgeRect.height / 2 + 2.5,
+              7.5,
+              `font: 500 7.5px ${monoFont}; letter-spacing: 0.24px; ${buildSvgTextPaintStyle(badgeStyles.color, shellMuted)}`,
+              'middle'
+            )
+          )
+        })
+
+        if (rowIndex < rowElements.length - 1) {
+          foregroundParts.push(
+            `<line x1="${rowX}" y1="${rowY + rowHeight}" x2="${rowX + rowRect.width}" y2="${rowY + rowHeight}" ${buildSvgPaintAttributes('stroke', dividerColor, dividerColor)} stroke-width="1" />`
+          )
+        }
       })
 
       return
@@ -1204,6 +1304,37 @@ const measureGroupMinimumSize = (groupId: string) => {
   }
 }
 
+const measureTableMinimumSize = (tableId: string) => {
+  if (!planeRef.value) {
+    return null
+  }
+
+  const tableElement = planeRef.value.querySelector(`[data-node-anchor="${tableId}"][data-table-anchor="${tableId}"]`)
+  const headerElement = planeRef.value.querySelector(`[data-node-header="${tableId}"]`)
+  const baselineHeight = estimateTableHeight(getTableRows(tableId).length)
+
+  if (
+    !(tableElement instanceof HTMLElement)
+    || !(headerElement instanceof HTMLElement)
+  ) {
+    return {
+      minWidth: groupTableWidth,
+      minHeight: baselineHeight
+    }
+  }
+
+  const measuredHeight = Math.ceil(Math.max(
+    tableElement.scrollHeight,
+    headerElement.offsetHeight + baselineHeight,
+    baselineHeight
+  ))
+
+  return {
+    minWidth: groupTableWidth,
+    minHeight: measuredHeight
+  }
+}
+
 const measureObjectMinimumSize = (node: CanvasNodeState) => {
   if (!planeRef.value) {
     return null
@@ -1245,6 +1376,10 @@ const measureObjectMinimumSize = (node: CanvasNodeState) => {
 const measureNodeMinimumSize = (node: CanvasNodeState) => {
   if (node.kind === 'group') {
     return measureGroupMinimumSize(node.id)
+  }
+
+  if (node.kind === 'table') {
+    return measureTableMinimumSize(node.id)
   }
 
   return measureObjectMinimumSize(node)
@@ -1592,15 +1727,31 @@ const dedupeCandidates = (candidates: Array<{ x: number, y: number }>) => {
     return true
   })
 }
-const getGroupNameForTableId = (tableId: string) => tableGroupById.value[tableId] || 'Ungrouped'
+const getGroupNameForTableId = (tableId: string) => tableGroupById.value[tableId] || null
+const getRelatedHostRectsForTableIds = (
+  tableIds: string[],
+  states: Record<string, CanvasNodeState>
+) => {
+  const seen = new Set<string>()
+
+  return tableIds.flatMap((tableId) => {
+    const groupName = getGroupNameForTableId(tableId)
+    const hostNode = groupName ? states[`group:${groupName}`] : states[tableId]
+
+    if (!hostNode || seen.has(hostNode.id)) {
+      return []
+    }
+
+    seen.add(hostNode.id)
+    return [getNodeRect(hostNode)]
+  })
+}
+
 const getRelatedGroupRectsForNode = (
   node: CanvasNodeState,
   states: Record<string, CanvasNodeState>
 ) => {
-  return uniqueValues(node.tableIds.map(tableId => getGroupNameForTableId(tableId)))
-    .map(groupName => states[`group:${groupName}`])
-    .filter((groupNode): groupNode is CanvasNodeState => Boolean(groupNode))
-    .map(groupNode => getNodeRect(groupNode))
+  return getRelatedHostRectsForTableIds(node.tableIds, states)
 }
 
 const normalizeReference = (value: string) => {
@@ -2201,25 +2352,61 @@ const tableRowsByTableId = computed(() => {
 })
 const getTableRows = (tableId: string) => tableRowsByTableId.value[tableId] || []
 const browserGroupNames = computed(() => {
-  const seen = new Set<string>()
-  const names: string[] = []
-
-  model.groups.forEach((group) => {
-    seen.add(group.name)
-    names.push(group.name)
+  return model.groups.map(group => group.name)
+})
+const diagramGroupNames = computed(() => {
+  return browserGroupNames.value.filter(groupName => isGroupDirectlyVisible(groupName))
+})
+const buildBrowserTableItem = (table: PgmlSchemaModel['tables'][number]): EntityBrowserItem => {
+  const columns = table.columns.map<EntityBrowserItem>((column) => {
+    return {
+      id: `${table.fullName}.${column.name}`,
+      kind: 'column',
+      label: column.name,
+      subtitle: '',
+      kindLabel: 'Field',
+      searchText: cleanForSearch(`field ${column.name} ${column.type} ${table.fullName}`),
+      children: [],
+      selection: {
+        kind: 'table',
+        tableId: table.fullName
+      },
+      sourceRange: table.sourceRange
+    }
   })
-
-  model.tables.forEach((table) => {
-    const groupName = getTableGroupName(table)
-
-    if (!seen.has(groupName)) {
-      seen.add(groupName)
-      names.push(groupName)
+  const attachments = (tableAttachmentState.value.attachmentsByTableId[table.fullName] || []).map<EntityBrowserItem>((attachment) => {
+    return {
+      id: attachment.id,
+      kind: 'attachment',
+      label: attachment.title,
+      subtitle: '',
+      kindLabel: attachment.kind,
+      searchText: cleanForSearch(`${attachment.kind} ${attachment.title} ${attachment.subtitle} ${attachment.details.join(' ')}`),
+      children: [],
+      selection: {
+        kind: 'attachment',
+        tableId: table.fullName,
+        attachmentId: attachment.id
+      },
+      sourceRange: attachment.sourceRange
     }
   })
 
-  return names
-})
+  return {
+    id: table.fullName,
+    kind: 'table',
+    label: table.name,
+    subtitle: '',
+    kindLabel: 'Table',
+    searchText: cleanForSearch(`table ${table.fullName} ${table.note || ''}`),
+    children: [...columns, ...attachments],
+    selection: {
+      kind: 'table',
+      tableId: table.fullName
+    },
+    sourceRange: table.sourceRange
+  }
+}
 const standaloneBrowserItems = computed(() => {
   const items: EntityBrowserItem[] = []
   const attachedObjectIds = tableAttachmentState.value.attachedObjectIds
@@ -2240,7 +2427,12 @@ const standaloneBrowserItems = computed(() => {
       selection: {
         kind: 'node',
         id
-      }
+      },
+      sourceRange: model.functions.find(entry => `function:${entry.name}` === id)?.sourceRange
+        || model.procedures.find(entry => `procedure:${entry.name}` === id)?.sourceRange
+        || model.triggers.find(entry => `trigger:${entry.name}` === id)?.sourceRange
+        || model.sequences.find(entry => `sequence:${entry.name}` === id)?.sourceRange
+        || model.customTypes.find(entry => `custom-type:${entry.kind}:${entry.name}` === id)?.sourceRange
     })
   }
 
@@ -2292,56 +2484,17 @@ const standaloneBrowserItems = computed(() => {
     return left.label.localeCompare(right.label)
   })
 })
+const ungroupedBrowserItems = computed(() => {
+  return model.tables
+    .filter(table => !getTableGroupName(table))
+    .map(table => buildBrowserTableItem(table))
+})
 const groupedBrowserItems = computed(() => {
   return browserGroupNames.value.map((groupName) => {
     const tables = model.tables.filter(table => getTableGroupName(table) === groupName)
-    const tableItems = tables.map<EntityBrowserItem>((table) => {
-      const columns = table.columns.map<EntityBrowserItem>((column) => {
-        return {
-          id: `${table.fullName}.${column.name}`,
-          kind: 'column',
-          label: column.name,
-          subtitle: '',
-          kindLabel: 'Field',
-          searchText: cleanForSearch(`field ${column.name} ${column.type} ${table.fullName}`),
-          children: [],
-          selection: {
-            kind: 'table',
-            tableId: table.fullName
-          }
-        }
-      })
-      const attachments = (tableAttachmentState.value.attachmentsByTableId[table.fullName] || []).map<EntityBrowserItem>((attachment) => {
-        return {
-          id: attachment.id,
-          kind: 'attachment',
-          label: attachment.title,
-          subtitle: '',
-          kindLabel: attachment.kind,
-          searchText: cleanForSearch(`${attachment.kind} ${attachment.title} ${attachment.subtitle} ${attachment.details.join(' ')}`),
-          children: [],
-          selection: {
-            kind: 'attachment',
-            tableId: table.fullName,
-            attachmentId: attachment.id
-          }
-        }
-      })
+    const tableItems = tables.map(table => buildBrowserTableItem(table))
 
-      return {
-        id: table.fullName,
-        kind: 'table',
-        label: table.name,
-        subtitle: '',
-        kindLabel: 'Table',
-        searchText: cleanForSearch(`table ${table.fullName} ${table.note || ''}`),
-        children: [...columns, ...attachments],
-        selection: {
-          kind: 'table',
-          tableId: table.fullName
-        }
-      }
-    })
+    const group = model.groups.find(entry => entry.name === groupName)
 
     return {
       id: getStoredGroupId(groupName),
@@ -2354,7 +2507,8 @@ const groupedBrowserItems = computed(() => {
       selection: {
         kind: 'node',
         id: getStoredGroupId(groupName)
-      }
+      },
+      sourceRange: group?.sourceRange
     } satisfies EntityBrowserItem
   })
 })
@@ -2410,6 +2564,9 @@ const filterEntityBrowserItems = (items: EntityBrowserItem[], query: string): En
 const filteredGroupedBrowserItems = computed(() => {
   return filterEntityBrowserItems(groupedBrowserItems.value, entitySearchQuery.value)
 })
+const filteredUngroupedBrowserItems = computed(() => {
+  return filterEntityBrowserItems(ungroupedBrowserItems.value, entitySearchQuery.value)
+})
 const filteredStandaloneBrowserItems = computed(() => {
   return filterEntityBrowserItems(standaloneBrowserItems.value, entitySearchQuery.value)
 })
@@ -2429,7 +2586,7 @@ const buildGroupRelationWeights = (groupNames: string[]) => {
     const fromGroup = getGroupNameForTableId(reference.fromTable)
     const toGroup = getGroupNameForTableId(reference.toTable)
 
-    if (fromGroup === toGroup) {
+    if (!fromGroup || !toGroup || fromGroup === toGroup) {
       continue
     }
 
@@ -2468,9 +2625,13 @@ const buildPlacedGroupConnections = (
 const resolveObjectCollisions = (states: Record<string, CanvasNodeState>) => {
   const nextStates: Record<string, CanvasNodeState> = { ...states }
   const groupRects = Object.values(nextStates)
-    .filter(node => node.kind === 'group')
+    .filter(node => node.kind === 'group' || node.kind === 'table')
     .map(node => getNodeRect(node))
-  const groupWeights = buildGroupRelationWeights(groupRects.map(rect => rect.id.replace('group:', '')))
+  const groupWeights = buildGroupRelationWeights(
+    groupRects
+      .filter(rect => rect.id.startsWith('group:'))
+      .map(rect => rect.id.replace('group:', ''))
+  )
 
   for (let iteration = 0; iteration < 8; iteration += 1) {
     let moved = false
@@ -2734,11 +2895,163 @@ const autoLayoutGroups = (groupNodes: CanvasNodeState[]) => {
   return positions
 }
 
+const autoLayoutFloatingTables = (
+  tableNodes: CanvasNodeState[],
+  states: Record<string, CanvasNodeState>
+) => {
+  const positions: Record<string, { x: number, y: number }> = {}
+  const groupRects = Object.values(states)
+    .filter(node => node.kind === 'group')
+    .map(node => getNodeRect(node))
+  const placedTables: LayoutRect[] = []
+  const orderedTables = [...tableNodes].sort((left, right) => left.title.localeCompare(right.title))
+
+  orderedTables.forEach((tableNode, index) => {
+    const relatedTableIds = uniqueValues(model.references.flatMap((reference) => {
+      if (reference.fromTable === tableNode.id) {
+        return [reference.toTable]
+      }
+
+      if (reference.toTable === tableNode.id) {
+        return [reference.fromTable]
+      }
+
+      return []
+    }))
+    const relatedRects = getRelatedHostRectsForTableIds(relatedTableIds, {
+      ...states,
+      ...Object.fromEntries(placedTables.map(rect => [rect.id, {
+        id: rect.id,
+        kind: 'table',
+        collapsed: false,
+        title: rect.id,
+        subtitle: '',
+        details: [],
+        x: rect.x,
+        y: rect.y,
+        width: rect.width,
+        height: rect.height,
+        color: '#38bdf8',
+        tableIds: [rect.id]
+      } satisfies CanvasNodeState]))
+    })
+    const centroid = relatedRects.length
+      ? relatedRects.reduce((sum, rect) => {
+          const center = getRectCenter(rect)
+
+          return {
+            x: sum.x + center.x,
+            y: sum.y + center.y
+          }
+        }, { x: 0, y: 0 })
+      : { x: 140, y: 120 + index * 180 }
+    const centroidPoint = relatedRects.length
+      ? {
+          x: centroid.x / relatedRects.length,
+          y: centroid.y / relatedRects.length
+        }
+      : centroid
+    const candidates = relatedRects.length
+      ? dedupeCandidates([
+          ...relatedRects.flatMap((rect) => {
+            return [72, 132, 212].flatMap((distance) => {
+              return [
+                {
+                  x: rect.x + rect.width + distance,
+                  y: rect.y + 18
+                },
+                {
+                  x: rect.x - tableNode.width - distance,
+                  y: rect.y + 18
+                },
+                {
+                  x: rect.x + clamp((rect.width - tableNode.width) / 2, -tableNode.width / 2, rect.width),
+                  y: rect.y + rect.height + distance
+                },
+                {
+                  x: rect.x + clamp((rect.width - tableNode.width) / 2, -tableNode.width / 2, rect.width),
+                  y: rect.y - tableNode.height - distance
+                }
+              ]
+            })
+          }),
+          ...buildRingCandidates(centroidPoint, tableNode.width, tableNode.height, [84, 160, 260]),
+          {
+            x: 140 + (index % 2) * (tableNode.width + 96),
+            y: 120 + Math.floor(index / 2) * 220
+          }
+        ])
+      : [
+          {
+            x: 140 + (index % 2) * (tableNode.width + 96),
+            y: 120 + Math.floor(index / 2) * 220
+          }
+        ]
+
+    const bestCandidate = candidates
+      .map((candidate) => {
+        const nextRect: LayoutRect = {
+          id: tableNode.id,
+          x: Math.max(72, Math.round(candidate.x / 12) * 12),
+          y: Math.max(72, Math.round(candidate.y / 12) * 12),
+          width: tableNode.width,
+          height: tableNode.height
+        }
+        const occupiedRects = [...groupRects, ...placedTables]
+        const overlapMetrics = getOverlapMetrics(
+          nextRect,
+          occupiedRects,
+          rect => rect.id.startsWith('group:') ? 44 : 22
+        )
+        const nextCenter = getRectCenter(nextRect)
+        const relationDistance = occupiedRects.reduce((sum, rect) => {
+          const rectCenter = getRectCenter(rect)
+          const distance = Math.hypot(nextCenter.x - rectCenter.x, nextCenter.y - rectCenter.y)
+          const relationScore = relatedRects.some(relatedRect => relatedRect.id === rect.id)
+            ? distance * 0.72
+            : Math.max(0, 180 - distance) * 0.9
+
+          return sum + relationScore
+        }, 0)
+
+        return {
+          candidate: nextRect,
+          metrics: {
+            overlapCount: overlapMetrics.overlapCount,
+            overlapArea: overlapMetrics.overlapArea,
+            relationDistance,
+            midpointDistance: Math.hypot(nextCenter.x - centroidPoint.x, nextCenter.y - centroidPoint.y),
+            crossingCount: 0,
+            lineHitCount: 0,
+            originDistance: Math.hypot(nextRect.x - centroidPoint.x, nextRect.y - centroidPoint.y)
+          } satisfies PlacementMetrics
+        }
+      })
+      .sort((left, right) => comparePlacementMetrics(left.metrics, right.metrics))[0]
+
+    const resolvedCandidate = bestCandidate?.candidate || {
+      id: tableNode.id,
+      x: 140 + (index % 2) * (tableNode.width + 96),
+      y: 120 + Math.floor(index / 2) * 220,
+      width: tableNode.width,
+      height: tableNode.height
+    }
+
+    positions[tableNode.id] = {
+      x: resolvedCandidate.x,
+      y: resolvedCandidate.y
+    }
+    placedTables.push(resolvedCandidate)
+  })
+
+  return positions
+}
+
 const autoLayoutObjectNodes = (objectNodes: CanvasNodeState[], groupStates: Record<string, CanvasNodeState>) => {
   const positions: Record<string, { x: number, y: number }> = {}
   const placedObjects: LayoutRect[] = []
   const groupRects = Object.values(groupStates)
-    .filter(node => node.kind === 'group')
+    .filter(node => node.kind === 'group' || node.kind === 'table')
     .map(node => getNodeRect(node))
   const placedConnections = buildPlacedGroupConnections(groupRects, buildGroupRelationWeights(groupRects.map(rect => rect.id.replace('group:', ''))))
   const orderedObjects = [...objectNodes].sort((left, right) => {
@@ -2750,11 +3063,7 @@ const autoLayoutObjectNodes = (objectNodes: CanvasNodeState[], groupStates: Reco
   })
 
   orderedObjects.forEach((objectNode, index) => {
-    const relatedGroupNames = uniqueValues(objectNode.tableIds.map(tableId => getGroupNameForTableId(tableId)))
-    const relatedRects = relatedGroupNames
-      .map(groupName => groupStates[`group:${groupName}`])
-      .filter((node): node is CanvasNodeState => Boolean(node))
-      .map(node => getNodeRect(node))
+    const relatedRects = getRelatedHostRectsForTableIds(objectNode.tableIds, groupStates)
     const centroid = relatedRects.length
       ? relatedRects.reduce((sum, rect) => {
           const center = getRectCenter(rect)
@@ -2885,15 +3194,17 @@ const buildObjectNodes = (groupStates: Record<string, CanvasNodeState>) => {
   const lanes: Record<string, number> = {}
   const attachedObjectIds = tableAttachmentState.value.attachedObjectIds
 
-  const resolveGroupName = (tableIds: string[]) => {
+  const resolveHostId = (tableIds: string[]) => {
     const firstTable = model.tables.find(table => tableIds.includes(table.fullName))
-    return firstTable?.groupName || 'Ungrouped'
+    const groupName = firstTable?.groupName
+
+    return groupName ? `group:${groupName}` : firstTable?.fullName || 'floating'
   }
 
   const nextPosition = (tableIds: string[], kind: ObjectKind) => {
-    const groupName = resolveGroupName(tableIds)
-    const groupNode = groupStates[`group:${groupName}`]
-    const laneKey = `${groupName}:${kind === 'Function' || kind === 'Procedure' || kind === 'Trigger' || kind === 'Sequence' ? 'bottom' : 'side'}`
+    const hostId = resolveHostId(tableIds)
+    const groupNode = groupStates[hostId]
+    const laneKey = `${hostId}:${kind === 'Function' || kind === 'Procedure' || kind === 'Trigger' || kind === 'Sequence' ? 'bottom' : 'side'}`
     const lane = lanes[laneKey] || 0
 
     lanes[laneKey] = lane + 1
@@ -3149,15 +3460,19 @@ const buildObjectNodes = (groupStates: Record<string, CanvasNodeState>) => {
 const syncNodeStates = () => {
   const nextStates: Record<string, CanvasNodeState> = {}
   const tableGroups = new Map<string, typeof model.tables>()
-  const orderedNames: string[] = []
+  const orderedNames = [...diagramGroupNames.value]
   const groupNodes: CanvasNodeState[] = []
+  const floatingTableNodes: CanvasNodeState[] = []
+
+  orderedNames.forEach((groupName) => {
+    tableGroups.set(groupName, [])
+  })
 
   for (const table of visibleTables.value) {
     const groupName = getTableGroupName(table)
 
-    if (!tableGroups.has(groupName)) {
-      tableGroups.set(groupName, [])
-      orderedNames.push(groupName)
+    if (!groupName) {
+      continue
     }
 
     tableGroups.get(groupName)?.push(table)
@@ -3206,6 +3521,44 @@ const syncNodeStates = () => {
       ...groupNode,
       x: storedLayout?.x ?? existing?.x ?? groupPositions[groupNode.id]?.x ?? groupNode.x,
       y: storedLayout?.y ?? existing?.y ?? groupPositions[groupNode.id]?.y ?? groupNode.y
+    }
+  }
+
+  for (const table of visibleTables.value.filter(entry => !getTableGroupName(entry))) {
+    const existing = nodeStates.value[table.fullName]
+    const storedLayout = model.nodeProperties[table.fullName]
+
+    floatingTableNodes.push({
+      id: table.fullName,
+      kind: 'table',
+      collapsed: false,
+      title: table.name,
+      subtitle: `${table.schema} schema`,
+      details: [],
+      x: storedLayout?.x ?? existing?.x ?? 140,
+      y: storedLayout?.y ?? existing?.y ?? 120,
+      width: existing?.width ?? groupTableWidth,
+      height: existing?.height ?? estimateTableHeight(getTableRows(table.fullName).length),
+      expandedHeight: existing?.expandedHeight ?? estimateTableHeight(getTableRows(table.fullName).length),
+      color: storedLayout?.color || existing?.color || '#38bdf8',
+      tableIds: [table.fullName],
+      minWidth: groupTableWidth,
+      minHeight: estimateTableHeight(getTableRows(table.fullName).length),
+      hasStoredLayout: Boolean(storedLayout),
+      sourceRange: table.sourceRange
+    })
+  }
+
+  const floatingTablePositions = autoLayoutFloatingTables(floatingTableNodes, nextStates)
+
+  for (const tableNode of floatingTableNodes) {
+    const existing = nodeStates.value[tableNode.id]
+    const storedLayout = model.nodeProperties[tableNode.id]
+
+    nextStates[tableNode.id] = {
+      ...tableNode,
+      x: storedLayout?.x ?? existing?.x ?? floatingTablePositions[tableNode.id]?.x ?? tableNode.x,
+      y: storedLayout?.y ?? existing?.y ?? floatingTablePositions[tableNode.id]?.y ?? tableNode.y
     }
   }
 
@@ -3358,27 +3711,19 @@ const isBrowserItemSelected = (item: EntityBrowserItem) => {
 }
 const browserItemSupportsVisibility = (item: EntityBrowserItem) => item.kind !== 'column'
 const isBrowserItemDirectlyVisible = (item: EntityBrowserItem) => {
-  if (item.kind === 'column') {
-    return isEntityDirectlyVisible(item.selection.tableId)
+  const selection = item.selection
+
+  if (selection.kind === 'table') {
+    return isEntityDirectlyVisible(selection.tableId)
   }
 
-  if (item.selection.kind === 'table') {
-    return isEntityDirectlyVisible(item.selection.tableId)
+  if (selection.kind === 'attachment') {
+    return isEntityDirectlyVisible(selection.attachmentId)
   }
 
-  if (item.selection.kind === 'attachment') {
-    return isEntityDirectlyVisible(item.selection.attachmentId)
-  }
-
-  return isEntityDirectlyVisible(item.selection.id)
+  return isEntityDirectlyVisible(selection.id)
 }
 const isBrowserItemEffectivelyVisible = (item: EntityBrowserItem) => {
-  if (item.kind === 'column') {
-    const table = model.tables.find(entry => entry.fullName === item.selection.tableId)
-
-    return table ? isTableEffectivelyVisible(table) : false
-  }
-
   const selection = item.selection
 
   if (selection.kind === 'table') {
@@ -3401,16 +3746,14 @@ const isBrowserItemHiddenByAncestor = (item: EntityBrowserItem) => {
   return !isBrowserItemEffectivelyVisible(item) && isBrowserItemDirectlyVisible(item)
 }
 const getBrowserItemTableId = (item: EntityBrowserItem) => {
-  if (item.kind === 'column') {
-    return item.selection.tableId
+  const selection = item.selection
+
+  if (selection.kind === 'table') {
+    return selection.tableId
   }
 
-  if (item.selection.kind === 'table') {
-    return item.selection.tableId
-  }
-
-  if (item.selection.kind === 'attachment') {
-    return item.selection.tableId
+  if (selection.kind === 'attachment') {
+    return selection.tableId
   }
 
   return null
@@ -3419,7 +3762,7 @@ const getBrowserItemAccentColor = (item: EntityBrowserItem) => {
   const tableId = getBrowserItemTableId(item)
 
   if (tableId) {
-    return tableGroupColorByTableId.value[tableId] || '#79e3ea'
+    return tableGroupColorByTableId.value[tableId] || nodeStates.value[tableId]?.color || '#79e3ea'
   }
 
   if (item.selection.kind === 'node') {
@@ -3470,6 +3813,9 @@ const toggleBrowserItemVisibility = (item: EntityBrowserItem) => {
 
   updateEntityVisibility(visibilityId, !isBrowserItemDirectlyVisible(item))
 }
+const focusBrowserItemSource = (item: EntityBrowserItem) => {
+  focusSourceRange(item.sourceRange)
+}
 const selectBrowserItem = (item: EntityBrowserItem) => {
   if (!isBrowserItemEffectivelyVisible(item)) {
     return
@@ -3501,11 +3847,6 @@ const selectBrowserItem = (item: EntityBrowserItem) => {
 }
 const toggleSidePanel = () => {
   isSidePanelOpen.value = !isSidePanelOpen.value
-
-  nextTick(() => {
-    fitView()
-    updateConnections()
-  })
 }
 const getSelectionGlowStyle = (color: string) => {
   return {
@@ -3529,9 +3870,15 @@ const getNodeBorderColor = (node: CanvasNodeState) => {
     : `color-mix(in srgb, ${node.color} 62%, var(--studio-node-border-neutral) 38%)`
 }
 const getNodeBackground = (node: CanvasNodeState) => {
-  return node.kind === 'group'
-    ? `linear-gradient(180deg, color-mix(in srgb, ${node.color} 12%, transparent), var(--studio-group-surface-soft) 22%), var(--studio-group-surface)`
-    : `color-mix(in srgb, ${node.color} 8%, var(--studio-node-surface-bottom) 92%)`
+  if (node.kind === 'group') {
+    return `linear-gradient(180deg, color-mix(in srgb, ${node.color} 12%, transparent), var(--studio-group-surface-soft) 22%), var(--studio-group-surface)`
+  }
+
+  if (node.kind === 'table') {
+    return `color-mix(in srgb, ${node.color} 8%, var(--studio-table-surface) 92%)`
+  }
+
+  return `color-mix(in srgb, ${node.color} 8%, var(--studio-node-surface-bottom) 92%)`
 }
 const getNodeAccentColor = (node: CanvasNodeState) => {
   return `color-mix(in srgb, ${node.color} 70%, var(--studio-node-accent-mix) 30%)`
@@ -4852,6 +5199,23 @@ const reflowAutoLayout = () => {
     }
   }
 
+  const tableNodes = Object.values(nextStates).filter(node => node.kind === 'table')
+  const tablePositions = autoLayoutFloatingTables(tableNodes, nextStates)
+
+  for (const tableNode of tableNodes) {
+    const currentTableNode = nextStates[tableNode.id]
+
+    if (!currentTableNode) {
+      continue
+    }
+
+    nextStates[tableNode.id] = {
+      ...currentTableNode,
+      x: tablePositions[tableNode.id]?.x ?? tableNode.x,
+      y: tablePositions[tableNode.id]?.y ?? tableNode.y
+    }
+  }
+
   const objectNodes = Object.values(nextStates).filter(node => node.kind === 'object')
   const objectPositions = autoLayoutObjectNodes(objectNodes, nextStates)
 
@@ -4926,7 +5290,7 @@ const fitView = () => {
 
   const padding = {
     top: 48,
-    right: isSidePanelOpen.value ? 332 : 48,
+    right: 48,
     bottom: 72,
     left: 48
   }
@@ -5030,7 +5394,7 @@ const getNodeLayoutProperties = () => {
       nextProperties.tableColumns = Math.max(1, Math.round(node.columnCount || 1))
     }
 
-    if (node.kind === 'object') {
+    if (node.kind === 'table' || node.kind === 'object') {
       nextProperties.color = node.color
       nextProperties.x = Math.round(node.x)
       nextProperties.y = Math.round(node.y)
@@ -5160,6 +5524,16 @@ const updateNode = (
     nextNode.expandedHeight = nextGroupHeight
   }
 
+  if (current.kind === 'table') {
+    const minimumHeight = estimateTableHeight(getTableRows(id).length)
+
+    nextNode.minWidth = groupTableWidth
+    nextNode.minHeight = minimumHeight
+    nextNode.width = Math.max(nextNode.width, groupTableWidth)
+    nextNode.height = Math.max(nextNode.height, minimumHeight)
+    nextNode.expandedHeight = nextNode.height
+  }
+
   nodeStates.value[id] = nextNode
 
   if (emitNodeProperties) {
@@ -5233,15 +5607,24 @@ const startPan = (event: PointerEvent) => {
 
 const startDragNode = (event: PointerEvent, id: string) => {
   event.stopPropagation()
-  selectedNodeId.value = id
-  selectedCanvasSelection.value = {
-    kind: 'node',
-    id
-  }
   const node = nodeStates.value[id]
 
   if (!node) {
     return
+  }
+
+  if (node.kind === 'table') {
+    selectedNodeId.value = null
+    selectedCanvasSelection.value = {
+      kind: 'table',
+      tableId: id
+    }
+  } else {
+    selectedNodeId.value = id
+    selectedCanvasSelection.value = {
+      kind: 'node',
+      id
+    }
   }
 
   const origin = {
@@ -5369,6 +5752,16 @@ const handleEditTable = (tableId: string) => {
 
 const handleCreateTable = (groupName: string) => {
   emit('createTable', groupName)
+}
+
+const handleCreateGroup = () => {
+  isSidePanelOpen.value = true
+  activePanelTab.value = 'entities'
+  emit('createGroup')
+}
+
+const handleEditGroup = (groupName: string) => {
+  emit('editGroup', groupName)
 }
 
 const handleWheel = (event: WheelEvent) => {
@@ -5506,7 +5899,7 @@ defineExpose<{
         :class="[
           'absolute select-none',
           node.kind === 'group' ? 'overflow-hidden rounded-[2px]' : 'overflow-hidden rounded-none border',
-          node.kind === 'object' ? 'transition-transform duration-150 hover:-translate-y-0.5 hover:ring-1 hover:ring-[color:var(--studio-ring)]' : '',
+          node.kind === 'table' || node.kind === 'object' ? 'transition-transform duration-150 hover:-translate-y-0.5 hover:ring-1 hover:ring-[color:var(--studio-ring)]' : '',
           isNodeSelectionActive(node.id) && node.kind !== 'group' ? 'pgml-selection-glow' : ''
         ]"
         :style="[
@@ -5519,13 +5912,14 @@ defineExpose<{
             borderColor: node.kind === 'group' ? 'transparent' : getNodeBorderColor(node),
             background: node.kind === 'group' ? 'transparent' : getNodeBackground(node)
           },
-          node.kind === 'object' ? getSelectionGlowStyle(node.color) : undefined
+          node.kind === 'table' || node.kind === 'object' ? getSelectionGlowStyle(node.color) : undefined
         ]"
         :data-node-anchor="node.id"
+        :data-table-anchor="node.kind === 'table' ? node.id : undefined"
         :data-selection-active="isNodeSelectionActive(node.id) ? 'true' : undefined"
-        @pointerdown.capture="selectedNodeId = node.id"
-        @click.stop="handleNodeClick(node)"
-        @dblclick.stop="handleNodeDoubleClick(node)"
+        @pointerdown.capture="selectedNodeId = node.kind === 'table' ? null : node.id"
+        @click.stop="node.kind === 'table' ? handleTableClick(node.id) : handleNodeClick(node)"
+        @dblclick.stop="node.kind === 'table' ? handleTableDoubleClick(node.id) : handleNodeDoubleClick(node)"
       >
         <div
           v-if="node.kind === 'group'"
@@ -5556,7 +5950,7 @@ defineExpose<{
               class="mb-1 inline-flex font-mono text-[0.62rem] uppercase tracking-[0.08em]"
               :style="{ color: getNodeAccentColor(node) }"
             >
-              {{ node.kind === 'group' ? 'Table Group' : node.objectKind }}
+              {{ node.kind === 'group' ? 'Table Group' : (node.kind === 'table' ? 'Table' : node.objectKind) }}
             </span>
             <h3 class="truncate text-[0.88rem] font-semibold leading-5 tracking-[-0.02em] text-[color:var(--studio-shell-text)]">
               {{ node.title }}
@@ -5571,7 +5965,7 @@ defineExpose<{
 
           <div class="flex shrink-0 items-start gap-1">
             <span class="inline-flex h-5 items-center border border-[color:var(--studio-rail)] px-1.5 font-mono text-[0.62rem] uppercase tracking-[0.06em] text-[color:var(--studio-shell-muted)]">
-              {{ node.kind === 'group' ? `${node.tableCount || node.tableIds.length} tables` : `${node.tableIds.length} impact` }}
+              {{ node.kind === 'group' ? `${node.tableCount || node.tableIds.length} tables` : (node.kind === 'table' ? `${getTableRows(node.id).length} rows` : `${node.tableIds.length} impact`) }}
             </span>
             <UButton
               v-if="node.kind === 'group'"
@@ -5587,6 +5981,19 @@ defineExpose<{
               @click.stop="handleCreateTable(node.title)"
             />
             <UButton
+              v-if="node.kind === 'group'"
+              icon="i-lucide-pencil-line"
+              :data-group-edit-button="node.title"
+              color="neutral"
+              variant="ghost"
+              size="xs"
+              class="h-5 w-5 rounded-none border border-[color:var(--studio-rail)] px-0 text-[color:var(--studio-shell-muted)] hover:bg-[color:var(--studio-surface-hover)] hover:text-[color:var(--studio-shell-text)]"
+              aria-label="Edit group"
+              title="Edit group"
+              @pointerdown.stop
+              @click.stop="handleEditGroup(node.title)"
+            />
+            <UButton
               v-if="isCollapsibleNode(node)"
               :icon="node.collapsed ? 'i-lucide-plus' : 'i-lucide-minus'"
               color="neutral"
@@ -5597,6 +6004,19 @@ defineExpose<{
               :title="node.collapsed ? `Expand ${node.title}` : `Collapse ${node.title}`"
               @pointerdown.stop
               @click.stop="toggleNodeCollapsed(node.id)"
+            />
+            <UButton
+              v-if="node.kind === 'table'"
+              icon="i-lucide-pencil-line"
+              :data-table-edit-button="node.id"
+              color="neutral"
+              variant="ghost"
+              size="xs"
+              class="h-5 w-5 rounded-none border border-[color:var(--studio-rail)] px-0 text-[color:var(--studio-shell-muted)] hover:bg-[color:var(--studio-surface-hover)] hover:text-[color:var(--studio-shell-text)]"
+              aria-label="Edit table"
+              title="Edit table"
+              @pointerdown.stop
+              @click.stop="handleEditTable(node.id)"
             />
           </div>
         </div>
@@ -5640,9 +6060,6 @@ defineExpose<{
                   </p>
                 </div>
 
-                <span class="inline-flex h-5 items-center border border-[color:var(--studio-rail)] px-1.5 font-mono text-[0.62rem] uppercase tracking-[0.06em] text-[color:var(--studio-shell-muted)]">
-                  {{ table.columns.length }} cols
-                </span>
                 <UButton
                   icon="i-lucide-pencil-line"
                   :data-table-edit-button="table.fullName"
@@ -5822,6 +6239,170 @@ defineExpose<{
         </div>
 
         <div
+          v-else-if="node.kind === 'table'"
+          class="grid gap-px bg-[color:var(--studio-divider)]"
+        >
+          <template
+            v-for="row in getTableRows(node.id)"
+            :key="row.key"
+          >
+            <div
+              v-if="row.kind === 'column'"
+              :data-table-row-anchor="row.key"
+              data-table-row-kind="column"
+              :data-column-anchor="getColumnAnchorKey(node.id, row.column.name)"
+              :class="[
+                'relative flex min-w-0 items-start justify-between gap-2 bg-[color:var(--studio-row-surface)] px-2 py-1.5',
+                isHighlightedRelationalRow(node.id, row.column.name) ? 'pgml-selection-glow pgml-selection-glow-subtle' : ''
+              ]"
+              :style="getRelationalRowHighlightColor(node.id, row.column.name) ? getSelectionGlowStyle(getRelationalRowHighlightColor(node.id, row.column.name) || '#79e3ea') : undefined"
+              :data-relational-highlighted="isHighlightedRelationalRow(node.id, row.column.name) ? 'true' : undefined"
+            >
+              <div
+                :data-column-label-anchor="getColumnLabelAnchorKey(node.id, row.column.name)"
+                class="min-w-0"
+              >
+                <strong
+                  data-table-row-title
+                  class="block truncate font-mono text-[0.68rem] font-medium text-[color:var(--studio-shell-text)]"
+                >
+                  {{ row.column.name }}
+                </strong>
+                <span
+                  data-table-row-subtitle
+                  class="mt-0.5 block truncate text-[0.64rem] text-[color:var(--studio-shell-muted)]"
+                >
+                  {{ row.column.type }}
+                </span>
+              </div>
+              <div class="grid max-w-[8.5rem] shrink-0 justify-items-end gap-0.5 text-right">
+                <span
+                  v-for="modifier in row.column.modifiers.slice(0, 2)"
+                  :key="modifier"
+                  data-table-row-badge
+                  class="inline-flex min-h-[1rem] max-w-full items-center justify-end border border-[color:var(--studio-rail)] px-1 py-0.5 font-mono text-[0.52rem] uppercase leading-[1.15] tracking-[0.04em] whitespace-normal break-all text-[color:var(--studio-shell-muted)]"
+                >
+                  {{ modifier }}
+                </span>
+              </div>
+            </div>
+
+            <UPopover
+              v-else
+              mode="click"
+              :content="attachmentPopoverContent"
+              :ui="attachmentPopoverUi"
+            >
+              <button
+                type="button"
+                :data-table-row-anchor="row.key"
+                data-table-row-kind="attachment"
+                :data-attachment-row="row.attachment.id"
+                :class="[
+                  'relative flex min-w-0 w-full items-start justify-between gap-2 px-2 py-1.5 text-left transition-[filter,transform] duration-150 hover:brightness-105',
+                  isAttachmentSelectionActive(node.id, row.attachment.id) ? 'pgml-selection-glow' : ''
+                ]"
+                :style="[
+                  getAttachmentRowStyle(row.attachment),
+                  isAttachmentSelectionActive(node.id, row.attachment.id) ? getSelectedAttachmentRowStyle() : undefined,
+                  getSelectionGlowStyle(row.attachment.color)
+                ]"
+                :aria-label="`${row.attachment.kind} ${row.attachment.title}`"
+                :data-selection-active="isAttachmentSelectionActive(node.id, row.attachment.id) ? 'true' : undefined"
+                @pointerdown.stop
+                @click.stop="handleAttachmentClick(node.id, row.attachment)"
+                @dblclick.stop="handleAttachmentDoubleClick(row.attachment)"
+              >
+                <div class="flex min-w-0 items-start gap-2">
+                  <span
+                    data-table-row-badge
+                    class="mt-0.5 inline-flex h-4 shrink-0 items-center border px-1 font-mono text-[0.48rem] uppercase tracking-[0.06em]"
+                    :style="getAttachmentKindBadgeStyle(row.attachment)"
+                  >
+                    {{ row.attachment.kind }}
+                  </span>
+                  <div class="min-w-0">
+                    <strong
+                      data-table-row-title
+                      class="block truncate font-mono text-[0.66rem] font-medium text-[color:var(--studio-shell-text)]"
+                    >
+                      {{ row.attachment.title }}
+                    </strong>
+                    <span
+                      v-if="row.attachment.subtitle"
+                      data-table-row-subtitle
+                      class="mt-0.5 block truncate text-[0.62rem] text-[color:var(--studio-shell-muted)]"
+                    >
+                      {{ row.attachment.subtitle }}
+                    </span>
+                  </div>
+                </div>
+
+                <div class="flex max-w-[8.5rem] shrink-0 flex-wrap justify-end gap-0.5 text-right">
+                  <span
+                    v-for="flag in row.attachment.flags"
+                    :key="flag.key"
+                    data-table-row-badge
+                    class="inline-flex min-h-[1rem] max-w-full items-center justify-end border px-1 py-0.5 font-mono text-[0.5rem] uppercase leading-[1.15] tracking-[0.04em] whitespace-normal break-all"
+                    :style="getAttachmentFlagStyle(flag)"
+                  >
+                    {{ flag.label }}
+                  </span>
+                </div>
+              </button>
+
+              <template #content>
+                <div
+                  :data-attachment-popover="row.attachment.id"
+                  class="grid gap-3"
+                >
+                  <div class="flex items-start justify-between gap-3">
+                    <div class="min-w-0">
+                      <span
+                        class="mb-1 inline-flex items-center border px-1.5 font-mono text-[0.56rem] uppercase tracking-[0.08em]"
+                        :style="getAttachmentKindBadgeStyle(row.attachment)"
+                      >
+                        {{ row.attachment.kind }}
+                      </span>
+                      <h5 class="truncate text-[0.82rem] font-semibold text-[color:var(--studio-shell-text)]">
+                        {{ row.attachment.title }}
+                      </h5>
+                      <p
+                        v-if="row.attachment.subtitle"
+                        class="mt-1 text-[0.68rem] leading-5 text-[color:var(--studio-shell-muted)]"
+                      >
+                        {{ row.attachment.subtitle }}
+                      </p>
+                    </div>
+
+                    <div class="flex shrink-0 flex-wrap justify-end gap-1">
+                      <span
+                        v-for="flag in row.attachment.flags"
+                        :key="flag.key"
+                        class="inline-flex items-center border px-1.5 py-0.5 font-mono text-[0.54rem] uppercase tracking-[0.06em]"
+                        :style="getAttachmentFlagStyle(flag)"
+                      >
+                        {{ flag.label }}
+                      </span>
+                    </div>
+                  </div>
+
+                  <div class="grid max-h-64 gap-1 overflow-auto border border-[color:var(--studio-rail)] bg-[color:var(--studio-input-bg)] px-2 py-2">
+                    <p
+                      v-for="detail in row.attachment.details"
+                      :key="detail"
+                      class="break-words whitespace-pre-wrap font-mono text-[0.62rem] leading-5 text-[color:var(--studio-shell-muted)] [overflow-wrap:anywhere]"
+                    >
+                      {{ detail }}
+                    </p>
+                  </div>
+                </div>
+              </template>
+            </UPopover>
+          </template>
+        </div>
+
+        <div
           v-else-if="!node.collapsed"
           :data-node-body="node.id"
           class="grid gap-1.5 px-2.5 pb-2.5 pt-2"
@@ -5936,7 +6517,21 @@ defineExpose<{
       </div>
     </div>
 
-    <div class="pointer-events-none absolute right-3 top-3 z-[3] flex justify-end">
+    <div class="pointer-events-none absolute right-3 top-3 z-[3] flex justify-end gap-2">
+      <button
+        type="button"
+        data-diagram-create-group="true"
+        class="pointer-events-auto inline-flex items-center gap-1.5 border px-2 py-1 font-mono text-[0.62rem] uppercase tracking-[0.08em] text-[color:var(--studio-shell-text)] transition-colors duration-150 hover:bg-[color:var(--studio-surface-hover)]"
+        :style="floatingPanelStyle"
+        @click="handleCreateGroup"
+      >
+        <UIcon
+          name="i-lucide-folder-plus"
+          class="h-3.5 w-3.5"
+        />
+        Add group
+      </button>
+
       <button
         type="button"
         data-diagram-panel-toggle="true"
@@ -5957,6 +6552,7 @@ defineExpose<{
       data-diagram-panel="true"
       class="absolute bottom-3 right-3 top-14 z-[2] grid w-[320px] grid-rows-[auto_auto_minmax(0,1fr)] overflow-hidden border max-[900px]:left-3 max-[900px]:w-auto"
       :style="floatingPanelStyle"
+      @wheel.stop
     >
       <div class="flex items-start justify-between gap-3 border-b border-[color:var(--studio-divider)] px-3 py-2.5">
         <div class="min-w-0">
@@ -6102,12 +6698,16 @@ defineExpose<{
             >
           </label>
           <div class="flex items-center justify-between gap-3 text-[0.62rem] text-[color:var(--studio-shell-muted)]">
-            <span>{{ filteredGroupedBrowserItems.length + filteredStandaloneBrowserItems.length }} sections</span>
+            <span>{{ filteredGroupedBrowserItems.length + filteredUngroupedBrowserItems.length + filteredStandaloneBrowserItems.length }} sections</span>
             <span>{{ hiddenEntityCount }} hidden</span>
           </div>
         </div>
 
-        <div class="grid content-start gap-2 overflow-auto overflow-x-hidden px-3 py-3">
+        <div
+          data-diagram-panel-scroll="true"
+          class="grid content-start gap-2 overflow-auto overflow-x-hidden px-3 py-3"
+          @wheel.stop
+        >
           <div
             v-for="groupItem in filteredGroupedBrowserItems"
             :key="groupItem.id"
@@ -6128,6 +6728,7 @@ defineExpose<{
                   type="button"
                   class="min-w-0 flex-1 text-left"
                   @click="selectBrowserItem(groupItem)"
+                  @dblclick.stop="focusBrowserItemSource(groupItem)"
                 >
                   <div class="font-mono text-[0.54rem] uppercase tracking-[0.08em] text-[color:var(--studio-shell-label)]">
                     <span :class="isBrowserItemSearchMatch(groupItem) ? 'pgml-browser-search-match-text' : ''">
@@ -6144,15 +6745,26 @@ defineExpose<{
                   </div>
                 </button>
 
-                <button
-                  type="button"
-                  :data-browser-visibility-toggle="groupItem.id"
-                  class="shrink-0 border px-2 py-1 font-mono text-[0.54rem] uppercase tracking-[0.08em] transition-colors duration-150"
-                  :class="isBrowserItemDirectlyVisible(groupItem) ? 'border-[color:var(--studio-divider)] text-[color:var(--studio-shell-text)] hover:bg-[color:var(--studio-surface-hover)]' : 'border-[color:var(--studio-shell-label)] bg-[color:var(--studio-input-bg)] text-[color:var(--studio-shell-label)] hover:bg-[color:var(--studio-surface-hover)]'"
-                  @click="toggleBrowserItemVisibility(groupItem)"
-                >
-                  {{ isBrowserItemDirectlyVisible(groupItem) ? 'Hide' : 'Show' }}
-                </button>
+                <div class="grid shrink-0 content-start gap-1">
+                  <button
+                    type="button"
+                    :data-browser-group-edit="groupItem.label"
+                    class="border px-2 py-1 font-mono text-[0.54rem] uppercase tracking-[0.08em] text-[color:var(--studio-shell-text)] transition-colors duration-150 hover:bg-[color:var(--studio-surface-hover)]"
+                    @click="handleEditGroup(groupItem.label)"
+                  >
+                    Edit
+                  </button>
+
+                  <button
+                    type="button"
+                    :data-browser-visibility-toggle="groupItem.id"
+                    class="border px-2 py-1 font-mono text-[0.54rem] uppercase tracking-[0.08em] transition-colors duration-150"
+                    :class="isBrowserItemDirectlyVisible(groupItem) ? 'border-[color:var(--studio-divider)] text-[color:var(--studio-shell-text)] hover:bg-[color:var(--studio-surface-hover)]' : 'border-[color:var(--studio-shell-label)] bg-[color:var(--studio-input-bg)] text-[color:var(--studio-shell-label)] hover:bg-[color:var(--studio-surface-hover)]'"
+                    @click="toggleBrowserItemVisibility(groupItem)"
+                  >
+                    {{ isBrowserItemDirectlyVisible(groupItem) ? 'Hide' : 'Show' }}
+                  </button>
+                </div>
               </div>
 
               <div class="grid content-start gap-1.5 pl-3">
@@ -6172,6 +6784,7 @@ defineExpose<{
                       type="button"
                       class="min-w-0 flex-1 text-left"
                       @click="selectBrowserItem(tableItem)"
+                      @dblclick.stop="focusBrowserItemSource(tableItem)"
                     >
                       <div class="font-mono text-[0.52rem] uppercase tracking-[0.08em] text-[color:var(--studio-shell-label)]">
                         <span :class="isBrowserItemSearchMatch(tableItem) ? 'pgml-browser-search-match-text' : ''">
@@ -6219,6 +6832,7 @@ defineExpose<{
                         type="button"
                         class="min-w-0 text-left"
                         @click="selectBrowserItem(childItem)"
+                        @dblclick.stop="focusBrowserItemSource(childItem)"
                       >
                         <span class="flex min-w-0 flex-wrap items-center gap-x-1.5 gap-y-0.5">
                           <span class="font-mono text-[0.48rem] uppercase tracking-[0.08em] text-[color:var(--studio-shell-label)]">
@@ -6256,6 +6870,112 @@ defineExpose<{
           </div>
 
           <div
+            v-if="filteredUngroupedBrowserItems.length"
+            class="grid content-start gap-1"
+          >
+            <div class="font-mono text-[0.58rem] uppercase tracking-[0.08em] text-[color:var(--studio-shell-label)]">
+              Ungrouped Tables
+            </div>
+
+            <div
+              v-for="tableItem in filteredUngroupedBrowserItems"
+              :key="tableItem.id"
+              :data-browser-entity-row="tableItem.id"
+              :data-browser-search-match="isBrowserItemSearchMatch(tableItem) ? 'true' : undefined"
+              :style="getBrowserItemSearchMatchStyle(tableItem)"
+              :class="[
+                'grid content-start gap-1 border px-2 py-2 transition-colors duration-150',
+                isBrowserItemSearchMatch(tableItem) ? 'pgml-browser-search-match-row' : '',
+                isBrowserItemSelected(tableItem) ? 'border-[color:var(--studio-ring)] bg-[color:var(--studio-input-bg)]' : 'border-[color:var(--studio-divider)] bg-[color:var(--studio-control-bg)]'
+              ]"
+            >
+              <div class="grid grid-cols-[minmax(0,1fr)_auto] items-start gap-2">
+                <button
+                  type="button"
+                  class="min-w-0 flex-1 text-left"
+                  @click="selectBrowserItem(tableItem)"
+                  @dblclick.stop="focusBrowserItemSource(tableItem)"
+                >
+                  <div class="font-mono text-[0.52rem] uppercase tracking-[0.08em] text-[color:var(--studio-shell-label)]">
+                    <span :class="isBrowserItemSearchMatch(tableItem) ? 'pgml-browser-search-match-text' : ''">
+                      {{ tableItem.kindLabel }}
+                    </span>
+                  </div>
+                  <div
+                    class="break-words text-[0.72rem] font-medium leading-5"
+                    :class="isBrowserItemEffectivelyVisible(tableItem) ? 'text-[color:var(--studio-shell-text)]' : 'text-[color:var(--studio-shell-muted)]'"
+                  >
+                    <span :class="isBrowserItemSearchMatch(tableItem) ? 'pgml-browser-search-match-text' : ''">
+                      {{ tableItem.label }}
+                    </span>
+                  </div>
+                </button>
+
+                <button
+                  type="button"
+                  :data-browser-visibility-toggle="tableItem.id"
+                  class="shrink-0 border px-2 py-1 font-mono text-[0.52rem] uppercase tracking-[0.08em] transition-colors duration-150"
+                  :class="isBrowserItemDirectlyVisible(tableItem) ? 'border-[color:var(--studio-divider)] text-[color:var(--studio-shell-text)] hover:bg-[color:var(--studio-surface-hover)]' : 'border-[color:var(--studio-shell-label)] bg-[color:var(--studio-input-bg)] text-[color:var(--studio-shell-label)] hover:bg-[color:var(--studio-surface-hover)]'"
+                  @click="toggleBrowserItemVisibility(tableItem)"
+                >
+                  {{ isBrowserItemDirectlyVisible(tableItem) ? 'Hide' : 'Show' }}
+                </button>
+              </div>
+
+              <div
+                v-if="tableItem.children.length"
+                class="grid content-start gap-0.5 pl-3"
+              >
+                <div
+                  v-for="childItem in tableItem.children"
+                  :key="childItem.id"
+                  :data-browser-entity-row="childItem.id"
+                  :data-browser-search-match="isBrowserItemSearchMatch(childItem) ? 'true' : undefined"
+                  :style="getBrowserItemSearchMatchStyle(childItem)"
+                  :class="[
+                    'grid grid-cols-[minmax(0,1fr)_auto] items-center gap-2 border-l border-[color:var(--studio-divider)] pl-3 py-0.5',
+                    isBrowserItemSearchMatch(childItem) ? 'pgml-browser-search-match-row' : ''
+                  ]"
+                >
+                  <button
+                    type="button"
+                    class="min-w-0 text-left"
+                    @click="selectBrowserItem(childItem)"
+                    @dblclick.stop="focusBrowserItemSource(childItem)"
+                  >
+                    <span class="flex min-w-0 flex-wrap items-center gap-x-1.5 gap-y-0.5">
+                      <span class="font-mono text-[0.48rem] uppercase tracking-[0.08em] text-[color:var(--studio-shell-label)]">
+                        <span :class="isBrowserItemSearchMatch(childItem) ? 'pgml-browser-search-match-text' : ''">
+                          {{ childItem.kindLabel }}
+                        </span>
+                      </span>
+                      <span
+                        class="break-words text-[0.66rem] leading-4"
+                        :class="isBrowserItemEffectivelyVisible(childItem) ? 'text-[color:var(--studio-shell-text)]' : 'text-[color:var(--studio-shell-muted)]'"
+                      >
+                        <span :class="isBrowserItemSearchMatch(childItem) ? 'pgml-browser-search-match-text' : ''">
+                          {{ childItem.label }}
+                        </span>
+                      </span>
+                    </span>
+                  </button>
+
+                  <button
+                    v-if="browserItemSupportsVisibility(childItem)"
+                    type="button"
+                    :data-browser-visibility-toggle="childItem.id"
+                    class="shrink-0 border px-2 py-1 font-mono text-[0.5rem] uppercase tracking-[0.08em] transition-colors duration-150"
+                    :class="isBrowserItemDirectlyVisible(childItem) ? 'border-[color:var(--studio-divider)] text-[color:var(--studio-shell-text)] hover:bg-[color:var(--studio-surface-hover)]' : 'border-[color:var(--studio-shell-label)] bg-[color:var(--studio-input-bg)] text-[color:var(--studio-shell-label)] hover:bg-[color:var(--studio-surface-hover)]'"
+                    @click="toggleBrowserItemVisibility(childItem)"
+                  >
+                    {{ isBrowserItemDirectlyVisible(childItem) ? 'Hide' : 'Show' }}
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div
             v-if="filteredStandaloneBrowserItems.length"
             class="grid content-start gap-1"
           >
@@ -6279,6 +6999,7 @@ defineExpose<{
                 type="button"
                 class="min-w-0 flex-1 text-left"
                 @click="selectBrowserItem(item)"
+                @dblclick.stop="focusBrowserItemSource(item)"
               >
                 <div class="font-mono text-[0.52rem] uppercase tracking-[0.08em] text-[color:var(--studio-shell-label)]">
                   <span :class="isBrowserItemSearchMatch(item) ? 'pgml-browser-search-match-text' : ''">
@@ -6314,7 +7035,7 @@ defineExpose<{
           </div>
 
           <div
-            v-if="!filteredGroupedBrowserItems.length && !filteredStandaloneBrowserItems.length"
+            v-if="!filteredGroupedBrowserItems.length && !filteredUngroupedBrowserItems.length && !filteredStandaloneBrowserItems.length"
             class="border border-[color:var(--studio-divider)] bg-[color:var(--studio-input-bg)] px-3 py-3 text-[0.68rem] leading-6 text-[color:var(--studio-shell-muted)]"
           >
             No entities match the current search.

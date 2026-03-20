@@ -2,7 +2,10 @@ import { describe, expect, it } from 'vitest'
 
 import { parsePgml } from '../../app/utils/pgml'
 import {
+  applyEditableGroupDraftToSource,
   applyEditableTableDraftToSource,
+  createEditableGroupDraft,
+  createEditableGroupDraftForCreate,
   createEditableTableDraft,
   createEditableTableDraftForGroup
 } from '../../app/utils/pgml-table-editor'
@@ -67,5 +70,52 @@ describe('PGML table editor', () => {
     expect(nextSource).toContain('TableGroup Core {\n  users\n  roles\n}')
     expect(nextSource).toContain('Table public.roles in Core {')
     expect(nextSource).toContain('key text [not null, unique]')
+  })
+
+  it('creates an empty group block from the group editor draft', () => {
+    const model = parsePgml(source)
+    const draft = createEditableGroupDraftForCreate()
+
+    draft.name = 'Billing'
+    draft.note = 'Invoices and payouts'
+
+    const nextSource = applyEditableGroupDraftToSource(source, model, draft)
+    const nextModel = parsePgml(nextSource)
+    const billingGroup = nextModel.groups.find(group => group.name === 'Billing')
+
+    expect(nextSource).toContain('TableGroup Billing {')
+    expect(nextSource).toContain('Note: Invoices and payouts')
+    expect(billingGroup).toEqual(expect.objectContaining({
+      name: 'Billing',
+      note: 'Invoices and payouts',
+      tableNames: []
+    }))
+  })
+
+  it('renames a group, keeps its members, and migrates stored group properties', () => {
+    const sourceWithProperties = `${source}
+
+Properties "group:Core" {
+  x: 120
+  y: 90
+}`
+    const model = parsePgml(sourceWithProperties)
+    const coreGroup = model.groups.find(group => group.name === 'Core')
+
+    if (!coreGroup) {
+      throw new Error('Expected Core group in test model.')
+    }
+
+    const draft = createEditableGroupDraft(coreGroup)
+
+    draft.name = 'Identity'
+    draft.note = 'Shared auth and tenant ownership.'
+
+    const nextSource = applyEditableGroupDraftToSource(sourceWithProperties, model, draft)
+
+    expect(nextSource).toContain('TableGroup Identity {\n  users\n  Note: Shared auth and tenant ownership.\n}')
+    expect(nextSource).toContain('Table public.users in Identity {')
+    expect(nextSource).toContain('Properties "group:Identity" {')
+    expect(nextSource).not.toContain('Properties "group:Core" {')
   })
 })

@@ -28,7 +28,7 @@ const reasons = [
   },
   {
     title: 'Reduce AI ambiguity',
-    description: 'PGML gives AI tooling a clearer, schema-specific representation of intent. With a repo-aware PGML skill, that means less room for misreading requirements than working from loosely described SQL changes.'
+    description: 'PGML gives AI tooling a clearer, schema-specific representation of intent. With a repo-aware PGML skill, that means less room for misreading requirements than working from loosely described SQL changes, including keeping TableGroup separate from actual PostgreSQL schemas.'
   },
   {
     title: 'Preserve intent, not just DDL',
@@ -42,7 +42,7 @@ const dbmlComparison = [
     points: [
       'Table blocks keep the familiar DBML shape.',
       'Inline column attributes like pk, unique, not null, and ref stay compact.',
-      'TableGroup keeps the one-table-per-line pattern for domain grouping.',
+      'TableGroup keeps the one-table-per-line pattern for domain grouping without redefining PostgreSQL schemas.',
       'The source remains block-based and easy to diff.'
     ]
   },
@@ -74,7 +74,7 @@ const documentationExamples = [
   },
   {
     title: 'Table groups',
-    description: 'Use TableGroup to cluster related tables in source and in the studio canvas.',
+    description: 'Use TableGroup to cluster related tables in source and in the studio canvas. It is a grouping construct, not a PostgreSQL schema declaration.',
     code: `TableGroup Commerce {
   products
   orders
@@ -172,7 +172,8 @@ Function register_entity(entity_kind text) returns trigger [replace] {
           <p class="max-w-2xl text-sm leading-7 text-[color:var(--studio-shell-muted)] sm:text-[0.97rem]">
             PGML stays close to DBML for tables and references, then extends it for the Postgres objects that shape real systems:
             functions, procedures, triggers, sequences, constraints, custom types, and embedded layout state. The goal is simple:
-            one source file that is easy to read in a pull request and useful enough to drive the diagram studio directly.
+            one source file that is easy to read in a pull request and useful enough to drive the diagram studio directly. TableGroup
+            helps organize related tables, but PostgreSQL schema still comes from table names like public.orders.
           </p>
         </div>
 
@@ -257,6 +258,7 @@ Function register_entity(entity_kind text) returns trigger [replace] {
                 Postgres-specific behavior starts mattering, the diagram needs to stay in sync with the source, and the document needs
                 to explain more than tables and foreign keys. It is also much easier to diff in reviews, can act as a deterministic
                 source for migration generation, and gives AI tooling a format that carries intent more explicitly than free-form schema discussions.
+                In PGML, PostgreSQL schemas are namespaces on table names, while TableGroup is only a source and layout grouping aid.
               </p>
             </div>
 

@@ -14,12 +14,18 @@ import {
   type PgmlNodeProperties
 } from '~/utils/pgml'
 import {
+  applyEditableGroupDraftToSource,
   applyEditableTableDraftToSource,
+  cloneEditableGroupDraft,
   cloneEditableTableDraft,
   commonPgmlColumnTypes,
+  createEditableGroupDraft,
+  createEditableGroupDraftForCreate,
   createEditableTableDraft,
   createEditableTableDraftForGroup,
+  getEditableGroupDraftErrors,
   getEditableTableDraftErrors,
+  type PgmlEditableGroupDraft,
   type PgmlEditableTableDraft
 } from '~/utils/pgml-table-editor'
 
@@ -35,6 +41,8 @@ const canvasRef: Ref<PgmlDiagramCanvasExposed | null> = ref(null)
 const isExporting: Ref<boolean> = ref(false)
 const tableEditorDraft: Ref<PgmlEditableTableDraft | null> = ref(null)
 const tableEditorOpen: Ref<boolean> = ref(false)
+const groupEditorDraft: Ref<PgmlEditableGroupDraft | null> = ref(null)
+const groupEditorOpen: Ref<boolean> = ref(false)
 const exportScales = [1, 2, 3, 4, 8]
 const { clearStudioHeaderActions, setStudioHeaderActions } = useStudioHeaderActions()
 const { clearStudioSchemaStatus, setStudioSchemaStatus } = useStudioSchemaStatus()
@@ -99,6 +107,7 @@ const studioSwitchUi = {
   description: 'text-[0.7rem] text-[color:var(--studio-shell-muted)]'
 }
 const secondaryModalButtonClass = 'rounded-none border border-[color:var(--studio-shell-border)] bg-[color:var(--studio-control-bg)] text-[color:var(--studio-shell-text)] hover:bg-[color:var(--studio-shell-text)]/8'
+const primaryModalButtonClass = 'rounded-none border border-[color:var(--studio-shell-border)] bg-[color:var(--studio-input-bg)] text-[color:var(--studio-shell-text)] hover:bg-[color:var(--studio-shell-text)]/8 disabled:opacity-100 disabled:border-[color:var(--studio-shell-border)] disabled:bg-[color:var(--studio-shell-text)]/10 disabled:text-[color:var(--studio-shell-muted)]'
 const iconGhostButtonClass = 'rounded-none text-[color:var(--studio-shell-muted)] hover:bg-[color:var(--studio-shell-text)]/8 hover:text-[color:var(--studio-shell-text)]'
 const overwriteTargetButtonClass = 'grid gap-1 border px-3 py-2 text-left transition-colors duration-150'
 const parsedState = computed(() => {
@@ -247,6 +256,12 @@ const tableEditorTitle = computed(() => {
 const tableEditorActionLabel = computed(() => {
   return tableEditorDraft.value?.mode === 'create' ? 'Create table' : 'Save table'
 })
+const groupEditorTitle = computed(() => {
+  return groupEditorDraft.value?.mode === 'create' ? 'Add table group' : 'Edit table group'
+})
+const groupEditorActionLabel = computed(() => {
+  return groupEditorDraft.value?.mode === 'create' ? 'Create group' : 'Save group'
+})
 const groupSelectItems = computed(() => {
   return ['Ungrouped', ...parsedModel.value.groups.map(group => group.name)]
 })
@@ -271,6 +286,9 @@ const tableTargetItems = computed(() => {
 })
 const tableEditorErrors = computed(() => {
   return tableEditorDraft.value ? getEditableTableDraftErrors(tableEditorDraft.value) : []
+})
+const groupEditorErrors = computed(() => {
+  return groupEditorDraft.value ? getEditableGroupDraftErrors(groupEditorDraft.value) : []
 })
 
 const getColumnDefaultItems = (columnType: string) => {
@@ -307,9 +325,38 @@ const openTableCreator = (groupName: string) => {
   tableEditorOpen.value = true
 }
 
+const openGroupEditor = (groupName: string) => {
+  if (parseError.value) {
+    return
+  }
+
+  const group = parsedModel.value.groups.find(candidate => candidate.name === groupName)
+
+  if (!group) {
+    return
+  }
+
+  groupEditorDraft.value = cloneEditableGroupDraft(createEditableGroupDraft(group))
+  groupEditorOpen.value = true
+}
+
+const openGroupCreator = () => {
+  if (parseError.value) {
+    return
+  }
+
+  groupEditorDraft.value = createEditableGroupDraftForCreate()
+  groupEditorOpen.value = true
+}
+
 const closeTableEditor = () => {
   tableEditorDraft.value = null
   tableEditorOpen.value = false
+}
+
+const closeGroupEditor = () => {
+  groupEditorDraft.value = null
+  groupEditorOpen.value = false
 }
 
 const addTableDraftColumn = () => {
@@ -382,6 +429,15 @@ const saveTableEditor = () => {
 
   source.value = applyEditableTableDraftToSource(source.value, parsedModel.value, tableEditorDraft.value)
   closeTableEditor()
+}
+
+const saveGroupEditor = () => {
+  if (!groupEditorDraft.value || groupEditorErrors.value.length > 0) {
+    return
+  }
+
+  source.value = applyEditableGroupDraftToSource(source.value, parsedModel.value, groupEditorDraft.value)
+  closeGroupEditor()
 }
 
 const runExport = async (format: 'svg' | 'png', scaleFactor?: number) => {
@@ -507,8 +563,10 @@ onBeforeUnmount(() => {
         <PgmlDiagramCanvas
           ref="canvasRef"
           :model="parsedModel"
+          @create-group="openGroupCreator"
           @focus-source="focusEditorSourceRange"
           @create-table="openTableCreator"
+          @edit-group="openGroupEditor"
           @edit-table="openTableEditor"
           @node-properties-change="syncSourceWithNodeProperties"
         />
@@ -649,7 +707,7 @@ onBeforeUnmount(() => {
                 :label="saveSchemaActionLabel"
                 color="neutral"
                 variant="soft"
-                class="rounded-none border border-[color:var(--studio-shell-border)] bg-[color:var(--studio-input-bg)] text-[color:var(--studio-shell-text)]"
+                :class="primaryModalButtonClass"
                 @click="saveSchemaToBrowser"
               />
               <UButton
@@ -657,7 +715,7 @@ onBeforeUnmount(() => {
                 label="Download .pgml"
                 color="neutral"
                 variant="soft"
-                class="rounded-none border border-[color:var(--studio-shell-border)] bg-[color:var(--studio-input-bg)] text-[color:var(--studio-shell-text)]"
+                :class="primaryModalButtonClass"
                 @click="downloadSchema"
               />
             </div>
@@ -1082,9 +1140,113 @@ onBeforeUnmount(() => {
                 data-table-editor-save="true"
                 color="neutral"
                 variant="soft"
-                class="rounded-none border border-[color:var(--studio-shell-border)] bg-[color:var(--studio-input-bg)] text-[color:var(--studio-shell-text)]"
+                :class="primaryModalButtonClass"
                 :disabled="tableEditorErrors.length > 0"
                 @click="saveTableEditor"
+              />
+            </div>
+          </div>
+        </template>
+      </UModal>
+
+      <UModal
+        v-model:open="groupEditorOpen"
+        :title="groupEditorTitle"
+        :description="groupEditorDraft?.mode === 'create' ? 'Create a table group block so tables can be organized into a new lane.' : 'Rename the selected table group and update its note.'"
+        :ui="{
+          overlay: 'bg-black/60 backdrop-blur-[2px]',
+          content: 'overflow-visible border-none bg-transparent p-0 shadow-none ring-0'
+        }"
+      >
+        <template #content>
+          <div
+            v-if="groupEditorDraft"
+            data-studio-modal-surface="group-editor"
+            class="flex w-[calc(100vw-2rem)] max-w-2xl flex-col overflow-hidden rounded-none border"
+            :style="studioModalSurfaceStyle"
+          >
+            <div class="flex items-start justify-between gap-4 border-b border-[color:var(--studio-shell-border)] px-4 py-3">
+              <div class="grid gap-1">
+                <h2 class="text-[1rem] font-semibold leading-6 text-[color:var(--studio-shell-text)]">
+                  {{ groupEditorTitle }}
+                </h2>
+                <p class="text-[0.8rem] leading-5 text-[color:var(--studio-shell-muted)]">
+                  {{ groupEditorDraft.mode === 'create' ? 'Create an empty table group now and move tables into it later.' : 'Update the selected group metadata without leaving the diagram.' }}
+                </p>
+              </div>
+
+              <UButton
+                icon="i-lucide-x"
+                color="neutral"
+                variant="ghost"
+                :class="iconGhostButtonClass"
+                aria-label="Close"
+                @click="closeGroupEditor"
+              />
+            </div>
+
+            <div class="grid max-h-[min(60vh,32rem)] gap-5 overflow-y-auto px-4 py-4">
+              <div
+                v-if="groupEditorErrors.length"
+                class="grid gap-1 border border-[color:var(--studio-shell-error)]/40 bg-[color:var(--studio-shell-error)]/8 px-3 py-3 text-[0.74rem] text-[color:var(--studio-shell-error)]"
+              >
+                <p
+                  v-for="error in groupEditorErrors"
+                  :key="error"
+                >
+                  {{ error }}
+                </p>
+              </div>
+
+              <div class="grid gap-3 lg:grid-cols-[minmax(0,0.9fr)_minmax(0,1.1fr)]">
+                <label class="grid gap-1">
+                  <span class="font-mono text-[0.62rem] uppercase tracking-[0.08em] text-[color:var(--studio-shell-label)]">Group name</span>
+                  <UInput
+                    v-model="groupEditorDraft.name"
+                    aria-label="Group name"
+                    data-group-editor-name="true"
+                    color="neutral"
+                    variant="outline"
+                    size="sm"
+                    :ui="studioFieldUi"
+                  />
+                </label>
+
+                <div class="grid gap-1">
+                  <span class="font-mono text-[0.62rem] uppercase tracking-[0.08em] text-[color:var(--studio-shell-label)]">Current tables</span>
+                  <div class="border border-[color:var(--studio-shell-border)] bg-[color:var(--studio-control-bg)] px-3 py-2 text-[0.78rem] text-[color:var(--studio-shell-text)]">
+                    {{ groupEditorDraft.tableNames.length ? groupEditorDraft.tableNames.join(', ') : 'No tables assigned yet.' }}
+                  </div>
+                </div>
+              </div>
+
+              <label class="grid gap-1">
+                <span class="font-mono text-[0.62rem] uppercase tracking-[0.08em] text-[color:var(--studio-shell-label)]">Group note</span>
+                <textarea
+                  v-model="groupEditorDraft.note"
+                  data-group-editor-note="true"
+                  rows="4"
+                  class="min-h-[6rem] w-full resize-y border border-[color:var(--studio-shell-border)] bg-[color:var(--studio-input-bg)] px-3 py-2 text-[0.8rem] text-[color:var(--studio-shell-text)] outline-none"
+                />
+              </label>
+            </div>
+
+            <div class="flex items-center justify-end gap-2 border-t border-[color:var(--studio-shell-border)] px-4 py-3">
+              <UButton
+                label="Cancel"
+                color="neutral"
+                variant="outline"
+                :class="secondaryModalButtonClass"
+                @click="closeGroupEditor"
+              />
+              <UButton
+                :label="groupEditorActionLabel"
+                data-group-editor-save="true"
+                color="neutral"
+                variant="soft"
+                :class="primaryModalButtonClass"
+                :disabled="groupEditorErrors.length > 0"
+                @click="saveGroupEditor"
               />
             </div>
           </div>

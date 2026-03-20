@@ -158,6 +158,12 @@ Table public.users in Core {
 
 When both styles exist, treat them as two ways to describe the same grouping intent.
 
+Important:
+
+- `TableGroup` is not a PostgreSQL schema.
+- PostgreSQL schema still comes from the table name itself, such as `public.users` or `billing.invoices`.
+- Use groups for source organization and studio layout, not for namespace semantics.
+
 ## References
 
 Standalone references use this syntax:

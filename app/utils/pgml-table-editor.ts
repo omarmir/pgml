@@ -30,6 +30,14 @@ export type PgmlEditableTableDraft = {
   schema: string
 }
 
+export type PgmlEditableGroupDraft = {
+  mode: 'create' | 'edit'
+  name: string
+  note: string
+  originalName: string | null
+  tableNames: string[]
+}
+
 type SourceEdit = {
   endLine: number
   replacement: string
@@ -37,6 +45,7 @@ type SourceEdit = {
 }
 
 const trimEditorValue = (value: string) => value.trim()
+const escapeRegExp = (value: string) => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
 const normalizeGroupName = (value: string | null | undefined) => {
   const normalized = trimEditorValue(value || '')
 
@@ -337,6 +346,44 @@ const buildCreateGroupInsertEdit = (source: string, groupName: string, tableEntr
   } satisfies SourceEdit
 }
 
+const getCreateGroupInsertLine = (model: PgmlSchemaModel) => {
+  const lastGroup = [...model.groups]
+    .sort((left, right) => getRangeEndLine(left.sourceRange) - getRangeEndLine(right.sourceRange))
+    .at(-1)
+
+  if (lastGroup?.sourceRange) {
+    return lastGroup.sourceRange.endLine + 1
+  }
+
+  const firstSourceRange = [
+    ...model.customTypes.map(item => item.sourceRange),
+    ...model.sequences.map(item => item.sourceRange),
+    ...model.functions.map(item => item.sourceRange),
+    ...model.procedures.map(item => item.sourceRange),
+    ...model.triggers.map(item => item.sourceRange),
+    ...model.tables.map(item => item.sourceRange)
+  ]
+    .filter((entry): entry is PgmlSourceRange => Boolean(entry))
+    .sort((left, right) => left.startLine - right.startLine)
+    .at(0)
+
+  return firstSourceRange?.startLine || 1
+}
+
+const buildCreateEmptyGroupInsertEdit = (source: string, draft: PgmlEditableGroupDraft, insertLine: number) => {
+  const sourceLines = splitSourceLines(source)
+  const groupBlock = serializeGroupBlock(trimEditorValue(draft.name), [], trimEditorValue(draft.note))
+  const replacement = insertLine > sourceLines.length
+    ? `${source.trim().length > 0 ? '\n\n' : ''}${groupBlock}`
+    : `${groupBlock}\n\n`
+
+  return {
+    endLine: insertLine - 1,
+    replacement,
+    startLine: insertLine
+  } satisfies SourceEdit
+}
+
 export const commonPgmlColumnTypes = [
   'bigint',
   'boolean',
@@ -398,6 +445,26 @@ export const createEditableTableDraftForGroup = (groupName: string | null = null
   }
 }
 
+export const createEditableGroupDraft = (group: PgmlGroup): PgmlEditableGroupDraft => {
+  return {
+    mode: 'edit',
+    name: group.name,
+    note: group.note || '',
+    originalName: group.name,
+    tableNames: [...group.tableNames]
+  }
+}
+
+export const createEditableGroupDraftForCreate = (): PgmlEditableGroupDraft => {
+  return {
+    mode: 'create',
+    name: '',
+    note: '',
+    originalName: null,
+    tableNames: []
+  }
+}
+
 export const cloneEditableTableDraft = (draft: PgmlEditableTableDraft): PgmlEditableTableDraft => {
   return {
     columns: draft.columns.map(column => ({
@@ -412,6 +479,16 @@ export const cloneEditableTableDraft = (draft: PgmlEditableTableDraft): PgmlEdit
     preservedConstraints: [...draft.preservedConstraints],
     preservedIndexes: [...draft.preservedIndexes],
     schema: draft.schema
+  }
+}
+
+export const cloneEditableGroupDraft = (draft: PgmlEditableGroupDraft): PgmlEditableGroupDraft => {
+  return {
+    mode: draft.mode,
+    name: draft.name,
+    note: draft.note,
+    originalName: draft.originalName,
+    tableNames: [...draft.tableNames]
   }
 }
 
@@ -455,6 +532,16 @@ export const getEditableTableDraftErrors = (draft: PgmlEditableTableDraft) => {
   return Array.from(new Set(errors))
 }
 
+export const getEditableGroupDraftErrors = (draft: PgmlEditableGroupDraft) => {
+  const errors: string[] = []
+
+  if (trimEditorValue(draft.name).length === 0) {
+    errors.push('Group name is required.')
+  }
+
+  return errors
+}
+
 export const applyEditableTableDraftToSource = (
   source: string,
   model: PgmlSchemaModel,
@@ -496,4 +583,69 @@ export const applyEditableTableDraftToSource = (
   })
 
   return applySourceEdits(normalizedSource, edits)
+}
+
+export const applyEditableGroupDraftToSource = (
+  source: string,
+  model: PgmlSchemaModel,
+  draft: PgmlEditableGroupDraft
+) => {
+  const normalizedSource = source.replaceAll('\r\n', '\n')
+  const currentGroup = draft.originalName
+    ? model.groups.find(group => group.name === draft.originalName) || null
+    : null
+
+  if (draft.mode === 'create') {
+    const insertLine = getCreateGroupInsertLine(model)
+
+    return applySourceEdits(normalizedSource, [
+      buildCreateEmptyGroupInsertEdit(normalizedSource, draft, insertLine)
+    ])
+  }
+
+  if (!currentGroup?.sourceRange) {
+    return normalizedSource
+  }
+
+  const nextName = trimEditorValue(draft.name)
+  const nextNote = trimEditorValue(draft.note)
+  const edits: SourceEdit[] = [{
+    endLine: currentGroup.sourceRange.endLine,
+    replacement: serializeGroupBlock(nextName, currentGroup.tableNames, nextNote),
+    startLine: currentGroup.sourceRange.startLine
+  }]
+  const sourceLines = splitSourceLines(normalizedSource)
+
+  if (currentGroup.name !== nextName) {
+    model.tables
+      .filter(table => table.groupName === currentGroup.name && table.sourceRange)
+      .forEach((table) => {
+        const startLine = table.sourceRange?.startLine || 0
+        const originalHeader = sourceLines[startLine - 1] || ''
+
+        if (!originalHeader.includes(` in ${currentGroup.name}`)) {
+          return
+        }
+
+        edits.push({
+          endLine: startLine,
+          replacement: originalHeader.replace(
+            new RegExp(`\\sin\\s${escapeRegExp(currentGroup.name)}(?=\\s*\\{)`),
+            ` in ${nextName}`
+          ),
+          startLine
+        })
+      })
+  }
+
+  const nextSource = applySourceEdits(normalizedSource, edits)
+
+  if (currentGroup.name === nextName) {
+    return nextSource
+  }
+
+  return nextSource.replace(
+    new RegExp(`Properties\\s+"group:${escapeRegExp(currentGroup.name)}"`, 'g'),
+    `Properties "group:${nextName}"`
+  )
 }

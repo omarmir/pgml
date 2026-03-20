@@ -191,6 +191,7 @@ Notes:
 - `Note:` is optional.
 - Table names inside the block should match table definitions elsewhere in the document.
 - Groups drive grouped layout in the studio.
+- `TableGroup` does not equal a PostgreSQL schema. Schema still comes from the qualified table name, such as `public.orders`.
 
 ## References
 
