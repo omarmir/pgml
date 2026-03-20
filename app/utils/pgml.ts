@@ -1635,22 +1635,22 @@ export const parsePgml = (source: string) => {
 }
 
 export const pgmlExample = `TableGroup Core {
-  tenants
-  users
-  roles
+  public.tenants
+  public.users
+  public.roles
   Note: Shared identity and account ownership
 }
 
 TableGroup Commerce {
-  products
-  orders
-  order_items
+  public.products
+  public.orders
+  public.order_items
   Note: Buying flow and inventory edges
 }
 
 TableGroup Programs {
-  common_entity
-  funding_opportunity_profile
+  public.common_entity
+  public.funding_opportunity_profile
   Note: Shared entity registration hooks for programs
 }
 

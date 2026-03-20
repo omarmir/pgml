@@ -55,9 +55,23 @@ const normalizeTableListEntry = (schema: string, tableName: string) => {
   const normalizedSchema = trimEditorValue(schema)
   const normalizedTableName = trimEditorValue(tableName)
 
-  return normalizedSchema === 'public'
+  return `${normalizedSchema}.${normalizedTableName}`
+}
+const normalizeExistingGroupTableEntry = (tableName: string) => {
+  const normalizedTableName = trimEditorValue(tableName)
+
+  if (normalizedTableName.length === 0) {
+    return normalizedTableName
+  }
+
+  return normalizedTableName.includes('.')
     ? normalizedTableName
-    : `${normalizedSchema}.${normalizedTableName}`
+    : `public.${normalizedTableName}`
+}
+const normalizeGroupTableNames = (tableNames: string[]) => {
+  return tableNames
+    .map(normalizeExistingGroupTableEntry)
+    .filter(tableName => tableName.length > 0)
 }
 const serializeColumnReference = (column: PgmlEditableColumnDraft) => {
   if (
@@ -221,7 +235,7 @@ const updateGroupBlock = (
     } | null
   }
 ) => {
-  const nextTableNames = [...group.tableNames]
+  const nextTableNames = normalizeGroupTableNames(group.tableNames)
 
   if (options.removeEntry) {
     const removeEntry = options.removeEntry
@@ -451,7 +465,7 @@ export const createEditableGroupDraft = (group: PgmlGroup): PgmlEditableGroupDra
     name: group.name,
     note: group.note || '',
     originalName: group.name,
-    tableNames: [...group.tableNames]
+    tableNames: normalizeGroupTableNames(group.tableNames)
   }
 }
 
@@ -611,7 +625,7 @@ export const applyEditableGroupDraftToSource = (
   const nextNote = trimEditorValue(draft.note)
   const edits: SourceEdit[] = [{
     endLine: currentGroup.sourceRange.endLine,
-    replacement: serializeGroupBlock(nextName, currentGroup.tableNames, nextNote),
+    replacement: serializeGroupBlock(nextName, normalizeGroupTableNames(currentGroup.tableNames), nextNote),
     startLine: currentGroup.sourceRange.startLine
   }]
   const sourceLines = splitSourceLines(normalizedSource)

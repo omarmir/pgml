@@ -6493,7 +6493,7 @@ defineExpose<{
         </div>
 
         <button
-          v-if="node.kind !== 'group' && !node.collapsed"
+          v-if="node.kind === 'object' && !node.collapsed"
           class="absolute bottom-1.5 right-1.5 h-4 w-4 cursor-nwse-resize border-none bg-transparent"
           :style="{
             borderRight: `2px solid ${getNodeAccentColor(node)}`,

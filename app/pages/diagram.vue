@@ -115,7 +115,7 @@ const studioDefaultInputMenuProps: Record<string, unknown> = {
 const getStudioSelectMenuSearchInputProps = (placeholder: string) => {
   return {
     placeholder,
-    variant: 'none',
+    variant: 'none' as const,
     ui: {
       base: 'text-[color:var(--studio-shell-text)] placeholder:text-[color:var(--studio-shell-muted)]',
       root: 'px-1',

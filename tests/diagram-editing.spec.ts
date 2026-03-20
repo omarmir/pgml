@@ -19,7 +19,7 @@ test('table edit modal can rename a table and add a new grouped table', async ({
   await expect(page.locator('[data-table-editor-save="true"]')).toBeVisible()
   await page.locator('[data-table-editor-save="true"]').dispatchEvent('click')
 
-  await expect.poll(async () => readPgmlEditorValue(editor)).toMatch(/TableGroup Core \{\n {2}tenants\n {2}accounts\n {2}roles/)
+  await expect.poll(async () => readPgmlEditorValue(editor)).toMatch(/TableGroup Core \{\n {2}public\.tenants\n {2}public\.accounts\n {2}public\.roles/)
   await expect.poll(async () => readPgmlEditorValue(editor)).toMatch(/Table public\.accounts in Core \{/)
   await expect(page.locator('[data-pgml-diagnostics="true"]')).toContainText('public.users')
 
@@ -35,7 +35,7 @@ test('table edit modal can rename a table and add a new grouped table', async ({
   await page.locator('[data-table-editor-save="true"]').dispatchEvent('click')
 
   await expect.poll(async () => readPgmlEditorValue(editor)).toMatch(/Table public\.audit_log in Core \{/)
-  await expect.poll(async () => readPgmlEditorValue(editor)).toMatch(/TableGroup Core \{\n {2}tenants\n {2}accounts\n {2}roles\n {2}audit_log/)
+  await expect.poll(async () => readPgmlEditorValue(editor)).toMatch(/TableGroup Core \{\n {2}public\.tenants\n {2}public\.accounts\n {2}public\.roles\n {2}public\.audit_log/)
 })
 
 test('group editor can create and rename table groups from the diagram canvas', async ({ goto, page }) => {

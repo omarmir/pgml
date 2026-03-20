@@ -37,7 +37,7 @@ describe('PGML table editor', () => {
 
     const nextSource = applyEditableTableDraftToSource(source, model, draft)
 
-    expect(nextSource).toContain('TableGroup Core {\n  members\n}')
+    expect(nextSource).toContain('TableGroup Core {\n  public.members\n}')
     expect(nextSource).toContain('Table public.members in Core {')
     expect(nextSource).toContain('Note: Managed through the modal editor.')
     expect(nextSource).toContain('email email_address [not null, unique]')
@@ -67,7 +67,7 @@ describe('PGML table editor', () => {
 
     const nextSource = applyEditableTableDraftToSource(source, model, draft)
 
-    expect(nextSource).toContain('TableGroup Core {\n  users\n  roles\n}')
+    expect(nextSource).toContain('TableGroup Core {\n  public.users\n  public.roles\n}')
     expect(nextSource).toContain('Table public.roles in Core {')
     expect(nextSource).toContain('key text [not null, unique]')
   })
@@ -113,9 +113,38 @@ Properties "group:Core" {
 
     const nextSource = applyEditableGroupDraftToSource(sourceWithProperties, model, draft)
 
-    expect(nextSource).toContain('TableGroup Identity {\n  users\n  Note: Shared auth and tenant ownership.\n}')
+    expect(nextSource).toContain('TableGroup Identity {\n  public.users\n  Note: Shared auth and tenant ownership.\n}')
     expect(nextSource).toContain('Table public.users in Identity {')
     expect(nextSource).toContain('Properties "group:Identity" {')
     expect(nextSource).not.toContain('Properties "group:Core" {')
+  })
+
+  it('keeps same-named tables from different schemas distinct inside a group', () => {
+    const sourceWithDuplicateNames = `TableGroup Core {
+  public.users
+}
+
+Table public.users in Core {
+  id uuid [pk]
+}
+
+Table billing.users {
+  id uuid [pk]
+}`
+    const model = parsePgml(sourceWithDuplicateNames)
+    const billingUsers = model.tables.find(table => table.fullName === 'billing.users')
+
+    if (!billingUsers) {
+      throw new Error('Expected billing.users table in test model.')
+    }
+
+    const draft = createEditableTableDraft(billingUsers)
+
+    draft.groupName = 'Core'
+
+    const nextSource = applyEditableTableDraftToSource(sourceWithDuplicateNames, model, draft)
+
+    expect(nextSource).toContain('TableGroup Core {\n  public.users\n  billing.users\n}')
+    expect(nextSource).toContain('Table billing.users in Core {')
   })
 })

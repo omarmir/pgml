@@ -42,7 +42,7 @@ const dbmlComparison = [
     points: [
       'Table blocks keep the familiar DBML shape.',
       'Inline column attributes like pk, unique, not null, and ref stay compact.',
-      'TableGroup keeps the one-table-per-line pattern for domain grouping without redefining PostgreSQL schemas.',
+      'TableGroup keeps the one-table-per-line pattern for domain grouping without redefining PostgreSQL schemas, and group members stay schema-qualified.',
       'The source remains block-based and easy to diff.'
     ]
   },
@@ -74,11 +74,11 @@ const documentationExamples = [
   },
   {
     title: 'Table groups',
-    description: 'Use TableGroup to cluster related tables in source and in the studio canvas. It is a grouping construct, not a PostgreSQL schema declaration.',
+    description: 'Use TableGroup to cluster related tables in source and in the studio canvas. It is a grouping construct, not a PostgreSQL schema declaration, so each group member should stay schema-qualified.',
     code: `TableGroup Commerce {
-  products
-  orders
-  order_items
+  public.products
+  public.orders
+  public.order_items
   Note: Buying flow and inventory edges
 }`
   },
@@ -134,9 +134,9 @@ Properties "custom-type:Domain:email_address" {
 ]
 
 const heroQuickStartCode = `TableGroup Commerce {
-  products
-  orders
-  order_items
+  public.products
+  public.orders
+  public.order_items
 }
 
 Table public.orders {
@@ -173,7 +173,8 @@ Function register_entity(entity_kind text) returns trigger [replace] {
             PGML stays close to DBML for tables and references, then extends it for the Postgres objects that shape real systems:
             functions, procedures, triggers, sequences, constraints, custom types, and embedded layout state. The goal is simple:
             one source file that is easy to read in a pull request and useful enough to drive the diagram studio directly. TableGroup
-            helps organize related tables, but PostgreSQL schema still comes from table names like public.orders.
+            helps organize related tables, but PostgreSQL schema still comes from table names like public.orders, so group members
+            should stay fully qualified as schema.table.
           </p>
         </div>
 
