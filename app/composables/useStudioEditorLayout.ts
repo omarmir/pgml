@@ -10,9 +10,16 @@ export const useStudioEditorLayout = () => {
   const layoutShellRef: Ref<HTMLDivElement | null> = ref(null)
   const viewportWidth: Ref<number> = ref(studioCompactBreakpoint)
   const editorPanelWidth: Ref<number> = ref(studioEditorPanelMinWidth)
+  const isEditorPanelVisible: Ref<boolean> = ref(true)
 
   const isCompactStudioLayout = computed(() => viewportWidth.value < studioCompactBreakpoint)
   const studioLayoutStyle = computed(() => {
+    if (!isEditorPanelVisible.value) {
+      return {
+        gridTemplateColumns: '1fr'
+      }
+    }
+
     return {
       gridTemplateColumns: getStudioLayoutColumns(editorPanelWidth.value, viewportWidth.value)
     }
@@ -47,7 +54,7 @@ export const useStudioEditorLayout = () => {
   }
 
   const startEditorResize = (event: PointerEvent) => {
-    if (isCompactStudioLayout.value || !layoutShellRef.value) {
+    if (isCompactStudioLayout.value || !isEditorPanelVisible.value || !layoutShellRef.value) {
       return
     }
 
@@ -72,6 +79,18 @@ export const useStudioEditorLayout = () => {
     window.addEventListener('pointerup', onUp)
   }
 
+  const showEditorPanel = () => {
+    isEditorPanelVisible.value = true
+  }
+
+  const hideEditorPanel = () => {
+    isEditorPanelVisible.value = false
+  }
+
+  const toggleEditorPanelVisibility = () => {
+    isEditorPanelVisible.value = !isEditorPanelVisible.value
+  }
+
   onMounted(() => {
     syncStudioViewport()
     window.addEventListener('resize', syncStudioViewport)
@@ -83,12 +102,16 @@ export const useStudioEditorLayout = () => {
 
   return {
     editorPanelWidth,
+    hideEditorPanel,
+    isEditorPanelVisible,
     isCompactStudioLayout,
     layoutShellRef,
     resizeEditorPanelBy,
+    showEditorPanel,
     startEditorResize,
     studioLayoutStyle,
     syncStudioViewport,
+    toggleEditorPanelVisibility,
     viewportWidth
   }
 }

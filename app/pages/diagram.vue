@@ -51,6 +51,76 @@ type ReferenceTargetItem = {
   value: string
 }
 
+const beginnerFriendlyColumnTypePresets: Record<string, Omit<ReferenceTargetItem, 'value'>> = {
+  bigint: {
+    label: 'Large whole number',
+    description: 'For large counts and identifiers. Exact type: bigint.'
+  },
+  bigserial: {
+    label: 'Auto-incrementing large number',
+    description: 'Good for generated primary keys that may grow large. Exact type: bigserial.'
+  },
+  boolean: {
+    label: 'True / false',
+    description: 'Stores yes-or-no values. Exact type: boolean.'
+  },
+  date: {
+    label: 'Date only',
+    description: 'Calendar date without a time. Exact type: date.'
+  },
+  integer: {
+    label: 'Whole number',
+    description: 'Standard integer value. Exact type: integer.'
+  },
+  jsonb: {
+    label: 'JSON document',
+    description: 'Structured JSON data you want to query efficiently. Exact type: jsonb.'
+  },
+  numeric: {
+    label: 'Decimal number',
+    description: 'Precise numbers for money and measurements. Exact type: numeric.'
+  },
+  serial: {
+    label: 'Auto-incrementing number',
+    description: 'Generated integer ID. Exact type: serial.'
+  },
+  text: {
+    label: 'Long text',
+    description: 'Plain text with no practical length limit. Exact type: text.'
+  },
+  time: {
+    label: 'Time only',
+    description: 'Clock time without a date. Exact type: time.'
+  },
+  timestamp: {
+    label: 'Date and time',
+    description: 'Stores a date and time without timezone conversion. Exact type: timestamp.'
+  },
+  timestamptz: {
+    label: 'Date and time with timezone',
+    description: 'Best default for real-world events across timezones. Exact type: timestamptz.'
+  },
+  tsvector: {
+    label: 'Search index text',
+    description: 'Postgres full-text search document value. Exact type: tsvector.'
+  },
+  uuid: {
+    label: 'Unique ID',
+    description: 'Globally unique identifier like 550e8400-e29b-41d4-a716-446655440000. Exact type: uuid.'
+  },
+  varchar: {
+    label: 'Short text',
+    description: 'Text with a chosen maximum length. Exact type: varchar.'
+  }
+}
+
+const formatColumnTypeLabel = (value: string) => {
+  return value
+    .replaceAll('_', ' ')
+    .replaceAll('-', ' ')
+    .trim() || value
+}
+
 const source: Ref<string> = ref(pgmlExample)
 const canvasRef: Ref<PgmlDiagramCanvasExposed | null> = ref(null)
 const canvasViewportResetKey: Ref<number> = ref(0)
@@ -68,11 +138,13 @@ const {
   focusEditorSourceRange
 } = usePgmlSourceEditor()
 const {
+  isEditorPanelVisible,
   isCompactStudioLayout,
   layoutShellRef,
   resizeEditorPanelBy,
   startEditorResize,
-  studioLayoutStyle
+  studioLayoutStyle,
+  toggleEditorPanelVisibility
 } = useStudioEditorLayout()
 const studioModalSurfaceStyle = {
   backgroundColor: 'var(--studio-modal-bg)',
@@ -305,19 +377,65 @@ const groupEditorTitle = computed(() => {
 const groupEditorActionLabel = computed(() => {
   return groupEditorDraft.value?.mode === 'create' ? 'Create group' : 'Save group'
 })
-const groupSelectItems = computed(() => {
-  return ['Ungrouped', ...parsedModel.value.groups.map(group => group.name)]
+const groupSelectItems = computed<ReferenceTargetItem[]>(() => {
+  return [
+    {
+      label: 'Ungrouped',
+      value: 'Ungrouped',
+      description: 'Leave this table floating outside a table group.'
+    },
+    ...parsedModel.value.groups
+      .map(group => ({
+        label: group.name,
+        value: group.name,
+        description: group.tableNames.length === 1
+          ? '1 table currently in this group'
+          : `${group.tableNames.length} tables currently in this group`
+      }))
+      .sort((left, right) => left.label.localeCompare(right.label))
+  ]
 })
 const schemaSelectItems = computed(() => {
   return Array.from(new Set(['public', ...parsedModel.value.schemas])).sort((left, right) => left.localeCompare(right))
 })
-const tableTypeItems = computed(() => {
-  return Array.from(new Set([
-    ...commonPgmlColumnTypes,
+const tableTypeItems = computed<ReferenceTargetItem[]>(() => {
+  const dynamicTypes = Array.from(new Set([
     ...parsedModel.value.customTypes.map(customType => customType.name),
     ...parsedModel.value.tables.flatMap(table => table.columns.map(column => column.type)),
     ...(tableEditorDraft.value?.columns.map(column => column.type) || [])
-  ])).sort((left, right) => left.localeCompare(right))
+  ].filter(type => type.trim().length > 0))).sort((left, right) => left.localeCompare(right))
+  const orderedTypes = Array.from(new Set([
+    ...commonPgmlColumnTypes,
+    ...dynamicTypes
+  ]))
+  const customTypeKinds = new Map(parsedModel.value.customTypes.map(customType => [customType.name, customType.kind]))
+
+  return orderedTypes.map((value) => {
+    const beginnerPreset = beginnerFriendlyColumnTypePresets[value]
+
+    if (beginnerPreset) {
+      return {
+        ...beginnerPreset,
+        value
+      }
+    }
+
+    const customTypeKind = customTypeKinds.get(value)
+
+    if (customTypeKind) {
+      return {
+        label: formatColumnTypeLabel(value),
+        value,
+        description: `Custom ${customTypeKind.toLowerCase()} from this diagram. Exact type: ${value}.`
+      }
+    }
+
+    return {
+      label: formatColumnTypeLabel(value),
+      value,
+      description: `Use the exact PostgreSQL type ${value}.`
+    }
+  })
 })
 const referenceRelationItems: ReferenceRelationItem[] = [
   {
@@ -336,12 +454,26 @@ const referenceRelationItems: ReferenceRelationItem[] = [
     description: 'Use for an undirected relationship when neither side should read as the source.'
   }
 ]
+const referenceRelationSymbolItems: ReferenceTargetItem[] = referenceRelationItems.map(item => ({
+  label: item.value,
+  value: item.value,
+  description: item.label
+}))
 const tableTargetItems = computed<ReferenceTargetItem[]>(() => {
   return parsedModel.value.tables
     .map(table => ({
       label: table.fullName,
       value: table.fullName,
       description: `${table.columns.length} column${table.columns.length === 1 ? '' : 's'}`
+    }))
+    .sort((left, right) => left.label.localeCompare(right.label))
+})
+const groupTableItems = computed<ReferenceTargetItem[]>(() => {
+  return parsedModel.value.tables
+    .map(table => ({
+      label: table.fullName,
+      value: table.fullName,
+      description: table.groupName ? `In ${table.groupName}` : 'Floating table'
     }))
     .sort((left, right) => left.label.localeCompare(right.label))
 })
@@ -381,7 +513,7 @@ const openTableEditor = (tableId: string) => {
   tableEditorOpen.value = true
 }
 
-const openTableCreator = (groupName: string) => {
+const openTableCreator = (groupName: string | null) => {
   if (hasBlockingSourceErrors.value) {
     return
   }
@@ -461,6 +593,30 @@ const updateTableDraftGroup = (value: string) => {
   }
 
   tableEditorDraft.value.groupName = value === 'Ungrouped' ? null : value
+}
+
+const updateGroupDraftTableNames = (value: unknown) => {
+  if (!groupEditorDraft.value) {
+    return
+  }
+
+  groupEditorDraft.value.tableNames = Array.isArray(value)
+    ? Array.from(new Set(
+        value
+          .map((entry) => {
+            if (typeof entry === 'string') {
+              return entry
+            }
+
+            if (entry && typeof entry === 'object' && 'value' in entry) {
+              return String((entry as { value: unknown }).value)
+            }
+
+            return ''
+          })
+          .filter(entry => entry.trim().length > 0)
+      ))
+    : []
 }
 
 const updateTableDraftReferenceTarget = (columnId: string, value: string) => {
@@ -581,8 +737,9 @@ onBeforeUnmount(() => {
       :style="studioLayoutStyle"
     >
       <aside
+        v-if="isEditorPanelVisible"
         data-editor-panel="true"
-        class="min-h-0 overflow-hidden border-r border-[color:var(--studio-shell-border)] bg-[color:var(--studio-shell-bg)] pr-0 max-[1100px]:border-r-0"
+        class="min-h-0 overflow-hidden bg-[color:var(--studio-shell-bg)] pr-0"
       >
         <div class="flex h-full min-h-0 flex-col bg-[color:var(--studio-shell-bg)]">
           <div class="min-h-0 flex-1 overflow-hidden bg-[color:var(--studio-shell-bg)]">
@@ -634,24 +791,34 @@ onBeforeUnmount(() => {
       </aside>
 
       <div
-        v-if="!isCompactStudioLayout"
+        v-if="isEditorPanelVisible && !isCompactStudioLayout"
         data-editor-resize-handle="true"
         role="separator"
         aria-orientation="vertical"
         aria-label="Resize PGML editor"
         tabindex="0"
-        class="group relative hidden h-full cursor-ew-resize bg-[color:var(--studio-shell-bg)] outline-none min-[1100px]:block"
+        class="group relative hidden h-full cursor-ew-resize bg-transparent outline-none min-[1100px]:block"
         @pointerdown="startEditorResize"
         @keydown.left.prevent="resizeEditorPanelBy(-32)"
         @keydown.right.prevent="resizeEditorPanelBy(32)"
       >
         <div class="absolute inset-y-0 left-1/2 w-px -translate-x-1/2 bg-[color:var(--studio-shell-border)] transition-colors duration-150 group-hover:bg-[color:var(--studio-ring)] group-focus-visible:bg-[color:var(--studio-ring)]" />
-        <div class="absolute left-1/2 top-1/2 flex h-14 w-4 -translate-x-1/2 -translate-y-1/2 items-center justify-center border border-[color:var(--studio-shell-border)] bg-[color:var(--studio-control-bg)] text-[color:var(--studio-shell-muted)] shadow-[var(--studio-floating-shadow)] transition-colors duration-150 group-hover:border-[color:var(--studio-ring)] group-focus-visible:border-[color:var(--studio-ring)]">
+        <div class="absolute left-1/2 top-1/2 flex h-12 w-4 -translate-x-1/2 -translate-y-1/2 items-center justify-center border border-[color:var(--studio-shell-border)] bg-[color:var(--studio-shell-bg)] text-[color:var(--studio-shell-muted)] transition-colors duration-150 group-hover:border-[color:var(--studio-ring)] group-focus-visible:border-[color:var(--studio-ring)]">
           <span class="h-7 w-px bg-[color:var(--studio-shell-border)]" />
         </div>
       </div>
 
-      <section class="min-h-0 w-full overflow-hidden p-0">
+      <section class="relative min-h-0 w-full overflow-hidden p-0">
+        <UButton
+          :label="isEditorPanelVisible ? 'Hide PGML' : 'Show PGML'"
+          :icon="isEditorPanelVisible ? 'i-lucide-panel-left-close' : 'i-lucide-panel-left-open'"
+          data-editor-visibility-toggle="true"
+          color="neutral"
+          variant="outline"
+          size="xs"
+          class="absolute left-3 top-3 z-[4] rounded-none border border-[color:var(--studio-shell-border)] bg-[color:var(--studio-control-bg)] text-[color:var(--studio-shell-text)]"
+          @click="toggleEditorPanelVisibility"
+        />
         <PgmlDiagramCanvas
           ref="canvasRef"
           :model="parsedModel"
@@ -921,7 +1088,7 @@ onBeforeUnmount(() => {
       <UModal
         v-model:open="tableEditorOpen"
         :title="tableEditorTitle"
-        :description="tableEditorDraft?.mode === 'create' ? 'Build a new table with structured inputs and add it to the selected group.' : 'Adjust the selected table with structured fields so the generated PGML stays valid.'"
+        :description="tableEditorDraft?.mode === 'create' ? 'Build a new table with structured inputs and choose whether it stays floating or belongs to a group.' : 'Adjust the selected table with structured fields so the generated PGML stays valid.'"
         :ui="{
           overlay: 'bg-black/60 backdrop-blur-[2px]',
           content: 'overflow-visible border-none bg-transparent p-0 shadow-none ring-0'
@@ -940,7 +1107,7 @@ onBeforeUnmount(() => {
                   {{ tableEditorTitle }}
                 </h2>
                 <p class="text-[0.8rem] leading-5 text-[color:var(--studio-shell-muted)]">
-                  {{ tableEditorDraft.mode === 'create' ? 'Create a new table block and place it in the chosen group.' : 'Update table metadata and column definitions from a structured editor.' }}
+                  {{ tableEditorDraft.mode === 'create' ? 'Create a new table block, leave it floating, or place it in a selected group.' : 'Update table metadata and column definitions from a structured editor.' }}
                 </p>
               </div>
 
@@ -996,15 +1163,21 @@ onBeforeUnmount(() => {
 
                 <label class="grid gap-1">
                   <span class="font-mono text-[0.62rem] uppercase tracking-[0.08em] text-[color:var(--studio-shell-label)]">Table group</span>
-                  <USelect
+                  <USelectMenu
                     aria-label="Table group"
                     :model-value="tableEditorDraft.groupName || 'Ungrouped'"
                     :items="groupSelectItems"
+                    :search-input="getStudioSelectMenuSearchInputProps('Search groups')"
+                    :filter-fields="['label', 'description', 'value']"
+                    value-key="value"
+                    label-key="label"
+                    description-key="description"
+                    placeholder="Choose a group"
                     color="neutral"
                     variant="outline"
                     size="sm"
-                    :ui="studioSelectUi"
-                    @update:model-value="updateTableDraftGroup(String($event))"
+                    :ui="studioInputMenuUi"
+                    @update:model-value="updateTableDraftGroup(String($event || 'Ungrouped'))"
                   />
                 </label>
               </div>
@@ -1080,14 +1253,21 @@ onBeforeUnmount(() => {
                       <div class="grid gap-2">
                         <span class="font-mono text-[0.58rem] uppercase tracking-[0.08em] text-[color:var(--studio-shell-label)]">Column type</span>
                         <div class="grid gap-2 lg:grid-cols-[minmax(0,0.56fr)_minmax(0,0.44fr)]">
-                          <USelect
-                            v-model="column.type"
+                          <USelectMenu
                             aria-label="Column type preset"
+                            :model-value="column.type"
                             :items="tableTypeItems"
+                            :search-input="getStudioSelectMenuSearchInputProps('Search column types')"
+                            :filter-fields="['label', 'description', 'value']"
+                            value-key="value"
+                            label-key="label"
+                            description-key="description"
+                            placeholder="Choose a type"
                             color="neutral"
                             variant="outline"
                             size="sm"
-                            :ui="studioSelectUi"
+                            :ui="studioInputMenuUi"
+                            @update:model-value="column.type = String($event || '')"
                           />
                           <UInput
                             v-model="column.type"
@@ -1178,18 +1358,32 @@ onBeforeUnmount(() => {
                     >
                       <label class="grid gap-1">
                         <span class="font-mono text-[0.58rem] uppercase tracking-[0.08em] text-[color:var(--studio-shell-label)]">Relationship direction</span>
-                        <USelect
-                          v-model="column.referenceRelation"
-                          aria-label="Relationship direction"
-                          :items="referenceRelationItems"
-                          value-key="value"
-                          label-key="label"
-                          description-key="description"
-                          color="neutral"
-                          variant="outline"
-                          size="sm"
-                          :ui="studioSelectUi"
-                        />
+                        <div class="grid gap-2 lg:grid-cols-[minmax(0,1fr)_4.5rem]">
+                          <USelect
+                            v-model="column.referenceRelation"
+                            aria-label="Relationship direction"
+                            :items="referenceRelationItems"
+                            value-key="value"
+                            label-key="label"
+                            description-key="description"
+                            color="neutral"
+                            variant="outline"
+                            size="sm"
+                            :ui="studioSelectUi"
+                          />
+                          <USelect
+                            v-model="column.referenceRelation"
+                            aria-label="Relationship direction symbol"
+                            :items="referenceRelationSymbolItems"
+                            value-key="value"
+                            label-key="label"
+                            description-key="description"
+                            color="neutral"
+                            variant="outline"
+                            size="sm"
+                            :ui="studioSelectUi"
+                          />
+                        </div>
                       </label>
 
                       <label class="grid gap-1">
@@ -1262,7 +1456,7 @@ onBeforeUnmount(() => {
       <UModal
         v-model:open="groupEditorOpen"
         :title="groupEditorTitle"
-        :description="groupEditorDraft?.mode === 'create' ? 'Create a table group block so tables can be organized into a new lane.' : 'Rename the selected table group and update its note.'"
+        :description="groupEditorDraft?.mode === 'create' ? 'Create a table group block and choose which tables should belong to it.' : 'Rename the selected table group, choose its tables, and update its note.'"
         :ui="{
           overlay: 'bg-black/60 backdrop-blur-[2px]',
           content: 'overflow-visible border-none bg-transparent p-0 shadow-none ring-0'
@@ -1281,7 +1475,7 @@ onBeforeUnmount(() => {
                   {{ groupEditorTitle }}
                 </h2>
                 <p class="text-[0.8rem] leading-5 text-[color:var(--studio-shell-muted)]">
-                  {{ groupEditorDraft.mode === 'create' ? 'Create an empty table group now and move tables into it later.' : 'Update the selected group metadata without leaving the diagram.' }}
+                  {{ groupEditorDraft.mode === 'create' ? 'Create a new table group and assign tables to it in one pass.' : 'Update the selected group metadata and its table membership without leaving the diagram.' }}
                 </p>
               </div>
 
@@ -1323,10 +1517,24 @@ onBeforeUnmount(() => {
                 </label>
 
                 <div class="grid gap-1">
-                  <span class="font-mono text-[0.62rem] uppercase tracking-[0.08em] text-[color:var(--studio-shell-label)]">Current tables</span>
-                  <div class="border border-[color:var(--studio-shell-border)] bg-[color:var(--studio-control-bg)] px-3 py-2 text-[0.78rem] text-[color:var(--studio-shell-text)]">
-                    {{ groupEditorDraft.tableNames.length ? groupEditorDraft.tableNames.join(', ') : 'No tables assigned yet.' }}
-                  </div>
+                  <span class="font-mono text-[0.62rem] uppercase tracking-[0.08em] text-[color:var(--studio-shell-label)]">Tables in this group</span>
+                  <USelectMenu
+                    aria-label="Group tables"
+                    :items="groupTableItems"
+                    :model-value="groupEditorDraft.tableNames"
+                    :multiple="true"
+                    :search-input="getStudioSelectMenuSearchInputProps('Search tables')"
+                    :filter-fields="['label', 'description', 'value']"
+                    value-key="value"
+                    label-key="label"
+                    description-key="description"
+                    placeholder="Choose tables"
+                    color="neutral"
+                    variant="outline"
+                    size="sm"
+                    :ui="studioInputMenuUi"
+                    @update:model-value="updateGroupDraftTableNames($event)"
+                  />
                 </div>
               </div>
 

@@ -38,6 +38,51 @@ test('table edit modal can rename a table and add a new grouped table', async ({
   await expect.poll(async () => readPgmlEditorValue(editor)).toMatch(/TableGroup Core \{\n {2}public\.tenants\n {2}public\.accounts\n {2}public\.roles\n {2}public\.audit_log/)
 })
 
+test('top-level add table button creates a floating table through the modal', async ({ goto, page }) => {
+  await goto('/diagram')
+
+  const editor = getPgmlEditor(page)
+
+  await page.locator('[data-diagram-create-table="true"]').click()
+  await page.locator('[data-table-editor-name="true"]').fill('audit_entries')
+  await expect(page.getByLabel('Table group', { exact: true })).toContainText('Ungrouped')
+  await page.locator('[data-table-editor-save="true"]').dispatchEvent('click')
+
+  await expect.poll(async () => readPgmlEditorValue(editor)).toMatch(/Table public\.audit_entries \{/)
+  await expect.poll(async () => readPgmlEditorValue(editor)).not.toContain('\n  public.audit_entries\n')
+  await expect(page.locator('[data-node-anchor="public.audit_entries"]')).toBeVisible()
+})
+
+test('table editor uses searchable group selection and descriptive type presets', async ({ goto, page }) => {
+  await goto('/diagram')
+
+  const editor = getPgmlEditor(page)
+
+  await page.locator('[data-diagram-create-table="true"]').click()
+  await page.locator('[data-table-editor-name="true"]').fill('job_runs')
+
+  const tableGroup = page.getByLabel('Table group', { exact: true })
+
+  await tableGroup.click()
+  await page.getByPlaceholder('Search groups').fill('core')
+  await page.getByRole('option', { name: /Core/i }).click()
+
+  const firstColumn = page.locator('[data-table-editor-column]').first()
+  const columnTypePreset = firstColumn.getByLabel('Column type preset', { exact: true })
+  const columnTypeInput = firstColumn.getByLabel('Column type', { exact: true })
+
+  await firstColumn.getByLabel('Column name', { exact: true }).fill('id')
+  await columnTypePreset.click()
+  await page.getByPlaceholder('Search column types').fill('auto-incrementing large number')
+  await page.getByRole('option', { name: /Auto-incrementing large number/i }).click()
+  await expect(columnTypeInput).toHaveValue('bigserial')
+
+  await page.locator('[data-table-editor-save="true"]').dispatchEvent('click')
+
+  await expect.poll(async () => readPgmlEditorValue(editor)).toContain('Table public.job_runs in Core {')
+  await expect.poll(async () => readPgmlEditorValue(editor)).toContain('id bigserial')
+})
+
 test('group editor can create and rename table groups from the diagram canvas', async ({ goto, page }) => {
   await goto('/diagram')
 
@@ -61,6 +106,54 @@ test('group editor can create and rename table groups from the diagram canvas', 
   await expect.poll(async () => readPgmlEditorValue(editor)).toMatch(/TableGroup BillingOps \{\n {2}Note: Revenue operations and settlement\.\n\}/)
   await expect.poll(async () => readPgmlEditorValue(editor)).not.toMatch(/TableGroup Billing \{/)
   await expect(page.locator('[data-node-anchor="group:BillingOps"]')).toBeVisible()
+})
+
+test('group editor can associate and disassociate tables with the searchable selector', async ({ goto, page }) => {
+  await goto('/diagram')
+
+  const editor = getPgmlEditor(page)
+
+  await setPgmlEditorValue(editor, `TableGroup Core {
+  public.users
+  public.audit_log
+}
+
+TableGroup Billing {
+}
+
+Table public.users in Core {
+  id uuid [pk]
+}
+
+Table public.audit_log in Core {
+  id uuid [pk]
+}
+
+Table public.orders {
+  id uuid [pk]
+}`)
+
+  await page.locator('[data-diagram-panel-tab="entities"]').click()
+  await page.locator('[data-browser-group-edit="Core"]').click()
+
+  const groupTables = page.getByLabel('Group tables', { exact: true })
+
+  await groupTables.click()
+  await page.getByPlaceholder('Search tables').fill('orders')
+  await page.getByRole('option', { name: /public\.orders/i }).click()
+
+  await groupTables.click()
+  await page.getByPlaceholder('Search tables').fill('audit_log')
+  await page.getByRole('option', { name: /public\.audit_log/i }).click()
+
+  await page.locator('[data-group-editor-save="true"]').dispatchEvent('click')
+
+  await expect.poll(async () => readPgmlEditorValue(editor)).toContain(`TableGroup Core {
+  public.users
+  public.orders
+}`)
+  await expect.poll(async () => readPgmlEditorValue(editor)).toContain(`Table public.orders in Core {`)
+  await expect.poll(async () => readPgmlEditorValue(editor)).toContain(`Table public.audit_log {`)
 })
 
 test('ungrouped tables render as floating nodes instead of an Ungrouped lane', async ({ goto, page }) => {
@@ -153,13 +246,19 @@ test('table edit modal explains relationship direction and uses searchable refer
 
   const roleIdColumn = page.locator('[data-table-editor-column]').filter({ hasText: 'role_id' })
   const relationDirection = roleIdColumn.getByLabel('Relationship direction', { exact: true })
+  const relationDirectionSymbol = roleIdColumn.getByLabel('Relationship direction symbol', { exact: true })
   const targetTable = roleIdColumn.getByLabel('Reference target table', { exact: true })
   const targetColumn = roleIdColumn.getByLabel('Reference target column', { exact: true })
 
   await relationDirection.click()
   await expect(page.getByText('Most foreign keys use this. Example: `tenant_id` points to `tenants.id`.')).toBeVisible()
   await expect(page.getByText('Use this when the other table points back to this column.')).toBeVisible()
-  await page.locator('[role="option"]').filter({ hasText: 'The target references this column' }).click()
+  await page.locator('[role="option"]').filter({ hasText: 'This column references the target' }).click()
+  await expect(relationDirectionSymbol).toContainText('>')
+
+  await relationDirectionSymbol.click()
+  await page.locator('[role="option"]').filter({ hasText: '<' }).click()
+  await expect(relationDirection).toContainText('The target references this column')
 
   await targetTable.click()
   await page.getByPlaceholder('Search tables').fill('roles')

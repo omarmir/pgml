@@ -1,5 +1,5 @@
 import { nanoid } from 'nanoid'
-import type { PgmlColumn, PgmlGroup, PgmlSchemaModel, PgmlSourceRange, PgmlTable } from './pgml'
+import { parsePgml, type PgmlColumn, type PgmlGroup, type PgmlSchemaModel, type PgmlSourceRange, type PgmlTable } from './pgml'
 
 export type PgmlEditableColumnDraft = {
   id: string
@@ -72,6 +72,9 @@ const normalizeGroupTableNames = (tableNames: string[]) => {
   return tableNames
     .map(normalizeExistingGroupTableEntry)
     .filter(tableName => tableName.length > 0)
+}
+const getNormalizedSelectedGroupTableNames = (tableNames: string[]) => {
+  return Array.from(new Set(normalizeGroupTableNames(tableNames)))
 }
 const serializeColumnReference = (column: PgmlEditableColumnDraft) => {
   if (
@@ -400,11 +403,13 @@ const buildCreateEmptyGroupInsertEdit = (source: string, draft: PgmlEditableGrou
 
 export const commonPgmlColumnTypes = [
   'bigint',
+  'bigserial',
   'boolean',
   'date',
   'integer',
   'jsonb',
   'numeric',
+  'serial',
   'text',
   'time',
   'timestamp',
@@ -609,12 +614,50 @@ export const applyEditableGroupDraftToSource = (
     ? model.groups.find(group => group.name === draft.originalName) || null
     : null
 
+  const applySelectedTableMemberships = (nextSource: string) => {
+    const nextGroupName = trimEditorValue(draft.name)
+    const selectedTableNames = new Set(getNormalizedSelectedGroupTableNames(draft.tableNames))
+    const managedTableNames = new Set<string>(selectedTableNames)
+
+    if (draft.originalName) {
+      model.tables
+        .filter(table => normalizeGroupName(table.groupName) === draft.originalName)
+        .forEach((table) => {
+          managedTableNames.add(table.fullName)
+        })
+    }
+
+    let workingSource = nextSource
+    let workingModel = parsePgml(workingSource)
+
+    for (const tableName of managedTableNames) {
+      const workingTable = workingModel.tables.find(table => table.fullName === tableName)
+
+      if (!workingTable) {
+        continue
+      }
+
+      const nextTableGroupName = selectedTableNames.has(tableName) ? nextGroupName : null
+
+      if (normalizeGroupName(workingTable.groupName) === nextTableGroupName) {
+        continue
+      }
+
+      const tableDraft = createEditableTableDraft(workingTable)
+      tableDraft.groupName = nextTableGroupName
+      workingSource = applyEditableTableDraftToSource(workingSource, workingModel, tableDraft)
+      workingModel = parsePgml(workingSource)
+    }
+
+    return workingSource
+  }
+
   if (draft.mode === 'create') {
     const insertLine = getCreateGroupInsertLine(model)
 
-    return applySourceEdits(normalizedSource, [
+    return applySelectedTableMemberships(applySourceEdits(normalizedSource, [
       buildCreateEmptyGroupInsertEdit(normalizedSource, draft, insertLine)
-    ])
+    ]))
   }
 
   if (!currentGroup?.sourceRange) {
@@ -655,11 +698,11 @@ export const applyEditableGroupDraftToSource = (
   const nextSource = applySourceEdits(normalizedSource, edits)
 
   if (currentGroup.name === nextName) {
-    return nextSource
+    return applySelectedTableMemberships(nextSource)
   }
 
-  return nextSource.replace(
+  return applySelectedTableMemberships(nextSource.replace(
     new RegExp(`Properties\\s+"group:${escapeRegExp(currentGroup.name)}"`, 'g'),
     `Properties "group:${nextName}"`
-  )
+  ))
 }

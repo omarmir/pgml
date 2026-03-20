@@ -37,6 +37,78 @@ test('studio editor panel can expand beyond its default width', async ({ goto, p
   }).toBeGreaterThan(initialWidth + 120)
 })
 
+test('studio editor panel can be hidden and shown again', async ({ goto, page }) => {
+  await goto('/diagram')
+
+  const editorPanel = page.locator('[data-editor-panel="true"]')
+  const editorToggle = page.locator('[data-editor-visibility-toggle="true"]')
+
+  await expect(editorPanel).toBeVisible()
+  await expect(editorToggle).toContainText('Hide PGML')
+
+  await editorToggle.click()
+
+  await expect(page.locator('[data-editor-panel="true"]')).toHaveCount(0)
+  await expect(page.locator('[data-editor-resize-handle="true"]')).toHaveCount(0)
+  await expect(editorToggle).toContainText('Show PGML')
+
+  await editorToggle.click()
+
+  await expect(page.locator('[data-editor-panel="true"]')).toBeVisible()
+  await expect(page.locator('[data-editor-resize-handle="true"]')).toBeVisible()
+  await expect(getPgmlEditor(page)).toBeVisible()
+})
+
+test('diagram panel reuses the PGML editor scrollbar styling', async ({ goto, page }) => {
+  await goto('/diagram')
+
+  await page.locator('[data-diagram-panel-tab="entities"]').click()
+
+  const scrollbarStyles = await page.evaluate(() => {
+    const editorScroller = document.querySelector('[data-pgml-editor-scroller="true"]')
+    const panelScroller = document.querySelector('[data-diagram-panel-scroll="true"]')
+
+    if (!(editorScroller instanceof HTMLElement) || !(panelScroller instanceof HTMLElement)) {
+      return null
+    }
+
+    const readScrollbarWidth = (styles: CSSStyleDeclaration) => {
+      const width = styles.getPropertyValue('scrollbar-width').trim()
+
+      if (width.length > 0) {
+        return width
+      }
+
+      return (styles as CSSStyleDeclaration & { scrollbarWidth?: string }).scrollbarWidth || ''
+    }
+
+    const readScrollbarColor = (styles: CSSStyleDeclaration) => {
+      const color = styles.getPropertyValue('scrollbar-color').trim()
+
+      if (color.length > 0) {
+        return color
+      }
+
+      return (styles as CSSStyleDeclaration & { scrollbarColor?: string }).scrollbarColor || ''
+    }
+
+    const editorStyles = window.getComputedStyle(editorScroller)
+    const panelStyles = window.getComputedStyle(panelScroller)
+
+    return {
+      editorScrollbarWidth: readScrollbarWidth(editorStyles),
+      panelScrollbarWidth: readScrollbarWidth(panelStyles),
+      editorScrollbarColor: readScrollbarColor(editorStyles),
+      panelScrollbarColor: readScrollbarColor(panelStyles)
+    }
+  })
+
+  expect(scrollbarStyles).not.toBeNull()
+  expect(scrollbarStyles?.editorScrollbarWidth).toBe('thin')
+  expect(scrollbarStyles?.panelScrollbarWidth).toBe('thin')
+  expect(scrollbarStyles?.panelScrollbarColor).toBe(scrollbarStyles?.editorScrollbarColor)
+})
+
 test('studio canvas stays viewport-bound and starts centered on the diagram', async ({ goto, page }) => {
   await goto('/diagram')
 

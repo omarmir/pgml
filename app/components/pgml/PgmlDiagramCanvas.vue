@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { useClipboard } from '@vueuse/core'
 import type {
   PgmlColumn,
   PgmlCustomType,
@@ -52,13 +53,21 @@ const {
   viewportResetKey?: number
 }>()
 const emit = defineEmits<{
-  createTable: [groupName: string]
+  createTable: [groupName: string | null]
   createGroup: []
   editGroup: [groupName: string]
   editTable: [tableId: string]
   focusSource: [sourceRange: PgmlSourceRange]
   nodePropertiesChange: [properties: Record<string, PgmlNodeProperties>]
 }>()
+const toast = useToast()
+const {
+  copy: copyToClipboard,
+  isSupported: isClipboardSupported
+} = useClipboard({
+  copiedDuring: 1400,
+  legacy: true
+})
 
 type CanvasNodeKind = 'group' | 'table' | 'object'
 type ObjectKind = 'Index' | 'Constraint' | 'Function' | 'Procedure' | 'Trigger' | 'Sequence' | 'Custom Type'
@@ -180,6 +189,8 @@ type LayoutConnection = {
   to: LayoutPoint
 }
 
+type ExportCopyFeedbackStatus = 'success' | 'error'
+
 type PlacementMetrics = {
   overlapCount: number
   overlapArea: number
@@ -232,8 +243,11 @@ const entitySearchQuery: Ref<string> = ref('')
 const exportPreferences: Ref<PgmlExportPreferences> = ref({
   ...defaultPgmlExportPreferences
 })
-const copiedExportArtifactKey: Ref<string | null> = ref(null)
-let clearCopiedExportArtifactTimeout: number | null = null
+const exportCopyFeedback: Ref<{ key: string | null, status: ExportCopyFeedbackStatus | null }> = ref({
+  key: null,
+  status: null
+})
+let clearExportCopyFeedbackTimeout: number | null = null
 let resizeObserver: ResizeObserver | null = null
 const exportTypeStyleItems = [
   {
@@ -286,15 +300,23 @@ const attachmentPopoverUi = {
   content: 'w-[22rem] rounded-none border border-[color:var(--studio-shell-border)] bg-[color:var(--studio-control-bg)] p-3 shadow-[var(--studio-floating-shadow)] backdrop-blur-sm'
 }
 const exportSelectUi = {
-  base: 'rounded-none border-[color:var(--studio-shell-border)] bg-[color:var(--studio-input-bg)] text-[color:var(--studio-shell-text)]',
+  base: 'studio-select-trigger rounded-none border-[color:var(--studio-shell-border)] bg-[color:var(--studio-input-bg)] text-[color:var(--studio-shell-text)]',
   value: 'text-[color:var(--studio-shell-text)]',
   placeholder: 'text-[color:var(--studio-shell-muted)]',
   trailingIcon: 'text-[color:var(--studio-shell-muted)]',
   content: 'rounded-none border border-[color:var(--studio-shell-border)] bg-[color:var(--studio-control-bg)] p-1 shadow-[var(--studio-floating-shadow)] backdrop-blur-sm',
   viewport: 'scroll-py-1 overflow-y-auto',
-  item: 'rounded-none text-[color:var(--studio-shell-text)]',
-  itemLabel: 'truncate'
+  item: 'studio-select-item rounded-none before:rounded-none text-[color:var(--studio-shell-text)]',
+  itemLabel: 'truncate',
+  itemDescription: 'whitespace-normal break-words text-[color:var(--studio-shell-muted)]',
+  itemLeadingIcon: 'text-[color:var(--studio-shell-muted)]',
+  itemTrailingIcon: 'text-[color:var(--studio-shell-label)]'
 }
+const exportToggleButtonBaseClass = 'rounded-none border border-[color:var(--studio-shell-border)] bg-[color:var(--studio-control-bg)] text-[color:var(--studio-shell-text)] hover:bg-[color:var(--studio-surface-hover)] hover:text-[color:var(--studio-shell-text)]'
+const exportToggleButtonActiveClass = 'border-[color:var(--studio-shell-label)] bg-[color:var(--studio-input-bg)] text-[color:var(--studio-shell-text)]'
+const exportArtifactButtonBaseClass = 'rounded-none border border-[color:var(--studio-shell-border)] bg-[color:var(--studio-control-bg)] text-[color:var(--studio-shell-text)] hover:bg-[color:var(--studio-surface-hover)] hover:text-[color:var(--studio-shell-text)]'
+const exportArtifactButtonActiveClass = 'border-[color:var(--studio-shell-label)] bg-[color:var(--studio-input-bg)] text-[color:var(--studio-shell-text)]'
+const exportArtifactButtonErrorClass = 'border-[color:var(--studio-shell-error)] bg-[color:var(--studio-shell-error)]/8 text-[color:var(--studio-shell-error)] hover:bg-[color:var(--studio-shell-error)]/12 hover:text-[color:var(--studio-shell-error)]'
 const attachmentKindOrder: Record<TableAttachmentKind, number> = {
   Index: 0,
   Constraint: 1,
@@ -1431,21 +1453,109 @@ const downloadExportArtifact = (artifact: PgmlExportArtifact) => {
   downloadBlob(blob, artifact.fileName)
 }
 
+const resetExportCopyFeedback = () => {
+  exportCopyFeedback.value = {
+    key: null,
+    status: null
+  }
+}
+
+const setExportCopyFeedback = (key: string, status: ExportCopyFeedbackStatus) => {
+  exportCopyFeedback.value = {
+    key,
+    status
+  }
+
+  if (clearExportCopyFeedbackTimeout) {
+    window.clearTimeout(clearExportCopyFeedbackTimeout)
+  }
+
+  clearExportCopyFeedbackTimeout = window.setTimeout(() => {
+    resetExportCopyFeedback()
+  }, 1800)
+}
+
+const getExportCopyFeedbackStatus = (key: string) => {
+  return exportCopyFeedback.value.key === key ? exportCopyFeedback.value.status : null
+}
+
+const getExportCopyButtonIcon = (key: string) => {
+  const status = getExportCopyFeedbackStatus(key)
+
+  if (status === 'success') {
+    return 'i-lucide-check'
+  }
+
+  if (status === 'error') {
+    return 'i-lucide-circle-alert'
+  }
+
+  return 'i-lucide-copy'
+}
+
+const getExportCopyButtonLabel = (key: string) => {
+  const status = getExportCopyFeedbackStatus(key)
+
+  if (status === 'success') {
+    return 'Copied'
+  }
+
+  if (status === 'error') {
+    return 'Copy failed'
+  }
+
+  return 'Copy'
+}
+
+const getExportCopyButtonClass = (key: string) => {
+  const status = getExportCopyFeedbackStatus(key)
+
+  if (status === 'success') {
+    return exportArtifactButtonActiveClass
+  }
+
+  if (status === 'error') {
+    return exportArtifactButtonErrorClass
+  }
+
+  return ''
+}
+
+const getClipboardCopyFailureMessage = (error: unknown) => {
+  if (!isClipboardSupported.value) {
+    return 'Clipboard access is not available in this browser.'
+  }
+
+  if (error instanceof Error && error.message.trim().length > 0) {
+    return error.message
+  }
+
+  if (typeof error === 'string' && error.trim().length > 0) {
+    return error
+  }
+
+  return 'The browser blocked clipboard access.'
+}
+
 const copyExportArtifact = async (artifact: PgmlExportArtifact & { key: string }) => {
-  if (!import.meta.client || !navigator.clipboard?.writeText) {
-    return
+  try {
+    if (!import.meta.client || !isClipboardSupported.value) {
+      throw new Error('Clipboard access is not available in this browser.')
+    }
+
+    await copyToClipboard(artifact.content)
+    setExportCopyFeedback(artifact.key, 'success')
+  } catch (error) {
+    const description = getClipboardCopyFailureMessage(error)
+
+    setExportCopyFeedback(artifact.key, 'error')
+    toast.add({
+      title: 'Copy failed',
+      description,
+      color: 'error',
+      icon: 'i-lucide-circle-alert'
+    })
   }
-
-  await navigator.clipboard.writeText(artifact.content)
-  copiedExportArtifactKey.value = artifact.key
-
-  if (clearCopiedExportArtifactTimeout) {
-    window.clearTimeout(clearCopiedExportArtifactTimeout)
-  }
-
-  clearCopiedExportArtifactTimeout = window.setTimeout(() => {
-    copiedExportArtifactKey.value = null
-  }, 1400)
 }
 
 const exportSvg = async () => {
@@ -5995,7 +6105,7 @@ const handleEditTable = (tableId: string) => {
   emit('editTable', tableId)
 }
 
-const handleCreateTable = (groupName: string) => {
+const handleCreateTable = (groupName: string | null) => {
   emit('createTable', groupName)
 }
 
@@ -6114,8 +6224,8 @@ onMounted(() => {
 })
 
 onBeforeUnmount(() => {
-  if (clearCopiedExportArtifactTimeout) {
-    window.clearTimeout(clearCopiedExportArtifactTimeout)
+  if (clearExportCopyFeedbackTimeout) {
+    window.clearTimeout(clearExportCopyFeedbackTimeout)
   }
 
   resizeObserver?.disconnect()
@@ -6797,20 +6907,6 @@ defineExpose<{
     <div class="pointer-events-none absolute right-3 top-3 z-[3] flex justify-end gap-2">
       <button
         type="button"
-        data-diagram-create-group="true"
-        class="pointer-events-auto inline-flex items-center gap-1.5 border px-2 py-1 font-mono text-[0.62rem] uppercase tracking-[0.08em] text-[color:var(--studio-shell-text)] transition-colors duration-150 hover:bg-[color:var(--studio-surface-hover)]"
-        :style="floatingPanelStyle"
-        @click="handleCreateGroup"
-      >
-        <UIcon
-          name="i-lucide-folder-plus"
-          class="h-3.5 w-3.5"
-        />
-        Add group
-      </button>
-
-      <button
-        type="button"
         data-diagram-panel-toggle="true"
         class="pointer-events-auto inline-flex items-center gap-1.5 border px-2 py-1 font-mono text-[0.62rem] uppercase tracking-[0.08em] text-[color:var(--studio-shell-text)] transition-colors duration-150 hover:bg-[color:var(--studio-surface-hover)]"
         :style="floatingPanelStyle"
@@ -6832,27 +6928,61 @@ defineExpose<{
       @wheel.stop
     >
       <div class="flex items-start justify-between gap-3 border-b border-[color:var(--studio-divider)] px-3 py-2.5">
-        <div class="min-w-0">
-          <div class="font-mono text-[0.6rem] uppercase tracking-[0.08em] text-[color:var(--studio-shell-label)]">
-            Diagram panel
-          </div>
-          <h3 class="truncate text-[0.88rem] font-semibold leading-5 text-[color:var(--studio-shell-text)]">
-            {{ diagramPanelTitle }}
-          </h3>
-          <p class="mt-1 text-[0.66rem] leading-5 text-[color:var(--studio-shell-muted)]">
-            {{ diagramPanelDescription }}
-          </p>
-        </div>
+        <div class="min-w-0 flex-1">
+          <div class="flex items-start justify-between gap-3">
+            <div class="min-w-0">
+              <div class="font-mono text-[0.6rem] uppercase tracking-[0.08em] text-[color:var(--studio-shell-label)]">
+                Diagram panel
+              </div>
+              <h3 class="truncate text-[0.88rem] font-semibold leading-5 text-[color:var(--studio-shell-text)]">
+                {{ diagramPanelTitle }}
+              </h3>
+              <p class="mt-1 text-[0.66rem] leading-5 text-[color:var(--studio-shell-muted)]">
+                {{ diagramPanelDescription }}
+              </p>
+            </div>
 
-        <UButton
-          icon="i-lucide-x"
-          color="neutral"
-          variant="ghost"
-          size="xs"
-          class="h-7 w-7 rounded-none border border-[color:var(--studio-shell-border)] text-[color:var(--studio-shell-muted)] hover:bg-[color:var(--studio-surface-hover)] hover:text-[color:var(--studio-shell-text)]"
-          aria-label="Hide panel"
-          @click="toggleSidePanel"
-        />
+            <UButton
+              icon="i-lucide-x"
+              color="neutral"
+              variant="ghost"
+              size="xs"
+              class="h-7 w-7 rounded-none border border-[color:var(--studio-shell-border)] text-[color:var(--studio-shell-muted)] hover:bg-[color:var(--studio-surface-hover)] hover:text-[color:var(--studio-shell-text)]"
+              aria-label="Hide panel"
+              @click="toggleSidePanel"
+            />
+          </div>
+
+          <div class="mt-3 flex flex-wrap gap-2">
+            <button
+              type="button"
+              data-diagram-create-table="true"
+              class="inline-flex items-center gap-1.5 border px-2 py-1 font-mono text-[0.62rem] uppercase tracking-[0.08em] text-[color:var(--studio-shell-text)] transition-colors duration-150 hover:bg-[color:var(--studio-surface-hover)]"
+              :style="floatingPanelStyle"
+              @click="handleCreateTable(null)"
+            >
+              <UIcon
+                name="i-lucide-table-properties"
+                class="h-3.5 w-3.5"
+              />
+              Add table
+            </button>
+
+            <button
+              type="button"
+              data-diagram-create-group="true"
+              class="inline-flex items-center gap-1.5 border px-2 py-1 font-mono text-[0.62rem] uppercase tracking-[0.08em] text-[color:var(--studio-shell-text)] transition-colors duration-150 hover:bg-[color:var(--studio-surface-hover)]"
+              :style="floatingPanelStyle"
+              @click="handleCreateGroup"
+            >
+              <UIcon
+                name="i-lucide-folder-plus"
+                class="h-3.5 w-3.5"
+              />
+              Add group
+            </button>
+          </div>
+        </div>
       </div>
 
       <div class="grid grid-cols-3 border-b border-[color:var(--studio-divider)]">
@@ -6887,6 +7017,7 @@ defineExpose<{
 
       <div
         v-if="activePanelTab === 'inspector'"
+        data-studio-scrollable="true"
         class="grid content-start gap-3 overflow-auto px-3 py-3"
       >
         <div
@@ -6991,6 +7122,7 @@ defineExpose<{
 
         <div
           data-diagram-panel-scroll="true"
+          data-studio-scrollable="true"
           class="grid content-start gap-2 overflow-auto overflow-x-hidden px-3 py-3"
           @wheel.stop
         >
@@ -7341,8 +7473,10 @@ defineExpose<{
               color="neutral"
               variant="outline"
               size="xs"
-              class="rounded-none border-[color:var(--studio-shell-border)]"
-              :class="exportPreferences.format === 'sql' ? 'bg-[color:var(--studio-input-bg)] text-[color:var(--studio-shell-text)]' : 'text-[color:var(--studio-shell-muted)]'"
+              :class="[
+                exportToggleButtonBaseClass,
+                exportPreferences.format === 'sql' ? exportToggleButtonActiveClass : ''
+              ]"
               @click="updateExportFormat('sql')"
             />
             <UButton
@@ -7351,8 +7485,10 @@ defineExpose<{
               color="neutral"
               variant="outline"
               size="xs"
-              class="rounded-none border-[color:var(--studio-shell-border)]"
-              :class="exportPreferences.format === 'kysely' ? 'bg-[color:var(--studio-input-bg)] text-[color:var(--studio-shell-text)]' : 'text-[color:var(--studio-shell-muted)]'"
+              :class="[
+                exportToggleButtonBaseClass,
+                exportPreferences.format === 'kysely' ? exportToggleButtonActiveClass : ''
+              ]"
               @click="updateExportFormat('kysely')"
             />
           </div>
@@ -7395,6 +7531,7 @@ defineExpose<{
 
         <div
           data-diagram-export-panel="true"
+          data-studio-scrollable="true"
           class="grid min-h-0 content-start gap-3 overflow-auto px-3 py-3"
         >
           <div
@@ -7424,11 +7561,16 @@ defineExpose<{
                 <div class="flex shrink-0 items-center gap-1">
                   <UButton
                     :data-export-copy="artifact.key"
-                    :label="copiedExportArtifactKey === artifact.key ? 'Copied' : 'Copy'"
+                    :data-export-copy-state="getExportCopyFeedbackStatus(artifact.key) || 'idle'"
+                    :leading-icon="getExportCopyButtonIcon(artifact.key)"
+                    :label="getExportCopyButtonLabel(artifact.key)"
                     color="neutral"
                     variant="outline"
                     size="xs"
-                    class="rounded-none border-[color:var(--studio-shell-border)]"
+                    :class="[
+                      exportArtifactButtonBaseClass,
+                      getExportCopyButtonClass(artifact.key)
+                    ]"
                     @click="void copyExportArtifact(artifact)"
                   />
                   <UButton
@@ -7437,13 +7579,16 @@ defineExpose<{
                     color="neutral"
                     variant="outline"
                     size="xs"
-                    class="rounded-none border-[color:var(--studio-shell-border)]"
+                    :class="exportArtifactButtonBaseClass"
                     @click="downloadExportArtifact(artifact)"
                   />
                 </div>
               </div>
 
-              <pre class="max-h-[16rem] overflow-auto px-3 py-3 font-mono text-[0.64rem] leading-5 text-[color:var(--studio-shell-text)]">{{ artifact.content }}</pre>
+              <pre
+                data-studio-scrollable="true"
+                class="max-h-[16rem] overflow-auto px-3 py-3 font-mono text-[0.64rem] leading-5 text-[color:var(--studio-shell-text)]"
+              >{{ artifact.content }}</pre>
             </article>
           </template>
         </div>

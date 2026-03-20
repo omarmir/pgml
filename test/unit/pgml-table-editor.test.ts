@@ -4,6 +4,7 @@ import { parsePgml } from '../../app/utils/pgml'
 import {
   applyEditableGroupDraftToSource,
   applyEditableTableDraftToSource,
+  commonPgmlColumnTypes,
   createEditableGroupDraft,
   createEditableGroupDraftForCreate,
   createEditableTableDraft,
@@ -20,6 +21,10 @@ Table public.users in Core {
 }`
 
 describe('PGML table editor', () => {
+  it('offers bigserial in the common column type presets', () => {
+    expect(commonPgmlColumnTypes).toContain('bigserial')
+  })
+
   it('rewrites an edited table block and keeps the group list aligned', () => {
     const model = parsePgml(source)
     const usersTable = model.tables.find(table => table.fullName === 'public.users')
@@ -117,6 +122,51 @@ Properties "group:Core" {
     expect(nextSource).toContain('Table public.users in Identity {')
     expect(nextSource).toContain('Properties "group:Identity" {')
     expect(nextSource).not.toContain('Properties "group:Core" {')
+  })
+
+  it('reassigns tables through the group editor and keeps table headers aligned', () => {
+    const sourceWithMultipleGroups = `TableGroup Core {
+  public.users
+  public.audit_log
+}
+
+TableGroup Billing {
+  public.invoices
+}
+
+Table public.users in Core {
+  id uuid [pk]
+}
+
+Table public.audit_log in Core {
+  id uuid [pk]
+}
+
+Table public.invoices in Billing {
+  id uuid [pk]
+}
+
+Table public.orders {
+  id uuid [pk]
+}`
+    const model = parsePgml(sourceWithMultipleGroups)
+    const coreGroup = model.groups.find(group => group.name === 'Core')
+
+    if (!coreGroup) {
+      throw new Error('Expected Core group in test model.')
+    }
+
+    const draft = createEditableGroupDraft(coreGroup)
+
+    draft.tableNames = ['public.users', 'public.orders', 'public.invoices']
+
+    const nextSource = applyEditableGroupDraftToSource(sourceWithMultipleGroups, model, draft)
+
+    expect(nextSource).toContain('TableGroup Core {\n  public.users\n  public.orders\n  public.invoices\n}')
+    expect(nextSource).toContain('TableGroup Billing {\n}')
+    expect(nextSource).toContain('Table public.orders in Core {')
+    expect(nextSource).toContain('Table public.invoices in Core {')
+    expect(nextSource).toContain('Table public.audit_log {')
   })
 
   it('keeps same-named tables from different schemas distinct inside a group', () => {
