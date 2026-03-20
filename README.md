@@ -245,4 +245,4 @@ For this repository, that means:
 https://omarmir.github.io/pgml/
 ```
 
-The workflow builds with Nuxt's `github_pages` preset and infers the correct base path from the GitHub repository name. If you ever need to override that path manually, set `NUXT_APP_BASE_URL`.
+The workflow builds with Nuxt's `github_pages` preset and explicitly sets `NUXT_APP_BASE_URL` from the repository name during the build step. If you ever need to override that path manually for a local or custom build, set `NUXT_APP_BASE_URL` yourself.

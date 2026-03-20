@@ -32,6 +32,8 @@ jobs:
         run: bun install --frozen-lockfile
 
       - name: Build static site
+        env:
+          NUXT_APP_BASE_URL: ${{ endsWith(github.event.repository.name, '.github.io') && '/' || format('/{0}/', github.event.repository.name) }}
         run: bun run build:pages
 
       - name: Upload Pages artifact
