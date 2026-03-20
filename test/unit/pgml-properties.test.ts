@@ -102,6 +102,20 @@ Properties "custom-type:Domain:email_address" {
     })
   })
 
+  it('parses visibility-only properties blocks for non-node entities', () => {
+    const source = `${baseSource}
+
+Properties "public.users" {
+  visible: false
+}`
+
+    const model = parsePgml(source)
+
+    expect(model.nodeProperties['public.users']).toEqual({
+      visible: false
+    })
+  })
+
   it('strips embedded node properties blocks from PGML text', () => {
     const source = `${baseSource}
 
@@ -140,6 +154,9 @@ Properties "group:Core" {
         y: 612,
         collapsed: false
       },
+      'public.users': {
+        visible: false
+      },
       'sequence:user_number_seq': {
         x: 1260,
         y: 702,
@@ -159,6 +176,8 @@ Properties "group:Core" {
     expect(built).toContain('x: 1188')
     expect(built).toContain('y: 612')
     expect(built).toContain('collapsed: false')
+    expect(built).toContain('Properties "public.users" {')
+    expect(built).toContain('visible: false')
     expect(built).toContain('Properties "sequence:user_number_seq" {')
 
     const reparsed = parsePgml(built)
@@ -171,6 +190,7 @@ Properties "group:Core" {
     expect(reparsed.nodeProperties['custom-type:Domain:email_address']?.x).toBe(1188)
     expect(reparsed.nodeProperties['custom-type:Domain:email_address']?.y).toBe(612)
     expect(reparsed.nodeProperties['custom-type:Domain:email_address']?.color).toBe('#f97316')
+    expect(reparsed.nodeProperties['public.users']?.visible).toBe(false)
     expect(reparsed.nodeProperties['sequence:user_number_seq']?.height).toBeUndefined()
   })
 })

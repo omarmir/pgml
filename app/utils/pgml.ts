@@ -61,6 +61,7 @@ export type PgmlNodeProperties = {
   height?: number
   tableColumns?: number | null
   collapsed?: boolean
+  visible?: boolean
 }
 
 export type PgmlMetadataEntry = {
@@ -1308,6 +1309,18 @@ const parseNodePropertiesBlock = (block: NamedBlock): { id: string, properties: 
       continue
     }
 
+    if (key === 'visible') {
+      if (entry.value.trim() === 'true') {
+        entries.visible = true
+      }
+
+      if (entry.value.trim() === 'false') {
+        entries.visible = false
+      }
+
+      continue
+    }
+
     if (key === 'color') {
       if (/^#(?:[\da-f]{3}|[\da-f]{6})$/i.test(entry.value.trim())) {
         entries.color = entry.value.trim()
@@ -1351,6 +1364,7 @@ const parseNodePropertiesBlock = (block: NamedBlock): { id: string, properties: 
   const y = entries.y
   if (
     (x === undefined || y === undefined)
+    && entries.visible === undefined
     && entries.collapsed === undefined
   ) {
     return null
@@ -1372,6 +1386,10 @@ const parseNodePropertiesBlock = (block: NamedBlock): { id: string, properties: 
 
   if (typeof entries.collapsed === 'boolean') {
     properties.collapsed = entries.collapsed
+  }
+
+  if (typeof entries.visible === 'boolean') {
+    properties.visible = entries.visible
   }
 
   if (Number.isFinite(entries.width)) {
@@ -1442,6 +1460,7 @@ export const buildPgmlWithNodeProperties = (
         typeof properties.y === 'number',
         typeof properties.color === 'string' && properties.color.length > 0,
         typeof properties.collapsed === 'boolean',
+        properties.visible === false,
         typeof properties.tableColumns === 'number'
       ].some(Boolean)
     })
@@ -1463,6 +1482,10 @@ export const buildPgmlWithNodeProperties = (
 
       if (typeof properties.collapsed === 'boolean') {
         lines.push(`  collapsed: ${properties.collapsed}`)
+      }
+
+      if (properties.visible === false) {
+        lines.push('  visible: false')
       }
 
       if (typeof properties.tableColumns === 'number') {

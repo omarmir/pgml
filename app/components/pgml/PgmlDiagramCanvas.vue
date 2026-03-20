@@ -124,6 +124,20 @@ type CanvasSelection = {
   attachmentId: string
 }
 
+type DiagramPanelTab = 'inspector' | 'entities'
+type EntityBrowserItemKind = 'group' | 'table' | 'column' | 'attachment' | 'object'
+
+type EntityBrowserItem = {
+  id: string
+  kind: EntityBrowserItemKind
+  label: string
+  subtitle: string
+  kindLabel: string
+  searchText: string
+  children: EntityBrowserItem[]
+  selection: CanvasSelection
+}
+
 type LayoutRect = {
   id: string
   x: number
@@ -190,6 +204,9 @@ const selectedNodeId: Ref<string | null> = ref(null)
 const selectedCanvasSelection: Ref<CanvasSelection | null> = ref(null)
 const nodeStates: Ref<Record<string, CanvasNodeState>> = ref({})
 const connectionLines: Ref<ConnectionLine[]> = ref([])
+const isSidePanelOpen: Ref<boolean> = ref(true)
+const activePanelTab: Ref<DiagramPanelTab> = ref('inspector')
+const entitySearchQuery: Ref<string> = ref('')
 let resizeObserver: ResizeObserver | null = null
 
 const palette = ['#8b5cf6', '#f59e0b', '#06b6d4', '#10b981', '#ef4444', '#ec4899', '#f97316']
@@ -246,9 +263,28 @@ let suppressLayoutObserverUntil = 0
 let previousModelContentSnapshot: string | null = null
 
 const canvasNodes = computed(() => Object.values(nodeStates.value))
+const isEntityDirectlyVisible = (id: string) => model.nodeProperties[id]?.visible !== false
+const getStoredGroupId = (groupName: string) => `group:${groupName}`
+const getTableGroupName = (table: PgmlSchemaModel['tables'][number]) => table.groupName || 'Ungrouped'
+const isGroupDirectlyVisible = (groupName: string) => isEntityDirectlyVisible(getStoredGroupId(groupName))
+const isTableEffectivelyVisible = (table: PgmlSchemaModel['tables'][number]) => {
+  return isEntityDirectlyVisible(table.fullName) && isGroupDirectlyVisible(getTableGroupName(table))
+}
+const isAttachmentEffectivelyVisible = (tableId: string, attachmentId: string) => {
+  const table = model.tables.find(entry => entry.fullName === tableId)
+
+  if (!table) {
+    return false
+  }
+
+  return isTableEffectivelyVisible(table) && isEntityDirectlyVisible(attachmentId)
+}
+const visibleTables = computed(() => {
+  return model.tables.filter(table => isTableEffectivelyVisible(table))
+})
 const tableGroupColorByTableId = computed(() => {
   return model.tables.reduce<Record<string, string>>((colors, table) => {
-    const groupName = table.groupName || 'Ungrouped'
+    const groupName = getTableGroupName(table)
     const groupNode = nodeStates.value[`group:${groupName}`]
 
     if (groupNode?.color) {
@@ -389,8 +425,8 @@ const isCollapsibleNode = (node: CanvasNodeState) => node.kind === 'object'
 const tablesByGroup = computed(() => {
   const groups: Record<string, PgmlSchemaModel['tables']> = {}
 
-  for (const table of model.tables) {
-    const groupName = table.groupName || 'Ungrouped'
+  for (const table of visibleTables.value) {
+    const groupName = getTableGroupName(table)
 
     if (!groups[groupName]) {
       groups[groupName] = []
@@ -405,7 +441,7 @@ const tableGroupById = computed(() => {
   const groups: Record<string, string> = {}
 
   for (const table of model.tables) {
-    groups[table.fullName] = table.groupName || 'Ungrouped'
+    groups[table.fullName] = getTableGroupName(table)
   }
 
   return groups
@@ -2151,13 +2187,236 @@ const tableRowsByTableId = computed(() => {
           attachment
         }
       })
-    ]
+    ].filter((row) => {
+      if (row.kind === 'attachment') {
+        return isEntityDirectlyVisible(row.attachment.id)
+      }
+
+      return true
+    })
 
     rowsByTableId[table.fullName] = rows
     return rowsByTableId
   }, {})
 })
 const getTableRows = (tableId: string) => tableRowsByTableId.value[tableId] || []
+const browserGroupNames = computed(() => {
+  const seen = new Set<string>()
+  const names: string[] = []
+
+  model.groups.forEach((group) => {
+    seen.add(group.name)
+    names.push(group.name)
+  })
+
+  model.tables.forEach((table) => {
+    const groupName = getTableGroupName(table)
+
+    if (!seen.has(groupName)) {
+      seen.add(groupName)
+      names.push(groupName)
+    }
+  })
+
+  return names
+})
+const standaloneBrowserItems = computed(() => {
+  const items: EntityBrowserItem[] = []
+  const attachedObjectIds = tableAttachmentState.value.attachedObjectIds
+  const pushNodeItem = (
+    id: string,
+    label: string,
+    kindLabel: string,
+    subtitle: string
+  ) => {
+    items.push({
+      id,
+      kind: 'object',
+      label,
+      subtitle: '',
+      kindLabel,
+      searchText: cleanForSearch(`${kindLabel} ${label} ${subtitle}`),
+      children: [],
+      selection: {
+        kind: 'node',
+        id
+      }
+    })
+  }
+
+  model.functions.forEach((routine) => {
+    const id = `function:${routine.name}`
+
+    if (!attachedObjectIds.has(id)) {
+      pushNodeItem(id, routine.name, 'Function', routine.signature)
+    }
+  })
+
+  model.procedures.forEach((routine) => {
+    const id = `procedure:${routine.name}`
+
+    if (!attachedObjectIds.has(id)) {
+      pushNodeItem(id, routine.name, 'Procedure', routine.signature)
+    }
+  })
+
+  model.triggers.forEach((trigger) => {
+    const id = `trigger:${trigger.name}`
+
+    if (!attachedObjectIds.has(id)) {
+      pushNodeItem(id, trigger.name, 'Trigger', buildTriggerSubtitle(trigger))
+    }
+  })
+
+  model.sequences.forEach((sequence) => {
+    const id = `sequence:${sequence.name}`
+
+    if (!attachedObjectIds.has(id)) {
+      pushNodeItem(id, sequence.name, 'Sequence', buildSequenceSubtitle(sequence))
+    }
+  })
+
+  model.customTypes.forEach((customType) => {
+    const id = `custom-type:${customType.kind}:${customType.name}`
+
+    pushNodeItem(id, customType.name, customType.kind, customType.details.join(' '))
+  })
+
+  return items.sort((left, right) => {
+    const kindDelta = left.kindLabel.localeCompare(right.kindLabel)
+
+    if (kindDelta !== 0) {
+      return kindDelta
+    }
+
+    return left.label.localeCompare(right.label)
+  })
+})
+const groupedBrowserItems = computed(() => {
+  return browserGroupNames.value.map((groupName) => {
+    const tables = model.tables.filter(table => getTableGroupName(table) === groupName)
+    const tableItems = tables.map<EntityBrowserItem>((table) => {
+      const columns = table.columns.map<EntityBrowserItem>((column) => {
+        return {
+          id: `${table.fullName}.${column.name}`,
+          kind: 'column',
+          label: column.name,
+          subtitle: '',
+          kindLabel: 'Field',
+          searchText: cleanForSearch(`field ${column.name} ${column.type} ${table.fullName}`),
+          children: [],
+          selection: {
+            kind: 'table',
+            tableId: table.fullName
+          }
+        }
+      })
+      const attachments = (tableAttachmentState.value.attachmentsByTableId[table.fullName] || []).map<EntityBrowserItem>((attachment) => {
+        return {
+          id: attachment.id,
+          kind: 'attachment',
+          label: attachment.title,
+          subtitle: '',
+          kindLabel: attachment.kind,
+          searchText: cleanForSearch(`${attachment.kind} ${attachment.title} ${attachment.subtitle} ${attachment.details.join(' ')}`),
+          children: [],
+          selection: {
+            kind: 'attachment',
+            tableId: table.fullName,
+            attachmentId: attachment.id
+          }
+        }
+      })
+
+      return {
+        id: table.fullName,
+        kind: 'table',
+        label: table.name,
+        subtitle: '',
+        kindLabel: 'Table',
+        searchText: cleanForSearch(`table ${table.fullName} ${table.note || ''}`),
+        children: [...columns, ...attachments],
+        selection: {
+          kind: 'table',
+          tableId: table.fullName
+        }
+      }
+    })
+
+    return {
+      id: getStoredGroupId(groupName),
+      kind: 'group',
+      label: groupName,
+      subtitle: `${tables.length} table${tables.length === 1 ? '' : 's'}`,
+      kindLabel: 'Group',
+      searchText: cleanForSearch(`group ${groupName}`),
+      children: tableItems,
+      selection: {
+        kind: 'node',
+        id: getStoredGroupId(groupName)
+      }
+    } satisfies EntityBrowserItem
+  })
+})
+const filterEntityBrowserItems = (items: EntityBrowserItem[], query: string): EntityBrowserItem[] => {
+  const normalizedQuery = cleanForSearch(query).trim()
+
+  if (!normalizedQuery) {
+    return items
+  }
+
+  return items.flatMap((item) => {
+    const filteredChildren = filterEntityBrowserItems(item.children, normalizedQuery)
+
+    if (item.kind === 'group') {
+      if (item.searchText.includes(normalizedQuery)) {
+        return [{
+          ...item,
+          children: []
+        }]
+      }
+
+      if (filteredChildren.length > 0) {
+        return [{
+          ...item,
+          children: filteredChildren
+        }]
+      }
+
+      return []
+    }
+
+    if (item.kind === 'table') {
+      if (item.searchText.includes(normalizedQuery) || filteredChildren.length > 0) {
+        return [{
+          ...item,
+          children: item.children
+        }]
+      }
+
+      return []
+    }
+
+    if (item.searchText.includes(normalizedQuery)) {
+      return [{
+        ...item,
+        children: []
+      }]
+    }
+
+    return []
+  })
+}
+const filteredGroupedBrowserItems = computed(() => {
+  return filterEntityBrowserItems(groupedBrowserItems.value, entitySearchQuery.value)
+})
+const filteredStandaloneBrowserItems = computed(() => {
+  return filterEntityBrowserItems(standaloneBrowserItems.value, entitySearchQuery.value)
+})
+const normalizedEntitySearchQuery = computed(() => cleanForSearch(entitySearchQuery.value).trim())
+const hiddenEntityCount = computed(() => {
+  return Object.values(model.nodeProperties).filter(properties => properties.visible === false).length
+})
 
 const buildGroupRelationWeights = (groupNames: string[]) => {
   const weights: Record<string, Record<string, number>> = {}
@@ -2672,6 +2931,10 @@ const buildObjectNodes = (groupStates: Record<string, CanvasNodeState>) => {
     for (const index of table.indexes) {
       const indexId = `index:${index.name}`
 
+      if (!isEntityDirectlyVisible(indexId)) {
+        continue
+      }
+
       if (attachedObjectIds.has(indexId)) {
         continue
       }
@@ -2702,6 +2965,10 @@ const buildObjectNodes = (groupStates: Record<string, CanvasNodeState>) => {
     for (const constraint of table.constraints) {
       const constraintId = `constraint:${constraint.name}`
 
+      if (!isEntityDirectlyVisible(constraintId)) {
+        continue
+      }
+
       if (attachedObjectIds.has(constraintId)) {
         continue
       }
@@ -2727,6 +2994,10 @@ const buildObjectNodes = (groupStates: Record<string, CanvasNodeState>) => {
 
   for (const pgFunction of model.functions) {
     const functionId = `function:${pgFunction.name}`
+
+    if (!isEntityDirectlyVisible(functionId)) {
+      continue
+    }
 
     if (attachedObjectIds.has(functionId)) {
       continue
@@ -2755,6 +3026,10 @@ const buildObjectNodes = (groupStates: Record<string, CanvasNodeState>) => {
   for (const procedure of model.procedures) {
     const procedureId = `procedure:${procedure.name}`
 
+    if (!isEntityDirectlyVisible(procedureId)) {
+      continue
+    }
+
     if (attachedObjectIds.has(procedureId)) {
       continue
     }
@@ -2781,6 +3056,10 @@ const buildObjectNodes = (groupStates: Record<string, CanvasNodeState>) => {
 
   for (const trigger of model.triggers) {
     const triggerId = `trigger:${trigger.name}`
+
+    if (!isEntityDirectlyVisible(triggerId)) {
+      continue
+    }
 
     if (attachedObjectIds.has(triggerId)) {
       continue
@@ -2809,6 +3088,10 @@ const buildObjectNodes = (groupStates: Record<string, CanvasNodeState>) => {
   for (const sequence of model.sequences) {
     const sequenceId = `sequence:${sequence.name}`
 
+    if (!isEntityDirectlyVisible(sequenceId)) {
+      continue
+    }
+
     if (attachedObjectIds.has(sequenceId)) {
       continue
     }
@@ -2834,10 +3117,16 @@ const buildObjectNodes = (groupStates: Record<string, CanvasNodeState>) => {
   }
 
   for (const customType of model.customTypes) {
+    const customTypeId = `custom-type:${customType.kind}:${customType.name}`
+
+    if (!isEntityDirectlyVisible(customTypeId)) {
+      continue
+    }
+
     const impactTargets = inferCustomTypeTargets(customType)
 
     addNode({
-      id: `custom-type:${customType.kind}:${customType.name}`,
+      id: customTypeId,
       kind: 'object',
       objectKind: 'Custom Type',
       collapsed: true,
@@ -2863,8 +3152,8 @@ const syncNodeStates = () => {
   const orderedNames: string[] = []
   const groupNodes: CanvasNodeState[] = []
 
-  for (const table of model.tables) {
-    const groupName = table.groupName || 'Ungrouped'
+  for (const table of visibleTables.value) {
+    const groupName = getTableGroupName(table)
 
     if (!tableGroups.has(groupName)) {
       tableGroups.set(groupName, [])
@@ -2876,15 +3165,16 @@ const syncNodeStates = () => {
 
   orderedNames.forEach((groupName, index) => {
     const tables = tableGroups.get(groupName) || []
+    const groupId = getStoredGroupId(groupName)
     const existing = nodeStates.value[`group:${groupName}`]
-    const storedLayout = model.nodeProperties[`group:${groupName}`]
+    const storedLayout = model.nodeProperties[groupId]
     const color = storedLayout?.color || existing?.color || palette[index % palette.length] || '#8b5cf6'
     const columnCount = storedLayout?.tableColumns ?? existing?.columnCount ?? 1
     const note = model.groups.find(group => group.name === groupName)?.note || null
     const minimumSize = getGroupMinimumSize(groupName, columnCount)
 
     groupNodes.push({
-      id: `group:${groupName}`,
+      id: groupId,
       kind: 'group',
       collapsed: false,
       title: groupName,
@@ -2965,7 +3255,9 @@ const syncNodeStates = () => {
 
   if (
     tableSelection?.kind === 'table'
-    && !model.tables.some(table => table.fullName === tableSelection.tableId)
+    && !model.tables.some((table) => {
+      return table.fullName === tableSelection.tableId && isTableEffectivelyVisible(table)
+    })
   ) {
     selectedCanvasSelection.value = null
   }
@@ -2974,7 +3266,12 @@ const syncNodeStates = () => {
 
   if (attachmentSelection?.kind === 'attachment') {
     const attachments = tableAttachmentState.value.attachmentsByTableId[attachmentSelection.tableId] || []
-    const hasAttachment = attachments.some(attachment => attachment.id === attachmentSelection.attachmentId)
+    const hasAttachment = attachments.some((attachment) => {
+      return (
+        attachment.id === attachmentSelection.attachmentId
+        && isAttachmentEffectivelyVisible(attachmentSelection.tableId, attachment.id)
+      )
+    })
 
     if (!hasAttachment) {
       selectedCanvasSelection.value = null
@@ -3036,6 +3333,179 @@ const floatingPanelStyle = {
   borderColor: 'var(--studio-control-border)',
   backgroundColor: 'var(--studio-control-bg)',
   boxShadow: 'var(--studio-floating-shadow)'
+}
+const browserItemSelectionEquals = (left: CanvasSelection | null, right: CanvasSelection) => {
+  if (!left || left.kind !== right.kind) {
+    return false
+  }
+
+  if (left.kind === 'node' && right.kind === 'node') {
+    return left.id === right.id
+  }
+
+  if (left.kind === 'table' && right.kind === 'table') {
+    return left.tableId === right.tableId
+  }
+
+  if (left.kind === 'attachment' && right.kind === 'attachment') {
+    return left.tableId === right.tableId && left.attachmentId === right.attachmentId
+  }
+
+  return false
+}
+const isBrowserItemSelected = (item: EntityBrowserItem) => {
+  return browserItemSelectionEquals(selectedCanvasSelection.value, item.selection)
+}
+const browserItemSupportsVisibility = (item: EntityBrowserItem) => item.kind !== 'column'
+const isBrowserItemDirectlyVisible = (item: EntityBrowserItem) => {
+  if (item.kind === 'column') {
+    return isEntityDirectlyVisible(item.selection.tableId)
+  }
+
+  if (item.selection.kind === 'table') {
+    return isEntityDirectlyVisible(item.selection.tableId)
+  }
+
+  if (item.selection.kind === 'attachment') {
+    return isEntityDirectlyVisible(item.selection.attachmentId)
+  }
+
+  return isEntityDirectlyVisible(item.selection.id)
+}
+const isBrowserItemEffectivelyVisible = (item: EntityBrowserItem) => {
+  if (item.kind === 'column') {
+    const table = model.tables.find(entry => entry.fullName === item.selection.tableId)
+
+    return table ? isTableEffectivelyVisible(table) : false
+  }
+
+  const selection = item.selection
+
+  if (selection.kind === 'table') {
+    const table = model.tables.find(entry => entry.fullName === selection.tableId)
+
+    return table ? isTableEffectivelyVisible(table) : false
+  }
+
+  if (selection.kind === 'attachment') {
+    return isAttachmentEffectivelyVisible(selection.tableId, selection.attachmentId)
+  }
+
+  if (selection.id.startsWith('group:')) {
+    return isGroupDirectlyVisible(selection.id.replace(/^group:/, ''))
+  }
+
+  return isEntityDirectlyVisible(selection.id)
+}
+const isBrowserItemHiddenByAncestor = (item: EntityBrowserItem) => {
+  return !isBrowserItemEffectivelyVisible(item) && isBrowserItemDirectlyVisible(item)
+}
+const getBrowserItemTableId = (item: EntityBrowserItem) => {
+  if (item.kind === 'column') {
+    return item.selection.tableId
+  }
+
+  if (item.selection.kind === 'table') {
+    return item.selection.tableId
+  }
+
+  if (item.selection.kind === 'attachment') {
+    return item.selection.tableId
+  }
+
+  return null
+}
+const getBrowserItemAccentColor = (item: EntityBrowserItem) => {
+  const tableId = getBrowserItemTableId(item)
+
+  if (tableId) {
+    return tableGroupColorByTableId.value[tableId] || '#79e3ea'
+  }
+
+  if (item.selection.kind === 'node') {
+    return nodeStates.value[item.selection.id]?.color || '#79e3ea'
+  }
+
+  return '#79e3ea'
+}
+const isBrowserItemSearchMatch = (item: EntityBrowserItem) => {
+  const normalizedQuery = normalizedEntitySearchQuery.value
+
+  return normalizedQuery.length > 0 && item.searchText.includes(normalizedQuery)
+}
+const getBrowserItemSearchMatchStyle = (item: EntityBrowserItem) => {
+  if (!isBrowserItemSearchMatch(item)) {
+    return undefined
+  }
+
+  return {
+    '--pgml-browser-match-color': getBrowserItemAccentColor(item)
+  }
+}
+const getBrowserItemVisibilityId = (item: EntityBrowserItem) => {
+  if (!browserItemSupportsVisibility(item)) {
+    return null
+  }
+
+  if (item.selection.kind === 'table') {
+    return item.selection.tableId
+  }
+
+  if (item.selection.kind === 'attachment') {
+    return item.selection.attachmentId
+  }
+
+  return item.selection.id
+}
+const toggleBrowserItemVisibility = (item: EntityBrowserItem) => {
+  if (isBrowserItemHiddenByAncestor(item)) {
+    return
+  }
+
+  const visibilityId = getBrowserItemVisibilityId(item)
+
+  if (!visibilityId) {
+    return
+  }
+
+  updateEntityVisibility(visibilityId, !isBrowserItemDirectlyVisible(item))
+}
+const selectBrowserItem = (item: EntityBrowserItem) => {
+  if (!isBrowserItemEffectivelyVisible(item)) {
+    return
+  }
+
+  const selection = item.selection
+
+  if (selection.kind === 'node') {
+    const node = nodeStates.value[selection.id]
+
+    if (node) {
+      handleNodeClick(node)
+    }
+
+    return
+  }
+
+  if (selection.kind === 'table') {
+    handleTableClick(selection.tableId)
+    return
+  }
+
+  const attachment = tableAttachmentState.value.attachmentsByTableId[selection.tableId]
+    ?.find(entry => entry.id === selection.attachmentId)
+
+  if (attachment) {
+    handleAttachmentClick(selection.tableId, attachment)
+  }
+}
+const toggleSidePanel = () => {
+  isSidePanelOpen.value = !isSidePanelOpen.value
+
+  nextTick(() => {
+    fitView()
+    updateConnections()
+  })
 }
 const getSelectionGlowStyle = (color: string) => {
   return {
@@ -4456,7 +4926,7 @@ const fitView = () => {
 
   const padding = {
     top: 48,
-    right: 280,
+    right: isSidePanelOpen.value ? 332 : 48,
     bottom: 72,
     left: 48
   }
@@ -4482,6 +4952,47 @@ const resetView = () => {
   fitView()
 }
 
+const normalizeStoredNodeProperties = (properties: PgmlNodeProperties) => {
+  const normalized: PgmlNodeProperties = {}
+
+  if (typeof properties.x === 'number') {
+    normalized.x = Math.round(properties.x)
+  }
+
+  if (typeof properties.y === 'number') {
+    normalized.y = Math.round(properties.y)
+  }
+
+  if (typeof properties.color === 'string' && properties.color.length > 0) {
+    normalized.color = properties.color
+  }
+
+  if (typeof properties.collapsed === 'boolean') {
+    normalized.collapsed = properties.collapsed
+  }
+
+  if (properties.visible === false) {
+    normalized.visible = false
+  }
+
+  if (typeof properties.tableColumns === 'number') {
+    normalized.tableColumns = Math.max(1, Math.round(properties.tableColumns))
+  }
+
+  return normalized
+}
+
+const hasStoredNodeProperties = (properties: PgmlNodeProperties) => {
+  return (
+    typeof properties.x === 'number'
+    || typeof properties.y === 'number'
+    || typeof properties.color === 'string'
+    || typeof properties.collapsed === 'boolean'
+    || properties.visible === false
+    || typeof properties.tableColumns === 'number'
+  )
+}
+
 const getModelContentSnapshot = (value: PgmlSchemaModel) => {
   return JSON.stringify({
     customTypes: value.customTypes,
@@ -4497,8 +5008,20 @@ const getModelContentSnapshot = (value: PgmlSchemaModel) => {
 }
 
 const getNodeLayoutProperties = () => {
-  return Object.values(nodeStates.value).reduce<Record<string, PgmlNodeProperties>>((properties, node) => {
-    const nextProperties: PgmlNodeProperties = {}
+  const properties = Object.entries(model.nodeProperties).reduce<Record<string, PgmlNodeProperties>>((entries, [id, value]) => {
+    const normalized = normalizeStoredNodeProperties(value)
+
+    if (hasStoredNodeProperties(normalized)) {
+      entries[id] = normalized
+    }
+
+    return entries
+  }, {})
+
+  Object.values(nodeStates.value).forEach((node) => {
+    const nextProperties: PgmlNodeProperties = {
+      ...properties[node.id]
+    }
 
     if (node.kind === 'group') {
       nextProperties.color = node.color
@@ -4518,13 +5041,64 @@ const getNodeLayoutProperties = () => {
     }
 
     properties[node.id] = nextProperties
+  })
 
-    return properties
+  return Object.entries(properties).reduce<Record<string, PgmlNodeProperties>>((entries, [id, value]) => {
+    const normalized = normalizeStoredNodeProperties(value)
+
+    if (hasStoredNodeProperties(normalized)) {
+      entries[id] = normalized
+    }
+
+    return entries
   }, {})
 }
 
 const emitNodePropertiesChange = () => {
   emit('nodePropertiesChange', getNodeLayoutProperties())
+}
+
+const updateEntityVisibility = (id: string, visible: boolean) => {
+  const nextProperties = getNodeLayoutProperties()
+  const nextEntry: PgmlNodeProperties = {
+    ...(nextProperties[id] || {})
+  }
+
+  const normalizedEntry = visible
+    ? (() => {
+        const { visible: _visible, ...rest } = nextEntry
+
+        return rest satisfies PgmlNodeProperties
+      })()
+    : {
+        ...nextEntry,
+        visible: false
+      }
+
+  if (hasStoredNodeProperties(normalizedEntry)) {
+    nextProperties[id] = normalizeStoredNodeProperties(normalizedEntry)
+    emit('nodePropertiesChange', nextProperties)
+  } else {
+    emit('nodePropertiesChange', Object.entries(nextProperties).reduce<Record<string, PgmlNodeProperties>>((entries, [entryId, entryValue]) => {
+      if (entryId !== id) {
+        entries[entryId] = entryValue
+      }
+
+      return entries
+    }, {}))
+  }
+
+  if (
+    !visible
+    && (
+      (selectedCanvasSelection.value?.kind === 'node' && selectedCanvasSelection.value.id === id)
+      || (selectedCanvasSelection.value?.kind === 'table' && selectedCanvasSelection.value.tableId === id)
+      || (selectedCanvasSelection.value?.kind === 'attachment' && selectedCanvasSelection.value.attachmentId === id)
+    )
+  ) {
+    selectedCanvasSelection.value = null
+    selectedNodeId.value = null
+  }
 }
 
 const updateNode = (
@@ -5362,96 +5936,390 @@ defineExpose<{
       </div>
     </div>
 
+    <div class="pointer-events-none absolute right-3 top-3 z-[3] flex justify-end">
+      <button
+        type="button"
+        data-diagram-panel-toggle="true"
+        class="pointer-events-auto inline-flex items-center gap-1.5 border px-2 py-1 font-mono text-[0.62rem] uppercase tracking-[0.08em] text-[color:var(--studio-shell-text)] transition-colors duration-150 hover:bg-[color:var(--studio-surface-hover)]"
+        :style="floatingPanelStyle"
+        @click="toggleSidePanel"
+      >
+        <UIcon
+          :name="isSidePanelOpen ? 'i-lucide-panel-right-close' : 'i-lucide-panel-right-open'"
+          class="h-3.5 w-3.5"
+        />
+        {{ isSidePanelOpen ? 'Hide panel' : 'Show panel' }}
+      </button>
+    </div>
+
     <aside
-      class="absolute right-3 top-3 z-[2] grid max-h-[calc(100%-24px)] w-[182px] gap-1.5 overflow-auto border p-2"
+      v-if="isSidePanelOpen"
+      data-diagram-panel="true"
+      class="absolute bottom-3 right-3 top-14 z-[2] grid w-[320px] grid-rows-[auto_auto_minmax(0,1fr)] overflow-hidden border max-[900px]:left-3 max-[900px]:w-auto"
       :style="floatingPanelStyle"
     >
-      <div class="font-mono text-[0.6rem] uppercase tracking-[0.08em] text-[color:var(--studio-shell-label)]">
-        Inspector
+      <div class="flex items-start justify-between gap-3 border-b border-[color:var(--studio-divider)] px-3 py-2.5">
+        <div class="min-w-0">
+          <div class="font-mono text-[0.6rem] uppercase tracking-[0.08em] text-[color:var(--studio-shell-label)]">
+            Diagram panel
+          </div>
+          <h3 class="truncate text-[0.88rem] font-semibold leading-5 text-[color:var(--studio-shell-text)]">
+            {{ activePanelTab === 'inspector' ? selectedCanvasEntityTitle : 'Entities' }}
+          </h3>
+          <p class="mt-1 text-[0.66rem] leading-5 text-[color:var(--studio-shell-muted)]">
+            {{ activePanelTab === 'inspector' ? selectedCanvasEntityDescription : `${hiddenEntityCount} hidden in saved properties.` }}
+          </p>
+        </div>
+
+        <UButton
+          icon="i-lucide-x"
+          color="neutral"
+          variant="ghost"
+          size="xs"
+          class="h-7 w-7 rounded-none border border-[color:var(--studio-shell-border)] text-[color:var(--studio-shell-muted)] hover:bg-[color:var(--studio-surface-hover)] hover:text-[color:var(--studio-shell-text)]"
+          aria-label="Hide panel"
+          @click="toggleSidePanel"
+        />
       </div>
-      <h3 class="text-[0.82rem] font-semibold leading-5 text-[color:var(--studio-shell-text)]">
-        {{ selectedCanvasEntityTitle }}
-      </h3>
-      <p class="text-[0.64rem] leading-4 text-[color:var(--studio-shell-muted)]">
-        {{ selectedCanvasEntityDescription }}
-      </p>
+
+      <div class="grid grid-cols-2 border-b border-[color:var(--studio-divider)]">
+        <button
+          type="button"
+          data-diagram-panel-tab="inspector"
+          class="border-r border-[color:var(--studio-divider)] px-3 py-2 font-mono text-[0.6rem] uppercase tracking-[0.08em] transition-colors duration-150"
+          :class="activePanelTab === 'inspector' ? 'bg-[color:var(--studio-input-bg)] text-[color:var(--studio-shell-text)]' : 'text-[color:var(--studio-shell-muted)] hover:bg-[color:var(--studio-surface-hover)]'"
+          @click="activePanelTab = 'inspector'"
+        >
+          Inspector
+        </button>
+        <button
+          type="button"
+          data-diagram-panel-tab="entities"
+          class="px-3 py-2 font-mono text-[0.6rem] uppercase tracking-[0.08em] transition-colors duration-150"
+          :class="activePanelTab === 'entities' ? 'bg-[color:var(--studio-input-bg)] text-[color:var(--studio-shell-text)]' : 'text-[color:var(--studio-shell-muted)] hover:bg-[color:var(--studio-surface-hover)]'"
+          @click="activePanelTab = 'entities'"
+        >
+          Entities
+        </button>
+      </div>
 
       <div
-        v-if="selectedNode"
-        class="grid gap-1.5"
+        v-if="activePanelTab === 'inspector'"
+        class="grid content-start gap-3 overflow-auto px-3 py-3"
       >
-        <label class="grid gap-1">
-          <span class="font-mono text-[0.58rem] uppercase tracking-[0.08em] text-[color:var(--studio-shell-label)]">Label</span>
-          <input
-            :value="selectedNode.title"
-            type="text"
-            class="w-full select-text border border-[color:var(--studio-rail)] bg-[color:var(--studio-input-bg)] px-2 py-1.5 text-[0.68rem] text-[color:var(--studio-shell-text)] outline-none"
-            @input="updateNode(selectedNode.id, { title: ($event.target as HTMLInputElement).value })"
-          >
-        </label>
-
-        <label class="grid gap-1">
-          <span class="font-mono text-[0.58rem] uppercase tracking-[0.08em] text-[color:var(--studio-shell-label)]">Color</span>
-          <input
-            :value="selectedNode.color"
-            type="color"
-            class="h-8 w-full border border-[color:var(--studio-rail)] bg-[color:var(--studio-input-bg)] p-0.5"
-            @input="updateNode(selectedNode.id, { color: ($event.target as HTMLInputElement).value })"
-          >
-        </label>
-
-        <label
-          v-if="selectedNode.kind !== 'group' && !selectedNode.collapsed"
-          class="grid gap-1"
+        <div
+          v-if="selectedNode"
+          class="grid gap-2"
         >
-          <span class="font-mono text-[0.58rem] uppercase tracking-[0.08em] text-[color:var(--studio-shell-label)]">Width</span>
-          <input
-            :value="selectedNode.width"
-            type="range"
-            :min="selectedNode.minWidth || 200"
-            max="640"
-            class="w-full"
-            @input="updateNode(selectedNode.id, { width: Number(($event.target as HTMLInputElement).value) })"
-          >
-        </label>
+          <label class="grid gap-1">
+            <span class="font-mono text-[0.58rem] uppercase tracking-[0.08em] text-[color:var(--studio-shell-label)]">Label</span>
+            <input
+              :value="selectedNode.title"
+              type="text"
+              class="w-full select-text border border-[color:var(--studio-rail)] bg-[color:var(--studio-input-bg)] px-2 py-1.5 text-[0.68rem] text-[color:var(--studio-shell-text)] outline-none"
+              @input="updateNode(selectedNode.id, { title: ($event.target as HTMLInputElement).value })"
+            >
+          </label>
 
-        <label
-          v-if="selectedNode.kind !== 'group' && !selectedNode.collapsed"
-          class="grid gap-1"
-        >
-          <span class="font-mono text-[0.58rem] uppercase tracking-[0.08em] text-[color:var(--studio-shell-label)]">Height</span>
-          <input
-            :value="selectedNode.height"
-            type="range"
-            :min="selectedNode.minHeight || 96"
-            max="920"
-            class="w-full"
-            @input="updateNode(selectedNode.id, { height: Number(($event.target as HTMLInputElement).value) })"
-          >
-        </label>
+          <label class="grid gap-1">
+            <span class="font-mono text-[0.58rem] uppercase tracking-[0.08em] text-[color:var(--studio-shell-label)]">Color</span>
+            <input
+              :value="selectedNode.color"
+              type="color"
+              class="h-9 w-full border border-[color:var(--studio-rail)] bg-[color:var(--studio-input-bg)] p-0.5"
+              @input="updateNode(selectedNode.id, { color: ($event.target as HTMLInputElement).value })"
+            >
+          </label>
 
-        <label
-          v-if="selectedNode.kind === 'group'"
-          class="grid gap-1"
-        >
-          <span class="font-mono text-[0.58rem] uppercase tracking-[0.08em] text-[color:var(--studio-shell-label)]">Table Columns · {{ selectedNode.columnCount || 1 }}</span>
-          <input
-            :value="selectedNode.columnCount || 1"
-            data-group-column-count-slider="true"
-            type="range"
-            min="1"
-            :max="Math.min(4, selectedNode.tableCount || 4)"
-            class="w-full"
-            @input="updateNode(selectedNode.id, { columnCount: Number(($event.target as HTMLInputElement).value) })"
+          <label
+            v-if="selectedNode.kind !== 'group' && !selectedNode.collapsed"
+            class="grid gap-1"
           >
-        </label>
+            <span class="font-mono text-[0.58rem] uppercase tracking-[0.08em] text-[color:var(--studio-shell-label)]">Width</span>
+            <input
+              :value="selectedNode.width"
+              type="range"
+              :min="selectedNode.minWidth || 200"
+              max="640"
+              class="w-full"
+              @input="updateNode(selectedNode.id, { width: Number(($event.target as HTMLInputElement).value) })"
+            >
+          </label>
+
+          <label
+            v-if="selectedNode.kind !== 'group' && !selectedNode.collapsed"
+            class="grid gap-1"
+          >
+            <span class="font-mono text-[0.58rem] uppercase tracking-[0.08em] text-[color:var(--studio-shell-label)]">Height</span>
+            <input
+              :value="selectedNode.height"
+              type="range"
+              :min="selectedNode.minHeight || 96"
+              max="920"
+              class="w-full"
+              @input="updateNode(selectedNode.id, { height: Number(($event.target as HTMLInputElement).value) })"
+            >
+          </label>
+
+          <label
+            v-if="selectedNode.kind === 'group'"
+            class="grid gap-1"
+          >
+            <span class="font-mono text-[0.58rem] uppercase tracking-[0.08em] text-[color:var(--studio-shell-label)]">Table Columns · {{ selectedNode.columnCount || 1 }}</span>
+            <input
+              :value="selectedNode.columnCount || 1"
+              data-group-column-count-slider="true"
+              type="range"
+              min="1"
+              :max="Math.min(4, selectedNode.tableCount || 4)"
+              class="w-full"
+              @input="updateNode(selectedNode.id, { columnCount: Number(($event.target as HTMLInputElement).value) })"
+            >
+          </label>
+        </div>
+
+        <div
+          v-else
+          class="border border-[color:var(--studio-divider)] bg-[color:var(--studio-input-bg)] px-3 py-3 text-[0.68rem] leading-6 text-[color:var(--studio-shell-muted)]"
+        >
+          Drag the canvas or select any schema object.
+        </div>
       </div>
 
       <div
         v-else
-        class="text-[0.64rem] leading-4 text-[color:var(--studio-shell-muted)]"
+        class="grid min-h-0 grid-rows-[auto_minmax(0,1fr)] overflow-hidden"
       >
-        Drag the canvas or select any schema object.
+        <div class="grid gap-2 border-b border-[color:var(--studio-divider)] px-3 py-3">
+          <label class="grid gap-1">
+            <span class="font-mono text-[0.58rem] uppercase tracking-[0.08em] text-[color:var(--studio-shell-label)]">Search entities</span>
+            <input
+              v-model="entitySearchQuery"
+              data-entity-search="true"
+              type="text"
+              placeholder="Groups, tables, routines..."
+              class="w-full border border-[color:var(--studio-rail)] bg-[color:var(--studio-input-bg)] px-2 py-1.5 text-[0.68rem] text-[color:var(--studio-shell-text)] outline-none placeholder:text-[color:var(--studio-shell-muted)]"
+            >
+          </label>
+          <div class="flex items-center justify-between gap-3 text-[0.62rem] text-[color:var(--studio-shell-muted)]">
+            <span>{{ filteredGroupedBrowserItems.length + filteredStandaloneBrowserItems.length }} sections</span>
+            <span>{{ hiddenEntityCount }} hidden</span>
+          </div>
+        </div>
+
+        <div class="grid content-start gap-2 overflow-auto overflow-x-hidden px-3 py-3">
+          <div
+            v-for="groupItem in filteredGroupedBrowserItems"
+            :key="groupItem.id"
+            class="grid content-start gap-1"
+          >
+            <div
+              :data-browser-entity-row="groupItem.id"
+              :data-browser-search-match="isBrowserItemSearchMatch(groupItem) ? 'true' : undefined"
+              :style="getBrowserItemSearchMatchStyle(groupItem)"
+              :class="[
+                'grid content-start gap-1.5 border px-2 py-2 transition-colors duration-150',
+                isBrowserItemSearchMatch(groupItem) ? 'pgml-browser-search-match-row' : '',
+                isBrowserItemSelected(groupItem) ? 'border-[color:var(--studio-ring)] bg-[color:var(--studio-input-bg)]' : 'border-[color:var(--studio-divider)] bg-[color:var(--studio-control-bg)]'
+              ]"
+            >
+              <div class="grid grid-cols-[minmax(0,1fr)_auto] items-start gap-2">
+                <button
+                  type="button"
+                  class="min-w-0 flex-1 text-left"
+                  @click="selectBrowserItem(groupItem)"
+                >
+                  <div class="font-mono text-[0.54rem] uppercase tracking-[0.08em] text-[color:var(--studio-shell-label)]">
+                    <span :class="isBrowserItemSearchMatch(groupItem) ? 'pgml-browser-search-match-text' : ''">
+                      {{ groupItem.kindLabel }}
+                    </span>
+                  </div>
+                  <div class="break-words text-[0.76rem] font-semibold leading-5 text-[color:var(--studio-shell-text)]">
+                    <span :class="isBrowserItemSearchMatch(groupItem) ? 'pgml-browser-search-match-text' : ''">
+                      {{ groupItem.label }}
+                    </span>
+                  </div>
+                  <div class="text-[0.64rem] text-[color:var(--studio-shell-muted)]">
+                    {{ groupItem.subtitle }}
+                  </div>
+                </button>
+
+                <button
+                  type="button"
+                  :data-browser-visibility-toggle="groupItem.id"
+                  class="shrink-0 border px-2 py-1 font-mono text-[0.54rem] uppercase tracking-[0.08em] transition-colors duration-150"
+                  :class="isBrowserItemDirectlyVisible(groupItem) ? 'border-[color:var(--studio-divider)] text-[color:var(--studio-shell-text)] hover:bg-[color:var(--studio-surface-hover)]' : 'border-[color:var(--studio-shell-label)] bg-[color:var(--studio-input-bg)] text-[color:var(--studio-shell-label)] hover:bg-[color:var(--studio-surface-hover)]'"
+                  @click="toggleBrowserItemVisibility(groupItem)"
+                >
+                  {{ isBrowserItemDirectlyVisible(groupItem) ? 'Hide' : 'Show' }}
+                </button>
+              </div>
+
+              <div class="grid content-start gap-1.5 pl-3">
+                <div
+                  v-for="tableItem in groupItem.children"
+                  :key="tableItem.id"
+                  :data-browser-entity-row="tableItem.id"
+                  :data-browser-search-match="isBrowserItemSearchMatch(tableItem) ? 'true' : undefined"
+                  :style="getBrowserItemSearchMatchStyle(tableItem)"
+                  :class="[
+                    'grid content-start gap-1 border-l border-[color:var(--studio-divider)] pl-3',
+                    isBrowserItemSearchMatch(tableItem) ? 'pgml-browser-search-match-row' : ''
+                  ]"
+                >
+                  <div class="grid grid-cols-[minmax(0,1fr)_auto] items-start gap-2">
+                    <button
+                      type="button"
+                      class="min-w-0 flex-1 text-left"
+                      @click="selectBrowserItem(tableItem)"
+                    >
+                      <div class="font-mono text-[0.52rem] uppercase tracking-[0.08em] text-[color:var(--studio-shell-label)]">
+                        <span :class="isBrowserItemSearchMatch(tableItem) ? 'pgml-browser-search-match-text' : ''">
+                          {{ tableItem.kindLabel }}
+                        </span>
+                      </div>
+                      <div
+                        class="break-words text-[0.72rem] font-medium leading-5"
+                        :class="isBrowserItemEffectivelyVisible(tableItem) ? 'text-[color:var(--studio-shell-text)]' : 'text-[color:var(--studio-shell-muted)]'"
+                      >
+                        <span :class="isBrowserItemSearchMatch(tableItem) ? 'pgml-browser-search-match-text' : ''">
+                          {{ tableItem.label }}
+                        </span>
+                      </div>
+                    </button>
+
+                    <button
+                      type="button"
+                      :data-browser-visibility-toggle="tableItem.id"
+                      :disabled="isBrowserItemHiddenByAncestor(tableItem)"
+                      class="shrink-0 border px-2 py-1 font-mono text-[0.52rem] uppercase tracking-[0.08em] transition-colors duration-150 disabled:border-[color:var(--studio-divider)] disabled:text-[color:var(--studio-shell-muted)] disabled:opacity-60"
+                      :class="isBrowserItemDirectlyVisible(tableItem) ? 'border-[color:var(--studio-divider)] text-[color:var(--studio-shell-text)] hover:bg-[color:var(--studio-surface-hover)]' : 'border-[color:var(--studio-shell-label)] bg-[color:var(--studio-input-bg)] text-[color:var(--studio-shell-label)] hover:bg-[color:var(--studio-surface-hover)]'"
+                      @click="toggleBrowserItemVisibility(tableItem)"
+                    >
+                      {{ isBrowserItemHiddenByAncestor(tableItem) ? 'Group hidden' : (isBrowserItemDirectlyVisible(tableItem) ? 'Hide' : 'Show') }}
+                    </button>
+                  </div>
+
+                  <div
+                    v-if="tableItem.children.length"
+                    class="grid content-start gap-0.5 pl-3"
+                  >
+                    <div
+                      v-for="childItem in tableItem.children"
+                      :key="childItem.id"
+                      :data-browser-entity-row="childItem.id"
+                      :data-browser-search-match="isBrowserItemSearchMatch(childItem) ? 'true' : undefined"
+                      :style="getBrowserItemSearchMatchStyle(childItem)"
+                      :class="[
+                        'grid grid-cols-[minmax(0,1fr)_auto] items-center gap-2 border-l border-[color:var(--studio-divider)] pl-3 py-0.5',
+                        isBrowserItemSearchMatch(childItem) ? 'pgml-browser-search-match-row' : ''
+                      ]"
+                    >
+                      <button
+                        type="button"
+                        class="min-w-0 text-left"
+                        @click="selectBrowserItem(childItem)"
+                      >
+                        <span class="flex min-w-0 flex-wrap items-center gap-x-1.5 gap-y-0.5">
+                          <span class="font-mono text-[0.48rem] uppercase tracking-[0.08em] text-[color:var(--studio-shell-label)]">
+                            <span :class="isBrowserItemSearchMatch(childItem) ? 'pgml-browser-search-match-text' : ''">
+                              {{ childItem.kindLabel }}
+                            </span>
+                          </span>
+                          <span
+                            class="break-words text-[0.66rem] leading-4"
+                            :class="isBrowserItemEffectivelyVisible(childItem) ? 'text-[color:var(--studio-shell-text)]' : 'text-[color:var(--studio-shell-muted)]'"
+                          >
+                            <span :class="isBrowserItemSearchMatch(childItem) ? 'pgml-browser-search-match-text' : ''">
+                              {{ childItem.label }}
+                            </span>
+                          </span>
+                        </span>
+                      </button>
+
+                      <button
+                        v-if="browserItemSupportsVisibility(childItem)"
+                        type="button"
+                        :data-browser-visibility-toggle="childItem.id"
+                        :disabled="isBrowserItemHiddenByAncestor(childItem)"
+                        class="shrink-0 border px-2 py-1 font-mono text-[0.5rem] uppercase tracking-[0.08em] transition-colors duration-150 disabled:border-[color:var(--studio-divider)] disabled:text-[color:var(--studio-shell-muted)] disabled:opacity-60"
+                        :class="isBrowserItemDirectlyVisible(childItem) ? 'border-[color:var(--studio-divider)] text-[color:var(--studio-shell-text)] hover:bg-[color:var(--studio-surface-hover)]' : 'border-[color:var(--studio-shell-label)] bg-[color:var(--studio-input-bg)] text-[color:var(--studio-shell-label)] hover:bg-[color:var(--studio-surface-hover)]'"
+                        @click="toggleBrowserItemVisibility(childItem)"
+                      >
+                        {{ isBrowserItemHiddenByAncestor(childItem) ? 'Table hidden' : (isBrowserItemDirectlyVisible(childItem) ? 'Hide' : 'Show') }}
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div
+            v-if="filteredStandaloneBrowserItems.length"
+            class="grid content-start gap-1"
+          >
+            <div class="font-mono text-[0.58rem] uppercase tracking-[0.08em] text-[color:var(--studio-shell-label)]">
+              Standalone Objects
+            </div>
+
+            <div
+              v-for="item in filteredStandaloneBrowserItems"
+              :key="item.id"
+              :data-browser-entity-row="item.id"
+              :data-browser-search-match="isBrowserItemSearchMatch(item) ? 'true' : undefined"
+              :style="getBrowserItemSearchMatchStyle(item)"
+              :class="[
+                'flex items-start justify-between gap-2 border px-2 py-2 transition-colors duration-150',
+                isBrowserItemSearchMatch(item) ? 'pgml-browser-search-match-row' : '',
+                isBrowserItemSelected(item) ? 'border-[color:var(--studio-ring)] bg-[color:var(--studio-input-bg)]' : 'border-[color:var(--studio-divider)] bg-[color:var(--studio-control-bg)]'
+              ]"
+            >
+              <button
+                type="button"
+                class="min-w-0 flex-1 text-left"
+                @click="selectBrowserItem(item)"
+              >
+                <div class="font-mono text-[0.52rem] uppercase tracking-[0.08em] text-[color:var(--studio-shell-label)]">
+                  <span :class="isBrowserItemSearchMatch(item) ? 'pgml-browser-search-match-text' : ''">
+                    {{ item.kindLabel }}
+                  </span>
+                </div>
+                <div
+                  class="truncate text-[0.72rem] font-medium"
+                  :class="isBrowserItemEffectivelyVisible(item) ? 'text-[color:var(--studio-shell-text)]' : 'text-[color:var(--studio-shell-muted)]'"
+                >
+                  <span :class="isBrowserItemSearchMatch(item) ? 'pgml-browser-search-match-text' : ''">
+                    {{ item.label }}
+                  </span>
+                </div>
+                <div
+                  v-if="item.subtitle"
+                  class="break-words text-[0.62rem] leading-5 text-[color:var(--studio-shell-muted)]"
+                >
+                  {{ item.subtitle }}
+                </div>
+              </button>
+
+              <button
+                type="button"
+                :data-browser-visibility-toggle="item.id"
+                class="shrink-0 border px-2 py-1 font-mono text-[0.52rem] uppercase tracking-[0.08em] transition-colors duration-150"
+                :class="isBrowserItemDirectlyVisible(item) ? 'border-[color:var(--studio-divider)] text-[color:var(--studio-shell-text)] hover:bg-[color:var(--studio-surface-hover)]' : 'border-[color:var(--studio-shell-label)] bg-[color:var(--studio-input-bg)] text-[color:var(--studio-shell-label)] hover:bg-[color:var(--studio-surface-hover)]'"
+                @click="toggleBrowserItemVisibility(item)"
+              >
+                {{ isBrowserItemDirectlyVisible(item) ? 'Hide' : 'Show' }}
+              </button>
+            </div>
+          </div>
+
+          <div
+            v-if="!filteredGroupedBrowserItems.length && !filteredStandaloneBrowserItems.length"
+            class="border border-[color:var(--studio-divider)] bg-[color:var(--studio-input-bg)] px-3 py-3 text-[0.68rem] leading-6 text-[color:var(--studio-shell-muted)]"
+          >
+            No entities match the current search.
+          </div>
+        </div>
       </div>
     </aside>
   </div>
@@ -5517,9 +6385,47 @@ defineExpose<{
     drop-shadow(0 0 28px var(--pgml-reference-race-strong));
 }
 
+.pgml-browser-search-match-row {
+  box-shadow:
+    inset 2px 0 0 color-mix(in srgb, var(--pgml-browser-match-color) 82%, transparent),
+    inset 0 0 0 1px color-mix(in srgb, var(--pgml-browser-match-color) 14%, transparent);
+  background-image: linear-gradient(90deg, color-mix(in srgb, var(--pgml-browser-match-color) 12%, transparent), transparent 42%);
+}
+
+.pgml-browser-search-match-text {
+  display: inline-block;
+  color: color-mix(in srgb, var(--pgml-browser-match-color) 72%, var(--studio-shell-text) 28%);
+  text-shadow: 0 0 10px color-mix(in srgb, var(--pgml-browser-match-color) 26%, transparent);
+  animation: pgml-browser-match-bounce 0.26s cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .pgml-browser-search-match-text {
+    animation: none;
+  }
+}
+
 @keyframes pgml-reference-race-line {
   to {
     stroke-dashoffset: -24;
+  }
+}
+
+@keyframes pgml-browser-match-bounce {
+  0% {
+    transform: translateY(0) scale(1);
+  }
+
+  34% {
+    transform: translateY(-1.5px) scale(1.03);
+  }
+
+  58% {
+    transform: translateY(0.8px) scale(0.995);
+  }
+
+  100% {
+    transform: translateY(0) scale(1);
   }
 }
 </style>

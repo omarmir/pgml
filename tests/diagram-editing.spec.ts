@@ -225,6 +225,78 @@ test('canvas interactions keep the PGML editor source in sync', async ({ goto, p
   await expect(editor).toHaveValue(new RegExp(`Properties "custom-type:Domain:email_address" \\{[\\s\\S]*x: ${customTypePosition.x}[\\s\\S]*y: ${customTypePosition.y}[\\s\\S]*collapsed: false`))
 })
 
+test('side panel can switch tabs, hide entities, and restore them from saved properties', async ({ goto, page }) => {
+  await goto('/diagram')
+
+  const editor = page.getByPlaceholder('Paste PGML here...')
+  const panel = page.locator('[data-diagram-panel="true"]')
+  const panelToggle = page.locator('[data-diagram-panel-toggle="true"]')
+
+  await expect(panel).toBeVisible()
+  await page.locator('[data-diagram-panel-tab="entities"]').click()
+  await page.locator('[data-entity-search="true"]').fill('display_name')
+  await expect(page.locator('[data-browser-entity-row="group:Core"]')).toBeVisible()
+  await expect(page.locator('[data-browser-entity-row="public.users"]')).toBeVisible()
+  await expect(page.locator('[data-browser-entity-row="public.users.display_name"]')).toBeVisible()
+  await expect(page.locator('[data-browser-entity-row="public.users.email"]')).toBeVisible()
+
+  await page.locator('[data-entity-search="true"]').fill('roles')
+  await expect(page.locator('[data-browser-entity-row="group:Core"]')).toBeVisible()
+  await expect(page.locator('[data-browser-entity-row="public.roles"]')).toBeVisible()
+
+  await page.locator('[data-entity-search="true"]').fill('Core')
+  await expect(page.locator('[data-browser-entity-row="group:Core"]')).toBeVisible()
+  await expect(page.locator('[data-browser-entity-row="public.roles"]')).toHaveCount(0)
+
+  const panelOverflow = await panel.evaluate((element) => {
+    return {
+      clientWidth: element.clientWidth,
+      scrollWidth: element.scrollWidth
+    }
+  })
+
+  expect(panelOverflow.scrollWidth).toBeLessThanOrEqual(panelOverflow.clientWidth + 1)
+
+  await page.locator('[data-entity-search="true"]').fill('email')
+
+  await expect(page.locator('[data-browser-entity-row="public.users"]')).not.toHaveAttribute('data-browser-search-match', 'true')
+  await expect(page.locator('[data-browser-entity-row="public.users.email"]')).toHaveAttribute('data-browser-search-match', 'true')
+  await expect(page.locator('[data-browser-entity-row="custom-type:Domain:email_address"]')).toHaveAttribute('data-browser-search-match', 'true')
+  await expect(page.locator('[data-browser-entity-row="public.users.email"]')).toHaveAttribute('style', /--pgml-browser-match-color:/)
+  await expect(page.locator('[data-browser-entity-row="custom-type:Domain:email_address"]')).toHaveAttribute('style', /--pgml-browser-match-color:/)
+
+  const groupBox = await page.locator('[data-browser-entity-row="group:Core"]').boundingBox()
+  const tableBox = await page.locator('[data-browser-entity-row="public.users"]').boundingBox()
+  const fieldBox = await page.locator('[data-browser-entity-row="public.users.email"]').boundingBox()
+
+  if (!groupBox || !tableBox || !fieldBox) {
+    throw new Error('Expected filtered entity rows to be measurable.')
+  }
+
+  expect(tableBox.y - groupBox.y).toBeLessThan(120)
+  expect(fieldBox.y - tableBox.y).toBeLessThan(180)
+
+  await page.locator('[data-entity-search="true"]').fill('users')
+  await page.locator('[data-browser-visibility-toggle="public.users"]').click()
+
+  await expect(page.locator('[data-table-anchor="public.users"]')).toHaveCount(0)
+  await expect(page.locator('[data-connection-key="ref:public.orders:customer_id:public.users:id"]')).toHaveCount(0)
+  await expect(editor).toHaveValue(/Properties "public\.users" \{[\s\S]*visible: false/)
+
+  await panelToggle.click()
+  await expect(panel).toHaveCount(0)
+  await panelToggle.click()
+  await expect(panel).toBeVisible()
+
+  await page.locator('[data-diagram-panel-tab="entities"]').click()
+  await page.locator('[data-browser-visibility-toggle="public.users"]').click()
+
+  await expect(page.locator('[data-table-anchor="public.users"]')).toBeVisible()
+  await expect.poll(async () => {
+    return editor.inputValue()
+  }).not.toContain('Properties "public.users" {\n  visible: false')
+})
+
 test('dragging a group or custom type preserves the current zoom and pan', async ({ goto, page }) => {
   await goto('/diagram')
 

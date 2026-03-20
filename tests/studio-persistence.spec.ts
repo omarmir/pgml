@@ -75,6 +75,39 @@ test('studio saves, reloads, and downloads PGML with embedded layout', async ({ 
   expect(readFileSync(downloadPath!, 'utf8')).toContain('Properties "group:Core" {')
 })
 
+test('entity visibility persists when a saved schema is reloaded', async ({ goto, page }) => {
+  await goto('/diagram')
+
+  const studioActionsButton = page.getByRole('button', { name: 'Studio actions' })
+
+  await page.locator('[data-diagram-panel-tab="entities"]').click()
+  await page.locator('[data-browser-visibility-toggle="public.users"]').click()
+  await expect(page.locator('[data-table-anchor="public.users"]')).toHaveCount(0)
+
+  await studioActionsButton.click()
+  await page.getByRole('menuitem', { name: 'Save schema' }).click()
+  await page.getByPlaceholder('Schema name').fill('Hidden users')
+  await page.getByRole('button', { name: 'Save to browser' }).click()
+
+  const savedSchemas = await page.evaluate(() => {
+    return JSON.parse(window.localStorage.getItem('pgml-studio-schemas-v1') || '[]')
+  })
+
+  expect(savedSchemas[0]?.text).toContain('Properties "public.users" {')
+  expect(savedSchemas[0]?.text).toContain('visible: false')
+
+  await studioActionsButton.click()
+  await page.getByRole('menuitem', { name: 'Clear schema' }).click()
+  await expect(page.getByPlaceholder('Paste PGML here...')).toHaveValue('')
+
+  await studioActionsButton.click()
+  await page.getByRole('menuitem', { name: 'Load saved schema' }).click()
+  await page.getByRole('button', { name: 'Load' }).click()
+
+  await expect(page.getByPlaceholder('Paste PGML here...')).toHaveValue(/Properties "public\.users" \{[\s\S]*visible: false/)
+  await expect(page.locator('[data-table-anchor="public.users"]')).toHaveCount(0)
+})
+
 test('save modal lists existing schemas as explicit overwrite targets', async ({ goto, page }) => {
   await goto('/diagram')
 
