@@ -1,7 +1,7 @@
 export const studioEditorPanelMinWidth = 320
 export const studioCanvasMinWidth = 420
 export const studioCompactBreakpoint = 1100
-export const studioResizeHandleWidth = 10
+export const studioResizeHandleWidth = 1
 
 export const clampStudioEditorWidth = (nextWidth: number, containerWidth: number) => {
   const maximumEditorWidth = Math.max(

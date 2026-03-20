@@ -57,6 +57,85 @@ test('studio editor panel can be hidden and shown again', async ({ goto, page })
   await expect(page.locator('[data-editor-panel="true"]')).toBeVisible()
   await expect(page.locator('[data-editor-resize-handle="true"]')).toBeVisible()
   await expect(getPgmlEditor(page)).toBeVisible()
+
+  const toggleStyles = await editorToggle.evaluate((element) => {
+    const styles = window.getComputedStyle(element)
+
+    return {
+      borderRadius: styles.borderRadius,
+      fontFamily: styles.fontFamily,
+      textTransform: styles.textTransform
+    }
+  })
+
+  expect(toggleStyles.borderRadius).toBe('0px')
+  expect(toggleStyles.fontFamily).toContain('IBM Plex Mono')
+  expect(toggleStyles.textTransform).toBe('uppercase')
+})
+
+test('studio editor resize grip stays centered on a single divider line', async ({ goto, page }) => {
+  await goto('/diagram')
+
+  const resizeHandle = page.locator('[data-editor-resize-handle="true"]')
+  const divider = page.locator('[data-editor-resize-divider="true"]')
+  const grip = page.locator('[data-editor-resize-grip="true"]')
+
+  await expect(resizeHandle).toBeVisible()
+  await expect(divider).toBeVisible()
+  await expect(grip).toBeVisible()
+
+  const metrics = await Promise.all([
+    resizeHandle.evaluate((element) => {
+      const rect = element.getBoundingClientRect()
+
+      return {
+        width: rect.width
+      }
+    }),
+    divider.evaluate((element) => {
+      const rect = element.getBoundingClientRect()
+
+      return {
+        centerX: rect.left + (rect.width / 2),
+        width: rect.width
+      }
+    }),
+    grip.evaluate((element) => {
+      const rect = element.getBoundingClientRect()
+      const styles = window.getComputedStyle(element)
+
+      return {
+        centerX: rect.left + (rect.width / 2),
+        rightProbeX: rect.right - 2,
+        probeY: rect.top + (rect.height / 2),
+        borderRadius: styles.borderRadius
+      }
+    })
+  ])
+
+  const [handleMetrics, dividerMetrics, gripMetrics] = metrics
+
+  expect(handleMetrics.width).toBeLessThanOrEqual(2)
+  expect(dividerMetrics.width).toBeLessThanOrEqual(2)
+  expect(Math.abs(dividerMetrics.centerX - gripMetrics.centerX)).toBeLessThanOrEqual(1)
+  expect(gripMetrics.borderRadius).toBe('0px')
+
+  const rightEdgeOwner = await page.evaluate(({ x, y }) => {
+    const element = document.elementFromPoint(x, y)
+
+    if (!(element instanceof HTMLElement)) {
+      return null
+    }
+
+    return element.closest('[data-editor-resize-handle="true"]')?.getAttribute('data-editor-resize-handle')
+      || element.closest('[data-editor-resize-grip="true"]')?.getAttribute('data-editor-resize-grip')
+      || null
+  }, {
+    x: gripMetrics.rightProbeX,
+    y: gripMetrics.probeY
+  })
+
+  expect(rightEdgeOwner).not.toBeNull()
 })
 
 test('diagram panel reuses the PGML editor scrollbar styling', async ({ goto, page }) => {

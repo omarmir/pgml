@@ -797,14 +797,27 @@ onBeforeUnmount(() => {
         aria-orientation="vertical"
         aria-label="Resize PGML editor"
         tabindex="0"
-        class="group relative hidden h-full cursor-ew-resize bg-transparent outline-none min-[1100px]:block"
+        class="group relative z-10 hidden h-full overflow-visible cursor-ew-resize bg-transparent outline-none min-[1100px]:block"
         @pointerdown="startEditorResize"
         @keydown.left.prevent="resizeEditorPanelBy(-32)"
         @keydown.right.prevent="resizeEditorPanelBy(32)"
       >
-        <div class="absolute inset-y-0 left-1/2 w-px -translate-x-1/2 bg-[color:var(--studio-shell-border)] transition-colors duration-150 group-hover:bg-[color:var(--studio-ring)] group-focus-visible:bg-[color:var(--studio-ring)]" />
-        <div class="absolute left-1/2 top-1/2 flex h-12 w-4 -translate-x-1/2 -translate-y-1/2 items-center justify-center border border-[color:var(--studio-shell-border)] bg-[color:var(--studio-shell-bg)] text-[color:var(--studio-shell-muted)] transition-colors duration-150 group-hover:border-[color:var(--studio-ring)] group-focus-visible:border-[color:var(--studio-ring)]">
-          <span class="h-7 w-px bg-[color:var(--studio-shell-border)]" />
+        <div
+          data-editor-resize-hit-area="true"
+          class="absolute inset-y-0 left-1/2 w-5 -translate-x-1/2"
+        />
+        <div
+          data-editor-resize-divider="true"
+          class="absolute inset-y-0 left-1/2 w-px -translate-x-1/2 bg-[color:var(--studio-shell-border)] transition-colors duration-150 group-hover:bg-[color:var(--studio-ring)] group-focus-visible:bg-[color:var(--studio-ring)]"
+        />
+        <div
+          data-editor-resize-grip="true"
+          class="absolute left-1/2 top-1/2 flex h-10 w-5 -translate-x-1/2 -translate-y-1/2 items-center justify-center border border-[color:var(--studio-shell-border)] bg-[color:var(--studio-control-bg)] text-[color:var(--studio-shell-muted)] transition-colors duration-150 group-hover:border-[color:var(--studio-ring)] group-hover:text-[color:var(--studio-shell-text)] group-focus-visible:border-[color:var(--studio-ring)] group-focus-visible:text-[color:var(--studio-shell-text)]"
+        >
+          <UIcon
+            name="i-lucide-grip-vertical"
+            class="h-3.5 w-3.5"
+          />
         </div>
       </div>
 
@@ -816,7 +829,7 @@ onBeforeUnmount(() => {
           color="neutral"
           variant="outline"
           size="xs"
-          class="absolute left-3 top-3 z-[4] rounded-none border border-[color:var(--studio-shell-border)] bg-[color:var(--studio-control-bg)] text-[color:var(--studio-shell-text)]"
+          class="absolute left-3 top-3 z-[4] rounded-none border border-[color:var(--studio-shell-border)] bg-[color:var(--studio-control-bg)] px-2 py-1 font-mono text-[0.62rem] uppercase tracking-[0.08em] text-[color:var(--studio-shell-text)] hover:bg-[color:var(--studio-surface-hover)]"
           @click="toggleEditorPanelVisibility"
         />
         <PgmlDiagramCanvas
