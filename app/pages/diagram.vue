@@ -38,6 +38,18 @@ type PgmlDiagramCanvasExposed = {
   getNodeLayoutProperties: () => Record<string, PgmlNodeProperties>
 }
 
+type ReferenceRelationItem = {
+  description: string
+  label: string
+  value: '>' | '<' | '-'
+}
+
+type ReferenceTargetItem = {
+  description?: string
+  label: string
+  value: string
+}
+
 const source: Ref<string> = ref(pgmlExample)
 const canvasRef: Ref<PgmlDiagramCanvasExposed | null> = ref(null)
 const isExporting: Ref<boolean> = ref(false)
@@ -78,25 +90,38 @@ const studioSelectUi = {
   viewport: 'scroll-py-1 overflow-y-auto',
   item: 'studio-select-item rounded-none before:rounded-none text-[color:var(--studio-shell-text)]',
   itemLabel: 'truncate',
-  itemDescription: 'text-[color:var(--studio-shell-muted)]',
+  itemDescription: 'whitespace-normal break-words text-[color:var(--studio-shell-muted)]',
   itemLeadingIcon: 'text-[color:var(--studio-shell-muted)]',
   itemTrailingIcon: 'text-[color:var(--studio-shell-label)]'
 }
 const studioInputMenuUi = {
-  base: 'rounded-none border-[color:var(--studio-shell-border)] bg-[color:var(--studio-input-bg)] text-[color:var(--studio-shell-text)]',
+  base: 'studio-select-trigger rounded-none border-[color:var(--studio-shell-border)] bg-[color:var(--studio-input-bg)] text-[color:var(--studio-shell-text)]',
+  value: 'text-[color:var(--studio-shell-text)]',
   placeholder: 'text-[color:var(--studio-shell-muted)]',
   trailingIcon: 'text-[color:var(--studio-shell-muted)]',
   content: 'rounded-none border border-[color:var(--studio-shell-border)] bg-[color:var(--studio-control-bg)] p-1 shadow-[var(--studio-floating-shadow)] backdrop-blur-sm',
   viewport: 'scroll-py-1 overflow-y-auto',
   item: 'studio-select-item rounded-none before:rounded-none text-[color:var(--studio-shell-text)]',
   itemLabel: 'truncate',
-  itemDescription: 'text-[color:var(--studio-shell-muted)]',
+  itemDescription: 'whitespace-normal break-words text-[color:var(--studio-shell-muted)]',
+  itemLeadingIcon: 'text-[color:var(--studio-shell-muted)]',
   itemTrailingIcon: 'text-[color:var(--studio-shell-label)]'
 }
 const studioDefaultInputMenuProps: Record<string, unknown> = {
   autocomplete: true,
   openOnClick: true,
   openOnFocus: true
+}
+const getStudioSelectMenuSearchInputProps = (placeholder: string) => {
+  return {
+    placeholder,
+    variant: 'none',
+    ui: {
+      base: 'text-[color:var(--studio-shell-text)] placeholder:text-[color:var(--studio-shell-muted)]',
+      root: 'px-1',
+      leadingIcon: 'text-[color:var(--studio-shell-muted)]'
+    }
+  }
 }
 const studioSwitchUi = {
   wrapper: 'gap-1',
@@ -270,11 +295,29 @@ const tableTypeItems = computed(() => {
     ...(tableEditorDraft.value?.columns.map(column => column.type) || [])
   ])).sort((left, right) => left.localeCompare(right))
 })
-const tableTargetItems = computed(() => {
+const referenceRelationItems: ReferenceRelationItem[] = [
+  {
+    label: 'This column references the target',
+    value: '>',
+    description: 'Most foreign keys use this. Example: `tenant_id` points to `tenants.id`.'
+  },
+  {
+    label: 'The target references this column',
+    value: '<',
+    description: 'Use this when the other table points back to this column.'
+  },
+  {
+    label: 'Associate both sides',
+    value: '-',
+    description: 'Use for an undirected relationship when neither side should read as the source.'
+  }
+]
+const tableTargetItems = computed<ReferenceTargetItem[]>(() => {
   return parsedModel.value.tables
     .map(table => ({
       label: table.fullName,
-      value: table.fullName
+      value: table.fullName,
+      description: `${table.columns.length} column${table.columns.length === 1 ? '' : 's'}`
     }))
     .sort((left, right) => left.label.localeCompare(right.label))
 })
@@ -289,10 +332,14 @@ const getColumnDefaultItems = (columnType: string) => {
   return getColumnDefaultSuggestions(columnType)
 }
 
-const getReferenceColumnItems = (tableFullName: string) => {
+const getReferenceColumnItems = (tableFullName: string): ReferenceTargetItem[] => {
   const referenceTable = parsedModel.value.tables.find(table => table.fullName === tableFullName)
 
-  return referenceTable?.columns.map(column => column.name) || []
+  return referenceTable?.columns.map(column => ({
+    label: column.name,
+    value: column.name,
+    description: column.type
+  })) || []
 }
 
 const openTableEditor = (tableId: string) => {
@@ -414,6 +461,20 @@ const updateTableDraftReferenceTarget = (columnId: string, value: string) => {
   }
 
   draftColumn.referenceColumn = ''
+}
+
+const updateTableDraftReferenceColumn = (columnId: string, value: string) => {
+  if (!tableEditorDraft.value) {
+    return
+  }
+
+  const draftColumn = tableEditorDraft.value.columns.find(column => column.id === columnId)
+
+  if (!draftColumn) {
+    return
+  }
+
+  draftColumn.referenceColumn = value
 }
 
 const saveTableEditor = () => {
@@ -1085,14 +1146,17 @@ onBeforeUnmount(() => {
 
                     <div
                       v-if="column.referenceEnabled"
-                      class="grid gap-3 lg:grid-cols-[84px_minmax(0,0.58fr)_minmax(0,0.42fr)]"
+                      class="grid gap-3 lg:grid-cols-[minmax(0,0.34fr)_minmax(0,0.4fr)_minmax(0,0.26fr)]"
                     >
                       <label class="grid gap-1">
-                        <span class="font-mono text-[0.58rem] uppercase tracking-[0.08em] text-[color:var(--studio-shell-label)]">Relation</span>
+                        <span class="font-mono text-[0.58rem] uppercase tracking-[0.08em] text-[color:var(--studio-shell-label)]">Relationship direction</span>
                         <USelect
                           v-model="column.referenceRelation"
-                          aria-label="Reference relation"
-                          :items="['>', '<', '-']"
+                          aria-label="Relationship direction"
+                          :items="referenceRelationItems"
+                          value-key="value"
+                          label-key="label"
+                          description-key="description"
                           color="neutral"
                           variant="outline"
                           size="sm"
@@ -1102,30 +1166,41 @@ onBeforeUnmount(() => {
 
                       <label class="grid gap-1">
                         <span class="font-mono text-[0.58rem] uppercase tracking-[0.08em] text-[color:var(--studio-shell-label)]">Target table</span>
-                        <USelect
+                        <USelectMenu
                           aria-label="Reference target table"
                           :model-value="`${column.referenceSchema}.${column.referenceTable}`"
                           :items="tableTargetItems"
+                          :search-input="getStudioSelectMenuSearchInputProps('Search tables')"
+                          :filter-fields="['label', 'description', 'value']"
                           value-key="value"
                           label-key="label"
+                          description-key="description"
+                          placeholder="Select a table"
                           color="neutral"
                           variant="outline"
                           size="sm"
-                          :ui="studioSelectUi"
+                          :ui="studioInputMenuUi"
                           @update:model-value="updateTableDraftReferenceTarget(column.id, String($event))"
                         />
                       </label>
 
                       <label class="grid gap-1">
                         <span class="font-mono text-[0.58rem] uppercase tracking-[0.08em] text-[color:var(--studio-shell-label)]">Target column</span>
-                        <USelect
-                          v-model="column.referenceColumn"
+                        <USelectMenu
                           aria-label="Reference target column"
                           :items="getReferenceColumnItems(`${column.referenceSchema}.${column.referenceTable}`)"
+                          :model-value="column.referenceColumn"
+                          :search-input="getStudioSelectMenuSearchInputProps('Search columns')"
+                          :filter-fields="['label', 'description', 'value']"
+                          value-key="value"
+                          label-key="label"
+                          description-key="description"
+                          placeholder="Select a column"
                           color="neutral"
                           variant="outline"
                           size="sm"
-                          :ui="studioSelectUi"
+                          :ui="studioInputMenuUi"
+                          @update:model-value="updateTableDraftReferenceColumn(column.id, String($event || ''))"
                         />
                       </label>
                     </div>

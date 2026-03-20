@@ -144,6 +144,104 @@ test('table edit modal autocompletes default values from the column type', async
   await expect(page.getByText(/^true$/)).toBeVisible()
 })
 
+test('table edit modal explains relationship direction and uses searchable reference selectors', async ({ goto, page }) => {
+  await goto('/diagram')
+
+  const editor = getPgmlEditor(page)
+
+  await page.locator('[data-table-edit-button="public.users"]').click()
+
+  const roleIdColumn = page.locator('[data-table-editor-column]').filter({ hasText: 'role_id' })
+  const relationDirection = roleIdColumn.getByLabel('Relationship direction', { exact: true })
+  const targetTable = roleIdColumn.getByLabel('Reference target table', { exact: true })
+  const targetColumn = roleIdColumn.getByLabel('Reference target column', { exact: true })
+
+  await relationDirection.click()
+  await expect(page.getByText('Most foreign keys use this. Example: `tenant_id` points to `tenants.id`.')).toBeVisible()
+  await expect(page.getByText('Use this when the other table points back to this column.')).toBeVisible()
+  await page.locator('[role="option"]').filter({ hasText: 'The target references this column' }).click()
+
+  await targetTable.click()
+  await page.getByPlaceholder('Search tables').fill('roles')
+  await page.locator('[role="option"]').filter({ hasText: 'public.roles' }).click()
+
+  await targetColumn.click()
+  await page.getByPlaceholder('Search columns').fill('key')
+  await page.locator('[role="listbox"]').getByText(/^key$/).click()
+
+  await page.locator('[data-table-editor-save="true"]').dispatchEvent('click')
+
+  await expect.poll(async () => readPgmlEditorValue(editor)).toMatch(/role_id uuid \[not null, ref: < public\.roles\.key\]/)
+})
+
+test('table schema badges stay consistent across groups for the same schema', async ({ goto, page }) => {
+  await goto('/diagram')
+
+  const editor = getPgmlEditor(page)
+
+  await setPgmlEditorValue(editor, `TableGroup Core {
+  users
+  invoices
+}
+
+TableGroup Commerce {
+  payouts
+}
+
+Table public.users in Core {
+  id uuid [pk]
+}
+
+Table billing.invoices in Core {
+  id uuid [pk]
+}
+
+Table billing.payouts in Commerce {
+  id uuid [pk]
+}`)
+
+  const billingInvoicesBadge = page.locator('[data-table-anchor="billing.invoices"] [data-table-schema-badge]').first()
+  const billingPayoutsBadge = page.locator('[data-table-anchor="billing.payouts"] [data-table-schema-badge]').first()
+  const publicUsersBadge = page.locator('[data-table-anchor="public.users"] [data-table-schema-badge]').first()
+
+  await expect(billingInvoicesBadge).toBeVisible()
+  await expect(billingPayoutsBadge).toBeVisible()
+  await expect(publicUsersBadge).toBeVisible()
+
+  const badgeStyles = await page.evaluate(() => {
+    const readStyles = (selector: string) => {
+      const element = document.querySelector(selector)
+
+      if (!(element instanceof HTMLElement)) {
+        return null
+      }
+
+      const styles = window.getComputedStyle(element)
+
+      return {
+        backgroundColor: styles.backgroundColor,
+        borderColor: styles.borderColor,
+        color: styles.color,
+        text: element.textContent?.trim() || ''
+      }
+    }
+
+    return {
+      billingInvoices: readStyles('[data-table-anchor="billing.invoices"] [data-table-schema-badge]'),
+      billingPayouts: readStyles('[data-table-anchor="billing.payouts"] [data-table-schema-badge]'),
+      publicUsers: readStyles('[data-table-anchor="public.users"] [data-table-schema-badge]')
+    }
+  })
+
+  expect(badgeStyles.billingInvoices?.text).toBe('billing')
+  expect(badgeStyles.billingPayouts?.text).toBe('billing')
+  expect(badgeStyles.publicUsers?.text).toBe('public')
+  expect(badgeStyles.billingInvoices?.backgroundColor).toBe(badgeStyles.billingPayouts?.backgroundColor)
+  expect(badgeStyles.billingInvoices?.borderColor).toBe(badgeStyles.billingPayouts?.borderColor)
+  expect(badgeStyles.billingInvoices?.color).toBe(badgeStyles.billingPayouts?.color)
+  expect(badgeStyles.billingInvoices?.backgroundColor).not.toBe(badgeStyles.publicUsers?.backgroundColor)
+})
+
 test('code editor shows PGML diagnostics and autocomplete suggestions', async ({ goto, page }) => {
   await goto('/diagram')
 

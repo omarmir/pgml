@@ -18,6 +18,12 @@ import { getPgmlCompletionItems, getPgmlDiagnostics } from './pgml-language'
 
 type PgmlStreamState = {
   blockKind: string | null
+  blockStack: string[]
+  lineIdentifierIndex: number
+  lineAllowsColumnTypeHighlight: boolean
+  lineIsBlockDeclaration: boolean
+  lastNamedTokenType: string | null
+  lastPropertyName: string | null
   sourceDelimiter: string | null
 }
 
@@ -28,11 +34,12 @@ export type PgmlCodeMirrorOptions = {
 const pgmlHighlightStyle = HighlightStyle.define([
   { tag: tags.keyword, color: 'var(--studio-shell-label)', fontWeight: '700' },
   { tag: tags.comment, color: 'var(--studio-shell-muted)', fontStyle: 'italic' },
-  { tag: [tags.string, tags.special(tags.string)], color: '#34d399' },
+  { tag: [tags.string, tags.special(tags.string)], color: 'color-mix(in srgb, #15803d 72%, var(--studio-shell-text) 28%)' },
   { tag: [tags.number, tags.integer, tags.float], color: '#f59e0b' },
   { tag: [tags.bool, tags.atom], color: '#38bdf8' },
   { tag: tags.propertyName, color: '#fda4af' },
-  { tag: [tags.typeName, tags.className], color: '#c084fc' },
+  { tag: tags.typeName, color: '#c084fc' },
+  { tag: tags.className, color: 'color-mix(in srgb, var(--studio-shell-text) 52%, var(--studio-shell-label) 48%)', fontWeight: '500' },
   { tag: tags.operator, color: '#fb7185' },
   { tag: [tags.punctuation, tags.separator], color: 'rgba(226,232,240,0.65)' }
 ])
@@ -134,100 +141,272 @@ const consumeTokenWhile = (stream: StringStream, pattern: RegExp) => {
   }
 }
 
+const createTestStringStream = (lineText: string) => {
+  let position = 0
+  const stream: Pick<StringStream, 'current' | 'eol' | 'match' | 'next' | 'peek' | 'skipToEnd' | 'sol' | 'start' | 'string' | 'pos'> = {
+    string: lineText,
+    pos: 0,
+    start: 0,
+    sol: () => position === 0,
+    eol: () => position >= lineText.length,
+    peek: () => lineText[position],
+    next: () => {
+      const value = lineText[position]
+
+      position += 1
+      stream.pos = position
+
+      return value
+    },
+    skipToEnd: () => {
+      position = lineText.length
+      stream.pos = position
+    },
+    match: (pattern: string | RegExp) => {
+      const remainder = lineText.slice(position)
+      stream.start = position
+
+      if (typeof pattern === 'string') {
+        if (!remainder.startsWith(pattern)) {
+          return false
+        }
+
+        position += pattern.length
+        stream.pos = position
+
+        return [pattern]
+      }
+
+      const regex = new RegExp(pattern.source, pattern.flags.replace('g', '').replace('y', ''))
+      const match = regex.exec(remainder)
+
+      if (!match || match.index !== 0) {
+        return false
+      }
+
+      position += match[0].length
+      stream.pos = position
+
+      return match
+    },
+    current: (): string => lineText.slice(stream.start, position)
+  }
+
+  return stream
+}
+
+const getBlockKeyword = (lineText: string) => {
+  const trimmedLine = lineText.trim()
+
+  if (!trimmedLine.endsWith('{')) {
+    return null
+  }
+
+  const keyword = trimmedLine.slice(0, -1).trim().split(/\s+/)[0]
+
+  return keyword || null
+}
+
+const syncPgmlLineState = (lineText: string, state: PgmlStreamState) => {
+  const trimmedLine = lineText.trimStart()
+  let closingIndex = 0
+
+  while (trimmedLine[closingIndex] === '}') {
+    state.blockStack.pop()
+    closingIndex += 1
+  }
+
+  state.blockKind = state.blockStack[state.blockStack.length - 1] || null
+  state.lineIdentifierIndex = 0
+  state.lineAllowsColumnTypeHighlight = state.blockKind === 'Table' || state.blockKind === 'Composite'
+  state.lineIsBlockDeclaration = false
+  state.lastNamedTokenType = null
+  state.lastPropertyName = null
+
+  const openingBlockKeyword = getBlockKeyword(lineText)
+
+  if (openingBlockKeyword) {
+    state.blockStack.push(openingBlockKeyword)
+    state.blockKind = openingBlockKeyword
+    state.lineAllowsColumnTypeHighlight = false
+    state.lineIsBlockDeclaration = true
+  }
+}
+
+const readPgmlToken = (stream: StringStream, state: PgmlStreamState) => {
+  if (stream.sol()) {
+    syncPgmlLineState(stream.string, state)
+
+    const delimiter = findSourceDelimiter(stream.string.trim())
+
+    if (delimiter !== null && delimiter.length > 0) {
+      state.sourceDelimiter = delimiter
+    }
+    if (state.sourceDelimiter && stream.string.includes(state.sourceDelimiter) && !stream.string.trim().startsWith('source:') && !stream.string.trim().startsWith('definition:')) {
+      stream.skipToEnd()
+      state.sourceDelimiter = null
+      return 'string'
+    }
+  }
+
+  if (state.sourceDelimiter) {
+    stream.skipToEnd()
+    return 'string'
+  }
+
+  if (stream.match(/\s+/)) {
+    return null
+  }
+
+  if (stream.match(/\/\/.*/)) {
+    return 'comment'
+  }
+
+  if (stream.match(/#(?:[\da-f]{6}|[\da-f]{3})/i)) {
+    return 'atom'
+  }
+
+  if (stream.match(/"(?:[^"\\]|\\.)*"/) || stream.match(/'(?:[^'\\]|\\.)*'/)) {
+    return 'string'
+  }
+
+  if (stream.match(/\$(?:[A-Za-z0-9_]+)?\$/)) {
+    return 'string'
+  }
+
+  if (stream.match(/\b(?:TableGroup|Table|Enum|Domain|Composite|Function|Procedure|Trigger|Sequence|Properties|Ref:)\b/)) {
+    state.lineAllowsColumnTypeHighlight = false
+    state.lastNamedTokenType = 'keyword'
+    state.lastPropertyName = null
+    return 'keyword'
+  }
+
+  if (stream.match(/\b(?:docs|affects|source|definition|Note|Index|Constraint)\b(?=\s|:|\(|\{)/)) {
+    state.lineAllowsColumnTypeHighlight = false
+    state.lastNamedTokenType = 'keyword'
+    state.lastPropertyName = null
+    return 'keyword'
+  }
+
+  if (stream.match(/\b(?:pk|unique|not|null|default|note|ref|language|volatility|security|timing|events|level|function|arguments|as|base|start|increment|min|max|cache|cycle|owned_by|summary|writes|sets|depends_on|reads|calls|uses|visible|collapsed|table_columns|width|height|color|x|y)\b(?=\s|:|\])/)) {
+    state.lastNamedTokenType = 'propertyName'
+    state.lastPropertyName = stream.current()
+    return 'propertyName'
+  }
+
+  if (stream.match(/\b(?:true|false)\b/)) {
+    return 'atom'
+  }
+
+  if (stream.match(/[<>-]/)) {
+    state.lastNamedTokenType = null
+    return 'operator'
+  }
+
+  if (stream.match(/[:[\]{}(),.]/)) {
+    state.lastNamedTokenType = null
+    return 'punctuation'
+  }
+
+  if (stream.match(/-?\d+(?:\.\d+)?/)) {
+    state.lastNamedTokenType = 'number'
+    return 'number'
+  }
+
+  if (stream.match(/[A-Za-z_][A-Za-z0-9_]*/)) {
+    if (state.lineAllowsColumnTypeHighlight && state.lineIdentifierIndex === 0) {
+      state.lineIdentifierIndex += 1
+      state.lastNamedTokenType = 'variableName'
+      state.lastPropertyName = null
+      return 'variableName'
+    }
+
+    if (state.lineAllowsColumnTypeHighlight && state.lineIdentifierIndex === 1) {
+      state.lineIdentifierIndex += 1
+      state.lastNamedTokenType = 'className'
+      state.lastPropertyName = null
+      return 'className'
+    }
+
+    if (state.lineIsBlockDeclaration && (state.blockKind === 'Enum' || state.blockKind === 'Domain')) {
+      state.lastNamedTokenType = 'typeName'
+      state.lastPropertyName = null
+      return 'typeName'
+    }
+
+    if (state.blockKind === 'Domain' && state.lastPropertyName === 'base') {
+      state.lastNamedTokenType = 'className'
+      state.lastPropertyName = null
+      return 'className'
+    }
+
+    state.lastNamedTokenType = 'variableName'
+    state.lastPropertyName = null
+    return 'variableName'
+  }
+
+  consumeTokenWhile(stream, /[^\s]/)
+
+  return null
+}
+
+export const tokenizePgmlSource = (source: string) => {
+  const state: PgmlStreamState = {
+    blockKind: null,
+    blockStack: [],
+    lineIdentifierIndex: 0,
+    lineAllowsColumnTypeHighlight: false,
+    lineIsBlockDeclaration: false,
+    lastNamedTokenType: null,
+    lastPropertyName: null,
+    sourceDelimiter: null
+  }
+
+  return source.split('\n').flatMap((lineText) => {
+    const stream = createTestStringStream(lineText)
+    const lineTokens: Array<{ value: string, type: string | null }> = []
+
+    while (!stream.eol()) {
+      const tokenStart = stream.pos
+      const tokenType = readPgmlToken(stream as StringStream, state)
+      const value = lineText.slice(tokenStart, stream.pos)
+
+      if (value.length > 0) {
+        lineTokens.push({
+          value,
+          type: tokenType
+        })
+      }
+    }
+
+    return lineTokens
+  })
+}
+
 const pgmlStreamParser = StreamLanguage.define<PgmlStreamState>({
   startState: () => ({
     blockKind: null,
+    blockStack: [],
+    lineIdentifierIndex: 0,
+    lineAllowsColumnTypeHighlight: false,
+    lineIsBlockDeclaration: false,
+    lastNamedTokenType: null,
+    lastPropertyName: null,
     sourceDelimiter: null
   }),
 
   copyState: state => ({
     blockKind: state.blockKind,
+    blockStack: [...state.blockStack],
+    lineIdentifierIndex: state.lineIdentifierIndex,
+    lineAllowsColumnTypeHighlight: state.lineAllowsColumnTypeHighlight,
+    lineIsBlockDeclaration: state.lineIsBlockDeclaration,
+    lastNamedTokenType: state.lastNamedTokenType,
+    lastPropertyName: state.lastPropertyName,
     sourceDelimiter: state.sourceDelimiter
   }),
 
-  token: (stream, state) => {
-    if (stream.sol()) {
-      const delimiter = findSourceDelimiter(stream.string.trim())
-
-      if (stream.string.trim().endsWith('{')) {
-        const keyword = stream.string.trim().slice(0, -1).trim().split(/\s+/)[0]
-        state.blockKind = keyword || state.blockKind
-      }
-      if (delimiter !== null && delimiter.length > 0) {
-        state.sourceDelimiter = delimiter
-      }
-      if (state.sourceDelimiter && stream.string.includes(state.sourceDelimiter) && !stream.string.trim().startsWith('source:') && !stream.string.trim().startsWith('definition:')) {
-        stream.skipToEnd()
-        state.sourceDelimiter = null
-        return 'string'
-      }
-    }
-
-    if (state.sourceDelimiter) {
-      stream.skipToEnd()
-      return 'string'
-    }
-
-    if (stream.match(/\s+/)) {
-      return null
-    }
-
-    if (stream.match(/\/\/.*/)) {
-      return 'comment'
-    }
-
-    if (stream.match(/#(?:[\da-f]{3}|[\da-f]{6})/i)) {
-      return 'atom'
-    }
-
-    if (stream.match(/"(?:[^"\\]|\\.)*"/) || stream.match(/'(?:[^'\\]|\\.)*'/)) {
-      return 'string'
-    }
-
-    if (stream.match(/\$(?:[A-Za-z0-9_]+)?\$/)) {
-      return 'string'
-    }
-
-    if (stream.match(/\b(?:TableGroup|Table|Enum|Domain|Composite|Function|Procedure|Trigger|Sequence|Properties|Ref:)\b/)) {
-      return 'keyword'
-    }
-
-    if (stream.match(/\b(?:docs|affects|source|definition|Note|Index|Constraint)\b(?=\s|:|\(|\{)/)) {
-      return 'keyword'
-    }
-
-    if (stream.match(/\b(?:pk|unique|not|null|default|note|ref|language|volatility|security|timing|events|level|function|arguments|as|start|increment|min|max|cache|cycle|owned_by|summary|writes|sets|depends_on|reads|calls|uses|visible|collapsed|table_columns|width|height|color|x|y)\b(?=\s|:|\])/)) {
-      return 'propertyName'
-    }
-
-    if (stream.match(/\b(?:true|false)\b/)) {
-      return 'atom'
-    }
-
-    if (stream.match(/[<>-]/)) {
-      return 'operator'
-    }
-
-    if (stream.match(/[:[\]{}(),.]/)) {
-      return 'punctuation'
-    }
-
-    if (stream.match(/-?\d+(?:\.\d+)?/)) {
-      return 'number'
-    }
-
-    if (stream.match(/[A-Za-z_][A-Za-z0-9_]*/)) {
-      if (state.blockKind === 'Enum' || state.blockKind === 'Domain' || state.blockKind === 'Composite') {
-        return 'typeName'
-      }
-
-      return 'variableName'
-    }
-
-    consumeTokenWhile(stream, /[^\s]/)
-
-    return null
-  }
+  token: (stream, state) => readPgmlToken(stream, state)
 })
 
 const pgmlCompletionSource = (context: CompletionContext) => {

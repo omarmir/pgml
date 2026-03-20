@@ -213,6 +213,7 @@ const entitySearchQuery: Ref<string> = ref('')
 let resizeObserver: ResizeObserver | null = null
 
 const palette = ['#8b5cf6', '#f59e0b', '#06b6d4', '#10b981', '#ef4444', '#ec4899', '#f97316']
+const schemaBadgePalette = ['#0f766e', '#f59e0b', '#2563eb', '#dc2626', '#7c3aed', '#0891b2', '#ea580c', '#65a30d']
 const groupTableWidth = 232
 const groupTableGap = 16
 const groupHorizontalPadding = 20
@@ -310,6 +311,48 @@ const tableGroupColorByTableId = computed(() => {
     return colors
   }, {})
 })
+const hashSchemaName = (schemaName: string) => {
+  let hash = 0
+
+  for (const character of schemaName) {
+    hash = ((hash << 5) - hash) + character.charCodeAt(0)
+    hash |= 0
+  }
+
+  return Math.abs(hash)
+}
+const schemaBadgeColorBySchema = computed(() => {
+  const colors: Record<string, string> = {}
+
+  model.schemas.forEach((schemaName) => {
+    const normalizedSchemaName = schemaName.trim()
+
+    if (normalizedSchemaName.length === 0) {
+      return
+    }
+
+    colors[normalizedSchemaName] = schemaBadgePalette[hashSchemaName(normalizedSchemaName) % schemaBadgePalette.length] || '#0f766e'
+  })
+
+  colors.public ||= schemaBadgePalette[hashSchemaName('public') % schemaBadgePalette.length] || '#0f766e'
+
+  return colors
+})
+const getSchemaBadgeColor = (schemaName: string) => {
+  return schemaBadgeColorBySchema.value[schemaName] || schemaBadgePalette[hashSchemaName(schemaName) % schemaBadgePalette.length] || '#0f766e'
+}
+const getSchemaBadgeStyle = (schemaName: string) => {
+  const color = getSchemaBadgeColor(schemaName)
+
+  return {
+    borderColor: `color-mix(in srgb, ${color} 58%, var(--studio-rail) 42%)`,
+    backgroundColor: `color-mix(in srgb, ${color} 14%, transparent)`,
+    color: `color-mix(in srgb, ${color} 72%, var(--studio-shell-text) 28%)`
+  }
+}
+const getTableSchemaName = (tableId: string) => {
+  return model.tables.find(table => table.fullName === tableId)?.schema || 'public'
+}
 const nodeLayerOrderById = computed(() => {
   return canvasNodes.value.reduce<Record<string, number>>((orders, node, index) => {
     orders[node.id] = index + 1
@@ -885,13 +928,23 @@ const buildExportSvgString = async (padding = exportPadding) => {
             `font: 600 11px ${sansFont}; ${buildSvgTextPaintStyle(shellText, '#e2e8f0')}`
           )
         )
+        const schemaBadgeColor = getSchemaBadgeColor(table.schema)
+        const schemaBadgeBorder = `color-mix(in srgb, ${schemaBadgeColor} 58%, ${railColor} 42%)`
+        const schemaBadgeFill = `color-mix(in srgb, ${schemaBadgeColor} 14%, transparent)`
+        const schemaBadgeText = `color-mix(in srgb, ${schemaBadgeColor} 72%, ${shellText} 28%)`
+        const schemaBadgeLabel = table.schema.toUpperCase()
+        const schemaBadgeWidth = Math.max(42, (schemaBadgeLabel.length * 5.1) + 12)
+
+        foregroundParts.push(
+          `<rect x="${tableX + 8}" y="${tableY + 20}" width="${schemaBadgeWidth}" height="12" ${buildSvgPaintAttributes('fill', schemaBadgeFill, 'transparent')} ${buildSvgPaintAttributes('stroke', schemaBadgeBorder, railColor)} stroke-width="1" />`
+        )
         foregroundParts.push(
           buildSvgText(
-            [`${table.schema.toUpperCase()} SCHEMA`],
-            tableX + 8,
+            [schemaBadgeLabel],
+            tableX + 12,
             tableY + 29,
             8,
-            `font: 500 8px ${monoFont}; letter-spacing: 0.6px; ${buildSvgTextPaintStyle(shellMuted, '#94a3b8')}`
+            `font: 500 8px ${monoFont}; letter-spacing: 0.5px; ${buildSvgTextPaintStyle(schemaBadgeText, shellText)}`
           )
         )
         const rowElements = Array.from(tableElement.querySelectorAll('[data-table-row-anchor]'))
@@ -5955,8 +6008,16 @@ defineExpose<{
             <h3 class="truncate text-[0.88rem] font-semibold leading-5 tracking-[-0.02em] text-[color:var(--studio-shell-text)]">
               {{ node.title }}
             </h3>
+            <span
+              v-if="node.kind === 'table'"
+              data-table-schema-badge
+              class="mt-1 inline-flex min-h-[1rem] items-center border px-1.5 py-0.5 font-mono text-[0.52rem] uppercase leading-[1.15] tracking-[0.05em]"
+              :style="getSchemaBadgeStyle(getTableSchemaName(node.id))"
+            >
+              {{ getTableSchemaName(node.id) }}
+            </span>
             <p
-              v-if="node.subtitle"
+              v-if="node.subtitle && node.kind !== 'table'"
               class="truncate text-[0.68rem] text-[color:var(--studio-shell-muted)]"
             >
               {{ node.subtitle }}
@@ -6055,9 +6116,13 @@ defineExpose<{
                   <h4 class="truncate text-[0.78rem] font-semibold leading-5 text-[color:var(--studio-shell-text)]">
                     {{ table.name }}
                   </h4>
-                  <p class="text-[0.62rem] uppercase tracking-[0.06em] text-[color:var(--studio-shell-muted)]">
-                    {{ table.schema }} schema
-                  </p>
+                  <span
+                    data-table-schema-badge
+                    class="mt-1 inline-flex min-h-[1rem] items-center border px-1.5 py-0.5 font-mono text-[0.5rem] uppercase leading-[1.15] tracking-[0.05em]"
+                    :style="getSchemaBadgeStyle(table.schema)"
+                  >
+                    {{ table.schema }}
+                  </span>
                 </div>
 
                 <UButton
