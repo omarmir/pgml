@@ -127,7 +127,41 @@ export type PgmlSequence = {
   sourceRange?: PgmlSourceRange
 }
 
-export type PgmlCustomType = {
+export type PgmlEnumType = {
+  kind: 'Enum'
+  name: string
+  values: string[]
+  details: string[]
+  sourceRange?: PgmlSourceRange
+}
+
+export type PgmlDomainType = {
+  kind: 'Domain'
+  name: string
+  baseType: string | null
+  check: string | null
+  details: string[]
+  sourceRange?: PgmlSourceRange
+}
+
+export type PgmlCompositeField = {
+  name: string
+  type: string
+}
+
+export type PgmlCompositeType = {
+  kind: 'Composite'
+  name: string
+  fields: PgmlCompositeField[]
+  details: string[]
+  sourceRange?: PgmlSourceRange
+}
+
+export type PgmlCustomType = PgmlEnumType
+  | PgmlDomainType
+  | PgmlCompositeType
+
+type PgmlCustomTypeBase = {
   kind: 'Enum' | 'Domain' | 'Composite'
   name: string
   details: string[]
@@ -1234,17 +1268,65 @@ const parseCustomType = (block: NamedBlock) => {
     return null
   }
 
+  const kind = readMatch(headerMatch[1]) as PgmlCustomTypeBase['kind']
+  const name = cleanName(readMatch(headerMatch[2]))
+  const details = block.body
+    .map(line => line.trim())
+    .filter(line => line.length > 0)
+  const sourceRange = {
+    startLine: block.startLine,
+    endLine: block.endLine
+  }
+
+  if (kind === 'Enum') {
+    return {
+      kind,
+      name,
+      values: details
+        .filter(line => !line.includes(':'))
+        .map(line => cleanName(line.replace(/,$/, ''))),
+      details,
+      sourceRange
+    } satisfies PgmlEnumType
+  }
+
+  if (kind === 'Domain') {
+    const baseEntry = details.find(line => line.startsWith('base:'))
+    const checkEntry = details.find(line => line.startsWith('check:'))
+
+    return {
+      kind,
+      name,
+      baseType: baseEntry ? baseEntry.replace('base:', '').trim() : null,
+      check: checkEntry ? checkEntry.replace('check:', '').trim() : null,
+      details,
+      sourceRange
+    } satisfies PgmlDomainType
+  }
+
   return {
-    kind: readMatch(headerMatch[1]) as 'Enum' | 'Domain' | 'Composite',
-    name: cleanName(readMatch(headerMatch[2])),
-    details: block.body
-      .map(line => line.trim())
-      .filter(line => line.length > 0),
-    sourceRange: {
-      startLine: block.startLine,
-      endLine: block.endLine
-    }
-  } satisfies PgmlCustomType
+    kind,
+    name,
+    fields: details.reduce<PgmlCompositeField[]>((entries, line) => {
+      if (line.includes(':')) {
+        return entries
+      }
+
+      const fieldMatch = line.match(/^([^\s]+)\s+(.+)$/)
+
+      if (!fieldMatch) {
+        return entries
+      }
+
+      entries.push({
+        name: cleanName(readMatch(fieldMatch[1])),
+        type: readMatch(fieldMatch[2]).trim()
+      })
+      return entries
+    }, []),
+    details,
+    sourceRange
+  } satisfies PgmlCompositeType
 }
 
 const parseTopLevelReference = (line: string) => {

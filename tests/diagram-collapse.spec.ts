@@ -314,6 +314,26 @@ test('selecting a table animates its outgoing references and target relational r
   })
 })
 
+test('initial connector geometry stays stable after a non-layout selection refresh', async ({ goto, page }) => {
+  await goto('/diagram')
+
+  const unaffectedConnection = page.locator('[data-connection-key="ref:public.users:tenant_id:public.tenants:id"]')
+  const unrelatedTable = page.locator('[data-table-anchor="public.products"]')
+
+  await expect(unaffectedConnection).toBeVisible()
+  await expect(unrelatedTable).toBeVisible()
+
+  const initialPath = await unaffectedConnection.getAttribute('d')
+
+  expect(initialPath).toBeTruthy()
+
+  await unrelatedTable.click()
+
+  await expect.poll(async () => {
+    return unaffectedConnection.getAttribute('d')
+  }).toBe(initialPath)
+})
+
 test('selecting a custom type animates its impact lines and highlights impacted rows', async ({ goto, page }) => {
   await goto('/diagram')
 

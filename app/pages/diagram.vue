@@ -5,7 +5,7 @@ import { nanoid } from 'nanoid'
 import PgmlDiagramCanvas from '~/components/pgml/PgmlDiagramCanvas.vue'
 import PgmlSourceCodeEditor from '~/components/pgml/PgmlSourceCodeEditor.vue'
 import { usePgmlColumnDefaultSuggestions } from '~/composables/usePgmlColumnDefaultSuggestions'
-import type { SavedPgmlSchema } from '~/composables/usePgmlStudioSchemas'
+import { slugifySchemaName, type SavedPgmlSchema } from '~/composables/usePgmlStudioSchemas'
 import { useStudioHeaderActions } from '~/composables/useStudioHeaderActions'
 import { useStudioSchemaStatus } from '~/composables/useStudioSchemaStatus'
 import { analyzePgmlDocument } from '~/utils/pgml-language'
@@ -227,6 +227,9 @@ const loadSavedSchema = (schema: SavedPgmlSchema) => {
   loadStudioSavedSchema(schema)
   requestCanvasViewportReset()
 }
+
+const exportBaseName = computed(() => slugifySchemaName(currentSchemaName.value))
+const exportPreferenceKey = computed(() => `name:${slugifySchemaName(currentSchemaName.value)}`)
 
 const actionMenuItems = computed<DropdownMenuItem[][]>(() => {
   const exportItems: DropdownMenuItem[] = exportScales.map((scaleOption) => {
@@ -652,6 +655,9 @@ onBeforeUnmount(() => {
         <PgmlDiagramCanvas
           ref="canvasRef"
           :model="parsedModel"
+          :export-base-name="exportBaseName"
+          :export-preference-key="exportPreferenceKey"
+          :has-blocking-source-errors="hasBlockingSourceErrors"
           :viewport-reset-key="canvasViewportResetKey"
           @create-group="openGroupCreator"
           @focus-source="focusEditorSourceRange"

@@ -10,6 +10,15 @@ import type {
 } from '~/utils/pgml'
 import { getRasterExportPlan } from '~/utils/diagram-export'
 import {
+  buildPgmlExportBundle,
+  defaultPgmlExportPreferences,
+  type PgmlExportArtifact,
+  type PgmlExportFormat,
+  type PgmlExportPreferences,
+  type PgmlKyselyTypeStyle
+} from '~/utils/pgml-export'
+import { readPgmlExportPreferences, writePgmlExportPreferences } from '~/utils/pgml-export-preferences'
+import {
   getDiagramConnectionZIndex,
   getDiagramGroupBackgroundZIndex,
   getDiagramNodeZIndex
@@ -30,9 +39,15 @@ import {
 import { normalizeSvgColor, normalizeSvgPaint, parseCssLinearGradient } from '~/utils/svg-paint'
 
 const {
+  exportBaseName = 'pgml-schema',
+  exportPreferenceKey = 'name:pgml-schema',
+  hasBlockingSourceErrors = false,
   model,
   viewportResetKey = 0
 } = defineProps<{
+  exportBaseName?: string
+  exportPreferenceKey?: string
+  hasBlockingSourceErrors?: boolean
   model: PgmlSchemaModel
   viewportResetKey?: number
 }>()
@@ -130,7 +145,7 @@ type CanvasSelection = {
   attachmentId: string
 }
 
-type DiagramPanelTab = 'inspector' | 'entities'
+type DiagramPanelTab = 'inspector' | 'entities' | 'export'
 type EntityBrowserItemKind = 'group' | 'table' | 'column' | 'attachment' | 'object'
 
 type EntityBrowserItem = {
@@ -214,7 +229,26 @@ const connectionLines: Ref<ConnectionLine[]> = ref([])
 const isSidePanelOpen: Ref<boolean> = ref(true)
 const activePanelTab: Ref<DiagramPanelTab> = ref('inspector')
 const entitySearchQuery: Ref<string> = ref('')
+const exportPreferences: Ref<PgmlExportPreferences> = ref({
+  ...defaultPgmlExportPreferences
+})
+const copiedExportArtifactKey: Ref<string | null> = ref(null)
+let clearCopiedExportArtifactTimeout: number | null = null
 let resizeObserver: ResizeObserver | null = null
+const exportTypeStyleItems = [
+  {
+    label: 'Pragmatic app types',
+    value: 'pragmatic'
+  },
+  {
+    label: 'Driver-safe strict types',
+    value: 'strict'
+  },
+  {
+    label: 'Minimal loose types',
+    value: 'loose'
+  }
+] satisfies Array<{ label: string, value: PgmlKyselyTypeStyle }>
 
 const palette = ['#8b5cf6', '#f59e0b', '#06b6d4', '#10b981', '#ef4444', '#ec4899', '#f97316']
 const schemaBadgePalette = ['#0f766e', '#f59e0b', '#2563eb', '#dc2626', '#7c3aed', '#0891b2', '#ea580c', '#65a30d']
@@ -250,6 +284,16 @@ const attachmentPopoverContent = {
 }
 const attachmentPopoverUi = {
   content: 'w-[22rem] rounded-none border border-[color:var(--studio-shell-border)] bg-[color:var(--studio-control-bg)] p-3 shadow-[var(--studio-floating-shadow)] backdrop-blur-sm'
+}
+const exportSelectUi = {
+  base: 'rounded-none border-[color:var(--studio-shell-border)] bg-[color:var(--studio-input-bg)] text-[color:var(--studio-shell-text)]',
+  value: 'text-[color:var(--studio-shell-text)]',
+  placeholder: 'text-[color:var(--studio-shell-muted)]',
+  trailingIcon: 'text-[color:var(--studio-shell-muted)]',
+  content: 'rounded-none border border-[color:var(--studio-shell-border)] bg-[color:var(--studio-control-bg)] p-1 shadow-[var(--studio-floating-shadow)] backdrop-blur-sm',
+  viewport: 'scroll-py-1 overflow-y-auto',
+  item: 'rounded-none text-[color:var(--studio-shell-text)]',
+  itemLabel: 'truncate'
 }
 const attachmentKindOrder: Record<TableAttachmentKind, number> = {
   Index: 0,
@@ -449,6 +493,76 @@ const selectedCanvasEntityDescription = computed(() => {
 
   return 'Select a node.'
 })
+const exportBundle = computed(() => {
+  if (hasBlockingSourceErrors) {
+    return null
+  }
+
+  return buildPgmlExportBundle(model, {
+    baseName: exportBaseName,
+    kyselyTypeStyle: exportPreferences.value.kyselyTypeStyle
+  })
+})
+const activeExportArtifacts = computed(() => {
+  if (!exportBundle.value) {
+    return [] as Array<PgmlExportArtifact & { key: string }>
+  }
+
+  if (exportPreferences.value.format === 'sql') {
+    return [
+      {
+        ...exportBundle.value.sql.migration,
+        key: 'sql:migration'
+      },
+      {
+        ...exportBundle.value.sql.ddl,
+        key: 'sql:ddl'
+      }
+    ]
+  }
+
+  return [
+    {
+      ...exportBundle.value.kysely.migration,
+      key: 'kysely:migration'
+    },
+    {
+      ...exportBundle.value.kysely.interfaces,
+      key: 'kysely:interfaces'
+    }
+  ]
+})
+const activeExportWarnings = computed(() => {
+  return Array.from(new Set(activeExportArtifacts.value.flatMap(artifact => artifact.warnings)))
+})
+const diagramPanelTitle = computed(() => {
+  if (activePanelTab.value === 'inspector') {
+    return selectedCanvasEntityTitle.value
+  }
+
+  if (activePanelTab.value === 'export') {
+    return exportPreferences.value.format === 'sql' ? 'SQL Export' : 'Kysely Export'
+  }
+
+  return 'Entities'
+})
+const diagramPanelDescription = computed(() => {
+  if (activePanelTab.value === 'inspector') {
+    return selectedCanvasEntityDescription.value
+  }
+
+  if (activePanelTab.value === 'export') {
+    if (hasBlockingSourceErrors) {
+      return 'Fix PGML parse errors before exporting migration files.'
+    }
+
+    return exportPreferences.value.format === 'sql'
+      ? 'Preview migration SQL and raw DDL from the current PGML snapshot.'
+      : 'Preview a Kysely migration plus generated database interfaces from the current PGML snapshot.'
+  }
+
+  return `${hiddenEntityCount.value} hidden in saved properties.`
+})
 const selectedTableOutgoingReferences = computed(() => {
   if (!selectedTable.value) {
     return []
@@ -556,14 +670,17 @@ const getCanvasBounds = () => {
   }
 }
 
+const waitForAnimationFrame = () => {
+  return new Promise<void>((resolve) => {
+    requestAnimationFrame(() => resolve())
+  })
+}
+
 const waitForCanvasRender = async () => {
   await nextTick()
   updateConnections()
   await nextTick()
-
-  await new Promise<void>((resolve) => {
-    requestAnimationFrame(() => resolve())
-  })
+  await waitForAnimationFrame()
 
   updateConnections()
 }
@@ -597,6 +714,24 @@ const readStudioToken = (token: string, fallback: string) => {
   const value = window.getComputedStyle(document.documentElement).getPropertyValue(token).trim()
 
   return value.length > 0 ? value : fallback
+}
+
+const resolveComputedCssColor = (
+  property: 'backgroundColor' | 'borderColor' | 'color',
+  value: string,
+  fallback: string
+) => {
+  const probeElement = document.createElement('span')
+  probeElement.style.position = 'absolute'
+  probeElement.style.pointerEvents = 'none'
+  probeElement.style.opacity = '0'
+  probeElement.style[property] = value
+  document.body.append(probeElement)
+
+  const resolvedValue = window.getComputedStyle(probeElement)[property]
+  probeElement.remove()
+
+  return normalizeSvgColor(resolvedValue, fallback)
 }
 
 const translatePathData = (path: string, offsetX: number, offsetY: number) => {
@@ -933,9 +1068,21 @@ const buildExportSvgString = async (padding = exportPadding) => {
           )
         )
         const schemaBadgeColor = getSchemaBadgeColor(table.schema)
-        const schemaBadgeBorder = `color-mix(in srgb, ${schemaBadgeColor} 58%, ${railColor} 42%)`
-        const schemaBadgeFill = `color-mix(in srgb, ${schemaBadgeColor} 14%, transparent)`
-        const schemaBadgeText = `color-mix(in srgb, ${schemaBadgeColor} 72%, ${shellText} 28%)`
+        const schemaBadgeBorder = resolveComputedCssColor(
+          'borderColor',
+          `color-mix(in srgb, ${schemaBadgeColor} 58%, ${railColor} 42%)`,
+          railColor
+        )
+        const schemaBadgeFill = resolveComputedCssColor(
+          'backgroundColor',
+          `color-mix(in srgb, ${schemaBadgeColor} 14%, transparent)`,
+          'transparent'
+        )
+        const schemaBadgeText = resolveComputedCssColor(
+          'color',
+          `color-mix(in srgb, ${schemaBadgeColor} 72%, ${shellText} 28%)`,
+          shellText
+        )
         const schemaBadgeLabel = table.schema.toUpperCase()
         const schemaBadgeWidth = Math.max(42, (schemaBadgeLabel.length * 5.1) + 12)
 
@@ -1018,9 +1165,11 @@ const buildExportSvgString = async (padding = exportPadding) => {
 
             const badgeStyles = window.getComputedStyle(badgeElement)
             const badgeFill = normalizeSvgColor(badgeStyles.backgroundColor, 'transparent')
+            const badgeBorderColor = normalizeSvgColor(badgeStyles.borderColor, railColor)
+            const badgeTextColor = normalizeSvgColor(badgeStyles.color, shellMuted)
 
             foregroundParts.push(
-              `<rect x="${badgeRect.x + offsetX}" y="${badgeRect.y + offsetY}" width="${badgeRect.width}" height="${badgeRect.height}" ${buildSvgPaintAttributes('fill', badgeFill, 'transparent')} ${buildSvgPaintAttributes('stroke', badgeStyles.borderColor, railColor)} stroke-width="1" />`
+              `<rect x="${badgeRect.x + offsetX}" y="${badgeRect.y + offsetY}" width="${badgeRect.width}" height="${badgeRect.height}" ${buildSvgPaintAttributes('fill', badgeFill, 'transparent')} ${buildSvgPaintAttributes('stroke', badgeBorderColor, railColor)} stroke-width="1" />`
             )
             foregroundParts.push(
               buildSvgText(
@@ -1028,7 +1177,7 @@ const buildExportSvgString = async (padding = exportPadding) => {
                 badgeRect.x + offsetX + badgeRect.width / 2,
                 badgeRect.y + offsetY + badgeRect.height / 2 + 2.5,
                 7.5,
-                `font: 500 7.5px ${monoFont}; letter-spacing: 0.24px; ${buildSvgTextPaintStyle(badgeStyles.color, shellMuted)}`,
+                `font: 500 7.5px ${monoFont}; letter-spacing: 0.24px; ${buildSvgTextPaintStyle(badgeTextColor, shellMuted)}`,
                 'middle'
               )
             )
@@ -1113,9 +1262,11 @@ const buildExportSvgString = async (padding = exportPadding) => {
 
           const badgeStyles = window.getComputedStyle(badgeElement)
           const badgeFill = normalizeSvgColor(badgeStyles.backgroundColor, 'transparent')
+          const badgeBorderColor = normalizeSvgColor(badgeStyles.borderColor, railColor)
+          const badgeTextColor = normalizeSvgColor(badgeStyles.color, shellMuted)
 
           foregroundParts.push(
-            `<rect x="${badgeRect.x + offsetX}" y="${badgeRect.y + offsetY}" width="${badgeRect.width}" height="${badgeRect.height}" ${buildSvgPaintAttributes('fill', badgeFill, 'transparent')} ${buildSvgPaintAttributes('stroke', badgeStyles.borderColor, railColor)} stroke-width="1" />`
+            `<rect x="${badgeRect.x + offsetX}" y="${badgeRect.y + offsetY}" width="${badgeRect.width}" height="${badgeRect.height}" ${buildSvgPaintAttributes('fill', badgeFill, 'transparent')} ${buildSvgPaintAttributes('stroke', badgeBorderColor, railColor)} stroke-width="1" />`
           )
           foregroundParts.push(
             buildSvgText(
@@ -1123,7 +1274,7 @@ const buildExportSvgString = async (padding = exportPadding) => {
               badgeRect.x + offsetX + badgeRect.width / 2,
               badgeRect.y + offsetY + badgeRect.height / 2 + 2.5,
               7.5,
-              `font: 500 7.5px ${monoFont}; letter-spacing: 0.24px; ${buildSvgTextPaintStyle(badgeStyles.color, shellMuted)}`,
+              `font: 500 7.5px ${monoFont}; letter-spacing: 0.24px; ${buildSvgTextPaintStyle(badgeTextColor, shellMuted)}`,
               'middle'
             )
           )
@@ -1244,6 +1395,57 @@ const downloadBlob = (blob: Blob, fileName: string) => {
   window.setTimeout(() => {
     URL.revokeObjectURL(objectUrl)
   }, 0)
+}
+
+const loadExportPreferences = (schemaKey: string) => {
+  exportPreferences.value = readPgmlExportPreferences(schemaKey)
+}
+
+const persistExportPreferences = () => {
+  writePgmlExportPreferences(exportPreferenceKey, exportPreferences.value)
+}
+
+const updateExportFormat = (format: PgmlExportFormat) => {
+  exportPreferences.value = {
+    ...exportPreferences.value,
+    format
+  }
+}
+
+const updateKyselyTypeStyle = (nextStyle: string) => {
+  if (nextStyle !== 'pragmatic' && nextStyle !== 'strict' && nextStyle !== 'loose') {
+    return
+  }
+
+  exportPreferences.value = {
+    ...exportPreferences.value,
+    kyselyTypeStyle: nextStyle
+  }
+}
+
+const downloadExportArtifact = (artifact: PgmlExportArtifact) => {
+  const blob = new Blob([artifact.content], {
+    type: artifact.fileName.endsWith('.ts') ? 'text/typescript;charset=utf-8' : 'text/plain;charset=utf-8'
+  })
+
+  downloadBlob(blob, artifact.fileName)
+}
+
+const copyExportArtifact = async (artifact: PgmlExportArtifact & { key: string }) => {
+  if (!import.meta.client || !navigator.clipboard?.writeText) {
+    return
+  }
+
+  await navigator.clipboard.writeText(artifact.content)
+  copiedExportArtifactKey.value = artifact.key
+
+  if (clearCopiedExportArtifactTimeout) {
+    window.clearTimeout(clearCopiedExportArtifactTimeout)
+  }
+
+  clearCopiedExportArtifactTimeout = window.setTimeout(() => {
+    copiedExportArtifactKey.value = null
+  }, 1400)
 }
 
 const exportSvg = async () => {
@@ -5813,6 +6015,22 @@ const handleWheel = (event: WheelEvent) => {
 }
 
 watch(
+  () => exportPreferenceKey,
+  (nextKey) => {
+    loadExportPreferences(nextKey)
+  },
+  { immediate: true }
+)
+
+watch(
+  exportPreferences,
+  () => {
+    persistExportPreferences()
+  },
+  { deep: true }
+)
+
+watch(
   () => model,
   async () => {
     const shouldFitViewport = previousViewportResetKey !== null && viewportResetKey !== previousViewportResetKey
@@ -5875,26 +6093,31 @@ onMounted(() => {
 
   observeCanvasLayout()
 
-  nextTick(() => {
+  nextTick(async () => {
     observeCanvasLayout()
     if (syncMeasuredNodeSizes()) {
       reflowAutoLayout()
       updateConnections()
     }
     updateConnections()
-    requestAnimationFrame(() => {
-      observeCanvasLayout()
-      if (syncMeasuredNodeSizes()) {
-        reflowAutoLayout()
-        updateConnections()
-      }
-      fitView()
+    await waitForAnimationFrame()
+    observeCanvasLayout()
+    if (syncMeasuredNodeSizes()) {
+      reflowAutoLayout()
       updateConnections()
-    })
+    }
+    fitView()
+    await nextTick()
+    await waitForAnimationFrame()
+    updateConnections()
   })
 })
 
 onBeforeUnmount(() => {
+  if (clearCopiedExportArtifactTimeout) {
+    window.clearTimeout(clearCopiedExportArtifactTimeout)
+  }
+
   resizeObserver?.disconnect()
 })
 
@@ -6614,10 +6837,10 @@ defineExpose<{
             Diagram panel
           </div>
           <h3 class="truncate text-[0.88rem] font-semibold leading-5 text-[color:var(--studio-shell-text)]">
-            {{ activePanelTab === 'inspector' ? selectedCanvasEntityTitle : 'Entities' }}
+            {{ diagramPanelTitle }}
           </h3>
           <p class="mt-1 text-[0.66rem] leading-5 text-[color:var(--studio-shell-muted)]">
-            {{ activePanelTab === 'inspector' ? selectedCanvasEntityDescription : `${hiddenEntityCount} hidden in saved properties.` }}
+            {{ diagramPanelDescription }}
           </p>
         </div>
 
@@ -6632,7 +6855,7 @@ defineExpose<{
         />
       </div>
 
-      <div class="grid grid-cols-2 border-b border-[color:var(--studio-divider)]">
+      <div class="grid grid-cols-3 border-b border-[color:var(--studio-divider)]">
         <button
           type="button"
           data-diagram-panel-tab="inspector"
@@ -6645,11 +6868,20 @@ defineExpose<{
         <button
           type="button"
           data-diagram-panel-tab="entities"
-          class="px-3 py-2 font-mono text-[0.6rem] uppercase tracking-[0.08em] transition-colors duration-150"
+          class="border-r border-[color:var(--studio-divider)] px-3 py-2 font-mono text-[0.6rem] uppercase tracking-[0.08em] transition-colors duration-150"
           :class="activePanelTab === 'entities' ? 'bg-[color:var(--studio-input-bg)] text-[color:var(--studio-shell-text)]' : 'text-[color:var(--studio-shell-muted)] hover:bg-[color:var(--studio-surface-hover)]'"
           @click="activePanelTab = 'entities'"
         >
           Entities
+        </button>
+        <button
+          type="button"
+          data-diagram-panel-tab="export"
+          class="px-3 py-2 font-mono text-[0.6rem] uppercase tracking-[0.08em] transition-colors duration-150"
+          :class="activePanelTab === 'export' ? 'bg-[color:var(--studio-input-bg)] text-[color:var(--studio-shell-text)]' : 'text-[color:var(--studio-shell-muted)] hover:bg-[color:var(--studio-surface-hover)]'"
+          @click="activePanelTab = 'export'"
+        >
+          Export
         </button>
       </div>
 
@@ -6737,7 +6969,7 @@ defineExpose<{
       </div>
 
       <div
-        v-else
+        v-else-if="activePanelTab === 'entities'"
         class="grid min-h-0 grid-rows-[auto_minmax(0,1fr)] overflow-hidden"
       >
         <div class="grid gap-2 border-b border-[color:var(--studio-divider)] px-3 py-3">
@@ -7094,6 +7326,126 @@ defineExpose<{
           >
             No entities match the current search.
           </div>
+        </div>
+      </div>
+
+      <div
+        v-else
+        class="grid min-h-0 grid-rows-[auto_auto_minmax(0,1fr)] overflow-hidden"
+      >
+        <div class="grid gap-3 border-b border-[color:var(--studio-divider)] px-3 py-3">
+          <div class="grid grid-cols-2 gap-2">
+            <UButton
+              data-export-format="sql"
+              label="SQL"
+              color="neutral"
+              variant="outline"
+              size="xs"
+              class="rounded-none border-[color:var(--studio-shell-border)]"
+              :class="exportPreferences.format === 'sql' ? 'bg-[color:var(--studio-input-bg)] text-[color:var(--studio-shell-text)]' : 'text-[color:var(--studio-shell-muted)]'"
+              @click="updateExportFormat('sql')"
+            />
+            <UButton
+              data-export-format="kysely"
+              label="Kysely"
+              color="neutral"
+              variant="outline"
+              size="xs"
+              class="rounded-none border-[color:var(--studio-shell-border)]"
+              :class="exportPreferences.format === 'kysely' ? 'bg-[color:var(--studio-input-bg)] text-[color:var(--studio-shell-text)]' : 'text-[color:var(--studio-shell-muted)]'"
+              @click="updateExportFormat('kysely')"
+            />
+          </div>
+
+          <label
+            v-if="exportPreferences.format === 'kysely'"
+            class="grid gap-1"
+          >
+            <span class="font-mono text-[0.58rem] uppercase tracking-[0.08em] text-[color:var(--studio-shell-label)]">Kysely type style</span>
+            <USelect
+              aria-label="Kysely type style"
+              :items="exportTypeStyleItems"
+              :model-value="exportPreferences.kyselyTypeStyle"
+              value-key="value"
+              label-key="label"
+              color="neutral"
+              variant="outline"
+              size="sm"
+              :ui="exportSelectUi"
+              @update:model-value="updateKyselyTypeStyle(String($event))"
+            />
+          </label>
+        </div>
+
+        <div
+          v-if="activeExportWarnings.length"
+          class="grid gap-1 border-b border-[color:var(--studio-divider)] bg-[color:var(--studio-input-bg)] px-3 py-3"
+        >
+          <div class="font-mono text-[0.56rem] uppercase tracking-[0.08em] text-[color:var(--studio-shell-label)]">
+            Export Notes
+          </div>
+          <p
+            v-for="warning in activeExportWarnings"
+            :key="warning"
+            class="text-[0.66rem] leading-5 text-[color:var(--studio-shell-muted)]"
+          >
+            {{ warning }}
+          </p>
+        </div>
+
+        <div
+          data-diagram-export-panel="true"
+          class="grid min-h-0 content-start gap-3 overflow-auto px-3 py-3"
+        >
+          <div
+            v-if="hasBlockingSourceErrors"
+            class="border border-[color:var(--studio-divider)] bg-[color:var(--studio-input-bg)] px-3 py-3 text-[0.68rem] leading-6 text-[color:var(--studio-shell-muted)]"
+          >
+            Resolve the current PGML parse errors to generate SQL or Kysely exports.
+          </div>
+
+          <template v-else>
+            <article
+              v-for="artifact in activeExportArtifacts"
+              :key="artifact.key"
+              :data-export-artifact="artifact.key"
+              class="grid min-h-0 gap-2 border border-[color:var(--studio-divider)] bg-[color:var(--studio-control-bg)]"
+            >
+              <div class="flex items-start justify-between gap-3 border-b border-[color:var(--studio-divider)] px-3 py-2.5">
+                <div class="min-w-0">
+                  <div class="font-mono text-[0.56rem] uppercase tracking-[0.08em] text-[color:var(--studio-shell-label)]">
+                    {{ artifact.label }}
+                  </div>
+                  <div class="mt-1 break-words text-[0.68rem] text-[color:var(--studio-shell-muted)]">
+                    {{ artifact.fileName }}
+                  </div>
+                </div>
+
+                <div class="flex shrink-0 items-center gap-1">
+                  <UButton
+                    :data-export-copy="artifact.key"
+                    :label="copiedExportArtifactKey === artifact.key ? 'Copied' : 'Copy'"
+                    color="neutral"
+                    variant="outline"
+                    size="xs"
+                    class="rounded-none border-[color:var(--studio-shell-border)]"
+                    @click="void copyExportArtifact(artifact)"
+                  />
+                  <UButton
+                    :data-export-download="artifact.key"
+                    label="Download"
+                    color="neutral"
+                    variant="outline"
+                    size="xs"
+                    class="rounded-none border-[color:var(--studio-shell-border)]"
+                    @click="downloadExportArtifact(artifact)"
+                  />
+                </div>
+              </div>
+
+              <pre class="max-h-[16rem] overflow-auto px-3 py-3 font-mono text-[0.64rem] leading-5 text-[color:var(--studio-shell-text)]">{{ artifact.content }}</pre>
+            </article>
+          </template>
         </div>
       </div>
     </aside>
