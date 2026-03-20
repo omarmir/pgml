@@ -676,3 +676,50 @@ test('dragging a group or custom type preserves the current zoom and pan', async
     })
   }).toBe(zoomedTransform)
 })
+
+test('editing PGML preserves the current canvas viewport', async ({ goto, page }) => {
+  await goto('/diagram')
+
+  const editor = getPgmlEditor(page)
+  const plane = page.locator('[data-diagram-plane="true"]')
+  const viewport = page.locator('[data-diagram-viewport="true"]')
+  const viewportBox = await viewport.boundingBox()
+
+  if (!viewportBox) {
+    throw new Error('Diagram viewport is not measurable.')
+  }
+
+  const panStart = {
+    x: viewportBox.x + viewportBox.width * 0.88,
+    y: viewportBox.y + viewportBox.height * 0.82
+  }
+
+  await page.mouse.move(panStart.x, panStart.y)
+  await page.mouse.down()
+  await page.mouse.move(panStart.x - 140, panStart.y - 96, { steps: 10 })
+  await page.mouse.up()
+
+  const zoomPoint = {
+    x: viewportBox.x + viewportBox.width * 0.62,
+    y: viewportBox.y + viewportBox.height * 0.36
+  }
+
+  await page.mouse.move(zoomPoint.x, zoomPoint.y)
+  await page.mouse.wheel(0, -180)
+
+  const viewportTransformBeforeEdit = await plane.evaluate((element) => {
+    return (element as HTMLElement).style.transform
+  })
+
+  const source = await readPgmlEditorValue(editor)
+  await setPgmlEditorValue(editor, source.replace(
+    '  total_cents integer [not null]',
+    '  total_cents integer [not null]\n  currency_code text'
+  ))
+
+  await expect.poll(async () => {
+    return plane.evaluate((element) => {
+      return (element as HTMLElement).style.transform
+    })
+  }).toBe(viewportTransformBeforeEdit)
+})

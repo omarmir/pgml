@@ -5,6 +5,7 @@ import { nanoid } from 'nanoid'
 import PgmlDiagramCanvas from '~/components/pgml/PgmlDiagramCanvas.vue'
 import PgmlSourceCodeEditor from '~/components/pgml/PgmlSourceCodeEditor.vue'
 import { usePgmlColumnDefaultSuggestions } from '~/composables/usePgmlColumnDefaultSuggestions'
+import type { SavedPgmlSchema } from '~/composables/usePgmlStudioSchemas'
 import { useStudioHeaderActions } from '~/composables/useStudioHeaderActions'
 import { useStudioSchemaStatus } from '~/composables/useStudioSchemaStatus'
 import { analyzePgmlDocument } from '~/utils/pgml-language'
@@ -52,6 +53,7 @@ type ReferenceTargetItem = {
 
 const source: Ref<string> = ref(pgmlExample)
 const canvasRef: Ref<PgmlDiagramCanvasExposed | null> = ref(null)
+const canvasViewportResetKey: Ref<number> = ref(0)
 const isExporting: Ref<boolean> = ref(false)
 const tableEditorDraft: Ref<PgmlEditableTableDraft | null> = ref(null)
 const tableEditorOpen: Ref<boolean> = ref(false)
@@ -175,7 +177,7 @@ const syncSourceWithNodeProperties = (nodeProperties: Record<string, PgmlNodePro
 }
 
 const {
-  clearSchema,
+  clearSchema: clearStudioSchema,
   currentSchemaName,
   currentSchemaUpdatedAt,
   clearSaveSchemaTarget,
@@ -188,8 +190,8 @@ const {
   isSavingToLocalStorage,
   localStorageSaveError,
   loadDialogOpen,
-  loadExample,
-  loadSavedSchema,
+  loadExample: loadStudioExample,
+  loadSavedSchema: loadStudioSavedSchema,
   openSchemaDialog,
   orderedSavedSchemas,
   saveSchemaActionLabel,
@@ -206,6 +208,25 @@ const {
   initialSource: pgmlExample,
   source
 })
+
+const requestCanvasViewportReset = () => {
+  canvasViewportResetKey.value += 1
+}
+
+const loadExample = () => {
+  loadStudioExample()
+  requestCanvasViewportReset()
+}
+
+const clearSchema = () => {
+  clearStudioSchema()
+  requestCanvasViewportReset()
+}
+
+const loadSavedSchema = (schema: SavedPgmlSchema) => {
+  loadStudioSavedSchema(schema)
+  requestCanvasViewportReset()
+}
 
 const actionMenuItems = computed<DropdownMenuItem[][]>(() => {
   const exportItems: DropdownMenuItem[] = exportScales.map((scaleOption) => {
@@ -631,6 +652,7 @@ onBeforeUnmount(() => {
         <PgmlDiagramCanvas
           ref="canvasRef"
           :model="parsedModel"
+          :viewport-reset-key="canvasViewportResetKey"
           @create-group="openGroupCreator"
           @focus-source="focusEditorSourceRange"
           @create-table="openTableCreator"

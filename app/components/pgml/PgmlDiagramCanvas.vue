@@ -29,8 +29,12 @@ import {
 } from '~/utils/diagram-routing'
 import { normalizeSvgColor, normalizeSvgPaint, parseCssLinearGradient } from '~/utils/svg-paint'
 
-const { model } = defineProps<{
+const {
+  model,
+  viewportResetKey = 0
+} = defineProps<{
   model: PgmlSchemaModel
+  viewportResetKey?: number
 }>()
 const emit = defineEmits<{
   createTable: [groupName: string]
@@ -264,7 +268,7 @@ const attachmentKindColors: Record<TableAttachmentKind, string> = {
   Sequence: '#eab308'
 }
 let suppressLayoutObserverUntil = 0
-let previousModelContentSnapshot: string | null = null
+let previousViewportResetKey: number | null = null
 
 const canvasNodes = computed(() => Object.values(nodeStates.value))
 const isEntityDirectlyVisible = (id: string) => model.nodeProperties[id]?.visible !== false
@@ -5410,20 +5414,6 @@ const hasStoredNodeProperties = (properties: PgmlNodeProperties) => {
   )
 }
 
-const getModelContentSnapshot = (value: PgmlSchemaModel) => {
-  return JSON.stringify({
-    customTypes: value.customTypes,
-    functions: value.functions,
-    groups: value.groups,
-    procedures: value.procedures,
-    references: value.references,
-    schemas: value.schemas,
-    sequences: value.sequences,
-    tables: value.tables,
-    triggers: value.triggers
-  })
-}
-
 const getNodeLayoutProperties = () => {
   const properties = Object.entries(model.nodeProperties).reduce<Record<string, PgmlNodeProperties>>((entries, [id, value]) => {
     const normalized = normalizeStoredNodeProperties(value)
@@ -5825,8 +5815,7 @@ const handleWheel = (event: WheelEvent) => {
 watch(
   () => model,
   async () => {
-    const nextModelContentSnapshot = getModelContentSnapshot(model)
-    const shouldFitViewport = previousModelContentSnapshot === null || previousModelContentSnapshot !== nextModelContentSnapshot
+    const shouldFitViewport = previousViewportResetKey !== null && viewportResetKey !== previousViewportResetKey
 
     syncNodeStates()
     await nextTick()
@@ -5855,7 +5844,7 @@ watch(
     await nextTick()
     observeCanvasLayout()
     updateConnections()
-    previousModelContentSnapshot = nextModelContentSnapshot
+    previousViewportResetKey = viewportResetKey
   },
   { deep: true, immediate: true }
 )
