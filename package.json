@@ -18,8 +18,15 @@
     "test:e2e:ui": "playwright test --ui"
   },
   "dependencies": {
+    "@codemirror/autocomplete": "^6.20.1",
+    "@codemirror/commands": "^6.10.3",
+    "@codemirror/language": "^6.12.2",
+    "@codemirror/lint": "^6.9.5",
+    "@codemirror/state": "^6.6.0",
+    "@codemirror/view": "^6.40.0",
     "@iconify-json/lucide": "^1.2.98",
     "@iconify-json/simple-icons": "^1.2.74",
+    "@lezer/highlight": "^1.2.3",
     "@nuxt/hints": "1.0.0",
     "@nuxt/image": "2.0.0",
     "@nuxt/test-utils": "4.0.0",

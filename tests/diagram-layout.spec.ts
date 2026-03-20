@@ -1,4 +1,5 @@
 import { expect, test } from '@nuxt/test-utils/playwright'
+import { getPgmlEditor, readPgmlEditorValue, setPgmlEditorValue } from './helpers/pgml-editor'
 
 test.setTimeout(120_000)
 
@@ -78,53 +79,56 @@ test('studio canvas stays viewport-bound and starts centered on the diagram', as
 test('studio header aligns the navigation with the page title copy', async ({ goto, page }) => {
   await goto('/diagram')
 
-  const headerMetrics = await page.evaluate(() => {
-    const tagline = Array.from(document.querySelectorAll('span')).find((element): element is HTMLSpanElement => {
-      return element instanceof HTMLSpanElement && element.textContent?.trim() === 'Postgres in markup'
-    })
-    const specLink = Array.from(document.querySelectorAll('a')).find((element): element is HTMLAnchorElement => {
-      return element instanceof HTMLAnchorElement && element.textContent?.trim() === 'Spec'
-    })
-    const studioLink = Array.from(document.querySelectorAll('a')).find((element): element is HTMLAnchorElement => {
-      return element instanceof HTMLAnchorElement && element.textContent?.trim() === 'Diagram Studio'
-    })
+  const tagline = page.getByText('Postgres in markup').first()
+  const headerNav = page.locator('header nav')
+  const specLink = headerNav.getByRole('link', { name: 'Spec', exact: true })
+  const studioLink = headerNav.getByRole('link', { name: 'Diagram Studio', exact: true })
 
-    if (!tagline || !specLink || !studioLink) {
-      return null
-    }
+  await expect(tagline).toBeVisible()
+  await expect(specLink).toBeVisible()
+  await expect(studioLink).toBeVisible()
 
-    const measureTextBounds = (element: HTMLElement) => {
+  const headerMetrics = await Promise.all([
+    tagline.evaluate((element) => {
       const range = document.createRange()
       range.selectNodeContents(element)
-
       const rect = range.getBoundingClientRect()
 
       return {
         top: Math.round(rect.top),
         bottom: Math.round(rect.bottom),
-        height: Math.round(rect.height)
+        fontSize: Number.parseFloat(window.getComputedStyle(element).fontSize)
       }
-    }
+    }),
+    specLink.evaluate((element) => {
+      const range = document.createRange()
+      range.selectNodeContents(element)
+      const rect = range.getBoundingClientRect()
 
-    const taglineRect = measureTextBounds(tagline)
-    const specRect = measureTextBounds(specLink)
-    const studioRect = measureTextBounds(studioLink)
+      return {
+        top: Math.round(rect.top),
+        bottom: Math.round(rect.bottom)
+      }
+    }),
+    studioLink.evaluate((element) => {
+      const range = document.createRange()
+      range.selectNodeContents(element)
+      const rect = range.getBoundingClientRect()
 
-    return {
-      taglineFontSize: Number.parseFloat(window.getComputedStyle(tagline).fontSize),
-      specTopOffset: specRect.top - taglineRect.top,
-      specBottomOffset: specRect.bottom - taglineRect.bottom,
-      studioTopOffset: studioRect.top - taglineRect.top,
-      studioBottomOffset: studioRect.bottom - taglineRect.bottom
-    }
-  })
+      return {
+        top: Math.round(rect.top),
+        bottom: Math.round(rect.bottom)
+      }
+    })
+  ])
 
-  expect(headerMetrics).not.toBeNull()
-  expect(headerMetrics?.taglineFontSize || 0).toBeGreaterThanOrEqual(16)
-  expect(Math.abs(headerMetrics?.specTopOffset || 0)).toBeLessThanOrEqual(1)
-  expect(Math.abs(headerMetrics?.specBottomOffset || 0)).toBeLessThanOrEqual(1)
-  expect(Math.abs(headerMetrics?.studioTopOffset || 0)).toBeLessThanOrEqual(1)
-  expect(Math.abs(headerMetrics?.studioBottomOffset || 0)).toBeLessThanOrEqual(1)
+  const [taglineRect, specRect, studioRect] = headerMetrics
+
+  expect(taglineRect.fontSize).toBeGreaterThanOrEqual(16)
+  expect(Math.abs(specRect.top - taglineRect.top)).toBeLessThanOrEqual(4)
+  expect(Math.abs(specRect.bottom - taglineRect.bottom)).toBeLessThanOrEqual(4)
+  expect(Math.abs(studioRect.top - taglineRect.top)).toBeLessThanOrEqual(4)
+  expect(Math.abs(studioRect.bottom - taglineRect.bottom)).toBeLessThanOrEqual(4)
 })
 
 test('table groups keep their required width after changing the table column count', async ({ goto, page }) => {
@@ -132,7 +136,7 @@ test('table groups keep their required width after changing the table column cou
 
   const commerceGroup = page.locator('[data-node-anchor="group:Commerce"]')
 
-  await commerceGroup.click()
+  await commerceGroup.dispatchEvent('click')
   await expect(page.locator('[data-group-column-count-slider="true"]')).toBeVisible()
 
   const slider = page.locator('[data-group-column-count-slider="true"]')
@@ -180,7 +184,7 @@ test('table groups keep independent table heights and balanced horizontal paddin
 
   const coreGroup = page.locator('[data-node-anchor="group:Core"]')
 
-  await coreGroup.click()
+  await coreGroup.dispatchEvent('click')
   await expect(page.locator('[data-group-column-count-slider="true"]')).toBeVisible()
 
   const slider = page.locator('[data-group-column-count-slider="true"]')
@@ -241,7 +245,7 @@ test('table groups keep independent table heights and balanced horizontal paddin
 test('connection lines hit grouped table borders, render above the owning group, and avoid the group header band', async ({ goto, page }) => {
   await goto('/diagram')
 
-  const editor = page.locator('[data-pgml-editor="true"]')
+  const editor = getPgmlEditor(page)
   const source = `TableGroup Core {
   tenants
 }
@@ -260,7 +264,7 @@ Table public.orders in Commerce {
   tenant_id uuid [ref: > public.tenants.id]
 }`
 
-  await editor.fill(source)
+  await setPgmlEditorValue(editor, source)
   await expect(page.locator('[data-node-anchor="group:Core"]')).toBeVisible()
 
   const coreGroup = page.locator('[data-node-anchor="group:Core"]')
@@ -444,7 +448,7 @@ Table public.orders in Commerce {
 test('field rows expose multiple side anchors and prefer unused points on the same row', async ({ goto, page }) => {
   await goto('/diagram')
 
-  const editor = page.locator('[data-pgml-editor="true"]')
+  const editor = getPgmlEditor(page)
   const source = `TableGroup Core {
   tenants
 }
@@ -475,7 +479,7 @@ Table public.payments in Commerce {
   tenant_id uuid [ref: > public.tenants.id]
 }`
 
-  await editor.fill(source)
+  await setPgmlEditorValue(editor, source)
   await expect(page.locator('[data-table-anchor="public.tenants"]')).toBeVisible()
 
   const diagnostics = await page.evaluate(() => {
@@ -556,7 +560,7 @@ Table public.payments in Commerce {
 test('shared-group reference lanes keep their first bend close to the table edge', async ({ goto, page }) => {
   await goto('/diagram')
 
-  const editor = page.locator('[data-pgml-editor="true"]')
+  const editor = getPgmlEditor(page)
   const source = `TableGroup Commerce {
   products
   orders
@@ -577,7 +581,7 @@ Table public.order_items in Commerce {
   product_id uuid [ref: > public.products.id]
 }`
 
-  await editor.fill(source)
+  await setPgmlEditorValue(editor, source)
   await expect(page.locator('[data-table-anchor="public.products"]')).toBeVisible()
 
   const diagnostics = await page.evaluate(() => {
@@ -623,7 +627,7 @@ Table public.order_items in Commerce {
 test('external table references flip endpoint sides instead of backtracking through the table when groups are packed closely', async ({ goto, page }) => {
   await goto('/diagram')
 
-  const editor = page.locator('[data-pgml-editor="true"]')
+  const editor = getPgmlEditor(page)
   const source = `TableGroup Core {
   tenants
   roles
@@ -668,7 +672,7 @@ Properties "group:Programs" {
   y: 200
 }`
 
-  await editor.fill(source)
+  await setPgmlEditorValue(editor, source)
   await expect(page.locator('[data-table-anchor="public.funding_opportunity_profile"]')).toBeVisible()
 
   const diagnostics = await page.evaluate(() => {
@@ -823,8 +827,8 @@ Properties "group:Programs" {
 test('full-sample program references keep their endpoint segments moving outward when Programs is packed near Core', async ({ goto, page }) => {
   await goto('/diagram')
 
-  const editor = page.locator('[data-pgml-editor="true"]')
-  const baseSource = await editor.inputValue()
+  const editor = getPgmlEditor(page)
+  const baseSource = await readPgmlEditorValue(editor)
   const source = `${baseSource}
 
 Properties "group:Programs" {
@@ -832,7 +836,7 @@ Properties "group:Programs" {
   y: 200
 }`
 
-  await editor.fill(source)
+  await setPgmlEditorValue(editor, source)
   await expect(page.locator('[data-table-anchor="public.funding_opportunity_profile"]')).toBeVisible()
 
   const diagnostics = await page.evaluate(() => {

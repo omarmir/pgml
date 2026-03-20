@@ -3,9 +3,11 @@ import type { DropdownMenuItem } from '@nuxt/ui'
 import type { Ref } from 'vue'
 import { nanoid } from 'nanoid'
 import PgmlDiagramCanvas from '~/components/pgml/PgmlDiagramCanvas.vue'
+import PgmlSourceCodeEditor from '~/components/pgml/PgmlSourceCodeEditor.vue'
 import { usePgmlColumnDefaultSuggestions } from '~/composables/usePgmlColumnDefaultSuggestions'
 import { useStudioHeaderActions } from '~/composables/useStudioHeaderActions'
 import { useStudioSchemaStatus } from '~/composables/useStudioSchemaStatus'
+import { analyzePgmlDocument } from '~/utils/pgml-language'
 import {
   buildPgmlWithNodeProperties,
   parsePgml,
@@ -48,12 +50,9 @@ const { clearStudioHeaderActions, setStudioHeaderActions } = useStudioHeaderActi
 const { clearStudioSchemaStatus, setStudioSchemaStatus } = useStudioSchemaStatus()
 const { getColumnDefaultPlaceholder, getColumnDefaultSuggestions } = usePgmlColumnDefaultSuggestions()
 const {
-  focusEditorSourceRange,
-  lineNumberRef,
-  lineNumbers,
-  syncLineNumberScroll,
-  textareaRef
-} = usePgmlSourceEditor(source)
+  editorRef,
+  focusEditorSourceRange
+} = usePgmlSourceEditor()
 const {
   isCompactStudioLayout,
   layoutShellRef,
@@ -110,23 +109,18 @@ const secondaryModalButtonClass = 'rounded-none border border-[color:var(--studi
 const primaryModalButtonClass = 'rounded-none border border-[color:var(--studio-shell-border)] bg-[color:var(--studio-input-bg)] text-[color:var(--studio-shell-text)] hover:bg-[color:var(--studio-shell-text)]/8 disabled:opacity-100 disabled:border-[color:var(--studio-shell-border)] disabled:bg-[color:var(--studio-shell-text)]/10 disabled:text-[color:var(--studio-shell-muted)]'
 const iconGhostButtonClass = 'rounded-none text-[color:var(--studio-shell-muted)] hover:bg-[color:var(--studio-shell-text)]/8 hover:text-[color:var(--studio-shell-text)]'
 const overwriteTargetButtonClass = 'grid gap-1 border px-3 py-2 text-left transition-colors duration-150'
-const parsedState = computed(() => {
-  try {
-    return {
-      model: parsePgml(source.value),
-      error: null
-    }
-  } catch (error) {
-    return {
-      model: parsePgml(pgmlExample),
-      error: error instanceof Error ? error.message : 'Unable to parse PGML.'
-    }
-  }
+const sourceAnalysis = computed(() => analyzePgmlDocument(source.value))
+const sourceDiagnostics = computed(() => sourceAnalysis.value.diagnostics)
+const sourceErrorDiagnostics = computed(() => {
+  return sourceDiagnostics.value.filter(diagnostic => diagnostic.severity === 'error')
 })
-
-const parsedModel = computed(() => parsedState.value.model)
-const parseError = computed(() => parsedState.value.error)
-const canEmbedLayout = computed(() => !parseError.value)
+const sourceWarningDiagnostics = computed(() => {
+  return sourceDiagnostics.value.filter(diagnostic => diagnostic.severity === 'warning')
+})
+const visibleSourceDiagnostics = computed(() => sourceDiagnostics.value.slice(0, 6))
+const hasBlockingSourceErrors = computed(() => sourceErrorDiagnostics.value.length > 0)
+const parsedModel = computed(() => parsePgml(source.value))
+const canEmbedLayout = computed(() => !hasBlockingSourceErrors.value)
 
 const buildSchemaText = (includeLayout: boolean) => {
   const strippedSource = stripPgmlPropertiesBlocks(source.value)
@@ -139,7 +133,7 @@ const buildSchemaText = (includeLayout: boolean) => {
 }
 
 const syncSourceWithNodeProperties = (nodeProperties: Record<string, PgmlNodeProperties>) => {
-  if (parseError.value) {
+  if (hasBlockingSourceErrors.value) {
     return
   }
 
@@ -302,7 +296,7 @@ const getReferenceColumnItems = (tableFullName: string) => {
 }
 
 const openTableEditor = (tableId: string) => {
-  if (parseError.value) {
+  if (hasBlockingSourceErrors.value) {
     return
   }
 
@@ -317,7 +311,7 @@ const openTableEditor = (tableId: string) => {
 }
 
 const openTableCreator = (groupName: string) => {
-  if (parseError.value) {
+  if (hasBlockingSourceErrors.value) {
     return
   }
 
@@ -326,7 +320,7 @@ const openTableCreator = (groupName: string) => {
 }
 
 const openGroupEditor = (groupName: string) => {
-  if (parseError.value) {
+  if (hasBlockingSourceErrors.value) {
     return
   }
 
@@ -341,7 +335,7 @@ const openGroupEditor = (groupName: string) => {
 }
 
 const openGroupCreator = () => {
-  if (parseError.value) {
+  if (hasBlockingSourceErrors.value) {
     return
   }
 
@@ -506,38 +500,51 @@ onBeforeUnmount(() => {
         class="min-h-0 overflow-hidden border-r border-[color:var(--studio-shell-border)] bg-[color:var(--studio-shell-bg)] pr-0 max-[1100px]:border-r-0"
       >
         <div class="flex h-full min-h-0 flex-col bg-[color:var(--studio-shell-bg)]">
-          <div class="grid min-h-0 flex-1 grid-cols-[48px_minmax(0,1fr)] overflow-hidden bg-[color:var(--studio-shell-bg)]">
-            <div
-              ref="lineNumberRef"
-              class="min-h-0 overflow-hidden border-r border-[color:var(--studio-shell-border)] bg-[color:var(--studio-shell-bg)] py-3 text-center font-mono text-[0.84rem] leading-[1.9] text-[color:var(--studio-shell-muted)]"
-            >
-              <span
-                v-for="line in lineNumbers"
-                :key="line"
-                class="block"
-              >
-                {{ line }}
-              </span>
-            </div>
-
-            <textarea
-              ref="textareaRef"
+          <div class="min-h-0 flex-1 overflow-hidden bg-[color:var(--studio-shell-bg)]">
+            <PgmlSourceCodeEditor
+              ref="editorRef"
               v-model="source"
-              data-pgml-editor="true"
-              wrap="off"
-              class="h-full min-h-0 w-full resize-none overflow-x-auto overflow-y-auto border-none bg-[color:var(--studio-shell-bg)] px-3.5 py-3 font-mono text-[0.84rem] leading-[1.9] text-[color:var(--studio-shell-text)] caret-[color:var(--studio-shell-label)] outline-none placeholder:text-[color:var(--studio-shell-muted)]"
-              spellcheck="false"
               placeholder="Paste PGML here..."
-              @scroll="syncLineNumberScroll"
             />
           </div>
         </div>
 
         <div
-          v-if="parseError"
-          class="border-t border-[color:var(--studio-shell-border)] bg-[color:var(--studio-shell-bg)] px-4 py-2 font-mono text-[0.72rem] leading-6 text-[color:var(--studio-shell-error)]"
+          v-if="sourceDiagnostics.length > 0"
+          data-pgml-diagnostics="true"
+          class="grid gap-2 border-t border-[color:var(--studio-shell-border)] bg-[color:var(--studio-shell-bg)] px-4 py-3 font-mono text-[0.72rem] leading-6"
         >
-          {{ parseError }}
+          <div class="flex flex-wrap items-center justify-between gap-3">
+            <span class="uppercase tracking-[0.08em] text-[color:var(--studio-shell-label)]">
+              Diagnostics
+            </span>
+            <span class="text-[color:var(--studio-shell-muted)]">
+              {{ sourceErrorDiagnostics.length }} error<span v-if="sourceErrorDiagnostics.length !== 1">s</span>
+              <template v-if="sourceWarningDiagnostics.length > 0">
+                · {{ sourceWarningDiagnostics.length }} warning<span v-if="sourceWarningDiagnostics.length !== 1">s</span>
+              </template>
+            </span>
+          </div>
+
+          <ul class="grid gap-1.5">
+            <li
+              v-for="diagnostic in visibleSourceDiagnostics"
+              :key="`${diagnostic.code}:${diagnostic.from}:${diagnostic.line}`"
+              class="flex gap-2"
+            >
+              <span
+                class="min-w-12 uppercase tracking-[0.08em]"
+                :class="diagnostic.severity === 'error' ? 'text-[color:var(--studio-shell-error)]' : 'text-[color:var(--studio-shell-label)]'"
+              >
+                L{{ diagnostic.line }}
+              </span>
+              <span
+                :class="diagnostic.severity === 'error' ? 'text-[color:var(--studio-shell-error)]' : 'text-[color:var(--studio-shell-muted)]'"
+              >
+                {{ diagnostic.message }}
+              </span>
+            </li>
+          </ul>
         </div>
       </aside>
 

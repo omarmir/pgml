@@ -1,4 +1,11 @@
 import { expect, test } from '@nuxt/test-utils/playwright'
+import {
+  getPgmlEditor,
+  readPgmlEditorState,
+  setPgmlEditorScrollTop,
+  setPgmlEditorSelection,
+  setPgmlEditorValue
+} from './helpers/pgml-editor'
 
 test.setTimeout(120_000)
 
@@ -79,35 +86,36 @@ Function orphan_report() {
     select 1;
   $sql$
 }`
-  const editor = page.locator('[data-pgml-editor="true"]')
+  const editor = getPgmlEditor(page)
   const readEditorState = async () => {
-    return editor.evaluate((element: HTMLTextAreaElement) => {
-      return {
-        scrollTop: element.scrollTop,
-        selectedText: element.value.slice(element.selectionStart, element.selectionEnd)
-      }
-    })
+    const state = await readPgmlEditorState(editor)
+
+    return {
+      scrollTop: state.scrollTop,
+      selectedText: state.value.slice(
+        Math.min(state.anchor, state.head),
+        Math.max(state.anchor, state.head)
+      )
+    }
   }
   const resetEditorState = async () => {
-    await editor.evaluate((element: HTMLTextAreaElement) => {
-      element.scrollTop = 0
-      element.setSelectionRange(0, 0)
-    })
+    await setPgmlEditorScrollTop(editor, 0)
+    await setPgmlEditorSelection(editor, 0, 0)
   }
 
-  await editor.fill(source)
+  await setPgmlEditorValue(editor, source)
   await expect(page.locator('[data-node-anchor="function:orphan_report"]')).toBeVisible()
   await expect(page.locator('[data-node-anchor="custom-type:Domain:email_address"]')).toBeVisible()
   await expect(page.locator('[data-table-anchor="public.orders"]')).toBeVisible()
   await expect(page.locator('[data-attachment-row="index:idx_orders_total"]')).toBeVisible()
 
   await resetEditorState()
-  await page.locator('[data-node-anchor="custom-type:Domain:email_address"]').click()
+  await page.locator('[data-node-anchor="custom-type:Domain:email_address"]').dispatchEvent('click')
   await expect.poll(async () => {
     return (await readEditorState()).selectedText
   }).toBe('')
 
-  await page.locator('[data-node-anchor="custom-type:Domain:email_address"]').dblclick()
+  await page.locator('[data-node-anchor="custom-type:Domain:email_address"]').dispatchEvent('dblclick')
   await expect.poll(async () => {
     return readEditorState()
   }).toEqual(expect.objectContaining({
@@ -116,16 +124,16 @@ Function orphan_report() {
   }))
 
   await expect.poll(async () => {
-    return editor.evaluate((element: HTMLTextAreaElement) => element.scrollTop)
+    return (await readPgmlEditorState(editor)).scrollTop
   }).toBeGreaterThan(0)
 
   await resetEditorState()
-  await page.locator('[data-node-anchor="function:orphan_report"]').click()
+  await page.locator('[data-node-anchor="function:orphan_report"]').dispatchEvent('click')
   await expect.poll(async () => {
     return (await readEditorState()).selectedText
   }).toBe('')
 
-  await page.locator('[data-node-anchor="function:orphan_report"]').dblclick()
+  await page.locator('[data-node-anchor="function:orphan_report"]').dispatchEvent('dblclick')
   await expect.poll(async () => {
     return readEditorState()
   }).toEqual(expect.objectContaining({
@@ -139,16 +147,16 @@ Function orphan_report() {
   }))
 
   await expect.poll(async () => {
-    return editor.evaluate((element: HTMLTextAreaElement) => element.scrollTop)
+    return (await readPgmlEditorState(editor)).scrollTop
   }).toBeGreaterThan(0)
 
   await resetEditorState()
-  await page.locator('[data-table-anchor="public.orders"]').click()
+  await page.locator('[data-table-anchor="public.orders"]').dispatchEvent('click')
   await expect.poll(async () => {
     return (await readEditorState()).selectedText
   }).toBe('')
 
-  await page.locator('[data-table-anchor="public.orders"]').dblclick()
+  await page.locator('[data-table-anchor="public.orders"]').dispatchEvent('dblclick')
   await expect.poll(async () => {
     return readEditorState()
   }).toEqual(expect.objectContaining({
@@ -161,16 +169,16 @@ Function orphan_report() {
   }))
 
   await expect.poll(async () => {
-    return editor.evaluate((element: HTMLTextAreaElement) => element.scrollTop)
+    return (await readPgmlEditorState(editor)).scrollTop
   }).toBeGreaterThan(0)
 
   await resetEditorState()
-  await page.locator('[data-attachment-row="index:idx_orders_total"]').click()
+  await page.locator('[data-attachment-row="index:idx_orders_total"]').dispatchEvent('click')
   await expect.poll(async () => {
     return (await readEditorState()).selectedText
   }).toBe('')
 
-  await page.locator('[data-attachment-row="index:idx_orders_total"]').dblclick()
+  await page.locator('[data-attachment-row="index:idx_orders_total"]').dispatchEvent('dblclick')
   await expect.poll(async () => {
     return readEditorState()
   }).toEqual(expect.objectContaining({
@@ -179,7 +187,7 @@ Function orphan_report() {
   }))
 
   await expect.poll(async () => {
-    return editor.evaluate((element: HTMLTextAreaElement) => element.scrollTop)
+    return (await readPgmlEditorState(editor)).scrollTop
   }).toBeGreaterThan(0)
 })
 

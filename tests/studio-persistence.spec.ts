@@ -1,14 +1,17 @@
 import { readFileSync } from 'node:fs'
 
 import { expect, test } from '@nuxt/test-utils/playwright'
+import { getPgmlEditor, readPgmlEditorValue, setPgmlEditorValue } from './helpers/pgml-editor'
 
 test.setTimeout(120_000)
 
 test('studio saves, reloads, and downloads PGML with embedded layout', async ({ goto, page }) => {
   await goto('/diagram')
   const studioActionsButton = page.getByRole('button', { name: 'Studio actions' })
+  const editor = getPgmlEditor(page)
 
-  await page.locator('[data-node-anchor="group:Core"]').click()
+  await page.locator('[data-node-anchor="group:Core"]').dispatchEvent('click')
+  await expect(page.locator('input[type="color"]')).toBeVisible()
   await page.locator('input[type="color"]').fill('#14b8a6')
   await page.getByRole('button', { name: 'Expand email_address' }).click()
   await expect(page.locator('[data-node-body="custom-type:Domain:email_address"]')).toBeVisible()
@@ -52,13 +55,13 @@ test('studio saves, reloads, and downloads PGML with embedded layout', async ({ 
 
   await studioActionsButton.click()
   await page.getByRole('menuitem', { name: 'Clear schema' }).click()
-  await expect(page.getByPlaceholder('Paste PGML here...')).toHaveValue('')
+  await expect.poll(async () => readPgmlEditorValue(editor)).toBe('')
 
   await studioActionsButton.click()
   await page.getByRole('menuitem', { name: 'Load saved schema' }).click()
   await page.getByRole('button', { name: 'Load' }).click()
 
-  await expect(page.getByPlaceholder('Paste PGML here...')).toHaveValue(/Properties "group:Core" \{/)
+  await expect.poll(async () => readPgmlEditorValue(editor)).toMatch(/Properties "group:Core" \{/)
   await expect(page.locator('[data-node-body="custom-type:Domain:email_address"]')).toBeVisible()
 
   await studioActionsButton.click()
@@ -79,6 +82,7 @@ test('entity visibility persists when a saved schema is reloaded', async ({ goto
   await goto('/diagram')
 
   const studioActionsButton = page.getByRole('button', { name: 'Studio actions' })
+  const editor = getPgmlEditor(page)
 
   await page.locator('[data-diagram-panel-tab="entities"]').click()
   await page.locator('[data-browser-visibility-toggle="public.users"]').click()
@@ -98,13 +102,13 @@ test('entity visibility persists when a saved schema is reloaded', async ({ goto
 
   await studioActionsButton.click()
   await page.getByRole('menuitem', { name: 'Clear schema' }).click()
-  await expect(page.getByPlaceholder('Paste PGML here...')).toHaveValue('')
+  await expect.poll(async () => readPgmlEditorValue(editor)).toBe('')
 
   await studioActionsButton.click()
   await page.getByRole('menuitem', { name: 'Load saved schema' }).click()
   await page.getByRole('button', { name: 'Load' }).click()
 
-  await expect(page.getByPlaceholder('Paste PGML here...')).toHaveValue(/Properties "public\.users" \{[\s\S]*visible: false/)
+  await expect.poll(async () => readPgmlEditorValue(editor)).toMatch(/Properties "public\.users" \{[\s\S]*visible: false/)
   await expect(page.locator('[data-table-anchor="public.users"]')).toHaveCount(0)
 })
 
@@ -156,7 +160,7 @@ test('studio restores the most recently saved schema after reload and shows its 
 
   await page.reload()
 
-  await expect(page.getByPlaceholder('Paste PGML here...')).toHaveValue(/Table public\.latest \{/)
+  await expect.poll(async () => readPgmlEditorValue(getPgmlEditor(page))).toMatch(/Table public\.latest \{/)
   await expect(page.locator('[data-studio-schema-name="true"]')).toHaveText('Latest schema')
   await expect(page.locator('[data-studio-schema-status]')).toHaveAttribute('data-studio-schema-status', 'saved')
 })
@@ -164,16 +168,13 @@ test('studio restores the most recently saved schema after reload and shows its 
 test('studio autosaves changes to local storage and updates the header status icon', async ({ goto, page }) => {
   await goto('/diagram')
 
-  const editor = page.getByPlaceholder('Paste PGML here...')
+  const editor = getPgmlEditor(page)
 
   await expect(page.locator('[data-studio-schema-name="true"]')).toHaveText('Example schema')
   await expect(page.locator('[data-studio-schema-status]')).toHaveAttribute('data-studio-schema-status', 'pending')
   await expect(page.locator('[data-studio-schema-status-icon="true"]')).toHaveClass(/animate-bounce/)
 
-  await editor.evaluate((element: HTMLTextAreaElement) => {
-    element.value = `${element.value}\n// autosave change`
-    element.dispatchEvent(new Event('input', { bubbles: true }))
-  })
+  await setPgmlEditorValue(editor, `${await readPgmlEditorValue(editor)}\n// autosave change`)
 
   await expect(page.locator('[data-studio-schema-status]')).toHaveAttribute('data-studio-schema-status', 'pending')
   await expect(page.locator('[data-studio-schema-status-icon="true"]')).toHaveClass(/animate-bounce/)

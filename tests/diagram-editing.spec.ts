@@ -1,55 +1,75 @@
 import { expect, test } from '@nuxt/test-utils/playwright'
+import {
+  getPgmlEditor,
+  readPgmlEditorState,
+  readPgmlEditorValue,
+  setPgmlEditorScrollTop,
+  setPgmlEditorSelection,
+  setPgmlEditorValue
+} from './helpers/pgml-editor'
 
 test.setTimeout(120_000)
 
 test('table edit modal can rename a table and add a new grouped table', async ({ goto, page }) => {
   await goto('/diagram')
+  const editor = getPgmlEditor(page)
 
   await page.locator('[data-table-edit-button="public.users"]').click()
   await page.locator('[data-table-editor-name="true"]').fill('accounts')
-  await page.locator('[data-table-editor-save="true"]').click()
+  await expect(page.locator('[data-table-editor-save="true"]')).toBeVisible()
+  await page.locator('[data-table-editor-save="true"]').dispatchEvent('click')
 
-  await expect(page.getByPlaceholder('Paste PGML here...')).toHaveValue(/TableGroup Core \{\n {2}tenants\n {2}accounts\n {2}roles/)
-  await expect(page.getByPlaceholder('Paste PGML here...')).toHaveValue(/Table public\.accounts in Core \{/)
+  await expect.poll(async () => readPgmlEditorValue(editor)).toMatch(/TableGroup Core \{\n {2}tenants\n {2}accounts\n {2}roles/)
+  await expect.poll(async () => readPgmlEditorValue(editor)).toMatch(/Table public\.accounts in Core \{/)
+  await expect(page.locator('[data-pgml-diagnostics="true"]')).toContainText('public.users')
 
-  await page.locator('[data-group-add-table="Core"]').click()
+  const renamedSource = (await readPgmlEditorValue(editor)).replaceAll('public.users', 'public.accounts')
+
+  await setPgmlEditorValue(editor, renamedSource)
+  await expect(page.locator('[data-pgml-diagnostics="true"]')).toHaveCount(0)
+
+  await page.locator('[data-group-add-table="Core"]').dispatchEvent('click')
+  await expect(page.locator('[data-table-editor-name="true"]')).toBeVisible()
   await page.locator('[data-table-editor-name="true"]').fill('audit_log')
-  await page.locator('[data-table-editor-save="true"]').click()
+  await expect(page.locator('[data-table-editor-save="true"]')).toBeVisible()
+  await page.locator('[data-table-editor-save="true"]').dispatchEvent('click')
 
-  await expect(page.getByPlaceholder('Paste PGML here...')).toHaveValue(/Table public\.audit_log in Core \{/)
-  await expect(page.getByPlaceholder('Paste PGML here...')).toHaveValue(/TableGroup Core \{\n {2}tenants\n {2}accounts\n {2}roles\n {2}audit_log/)
+  await expect.poll(async () => readPgmlEditorValue(editor)).toMatch(/Table public\.audit_log in Core \{/)
+  await expect.poll(async () => readPgmlEditorValue(editor)).toMatch(/TableGroup Core \{\n {2}tenants\n {2}accounts\n {2}roles\n {2}audit_log/)
 })
 
 test('group editor can create and rename table groups from the diagram canvas', async ({ goto, page }) => {
   await goto('/diagram')
 
-  const editor = page.getByPlaceholder('Paste PGML here...')
+  const editor = getPgmlEditor(page)
 
   await page.locator('[data-diagram-create-group="true"]').click()
   await page.locator('[data-group-editor-name="true"]').fill('Billing')
   await page.locator('[data-group-editor-note="true"]').fill('Invoices and payouts')
-  await page.locator('[data-group-editor-save="true"]').click()
+  await expect(page.locator('[data-group-editor-save="true"]')).toBeVisible()
+  await page.locator('[data-group-editor-save="true"]').dispatchEvent('click')
 
-  await expect(editor).toHaveValue(/TableGroup Billing \{\n {2}Note: Invoices and payouts\n\}/)
+  await expect.poll(async () => readPgmlEditorValue(editor)).toMatch(/TableGroup Billing \{\n {2}Note: Invoices and payouts\n\}/)
   await expect(page.locator('[data-node-anchor="group:Billing"]')).toBeVisible()
 
   await page.locator('[data-browser-group-edit="Billing"]').click()
   await page.locator('[data-group-editor-name="true"]').fill('BillingOps')
   await page.locator('[data-group-editor-note="true"]').fill('Revenue operations and settlement.')
-  await page.locator('[data-group-editor-save="true"]').click()
+  await expect(page.locator('[data-group-editor-save="true"]')).toBeVisible()
+  await page.locator('[data-group-editor-save="true"]').dispatchEvent('click')
 
-  await expect(editor).toHaveValue(/TableGroup BillingOps \{\n {2}Note: Revenue operations and settlement\.\n\}/)
-  await expect(editor).not.toHaveValue(/TableGroup Billing \{/)
+  await expect.poll(async () => readPgmlEditorValue(editor)).toMatch(/TableGroup BillingOps \{\n {2}Note: Revenue operations and settlement\.\n\}/)
+  await expect.poll(async () => readPgmlEditorValue(editor)).not.toMatch(/TableGroup Billing \{/)
   await expect(page.locator('[data-node-anchor="group:BillingOps"]')).toBeVisible()
 })
 
 test('ungrouped tables render as floating nodes instead of an Ungrouped lane', async ({ goto, page }) => {
   await goto('/diagram')
 
-  const editor = page.getByPlaceholder('Paste PGML here...')
-  const baseSource = await editor.inputValue()
+  const editor = getPgmlEditor(page)
+  const baseSource = await readPgmlEditorValue(editor)
 
-  await editor.fill(`${baseSource}
+  await setPgmlEditorValue(editor, `${baseSource}
 
 Table public.audit_entries {
   id uuid [pk, not null]
@@ -70,10 +90,10 @@ Table public.audit_entries {
 test('floating ungrouped tables grow tall enough to contain all rendered rows', async ({ goto, page }) => {
   await goto('/diagram')
 
-  const editor = page.getByPlaceholder('Paste PGML here...')
-  const baseSource = await editor.inputValue()
+  const editor = getPgmlEditor(page)
+  const baseSource = await readPgmlEditorValue(editor)
 
-  await editor.fill(`${baseSource}
+  await setPgmlEditorValue(editor, `${baseSource}
 
 Table public.audit_entries {
   id uuid [pk, not null]
@@ -122,6 +142,29 @@ test('table edit modal autocompletes default values from the column type', async
   await expect(columnDefaultInput).toHaveAttribute('placeholder', 'false')
   await expect(page.getByText(/^false$/)).toBeVisible()
   await expect(page.getByText(/^true$/)).toBeVisible()
+})
+
+test('code editor shows PGML diagnostics and autocomplete suggestions', async ({ goto, page }) => {
+  await goto('/diagram')
+
+  const editor = getPgmlEditor(page)
+
+  await setPgmlEditorValue(editor, `Table public.users {
+  id uuid [pk]
+  id uuid
+  role_id uuid [ref: > public.roles.id]
+}`)
+
+  await expect(page.locator('[data-pgml-diagnostics="true"]')).toContainText('Duplicate column')
+  await expect(page.locator('[data-pgml-diagnostics="true"]')).toContainText('Reference target table')
+
+  await setPgmlEditorValue(editor, '')
+  await setPgmlEditorSelection(editor, 0, 0)
+  await page.locator('[data-pgml-editor-content="true"]').click()
+  await page.keyboard.press('Control+Space')
+
+  await expect(page.locator('.cm-tooltip-autocomplete')).toBeVisible()
+  await expect(page.locator('.cm-tooltip-autocomplete')).toContainText('Table')
 })
 
 test('canvas snaps dragged nodes to the grid and zooms around the mouse position', async ({ goto, page }) => {
@@ -241,13 +284,14 @@ test('connection routing stays stable when zoom changes', async ({ goto, page })
 test('canvas interactions keep the PGML editor source in sync', async ({ goto, page }) => {
   await goto('/diagram')
 
-  const editor = page.getByPlaceholder('Paste PGML here...')
+  const editor = getPgmlEditor(page)
   const coreGroup = page.locator('[data-node-anchor="group:Core"]')
 
-  await coreGroup.click()
+  await coreGroup.dispatchEvent('click')
+  await expect(page.locator('input[type="color"]')).toBeVisible()
   await page.locator('input[type="color"]').fill('#14b8a6')
 
-  await expect(editor).toHaveValue(/Properties "group:Core" \{[\s\S]*color: #14b8a6/)
+  await expect.poll(async () => readPgmlEditorValue(editor)).toMatch(/Properties "group:Core" \{[\s\S]*color: #14b8a6/)
 
   const columnSlider = page.locator('[data-group-column-count-slider="true"]')
 
@@ -256,7 +300,7 @@ test('canvas interactions keep the PGML editor source in sync', async ({ goto, p
     element.dispatchEvent(new Event('input', { bubbles: true }))
   })
 
-  await expect(editor).toHaveValue(/Properties "group:Core" \{[\s\S]*table_columns: 2/)
+  await expect.poll(async () => readPgmlEditorValue(editor)).toMatch(/Properties "group:Core" \{[\s\S]*table_columns: 2/)
 
   const coreHeader = page.locator('[data-node-header="group:Core"]')
   const headerBox = await coreHeader.boundingBox()
@@ -277,9 +321,7 @@ test('canvas interactions keep the PGML editor source in sync', async ({ goto, p
     }
   })
 
-  await expect.poll(async () => {
-    return editor.inputValue()
-  }).toContain(`Properties "group:Core" {\n  x: ${groupPosition.x}\n  y: ${groupPosition.y}`)
+  await expect.poll(async () => readPgmlEditorValue(editor)).toContain(`Properties "group:Core" {\n  x: ${groupPosition.x}\n  y: ${groupPosition.y}`)
 
   const customTypeNode = page.locator('[data-node-anchor="custom-type:Domain:email_address"]')
   const customTypeHeader = page.locator('[data-node-header="custom-type:Domain:email_address"]')
@@ -304,13 +346,13 @@ test('canvas interactions keep the PGML editor source in sync', async ({ goto, p
     }
   })
 
-  await expect(editor).toHaveValue(new RegExp(`Properties "custom-type:Domain:email_address" \\{[\\s\\S]*x: ${customTypePosition.x}[\\s\\S]*y: ${customTypePosition.y}[\\s\\S]*collapsed: false`))
+  await expect.poll(async () => readPgmlEditorValue(editor)).toMatch(new RegExp(`Properties "custom-type:Domain:email_address" \\{[\\s\\S]*x: ${customTypePosition.x}[\\s\\S]*y: ${customTypePosition.y}[\\s\\S]*collapsed: false`))
 })
 
 test('side panel can switch tabs, hide entities, and restore them from saved properties', async ({ goto, page }) => {
   await goto('/diagram')
 
-  const editor = page.getByPlaceholder('Paste PGML here...')
+  const editor = getPgmlEditor(page)
   const panel = page.locator('[data-diagram-panel="true"]')
   const panelToggle = page.locator('[data-diagram-panel-toggle="true"]')
 
@@ -363,7 +405,7 @@ test('side panel can switch tabs, hide entities, and restore them from saved pro
 
   await expect(page.locator('[data-table-anchor="public.users"]')).toHaveCount(0)
   await expect(page.locator('[data-connection-key="ref:public.orders:customer_id:public.users:id"]')).toHaveCount(0)
-  await expect(editor).toHaveValue(/Properties "public\.users" \{[\s\S]*visible: false/)
+  await expect.poll(async () => readPgmlEditorValue(editor)).toMatch(/Properties "public\.users" \{[\s\S]*visible: false/)
 
   const tenantsTable = page.locator('[data-table-anchor="public.tenants"]')
   const beforeToggleBox = await tenantsTable.boundingBox()
@@ -390,9 +432,7 @@ test('side panel can switch tabs, hide entities, and restore them from saved pro
   await page.locator('[data-browser-visibility-toggle="public.users"]').click()
 
   await expect(page.locator('[data-table-anchor="public.users"]')).toBeVisible()
-  await expect.poll(async () => {
-    return editor.inputValue()
-  }).not.toContain('Properties "public.users" {\n  visible: false')
+  await expect.poll(async () => readPgmlEditorValue(editor)).not.toContain('Properties "public.users" {\n  visible: false')
 })
 
 test('scrolling inside the diagram panel scrolls the panel instead of the canvas', async ({ goto, page }) => {
@@ -430,20 +470,21 @@ test('scrolling inside the diagram panel scrolls the panel instead of the canvas
 test('double clicking entity panel items focuses the matching PGML source block', async ({ goto, page }) => {
   await goto('/diagram')
 
-  const editor = page.locator('[data-pgml-editor="true"]')
+  const editor = getPgmlEditor(page)
   const readEditorState = async () => {
-    return editor.evaluate((element: HTMLTextAreaElement) => {
-      return {
-        scrollTop: element.scrollTop,
-        selectedText: element.value.slice(element.selectionStart, element.selectionEnd)
-      }
-    })
+    const state = await readPgmlEditorState(editor)
+
+    return {
+      scrollTop: state.scrollTop,
+      selectedText: state.value.slice(
+        Math.min(state.anchor, state.head),
+        Math.max(state.anchor, state.head)
+      )
+    }
   }
   const resetEditorState = async () => {
-    await editor.evaluate((element: HTMLTextAreaElement) => {
-      element.scrollTop = 0
-      element.setSelectionRange(0, 0)
-    })
+    await setPgmlEditorScrollTop(editor, 0)
+    await setPgmlEditorSelection(editor, 0, 0)
   }
 
   await page.locator('[data-diagram-panel-tab="entities"]').click()
