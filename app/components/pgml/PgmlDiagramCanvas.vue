@@ -7182,7 +7182,7 @@ defineExpose<{
 
 @keyframes pgml-reference-race-line {
   to {
-    stroke-dashoffset: -24;
+    stroke-dashoffset: 24;
   }
 }
 

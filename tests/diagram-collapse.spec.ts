@@ -276,15 +276,24 @@ test('selecting a table animates its outgoing references and target relational r
   await expect.poll(async () => {
     return highlightedConnections.first().evaluate((element) => {
       const styles = getComputedStyle(element as SVGPathElement)
+      const animation = (element as SVGPathElement).getAnimations()[0]
+      const keyframes = animation?.effect && 'getKeyframes' in animation.effect
+        ? animation.effect.getKeyframes()
+        : []
+      const lastKeyframe = keyframes.at(-1)
 
       return {
         animationName: styles.animationName.includes('pgml-reference-race-line'),
-        strokeDasharray: styles.strokeDasharray
+        strokeDasharray: styles.strokeDasharray,
+        finalStrokeDashoffset: typeof lastKeyframe?.strokeDashoffset === 'string'
+          ? lastKeyframe.strokeDashoffset
+          : ''
       }
     })
   }).toEqual({
     animationName: true,
-    strokeDasharray: '14px, 10px'
+    strokeDasharray: '14px, 10px',
+    finalStrokeDashoffset: '24px'
   })
 
   await expect.poll(async () => {
