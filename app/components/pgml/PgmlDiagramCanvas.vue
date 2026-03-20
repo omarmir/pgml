@@ -1,7 +1,6 @@
 <script setup lang="ts">
-import { useClipboard } from '@vueuse/core'
+import { useClipboard, useResizeObserver, useTimeoutFn } from '@vueuse/core'
 import type {
-  PgmlColumn,
   PgmlCustomType,
   PgmlNodeProperties,
   PgmlRoutine,
@@ -38,6 +37,12 @@ import {
   pickDiagramAnchorSlot
 } from '~/utils/diagram-routing'
 import { normalizeSvgColor, normalizeSvgPaint, parseCssLinearGradient } from '~/utils/svg-paint'
+import type {
+  TableAttachment,
+  TableAttachmentFlag,
+  TableAttachmentKind,
+  TableRow
+} from '~/utils/pgml-diagram-canvas'
 
 const {
   exportBaseName = 'pgml-schema',
@@ -61,6 +66,7 @@ const emit = defineEmits<{
   nodePropertiesChange: [properties: Record<string, PgmlNodeProperties>]
 }>()
 const toast = useToast()
+const { startPointerSession } = useWindowPointerSession()
 const {
   copy: copyToClipboard,
   isSupported: isClipboardSupported
@@ -71,40 +77,9 @@ const {
 
 type CanvasNodeKind = 'group' | 'table' | 'object'
 type ObjectKind = 'Index' | 'Constraint' | 'Function' | 'Procedure' | 'Trigger' | 'Sequence' | 'Custom Type'
-type TableAttachmentKind = 'Index' | 'Constraint' | 'Function' | 'Procedure' | 'Trigger' | 'Sequence'
 type ImpactTarget = {
   tableId: string
   columnName: string | null
-}
-
-type TableAttachmentFlag = {
-  key: string
-  label: string
-  color: string
-}
-
-type TableAttachment = {
-  id: string
-  kind: TableAttachmentKind
-  title: string
-  subtitle: string
-  details: string[]
-  tableId: string
-  color: string
-  flags: TableAttachmentFlag[]
-  sourceRange?: PgmlSourceRange
-}
-
-type TableRow = {
-  kind: 'column'
-  key: string
-  tableId: string
-  column: PgmlColumn
-} | {
-  kind: 'attachment'
-  key: string
-  tableId: string
-  attachment: TableAttachment
 }
 
 type CanvasNodeState = {
@@ -247,8 +222,15 @@ const exportCopyFeedback: Ref<{ key: string | null, status: ExportCopyFeedbackSt
   key: null,
   status: null
 })
-let clearExportCopyFeedbackTimeout: number | null = null
-let resizeObserver: ResizeObserver | null = null
+const resetExportCopyFeedback = () => {
+  exportCopyFeedback.value = {
+    key: null,
+    status: null
+  }
+}
+const { start: scheduleExportCopyFeedbackReset, stop: stopExportCopyFeedbackReset } = useTimeoutFn(resetExportCopyFeedback, 1800, {
+  immediate: false
+})
 const exportTypeStyleItems = [
   {
     label: 'Pragmatic app types',
@@ -1457,26 +1439,14 @@ const downloadExportArtifact = (artifact: PgmlExportArtifact) => {
   downloadBlob(blob, artifact.fileName)
 }
 
-const resetExportCopyFeedback = () => {
-  exportCopyFeedback.value = {
-    key: null,
-    status: null
-  }
-}
-
 const setExportCopyFeedback = (key: string, status: ExportCopyFeedbackStatus) => {
   exportCopyFeedback.value = {
     key,
     status
   }
 
-  if (clearExportCopyFeedbackTimeout) {
-    window.clearTimeout(clearExportCopyFeedbackTimeout)
-  }
-
-  clearExportCopyFeedbackTimeout = window.setTimeout(() => {
-    resetExportCopyFeedback()
-  }, 1800)
+  stopExportCopyFeedbackReset()
+  scheduleExportCopyFeedbackReset()
 }
 
 const getExportCopyFeedbackStatus = (key: string) => {
@@ -1807,29 +1777,47 @@ const syncMeasuredNodeSizes = () => {
   return hasChanges
 }
 
-const observeCanvasLayout = () => {
-  if (!resizeObserver) {
+const getCanvasLayoutObserverTargets = () => {
+  const targets: HTMLElement[] = []
+
+  if (viewportRef.value) {
+    targets.push(viewportRef.value)
+  }
+
+  if (!planeRef.value) {
+    return targets
+  }
+
+  targets.push(planeRef.value)
+
+  planeRef.value.querySelectorAll('[data-node-anchor]').forEach((element) => {
+    if (element instanceof HTMLElement) {
+      targets.push(element)
+    }
+  })
+
+  return targets
+}
+
+const layoutObserverTargets: Ref<HTMLElement[]> = ref([])
+const syncLayoutObserverTargets = async () => {
+  await nextTick()
+  layoutObserverTargets.value = getCanvasLayoutObserverTargets()
+}
+
+const handleCanvasLayoutResize = () => {
+  if (Date.now() < suppressLayoutObserverUntil) {
     return
   }
 
-  const observer = resizeObserver
-
-  observer.disconnect()
-
-  if (viewportRef.value) {
-    observer.observe(viewportRef.value)
+  if (syncMeasuredNodeSizes() && !hasEmbeddedLayout.value) {
+    reflowAutoLayout()
   }
 
-  if (planeRef.value) {
-    observer.observe(planeRef.value)
-
-    planeRef.value.querySelectorAll('[data-node-anchor]').forEach((element) => {
-      if (element instanceof HTMLElement) {
-        observer.observe(element)
-      }
-    })
-  }
+  updateConnections()
 }
+
+useResizeObserver(layoutObserverTargets, handleCanvasLayoutResize)
 
 const cleanForSearch = (value: string) => value.toLowerCase().replaceAll(/[^\w.]+/g, ' ')
 const clamp = (value: number, min: number, max: number) => Math.min(max, Math.max(min, value))
@@ -5948,20 +5936,14 @@ const startPan = (event: PointerEvent) => {
     panY: pan.value.y
   }
 
-  const onMove = (moveEvent: PointerEvent) => {
-    pan.value = {
-      x: origin.panX + moveEvent.clientX - origin.x,
-      y: origin.panY + moveEvent.clientY - origin.y
+  startPointerSession({
+    onMove: (moveEvent) => {
+      pan.value = {
+        x: origin.panX + moveEvent.clientX - origin.x,
+        y: origin.panY + moveEvent.clientY - origin.y
+      }
     }
-  }
-
-  const onUp = () => {
-    window.removeEventListener('pointermove', onMove)
-    window.removeEventListener('pointerup', onUp)
-  }
-
-  window.addEventListener('pointermove', onMove)
-  window.addEventListener('pointerup', onUp)
+  })
 }
 
 const startDragNode = (event: PointerEvent, id: string) => {
@@ -5993,24 +5975,18 @@ const startDragNode = (event: PointerEvent, id: string) => {
     nodeY: node.y
   }
 
-  const onMove = (moveEvent: PointerEvent) => {
-    updateNode(id, {
-      x: snapCoordinate(origin.nodeX + (moveEvent.clientX - origin.x) / scale.value),
-      y: snapCoordinate(origin.nodeY + (moveEvent.clientY - origin.y) / scale.value)
-    }, {
-      remeasure: false,
-      emitNodeProperties: false
-    })
-  }
-
-  const onUp = () => {
-    window.removeEventListener('pointermove', onMove)
-    window.removeEventListener('pointerup', onUp)
-    emitNodePropertiesChange()
-  }
-
-  window.addEventListener('pointermove', onMove)
-  window.addEventListener('pointerup', onUp)
+  startPointerSession({
+    onMove: (moveEvent) => {
+      updateNode(id, {
+        x: snapCoordinate(origin.nodeX + (moveEvent.clientX - origin.x) / scale.value),
+        y: snapCoordinate(origin.nodeY + (moveEvent.clientY - origin.y) / scale.value)
+      }, {
+        remeasure: false,
+        emitNodeProperties: false
+      })
+    },
+    onEnd: emitNodePropertiesChange
+  })
 }
 
 const startResizeNode = (event: PointerEvent, id: string) => {
@@ -6035,23 +6011,17 @@ const startResizeNode = (event: PointerEvent, id: string) => {
     minHeight: node.minHeight || 96
   }
 
-  const onMove = (moveEvent: PointerEvent) => {
-    updateNode(id, {
-      width: Math.max(origin.minWidth, origin.width + (moveEvent.clientX - origin.x) / scale.value),
-      height: Math.max(origin.minHeight, origin.height + (moveEvent.clientY - origin.y) / scale.value)
-    }, {
-      emitNodeProperties: false
-    })
-  }
-
-  const onUp = () => {
-    window.removeEventListener('pointermove', onMove)
-    window.removeEventListener('pointerup', onUp)
-    emitNodePropertiesChange()
-  }
-
-  window.addEventListener('pointermove', onMove)
-  window.addEventListener('pointerup', onUp)
+  startPointerSession({
+    onMove: (moveEvent) => {
+      updateNode(id, {
+        width: Math.max(origin.minWidth, origin.width + (moveEvent.clientX - origin.x) / scale.value),
+        height: Math.max(origin.minHeight, origin.height + (moveEvent.clientY - origin.y) / scale.value)
+      }, {
+        emitNodeProperties: false
+      })
+    },
+    onEnd: emitNodePropertiesChange
+  })
 }
 
 const focusSourceRange = (sourceRange?: PgmlSourceRange) => {
@@ -6150,31 +6120,25 @@ watch(
     const shouldFitViewport = previousViewportResetKey !== null && viewportResetKey !== previousViewportResetKey
 
     syncNodeStates()
-    await nextTick()
-    observeCanvasLayout()
+    await syncLayoutObserverTargets()
     if (syncMeasuredNodeSizes()) {
-      await nextTick()
-      observeCanvasLayout()
+      await syncLayoutObserverTargets()
     }
     if (!hasEmbeddedLayout.value) {
       reflowAutoLayout()
     }
-    await nextTick()
-    observeCanvasLayout()
+    await syncLayoutObserverTargets()
     if (syncMeasuredNodeSizes()) {
-      await nextTick()
-      observeCanvasLayout()
+      await syncLayoutObserverTargets()
       if (!hasEmbeddedLayout.value) {
         reflowAutoLayout()
       }
-      await nextTick()
-      observeCanvasLayout()
+      await syncLayoutObserverTargets()
     }
     if (shouldFitViewport) {
       fitView()
     }
-    await nextTick()
-    observeCanvasLayout()
+    await syncLayoutObserverTargets()
     updateConnections()
     previousViewportResetKey = viewportResetKey
   },
@@ -6191,31 +6155,24 @@ watch(
   { deep: true }
 )
 
+watch(
+  () => canvasNodes.value.map(node => `${node.id}:${node.kind}:${node.collapsed}`).join('|'),
+  () => {
+    void syncLayoutObserverTargets()
+  },
+  { immediate: true, flush: 'post' }
+)
+
 onMounted(() => {
-  resizeObserver = new ResizeObserver(() => {
-    if (Date.now() < suppressLayoutObserverUntil) {
-      return
-    }
-
-    if (syncMeasuredNodeSizes()) {
-      if (!hasEmbeddedLayout.value) {
-        reflowAutoLayout()
-      }
-    }
-    updateConnections()
-  })
-
-  observeCanvasLayout()
-
   nextTick(async () => {
-    observeCanvasLayout()
+    await syncLayoutObserverTargets()
     if (syncMeasuredNodeSizes()) {
       reflowAutoLayout()
       updateConnections()
     }
     updateConnections()
     await waitForAnimationFrame()
-    observeCanvasLayout()
+    await syncLayoutObserverTargets()
     if (syncMeasuredNodeSizes()) {
       reflowAutoLayout()
       updateConnections()
@@ -6228,11 +6185,7 @@ onMounted(() => {
 })
 
 onBeforeUnmount(() => {
-  if (clearExportCopyFeedbackTimeout) {
-    window.clearTimeout(clearExportCopyFeedbackTimeout)
-  }
-
-  resizeObserver?.disconnect()
+  stopExportCopyFeedbackReset()
 })
 
 defineExpose<{
@@ -6466,164 +6419,24 @@ defineExpose<{
               </div>
 
               <div class="grid gap-px bg-[color:var(--studio-divider)]">
-                <template
-                  v-for="row in getTableRows(table.fullName)"
-                  :key="row.key"
-                >
-                  <div
-                    v-if="row.kind === 'column'"
-                    :data-table-row-anchor="row.key"
-                    data-table-row-kind="column"
-                    :data-column-anchor="getColumnAnchorKey(table.fullName, row.column.name)"
-                    :class="[
-                      'relative flex min-w-0 items-start justify-between gap-2 bg-[color:var(--studio-row-surface)] px-2 py-1.5',
-                      isHighlightedRelationalRow(table.fullName, row.column.name) ? 'pgml-selection-glow pgml-selection-glow-subtle' : ''
-                    ]"
-                    :style="getRelationalRowHighlightColor(table.fullName, row.column.name) ? getSelectionGlowStyle(getRelationalRowHighlightColor(table.fullName, row.column.name) || '#79e3ea') : undefined"
-                    :data-relational-highlighted="isHighlightedRelationalRow(table.fullName, row.column.name) ? 'true' : undefined"
-                  >
-                    <div
-                      :data-column-label-anchor="getColumnLabelAnchorKey(table.fullName, row.column.name)"
-                      class="min-w-0"
-                    >
-                      <strong
-                        data-table-row-title
-                        class="block truncate font-mono text-[0.68rem] font-medium text-[color:var(--studio-shell-text)]"
-                      >
-                        {{ row.column.name }}
-                      </strong>
-                      <span
-                        data-table-row-subtitle
-                        class="mt-0.5 block truncate text-[0.64rem] text-[color:var(--studio-shell-muted)]"
-                      >
-                        {{ row.column.type }}
-                      </span>
-                    </div>
-                    <div class="grid max-w-[8.5rem] shrink-0 justify-items-end gap-0.5 text-right">
-                      <span
-                        v-for="modifier in row.column.modifiers.slice(0, 2)"
-                        :key="modifier"
-                        data-table-row-badge
-                        class="inline-flex min-h-[1rem] max-w-full items-center justify-end border border-[color:var(--studio-rail)] px-1 py-0.5 font-mono text-[0.52rem] uppercase leading-[1.15] tracking-[0.04em] whitespace-normal break-all text-[color:var(--studio-shell-muted)]"
-                      >
-                        {{ modifier }}
-                      </span>
-                    </div>
-                  </div>
-
-                  <UPopover
-                    v-else
-                    mode="click"
-                    :content="attachmentPopoverContent"
-                    :ui="attachmentPopoverUi"
-                  >
-                    <button
-                      type="button"
-                      :data-table-row-anchor="row.key"
-                      data-table-row-kind="attachment"
-                      :data-attachment-row="row.attachment.id"
-                      :class="[
-                        'relative flex min-w-0 w-full items-start justify-between gap-2 px-2 py-1.5 text-left transition-[filter,transform] duration-150 hover:brightness-105',
-                        isAttachmentSelectionActive(table.fullName, row.attachment.id) ? 'pgml-selection-glow' : ''
-                      ]"
-                      :style="[
-                        getAttachmentRowStyle(row.attachment),
-                        isAttachmentSelectionActive(table.fullName, row.attachment.id) ? getSelectedAttachmentRowStyle() : undefined,
-                        getSelectionGlowStyle(row.attachment.color)
-                      ]"
-                      :aria-label="`${row.attachment.kind} ${row.attachment.title}`"
-                      :data-selection-active="isAttachmentSelectionActive(table.fullName, row.attachment.id) ? 'true' : undefined"
-                      @pointerdown.stop
-                      @click.stop="handleAttachmentClick(table.fullName, row.attachment)"
-                      @dblclick.stop="handleAttachmentDoubleClick(row.attachment)"
-                    >
-                      <div class="flex min-w-0 items-start gap-2">
-                        <span
-                          data-table-row-badge
-                          class="mt-0.5 inline-flex h-4 shrink-0 items-center border px-1 font-mono text-[0.48rem] uppercase tracking-[0.06em]"
-                          :style="getAttachmentKindBadgeStyle(row.attachment)"
-                        >
-                          {{ row.attachment.kind }}
-                        </span>
-                        <div class="min-w-0">
-                          <strong
-                            data-table-row-title
-                            class="block truncate font-mono text-[0.66rem] font-medium text-[color:var(--studio-shell-text)]"
-                          >
-                            {{ row.attachment.title }}
-                          </strong>
-                          <span
-                            v-if="row.attachment.subtitle"
-                            data-table-row-subtitle
-                            class="mt-0.5 block truncate text-[0.62rem] text-[color:var(--studio-shell-muted)]"
-                          >
-                            {{ row.attachment.subtitle }}
-                          </span>
-                        </div>
-                      </div>
-
-                      <div class="flex max-w-[8.5rem] shrink-0 flex-wrap justify-end gap-0.5 text-right">
-                        <span
-                          v-for="flag in row.attachment.flags"
-                          :key="flag.key"
-                          data-table-row-badge
-                          class="inline-flex min-h-[1rem] max-w-full items-center justify-end border px-1 py-0.5 font-mono text-[0.5rem] uppercase leading-[1.15] tracking-[0.04em] whitespace-normal break-all"
-                          :style="getAttachmentFlagStyle(flag)"
-                        >
-                          {{ flag.label }}
-                        </span>
-                      </div>
-                    </button>
-
-                    <template #content>
-                      <div
-                        :data-attachment-popover="row.attachment.id"
-                        class="grid gap-3"
-                      >
-                        <div class="flex items-start justify-between gap-3">
-                          <div class="min-w-0">
-                            <span
-                              class="mb-1 inline-flex items-center border px-1.5 font-mono text-[0.56rem] uppercase tracking-[0.08em]"
-                              :style="getAttachmentKindBadgeStyle(row.attachment)"
-                            >
-                              {{ row.attachment.kind }}
-                            </span>
-                            <h5 class="truncate text-[0.82rem] font-semibold text-[color:var(--studio-shell-text)]">
-                              {{ row.attachment.title }}
-                            </h5>
-                            <p
-                              v-if="row.attachment.subtitle"
-                              class="mt-1 text-[0.68rem] leading-5 text-[color:var(--studio-shell-muted)]"
-                            >
-                              {{ row.attachment.subtitle }}
-                            </p>
-                          </div>
-
-                          <div class="flex shrink-0 flex-wrap justify-end gap-1">
-                            <span
-                              v-for="flag in row.attachment.flags"
-                              :key="flag.key"
-                              class="inline-flex items-center border px-1.5 py-0.5 font-mono text-[0.54rem] uppercase tracking-[0.06em]"
-                              :style="getAttachmentFlagStyle(flag)"
-                            >
-                              {{ flag.label }}
-                            </span>
-                          </div>
-                        </div>
-
-                        <div class="grid max-h-64 gap-1 overflow-auto border border-[color:var(--studio-rail)] bg-[color:var(--studio-input-bg)] px-2 py-2">
-                          <p
-                            v-for="detail in row.attachment.details"
-                            :key="detail"
-                            class="break-words whitespace-pre-wrap font-mono text-[0.62rem] leading-5 text-[color:var(--studio-shell-muted)] [overflow-wrap:anywhere]"
-                          >
-                            {{ detail }}
-                          </p>
-                        </div>
-                      </div>
-                    </template>
-                  </UPopover>
-                </template>
+                <PgmlDiagramTableRows
+                  :attachment-popover-content="attachmentPopoverContent"
+                  :attachment-popover-ui="attachmentPopoverUi"
+                  :get-attachment-flag-style="getAttachmentFlagStyle"
+                  :get-attachment-kind-badge-style="getAttachmentKindBadgeStyle"
+                  :get-attachment-row-style="getAttachmentRowStyle"
+                  :get-column-anchor-key="getColumnAnchorKey"
+                  :get-column-label-anchor-key="getColumnLabelAnchorKey"
+                  :get-relational-row-highlight-color="getRelationalRowHighlightColor"
+                  :get-selected-attachment-row-style="getSelectedAttachmentRowStyle"
+                  :get-selection-glow-style="getSelectionGlowStyle"
+                  :is-attachment-selection-active="isAttachmentSelectionActive"
+                  :is-highlighted-relational-row="isHighlightedRelationalRow"
+                  :rows="getTableRows(table.fullName)"
+                  :table-id="table.fullName"
+                  @attachment-click="handleAttachmentClick"
+                  @attachment-double-click="handleAttachmentDoubleClick"
+                />
               </div>
             </article>
           </div>
@@ -6633,164 +6446,24 @@ defineExpose<{
           v-else-if="node.kind === 'table'"
           class="grid gap-px bg-[color:var(--studio-divider)]"
         >
-          <template
-            v-for="row in getTableRows(node.id)"
-            :key="row.key"
-          >
-            <div
-              v-if="row.kind === 'column'"
-              :data-table-row-anchor="row.key"
-              data-table-row-kind="column"
-              :data-column-anchor="getColumnAnchorKey(node.id, row.column.name)"
-              :class="[
-                'relative flex min-w-0 items-start justify-between gap-2 bg-[color:var(--studio-row-surface)] px-2 py-1.5',
-                isHighlightedRelationalRow(node.id, row.column.name) ? 'pgml-selection-glow pgml-selection-glow-subtle' : ''
-              ]"
-              :style="getRelationalRowHighlightColor(node.id, row.column.name) ? getSelectionGlowStyle(getRelationalRowHighlightColor(node.id, row.column.name) || '#79e3ea') : undefined"
-              :data-relational-highlighted="isHighlightedRelationalRow(node.id, row.column.name) ? 'true' : undefined"
-            >
-              <div
-                :data-column-label-anchor="getColumnLabelAnchorKey(node.id, row.column.name)"
-                class="min-w-0"
-              >
-                <strong
-                  data-table-row-title
-                  class="block truncate font-mono text-[0.68rem] font-medium text-[color:var(--studio-shell-text)]"
-                >
-                  {{ row.column.name }}
-                </strong>
-                <span
-                  data-table-row-subtitle
-                  class="mt-0.5 block truncate text-[0.64rem] text-[color:var(--studio-shell-muted)]"
-                >
-                  {{ row.column.type }}
-                </span>
-              </div>
-              <div class="grid max-w-[8.5rem] shrink-0 justify-items-end gap-0.5 text-right">
-                <span
-                  v-for="modifier in row.column.modifiers.slice(0, 2)"
-                  :key="modifier"
-                  data-table-row-badge
-                  class="inline-flex min-h-[1rem] max-w-full items-center justify-end border border-[color:var(--studio-rail)] px-1 py-0.5 font-mono text-[0.52rem] uppercase leading-[1.15] tracking-[0.04em] whitespace-normal break-all text-[color:var(--studio-shell-muted)]"
-                >
-                  {{ modifier }}
-                </span>
-              </div>
-            </div>
-
-            <UPopover
-              v-else
-              mode="click"
-              :content="attachmentPopoverContent"
-              :ui="attachmentPopoverUi"
-            >
-              <button
-                type="button"
-                :data-table-row-anchor="row.key"
-                data-table-row-kind="attachment"
-                :data-attachment-row="row.attachment.id"
-                :class="[
-                  'relative flex min-w-0 w-full items-start justify-between gap-2 px-2 py-1.5 text-left transition-[filter,transform] duration-150 hover:brightness-105',
-                  isAttachmentSelectionActive(node.id, row.attachment.id) ? 'pgml-selection-glow' : ''
-                ]"
-                :style="[
-                  getAttachmentRowStyle(row.attachment),
-                  isAttachmentSelectionActive(node.id, row.attachment.id) ? getSelectedAttachmentRowStyle() : undefined,
-                  getSelectionGlowStyle(row.attachment.color)
-                ]"
-                :aria-label="`${row.attachment.kind} ${row.attachment.title}`"
-                :data-selection-active="isAttachmentSelectionActive(node.id, row.attachment.id) ? 'true' : undefined"
-                @pointerdown.stop
-                @click.stop="handleAttachmentClick(node.id, row.attachment)"
-                @dblclick.stop="handleAttachmentDoubleClick(row.attachment)"
-              >
-                <div class="flex min-w-0 items-start gap-2">
-                  <span
-                    data-table-row-badge
-                    class="mt-0.5 inline-flex h-4 shrink-0 items-center border px-1 font-mono text-[0.48rem] uppercase tracking-[0.06em]"
-                    :style="getAttachmentKindBadgeStyle(row.attachment)"
-                  >
-                    {{ row.attachment.kind }}
-                  </span>
-                  <div class="min-w-0">
-                    <strong
-                      data-table-row-title
-                      class="block truncate font-mono text-[0.66rem] font-medium text-[color:var(--studio-shell-text)]"
-                    >
-                      {{ row.attachment.title }}
-                    </strong>
-                    <span
-                      v-if="row.attachment.subtitle"
-                      data-table-row-subtitle
-                      class="mt-0.5 block truncate text-[0.62rem] text-[color:var(--studio-shell-muted)]"
-                    >
-                      {{ row.attachment.subtitle }}
-                    </span>
-                  </div>
-                </div>
-
-                <div class="flex max-w-[8.5rem] shrink-0 flex-wrap justify-end gap-0.5 text-right">
-                  <span
-                    v-for="flag in row.attachment.flags"
-                    :key="flag.key"
-                    data-table-row-badge
-                    class="inline-flex min-h-[1rem] max-w-full items-center justify-end border px-1 py-0.5 font-mono text-[0.5rem] uppercase leading-[1.15] tracking-[0.04em] whitespace-normal break-all"
-                    :style="getAttachmentFlagStyle(flag)"
-                  >
-                    {{ flag.label }}
-                  </span>
-                </div>
-              </button>
-
-              <template #content>
-                <div
-                  :data-attachment-popover="row.attachment.id"
-                  class="grid gap-3"
-                >
-                  <div class="flex items-start justify-between gap-3">
-                    <div class="min-w-0">
-                      <span
-                        class="mb-1 inline-flex items-center border px-1.5 font-mono text-[0.56rem] uppercase tracking-[0.08em]"
-                        :style="getAttachmentKindBadgeStyle(row.attachment)"
-                      >
-                        {{ row.attachment.kind }}
-                      </span>
-                      <h5 class="truncate text-[0.82rem] font-semibold text-[color:var(--studio-shell-text)]">
-                        {{ row.attachment.title }}
-                      </h5>
-                      <p
-                        v-if="row.attachment.subtitle"
-                        class="mt-1 text-[0.68rem] leading-5 text-[color:var(--studio-shell-muted)]"
-                      >
-                        {{ row.attachment.subtitle }}
-                      </p>
-                    </div>
-
-                    <div class="flex shrink-0 flex-wrap justify-end gap-1">
-                      <span
-                        v-for="flag in row.attachment.flags"
-                        :key="flag.key"
-                        class="inline-flex items-center border px-1.5 py-0.5 font-mono text-[0.54rem] uppercase tracking-[0.06em]"
-                        :style="getAttachmentFlagStyle(flag)"
-                      >
-                        {{ flag.label }}
-                      </span>
-                    </div>
-                  </div>
-
-                  <div class="grid max-h-64 gap-1 overflow-auto border border-[color:var(--studio-rail)] bg-[color:var(--studio-input-bg)] px-2 py-2">
-                    <p
-                      v-for="detail in row.attachment.details"
-                      :key="detail"
-                      class="break-words whitespace-pre-wrap font-mono text-[0.62rem] leading-5 text-[color:var(--studio-shell-muted)] [overflow-wrap:anywhere]"
-                    >
-                      {{ detail }}
-                    </p>
-                  </div>
-                </div>
-              </template>
-            </UPopover>
-          </template>
+          <PgmlDiagramTableRows
+            :attachment-popover-content="attachmentPopoverContent"
+            :attachment-popover-ui="attachmentPopoverUi"
+            :get-attachment-flag-style="getAttachmentFlagStyle"
+            :get-attachment-kind-badge-style="getAttachmentKindBadgeStyle"
+            :get-attachment-row-style="getAttachmentRowStyle"
+            :get-column-anchor-key="getColumnAnchorKey"
+            :get-column-label-anchor-key="getColumnLabelAnchorKey"
+            :get-relational-row-highlight-color="getRelationalRowHighlightColor"
+            :get-selected-attachment-row-style="getSelectedAttachmentRowStyle"
+            :get-selection-glow-style="getSelectionGlowStyle"
+            :is-attachment-selection-active="isAttachmentSelectionActive"
+            :is-highlighted-relational-row="isHighlightedRelationalRow"
+            :rows="getTableRows(node.id)"
+            :table-id="node.id"
+            @attachment-click="handleAttachmentClick"
+            @attachment-double-click="handleAttachmentDoubleClick"
+          />
         </div>
 
         <div
