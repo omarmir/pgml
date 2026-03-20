@@ -204,10 +204,14 @@ const studioSwitchUi = {
   label: 'text-[0.78rem] text-[color:var(--studio-shell-text)]',
   description: 'text-[0.7rem] text-[color:var(--studio-shell-muted)]'
 }
-const secondaryModalButtonClass = 'rounded-none border border-[color:var(--studio-shell-border)] bg-[color:var(--studio-control-bg)] text-[color:var(--studio-shell-text)] hover:bg-[color:var(--studio-shell-text)]/8'
-const primaryModalButtonClass = 'rounded-none border border-[color:var(--studio-shell-border)] bg-[color:var(--studio-input-bg)] text-[color:var(--studio-shell-text)] hover:bg-[color:var(--studio-shell-text)]/8 disabled:opacity-100 disabled:border-[color:var(--studio-shell-border)] disabled:bg-[color:var(--studio-shell-text)]/10 disabled:text-[color:var(--studio-shell-muted)]'
-const iconGhostButtonClass = 'rounded-none text-[color:var(--studio-shell-muted)] hover:bg-[color:var(--studio-shell-text)]/8 hover:text-[color:var(--studio-shell-text)]'
-const overwriteTargetButtonClass = 'grid gap-1 border px-3 py-2 text-left transition-colors duration-150'
+const secondaryModalButtonClass = 'studio-button'
+const primaryModalButtonClass = 'studio-button studio-button--primary'
+const iconGhostButtonClass = 'studio-button studio-button--ghost studio-button--icon'
+const overwriteTargetButtonClass = 'studio-choice-button grid gap-1 px-3 py-2 text-left'
+const editorVisibilityButtonClass = 'studio-button absolute left-3 top-3 z-[4] px-2 py-1 font-mono text-[0.62rem] uppercase tracking-[0.08em]'
+const tableEditorAddButtonClass = 'studio-button studio-button--primary'
+const tableEditorRemoveButtonClass = 'studio-button studio-button--ghost studio-button--icon'
+const tableEditorModifierButtonClass = 'studio-toggle-chip px-2 py-1 font-mono text-[0.58rem] uppercase tracking-[0.08em]'
 const sourceAnalysis = computed(() => analyzePgmlDocument(source.value))
 const sourceDiagnostics = computed(() => sourceAnalysis.value.diagnostics)
 const sourceErrorDiagnostics = computed(() => {
@@ -829,7 +833,7 @@ onBeforeUnmount(() => {
           color="neutral"
           variant="outline"
           size="xs"
-          class="absolute left-3 top-3 z-[4] rounded-none border border-[color:var(--studio-shell-border)] bg-[color:var(--studio-control-bg)] px-2 py-1 font-mono text-[0.62rem] uppercase tracking-[0.08em] text-[color:var(--studio-shell-text)] hover:bg-[color:var(--studio-surface-hover)]"
+          :class="editorVisibilityButtonClass"
           @click="toggleEditorPanelVisibility"
         />
         <PgmlDiagramCanvas
@@ -930,7 +934,7 @@ onBeforeUnmount(() => {
                       color="neutral"
                       variant="soft"
                       size="xs"
-                      class="rounded-none border border-[color:var(--studio-shell-border)] bg-[color:var(--studio-input-bg)] text-[color:var(--studio-shell-text)]"
+                      :class="primaryModalButtonClass"
                       @click="clearSaveSchemaTarget"
                     />
                   </div>
@@ -946,8 +950,8 @@ onBeforeUnmount(() => {
                       :class="[
                         overwriteTargetButtonClass,
                         saveSchemaTarget?.id === schema.id
-                          ? 'border-[color:var(--studio-shell-label)] bg-[color:var(--studio-shell-text)]/8'
-                          : 'border-[color:var(--studio-shell-border)] bg-[color:var(--studio-control-bg)] hover:bg-[color:var(--studio-shell-text)]/8'
+                          ? 'studio-choice-button--active'
+                          : ''
                       ]"
                       @click="selectSaveSchemaTarget(schema)"
                     >
@@ -1221,7 +1225,7 @@ onBeforeUnmount(() => {
                     color="neutral"
                     variant="soft"
                     size="sm"
-                    class="rounded-none border border-[color:var(--studio-shell-border)] bg-[color:var(--studio-input-bg)] text-[color:var(--studio-shell-text)]"
+                    :class="tableEditorAddButtonClass"
                     @click="addTableDraftColumn"
                   />
                 </div>
@@ -1243,7 +1247,7 @@ onBeforeUnmount(() => {
                         color="neutral"
                         variant="ghost"
                         size="xs"
-                        class="rounded-none text-[color:var(--studio-shell-muted)] hover:bg-[color:var(--studio-surface-hover)] hover:text-[color:var(--studio-shell-text)]"
+                        :class="tableEditorRemoveButtonClass"
                         aria-label="Remove column"
                         :disabled="tableEditorDraft.columns.length <= 1"
                         @click="removeTableDraftColumn(column.id)"
@@ -1332,24 +1336,21 @@ onBeforeUnmount(() => {
                     <div class="flex flex-wrap gap-2">
                       <button
                         type="button"
-                        class="border px-2 py-1 font-mono text-[0.58rem] uppercase tracking-[0.08em] transition-colors duration-150"
-                        :class="column.primaryKey ? 'border-[color:var(--studio-shell-label)] bg-[color:var(--studio-input-bg)] text-[color:var(--studio-shell-text)]' : 'border-[color:var(--studio-shell-border)] text-[color:var(--studio-shell-muted)]'"
+                        :class="[tableEditorModifierButtonClass, column.primaryKey ? 'studio-toggle-chip--active' : '']"
                         @click="column.primaryKey = !column.primaryKey"
                       >
                         Primary key
                       </button>
                       <button
                         type="button"
-                        class="border px-2 py-1 font-mono text-[0.58rem] uppercase tracking-[0.08em] transition-colors duration-150"
-                        :class="column.notNull ? 'border-[color:var(--studio-shell-label)] bg-[color:var(--studio-input-bg)] text-[color:var(--studio-shell-text)]' : 'border-[color:var(--studio-shell-border)] text-[color:var(--studio-shell-muted)]'"
+                        :class="[tableEditorModifierButtonClass, column.notNull ? 'studio-toggle-chip--active' : '']"
                         @click="column.notNull = !column.notNull"
                       >
                         Not null
                       </button>
                       <button
                         type="button"
-                        class="border px-2 py-1 font-mono text-[0.58rem] uppercase tracking-[0.08em] transition-colors duration-150"
-                        :class="column.unique ? 'border-[color:var(--studio-shell-label)] bg-[color:var(--studio-input-bg)] text-[color:var(--studio-shell-text)]' : 'border-[color:var(--studio-shell-border)] text-[color:var(--studio-shell-muted)]'"
+                        :class="[tableEditorModifierButtonClass, column.unique ? 'studio-toggle-chip--active' : '']"
                         @click="column.unique = !column.unique"
                       >
                         Unique

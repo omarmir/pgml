@@ -184,14 +184,14 @@ Function register_entity(entity_kind text) returns trigger [replace] {
             label="Open Diagram Studio"
             trailing-icon="i-lucide-arrow-right"
             color="neutral"
-            class="rounded-none border border-[color:var(--studio-shell-border)] bg-[color:var(--studio-control-bg)] text-[color:var(--studio-shell-text)] hover:bg-[color:var(--studio-surface-hover)]"
+            class="studio-button"
           />
           <UButton
             to="#documentation"
             label="Read the docs"
             color="neutral"
             variant="ghost"
-            class="rounded-none border border-transparent text-[color:var(--studio-shell-muted)] hover:border-[color:var(--studio-shell-border)] hover:bg-[color:var(--studio-surface-hover)] hover:text-[color:var(--studio-shell-text)]"
+            class="studio-button studio-button--ghost"
           />
         </div>
       </div>

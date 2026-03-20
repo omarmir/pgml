@@ -195,11 +195,13 @@ const studioSchemaStatusIconClass = computed(() => {
                   }"
                 >
                   <UButton
-                    icon="i-lucide-ellipsis"
+                    icon="i-lucide-panel-top-open"
+                    label="Actions"
                     color="neutral"
-                    variant="ghost"
-                    class="rounded-none border border-transparent text-[color:var(--studio-shell-muted)] hover:border-[color:var(--studio-shell-border)] hover:bg-[color:var(--studio-surface-hover)] hover:text-[color:var(--studio-shell-text)]"
+                    variant="soft"
+                    class="studio-button studio-button--primary"
                     aria-label="Studio actions"
+                    title="Studio actions"
                     :loading="studioHeaderActions.isLoading"
                   />
                 </UDropdownMenu>
@@ -208,7 +210,7 @@ const studioSchemaStatusIconClass = computed(() => {
                 :icon="studioThemeIcon"
                 color="neutral"
                 variant="ghost"
-                class="rounded-none border border-transparent text-[color:var(--studio-shell-muted)] hover:border-[color:var(--studio-shell-border)] hover:bg-[color:var(--studio-surface-hover)] hover:text-[color:var(--studio-shell-text)]"
+                class="studio-button studio-button--ghost studio-button--icon"
                 :aria-label="studioThemeLabel"
                 :title="studioThemeLabel"
                 @click="toggleStudioTheme"
@@ -218,7 +220,7 @@ const studioSchemaStatusIconClass = computed(() => {
                 :label="isStudioRoute ? 'View Spec' : 'Open Studio'"
                 color="neutral"
                 trailing-icon="i-lucide-arrow-up-right"
-                class="rounded-none border border-[color:var(--studio-shell-border)] bg-[color:var(--studio-control-bg)] text-[color:var(--studio-shell-text)] hover:bg-[color:var(--studio-surface-hover)]"
+                class="studio-button"
               />
             </div>
           </div>
