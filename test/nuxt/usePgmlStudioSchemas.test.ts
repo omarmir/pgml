@@ -52,7 +52,7 @@ describe('usePgmlStudioSchemas', () => {
     ]))
 
     const source = ref('Table public.users {\n  id uuid [pk]\n}')
-    let api: ReturnType<typeof usePgmlStudioSchemas> | null = null
+    let api!: ReturnType<typeof usePgmlStudioSchemas>
 
     await mountSuspended(defineComponent({
       setup() {
@@ -67,18 +67,18 @@ describe('usePgmlStudioSchemas', () => {
       }
     }))
 
-    expect(api?.orderedSavedSchemas.value).toHaveLength(1)
+    expect(api.orderedSavedSchemas.value).toHaveLength(1)
 
-    api?.openSchemaDialog('save')
-    api?.selectSaveSchemaTarget(api.orderedSavedSchemas.value[0]!)
+    api.openSchemaDialog('save')
+    api.selectSaveSchemaTarget(api.orderedSavedSchemas.value[0]!)
 
     source.value = 'Table public.users {\n  id uuid [pk]\n  email text\n}'
-    api?.saveSchemaToBrowser()
+    api.saveSchemaToBrowser()
 
     const persisted = JSON.parse(window.localStorage.getItem('pgml-studio-schemas-v1') || '[]')
 
-    expect(api?.saveSchemaActionLabel.value).toBe('Overwrite saved schema')
-    expect(api?.saveSchemaTarget.value?.id).toBe('existing-schema')
+    expect(api.saveSchemaActionLabel.value).toBe('Overwrite saved schema')
+    expect(api.saveSchemaTarget.value?.id).toBe('existing-schema')
     expect(persisted).toHaveLength(1)
     expect(persisted[0]?.id).toBe('existing-schema')
     expect(persisted[0]?.text).toContain('email text')
@@ -86,7 +86,7 @@ describe('usePgmlStudioSchemas', () => {
 
   it('downloads, loads, and deletes schemas while keeping the current selection in sync', async () => {
     const source = ref('Table public.users {\n  id uuid [pk]\n}')
-    let api: ReturnType<typeof usePgmlStudioSchemas> | null = null
+    let api!: ReturnType<typeof usePgmlStudioSchemas>
     const createObjectUrl = vi.spyOn(URL, 'createObjectURL').mockReturnValue('blob:pgml')
     const revokeObjectUrl = vi.spyOn(URL, 'revokeObjectURL').mockImplementation(() => undefined)
     const clickSpy = vi.fn()
@@ -118,28 +118,28 @@ describe('usePgmlStudioSchemas', () => {
       }
     }))
 
-    api?.openSchemaDialog('save')
-    api!.currentSchemaName.value = 'Primary schema'
-    api?.saveSchemaToBrowser()
+    api.openSchemaDialog('save')
+    api.currentSchemaName.value = 'Primary schema'
+    api.saveSchemaToBrowser()
 
-    const savedSchema = api?.orderedSavedSchemas.value[0]
+    const savedSchema = api.orderedSavedSchemas.value[0]
 
     if (!savedSchema) {
       throw new Error('Expected a saved schema.')
     }
 
-    api?.downloadSchema()
+    api.downloadSchema()
     await new Promise((resolve) => {
       window.setTimeout(resolve, 0)
     })
-    api?.loadSavedSchema(savedSchema)
-    api?.deleteSavedSchema(savedSchema.id)
+    api.loadSavedSchema(savedSchema)
+    api.deleteSavedSchema(savedSchema.id)
 
     expect(clickSpy).toHaveBeenCalled()
     expect(createObjectUrl).toHaveBeenCalled()
     expect(revokeObjectUrl).toHaveBeenCalled()
-    expect(api?.currentSchemaId.value).toBeNull()
-    expect(api?.orderedSavedSchemas.value).toHaveLength(0)
+    expect(api.currentSchemaId.value).toBeNull()
+    expect(api.orderedSavedSchemas.value).toHaveLength(0)
 
     createObjectUrl.mockRestore()
     revokeObjectUrl.mockRestore()
@@ -162,7 +162,7 @@ describe('usePgmlStudioSchemas', () => {
     ]))
 
     const source = ref('Table public.users {\n  id uuid [pk]\n}')
-    let api: ReturnType<typeof usePgmlStudioSchemas> | null = null
+    let api!: ReturnType<typeof usePgmlStudioSchemas>
 
     await mountSuspended(defineComponent({
       setup() {
@@ -178,17 +178,17 @@ describe('usePgmlStudioSchemas', () => {
     }))
 
     expect(source.value).toContain('Table public.latest')
-    expect(api?.currentSchemaId.value).toBe('latest-schema')
-    expect(api?.currentSchemaName.value).toBe('Latest schema')
-    expect(api?.currentSchemaUpdatedAt.value).toBe('2026-03-19T09:30:00.000Z')
-    expect(api?.isSavedToLocalStorage.value).toBe(true)
+    expect(api.currentSchemaId.value).toBe('latest-schema')
+    expect(api.currentSchemaName.value).toBe('Latest schema')
+    expect(api.currentSchemaUpdatedAt.value).toBe('2026-03-19T09:30:00.000Z')
+    expect(api.isSavedToLocalStorage.value).toBe(true)
   })
 
   it('autosaves changes to local storage after five seconds', async () => {
     vi.useFakeTimers()
 
     const source = ref('Table public.users {\n  id uuid [pk]\n}')
-    let api: ReturnType<typeof usePgmlStudioSchemas> | null = null
+    let api!: ReturnType<typeof usePgmlStudioSchemas>
 
     await mountSuspended(defineComponent({
       setup() {
@@ -205,8 +205,8 @@ describe('usePgmlStudioSchemas', () => {
 
     source.value = 'Table public.users {\n  id uuid [pk]\n  email text\n}'
 
-    expect(api?.hasPendingLocalChanges.value).toBe(true)
-    expect(api?.isSavedToLocalStorage.value).toBe(false)
+    expect(api.hasPendingLocalChanges.value).toBe(true)
+    expect(api.isSavedToLocalStorage.value).toBe(false)
 
     await vi.advanceTimersByTimeAsync(4900)
 
@@ -219,16 +219,16 @@ describe('usePgmlStudioSchemas', () => {
     expect(persisted).toHaveLength(1)
     expect(persisted[0]?.text).toContain('email text')
     expect(typeof persisted[0]?.updatedAt).toBe('string')
-    expect(api?.currentSchemaUpdatedAt.value).toBe(persisted[0]?.updatedAt)
-    expect(api?.isSavedToLocalStorage.value).toBe(true)
-    expect(api?.hasPendingLocalChanges.value).toBe(false)
+    expect(api.currentSchemaUpdatedAt.value).toBe(persisted[0]?.updatedAt)
+    expect(api.isSavedToLocalStorage.value).toBe(true)
+    expect(api.hasPendingLocalChanges.value).toBe(false)
   })
 
   it('keeps pending changes and exposes an error when local storage saving fails', async () => {
     vi.useFakeTimers()
 
     const source = ref('Table public.users {\n  id uuid [pk]\n}')
-    let api: ReturnType<typeof usePgmlStudioSchemas> | null = null
+    let api!: ReturnType<typeof usePgmlStudioSchemas>
     const setItemSpy = vi.spyOn(window.localStorage, 'setItem').mockImplementation(() => {
       throw new Error('Storage quota exceeded.')
     })
@@ -250,9 +250,9 @@ describe('usePgmlStudioSchemas', () => {
 
     await vi.advanceTimersByTimeAsync(5000)
 
-    expect(api?.localStorageSaveError.value).toBe('Unable to save to local storage.')
-    expect(api?.hasPendingLocalChanges.value).toBe(true)
-    expect(api?.isSavedToLocalStorage.value).toBe(false)
+    expect(api.localStorageSaveError.value).toBe('Unable to save to local storage.')
+    expect(api.hasPendingLocalChanges.value).toBe(true)
+    expect(api.isSavedToLocalStorage.value).toBe(false)
 
     setItemSpy.mockRestore()
   })

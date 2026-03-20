@@ -299,6 +299,7 @@ const attachmentPopoverContent = {
 const attachmentPopoverUi = {
   content: 'w-[22rem] rounded-none border border-[color:var(--studio-shell-border)] bg-[color:var(--studio-control-bg)] p-3 shadow-[var(--studio-floating-shadow)] backdrop-blur-sm'
 }
+const { buttonClasses } = useStudioUi()
 const exportSelectUi = {
   base: 'studio-select-trigger rounded-none border-[color:var(--studio-shell-border)] bg-[color:var(--studio-input-bg)] text-[color:var(--studio-shell-text)]',
   value: 'text-[color:var(--studio-shell-text)]',
@@ -317,6 +318,9 @@ const exportToggleButtonActiveClass = 'border-[color:var(--studio-shell-label)] 
 const exportArtifactButtonBaseClass = 'rounded-none border border-[color:var(--studio-shell-border)] bg-[color:var(--studio-control-bg)] text-[color:var(--studio-shell-text)] hover:bg-[color:var(--studio-surface-hover)] hover:text-[color:var(--studio-shell-text)]'
 const exportArtifactButtonActiveClass = 'border-[color:var(--studio-shell-label)] bg-[color:var(--studio-input-bg)] text-[color:var(--studio-shell-text)]'
 const exportArtifactButtonErrorClass = 'border-[color:var(--studio-shell-error)] bg-[color:var(--studio-shell-error)]/8 text-[color:var(--studio-shell-error)] hover:bg-[color:var(--studio-shell-error)]/12 hover:text-[color:var(--studio-shell-error)]'
+const panelToggleButtonClass = `${buttonClasses.secondary} px-2 py-1 font-mono text-[0.62rem] uppercase tracking-[0.08em]`
+const sidePanelCloseButtonClass = `${buttonClasses.iconGhost} h-7 w-7 justify-center px-0`
+const sidePanelActionButtonClass = `${buttonClasses.secondary} px-2 py-1 font-mono text-[0.62rem] uppercase tracking-[0.08em]`
 const attachmentKindOrder: Record<TableAttachmentKind, number> = {
   Index: 0,
   Constraint: 1,
@@ -6905,19 +6909,17 @@ defineExpose<{
     </div>
 
     <div class="pointer-events-none absolute right-3 top-3 z-[3] flex justify-end gap-2">
-      <button
-        type="button"
+      <UButton
         data-diagram-panel-toggle="true"
-        class="pointer-events-auto inline-flex items-center gap-1.5 border px-2 py-1 font-mono text-[0.62rem] uppercase tracking-[0.08em] text-[color:var(--studio-shell-text)] transition-colors duration-150 hover:bg-[color:var(--studio-surface-hover)]"
-        :style="floatingPanelStyle"
+        :label="isSidePanelOpen ? 'Hide panel' : 'Show panel'"
+        :leading-icon="isSidePanelOpen ? 'i-lucide-panel-right-close' : 'i-lucide-panel-right-open'"
+        color="neutral"
+        variant="outline"
+        size="xs"
+        class="pointer-events-auto"
+        :class="panelToggleButtonClass"
         @click="toggleSidePanel"
-      >
-        <UIcon
-          :name="isSidePanelOpen ? 'i-lucide-panel-right-close' : 'i-lucide-panel-right-open'"
-          class="h-3.5 w-3.5"
-        />
-        {{ isSidePanelOpen ? 'Hide panel' : 'Show panel' }}
-      </button>
+      />
     </div>
 
     <aside
@@ -6947,40 +6949,34 @@ defineExpose<{
               color="neutral"
               variant="ghost"
               size="xs"
-              class="h-7 w-7 rounded-none border border-[color:var(--studio-shell-border)] text-[color:var(--studio-shell-muted)] hover:bg-[color:var(--studio-surface-hover)] hover:text-[color:var(--studio-shell-text)]"
+              :class="sidePanelCloseButtonClass"
               aria-label="Hide panel"
               @click="toggleSidePanel"
             />
           </div>
 
           <div class="mt-3 flex flex-wrap gap-2">
-            <button
-              type="button"
+            <UButton
               data-diagram-create-table="true"
-              class="inline-flex items-center gap-1.5 border px-2 py-1 font-mono text-[0.62rem] uppercase tracking-[0.08em] text-[color:var(--studio-shell-text)] transition-colors duration-150 hover:bg-[color:var(--studio-surface-hover)]"
-              :style="floatingPanelStyle"
+              label="Add table"
+              leading-icon="i-lucide-table-properties"
+              color="neutral"
+              variant="outline"
+              size="xs"
+              :class="sidePanelActionButtonClass"
               @click="handleCreateTable(null)"
-            >
-              <UIcon
-                name="i-lucide-table-properties"
-                class="h-3.5 w-3.5"
-              />
-              Add table
-            </button>
+            />
 
-            <button
-              type="button"
+            <UButton
               data-diagram-create-group="true"
-              class="inline-flex items-center gap-1.5 border px-2 py-1 font-mono text-[0.62rem] uppercase tracking-[0.08em] text-[color:var(--studio-shell-text)] transition-colors duration-150 hover:bg-[color:var(--studio-surface-hover)]"
-              :style="floatingPanelStyle"
+              label="Add group"
+              leading-icon="i-lucide-folder-plus"
+              color="neutral"
+              variant="outline"
+              size="xs"
+              :class="sidePanelActionButtonClass"
               @click="handleCreateGroup"
-            >
-              <UIcon
-                name="i-lucide-folder-plus"
-                class="h-3.5 w-3.5"
-              />
-              Add group
-            </button>
+            />
           </div>
         </div>
       </div>

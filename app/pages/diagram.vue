@@ -8,6 +8,7 @@ import { usePgmlColumnDefaultSuggestions } from '~/composables/usePgmlColumnDefa
 import { slugifySchemaName, type SavedPgmlSchema } from '~/composables/usePgmlStudioSchemas'
 import { useStudioHeaderActions } from '~/composables/useStudioHeaderActions'
 import { useStudioSchemaStatus } from '~/composables/useStudioSchemaStatus'
+import { useStudioUi } from '~/composables/useStudioUi'
 import { analyzePgmlDocument } from '~/utils/pgml-language'
 import {
   buildPgmlWithNodeProperties,
@@ -146,71 +147,24 @@ const {
   studioLayoutStyle,
   toggleEditorPanelVisibility
 } = useStudioEditorLayout()
-const studioModalSurfaceStyle = {
-  backgroundColor: 'var(--studio-modal-bg)',
-  color: 'var(--studio-shell-text)',
-  borderColor: 'var(--studio-shell-border)',
-  boxShadow: 'var(--studio-floating-shadow)'
-}
-const studioFieldUi = {
-  base: 'rounded-none border-[color:var(--studio-shell-border)] bg-[color:var(--studio-input-bg)] text-[color:var(--studio-shell-text)]'
-}
-const studioSelectUi = {
-  base: 'studio-select-trigger rounded-none border-[color:var(--studio-shell-border)] bg-[color:var(--studio-input-bg)] text-[color:var(--studio-shell-text)]',
-  value: 'text-[color:var(--studio-shell-text)]',
-  placeholder: 'text-[color:var(--studio-shell-muted)]',
-  trailingIcon: 'text-[color:var(--studio-shell-muted)]',
-  content: 'rounded-none border border-[color:var(--studio-shell-border)] bg-[color:var(--studio-control-bg)] p-1 shadow-[var(--studio-floating-shadow)] backdrop-blur-sm',
-  viewport: 'scroll-py-1 overflow-y-auto',
-  item: 'studio-select-item rounded-none before:rounded-none text-[color:var(--studio-shell-text)]',
-  itemLabel: 'truncate',
-  itemDescription: 'whitespace-normal break-words text-[color:var(--studio-shell-muted)]',
-  itemLeadingIcon: 'text-[color:var(--studio-shell-muted)]',
-  itemTrailingIcon: 'text-[color:var(--studio-shell-label)]'
-}
-const studioInputMenuUi = {
-  base: 'studio-select-trigger rounded-none border-[color:var(--studio-shell-border)] bg-[color:var(--studio-input-bg)] text-[color:var(--studio-shell-text)]',
-  value: 'text-[color:var(--studio-shell-text)]',
-  placeholder: 'text-[color:var(--studio-shell-muted)]',
-  trailingIcon: 'text-[color:var(--studio-shell-muted)]',
-  content: 'rounded-none border border-[color:var(--studio-shell-border)] bg-[color:var(--studio-control-bg)] p-1 shadow-[var(--studio-floating-shadow)] backdrop-blur-sm',
-  viewport: 'scroll-py-1 overflow-y-auto',
-  item: 'studio-select-item rounded-none before:rounded-none text-[color:var(--studio-shell-text)]',
-  itemLabel: 'truncate',
-  itemDescription: 'whitespace-normal break-words text-[color:var(--studio-shell-muted)]',
-  itemLeadingIcon: 'text-[color:var(--studio-shell-muted)]',
-  itemTrailingIcon: 'text-[color:var(--studio-shell-label)]'
-}
-const studioDefaultInputMenuProps: Record<string, unknown> = {
-  autocomplete: true,
-  openOnClick: true,
-  openOnFocus: true
-}
-const getStudioSelectMenuSearchInputProps = (placeholder: string) => {
-  return {
-    placeholder,
-    variant: 'none' as const,
-    ui: {
-      base: 'text-[color:var(--studio-shell-text)] placeholder:text-[color:var(--studio-shell-muted)]',
-      root: 'px-1',
-      leadingIcon: 'text-[color:var(--studio-shell-muted)]'
-    }
-  }
-}
-const studioSwitchUi = {
-  wrapper: 'gap-1',
-  base: 'border border-[color:var(--studio-shell-border)] bg-[color:var(--studio-rail)] data-[state=checked]:bg-[color:var(--studio-shell-label)]',
-  thumb: 'bg-[color:var(--studio-modal-bg)]',
-  label: 'text-[0.78rem] text-[color:var(--studio-shell-text)]',
-  description: 'text-[0.7rem] text-[color:var(--studio-shell-muted)]'
-}
-const secondaryModalButtonClass = 'studio-button'
-const primaryModalButtonClass = 'studio-button studio-button--primary'
-const iconGhostButtonClass = 'studio-button studio-button--ghost studio-button--icon'
+const {
+  buttonClasses,
+  getStudioSelectMenuSearchInputProps,
+  studioDefaultInputMenuProps,
+  studioFieldUi,
+  studioInputMenuUi,
+  studioModalSurfaceStyle,
+  studioSelectUi,
+  studioSwitchUi,
+  textareaClass
+} = useStudioUi()
+const secondaryModalButtonClass = buttonClasses.secondary
+const primaryModalButtonClass = buttonClasses.primary
+const iconGhostButtonClass = buttonClasses.iconGhost
 const overwriteTargetButtonClass = 'studio-choice-button grid gap-1 px-3 py-2 text-left'
 const editorVisibilityButtonClass = 'studio-button absolute left-3 top-3 z-[4] px-2 py-1 font-mono text-[0.62rem] uppercase tracking-[0.08em]'
-const tableEditorAddButtonClass = 'studio-button studio-button--primary'
-const tableEditorRemoveButtonClass = 'studio-button studio-button--ghost studio-button--icon'
+const tableEditorAddButtonClass = buttonClasses.primary
+const tableEditorRemoveButtonClass = buttonClasses.iconGhost
 const tableEditorModifierButtonClass = 'studio-toggle-chip px-2 py-1 font-mono text-[0.58rem] uppercase tracking-[0.08em]'
 const sourceAnalysis = computed(() => analyzePgmlDocument(source.value))
 const sourceDiagnostics = computed(() => sourceAnalysis.value.diagnostics)
@@ -1204,7 +1158,7 @@ onBeforeUnmount(() => {
                 <textarea
                   v-model="tableEditorDraft.note"
                   rows="3"
-                  class="min-h-[5rem] w-full resize-y border border-[color:var(--studio-shell-border)] bg-[color:var(--studio-input-bg)] px-3 py-2 text-[0.8rem] text-[color:var(--studio-shell-text)] outline-none"
+                  :class="[textareaClass, 'min-h-[5rem]']"
                 />
               </label>
 
@@ -1558,7 +1512,7 @@ onBeforeUnmount(() => {
                   v-model="groupEditorDraft.note"
                   data-group-editor-note="true"
                   rows="4"
-                  class="min-h-[6rem] w-full resize-y border border-[color:var(--studio-shell-border)] bg-[color:var(--studio-input-bg)] px-3 py-2 text-[0.8rem] text-[color:var(--studio-shell-text)] outline-none"
+                  :class="[textareaClass, 'min-h-[6rem]']"
                 />
               </label>
             </div>

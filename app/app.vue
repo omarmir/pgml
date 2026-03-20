@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { useStudioHeaderActions } from './composables/useStudioHeaderActions'
-import { useStudioSchemaStatus } from './composables/useStudioSchemaStatus'
+import { useStudioSchemaStatus, type StudioSchemaSaveState } from './composables/useStudioSchemaStatus'
 
 const title = 'PGML'
 const description = 'A Postgres-first markup language and live diagram studio built on top of DBML ideas.'
@@ -35,6 +35,18 @@ const navigation = [
     to: '/diagram'
   }
 ]
+const studioSchemaStatusIcons: Record<StudioSchemaSaveState, string> = {
+  error: 'i-lucide-circle-alert',
+  pending: 'i-lucide-hard-drive-download',
+  saved: 'i-lucide-hard-drive-download',
+  saving: 'i-lucide-loader-circle'
+}
+const studioSchemaStatusIconClasses: Record<StudioSchemaSaveState, string> = {
+  error: 'text-red-500',
+  pending: 'animate-bounce text-emerald-500',
+  saved: 'text-emerald-500',
+  saving: 'animate-spin text-[color:var(--studio-shell-label)]'
+}
 
 const route = useRoute()
 const isStudioRoute = computed(() => route.path.startsWith('/diagram'))
@@ -76,39 +88,11 @@ const navLinkClass = (to: string) => {
 }
 
 const studioSchemaStatusIcon = computed(() => {
-  if (studioSchemaStatus.value.saveState === 'saving') {
-    return 'i-lucide-loader-circle'
-  }
-
-  if (studioSchemaStatus.value.saveState === 'pending') {
-    return 'i-lucide-hard-drive-download'
-  }
-
-  if (studioSchemaStatus.value.saveState === 'error') {
-    return 'i-lucide-circle-alert'
-  }
-
-  if (studioSchemaStatus.value.saveState === 'saved') {
-    return 'i-lucide-hard-drive-download'
-  }
-
-  return 'i-lucide-loader-circle'
+  return studioSchemaStatusIcons[studioSchemaStatus.value.saveState]
 })
 
 const studioSchemaStatusIconClass = computed(() => {
-  if (studioSchemaStatus.value.saveState === 'pending') {
-    return 'animate-bounce text-emerald-500'
-  }
-
-  if (studioSchemaStatus.value.saveState === 'saving') {
-    return 'animate-spin text-[color:var(--studio-shell-label)]'
-  }
-
-  if (studioSchemaStatus.value.saveState === 'error') {
-    return 'text-red-500'
-  }
-
-  return 'text-emerald-500'
+  return studioSchemaStatusIconClasses[studioSchemaStatus.value.saveState]
 })
 </script>
 

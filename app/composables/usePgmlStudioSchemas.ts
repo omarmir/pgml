@@ -79,6 +79,10 @@ type UsePgmlStudioSchemasOptions = {
   source: Ref<string>
 }
 
+type PersistSchemaOptions = {
+  closeDialog: boolean
+}
+
 export const usePgmlStudioSchemas = ({
   buildSchemaText,
   canEmbedLayout,
@@ -128,6 +132,18 @@ export const usePgmlStudioSchemas = ({
   const getCurrentSnapshot = () => {
     return getSnapshot(getAutosaveName(), getAutosaveText())
   }
+  const clearPersistedSelection = () => {
+    currentSchemaId.value = null
+    currentSchemaUpdatedAt.value = null
+    lastPersistedSnapshot.value = null
+    saveSchemaTargetId.value = null
+    localStorageSaveError.value = null
+  }
+  const applyUnsavedSchema = (nextSchema: { name: string, text: string }) => {
+    source.value = nextSchema.text
+    currentSchemaName.value = nextSchema.name
+    clearPersistedSelection()
+  }
   const hasPendingLocalChanges = computed(() => {
     return lastPersistedSnapshot.value !== getCurrentSnapshot()
   })
@@ -136,23 +152,17 @@ export const usePgmlStudioSchemas = ({
   })
 
   const loadExample = () => {
-    source.value = initialSource
-    currentSchemaId.value = null
-    currentSchemaName.value = exampleSchemaName
-    currentSchemaUpdatedAt.value = null
-    localStorageSaveError.value = null
-    lastPersistedSnapshot.value = null
-    saveSchemaTargetId.value = null
+    applyUnsavedSchema({
+      name: exampleSchemaName,
+      text: initialSource
+    })
   }
 
   const clearSchema = () => {
-    source.value = ''
-    currentSchemaId.value = null
-    currentSchemaName.value = untitledSchemaName
-    currentSchemaUpdatedAt.value = null
-    localStorageSaveError.value = null
-    lastPersistedSnapshot.value = null
-    saveSchemaTargetId.value = null
+    applyUnsavedSchema({
+      name: untitledSchemaName,
+      text: ''
+    })
   }
 
   const readSavedSchemas = () => {
@@ -162,6 +172,28 @@ export const usePgmlStudioSchemas = ({
 
   const persistSavedSchemas = (schemas: SavedPgmlSchema[]) => {
     return writeBrowserStorageItem(savedSchemaStorageKey, JSON.stringify(schemas))
+  }
+  const findMatchingSavedSchema = (name: string) => {
+    return savedSchemas.value.find((entry) => {
+      return (
+        entry.id === saveSchemaTargetId.value
+        || entry.id === currentSchemaId.value
+        || (
+          !saveSchemaTargetId.value
+          && !currentSchemaId.value
+          && entry.name.toLowerCase() === name.toLowerCase()
+        )
+      )
+    })
+  }
+  const upsertSavedSchema = (schema: SavedPgmlSchema, existingSchemaId: string | null) => {
+    if (!existingSchemaId) {
+      return [schema, ...savedSchemas.value]
+    }
+
+    return savedSchemas.value.map((entry) => {
+      return entry.id === existingSchemaId ? schema : entry
+    })
   }
 
   const syncPersistedState = (schema: SavedPgmlSchema) => {
@@ -212,44 +244,24 @@ export const usePgmlStudioSchemas = ({
   const persistSchemaToBrowser = (
     name: string,
     text: string,
-    options: {
-      closeDialog: boolean
-    }
+    options: PersistSchemaOptions
   ) => {
     const updatedAt = new Date().toISOString()
-    const matchingSchema = savedSchemas.value.find((entry) => {
-      return (
-        entry.id === saveSchemaTargetId.value
-        || entry.id === currentSchemaId.value
-        || (
-          !saveSchemaTargetId.value
-          && !currentSchemaId.value
-          && entry.name.toLowerCase() === name.toLowerCase()
-        )
-      )
-    })
-    let nextSchema: SavedPgmlSchema
-    let nextSavedSchemas: SavedPgmlSchema[]
-
-    if (matchingSchema) {
-      nextSchema = {
-        ...matchingSchema,
-        name,
-        text,
-        updatedAt
-      }
-      nextSavedSchemas = savedSchemas.value.map((entry) => {
-        return entry.id === nextSchema.id ? nextSchema : entry
-      })
-    } else {
-      nextSchema = {
-        id: nanoid(),
-        name,
-        text,
-        updatedAt
-      }
-      nextSavedSchemas = [nextSchema, ...savedSchemas.value]
-    }
+    const matchingSchema = findMatchingSavedSchema(name)
+    const nextSchema: SavedPgmlSchema = matchingSchema
+      ? {
+          ...matchingSchema,
+          name,
+          text,
+          updatedAt
+        }
+      : {
+          id: nanoid(),
+          name,
+          text,
+          updatedAt
+        }
+    const nextSavedSchemas = upsertSavedSchema(nextSchema, matchingSchema?.id || null)
 
     if (!persistSavedSchemas(nextSavedSchemas)) {
       localStorageSaveError.value = localStorageSaveErrorMessage

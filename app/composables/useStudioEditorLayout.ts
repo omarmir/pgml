@@ -1,4 +1,5 @@
 import type { Ref } from 'vue'
+import { useEventListener, useResizeObserver, useToggle, useWindowSize } from '@vueuse/core'
 import {
   clampStudioEditorWidth,
   getStudioLayoutColumns,
@@ -8,9 +9,12 @@ import {
 
 export const useStudioEditorLayout = () => {
   const layoutShellRef: Ref<HTMLDivElement | null> = ref(null)
-  const viewportWidth: Ref<number> = ref(studioCompactBreakpoint)
   const editorPanelWidth: Ref<number> = ref(studioEditorPanelMinWidth)
   const isEditorPanelVisible: Ref<boolean> = ref(true)
+  const { width: viewportWidth } = useWindowSize({
+    initialWidth: studioCompactBreakpoint
+  })
+  const toggleEditorPanel = useToggle(isEditorPanelVisible)
 
   const isCompactStudioLayout = computed(() => viewportWidth.value < studioCompactBreakpoint)
   const studioLayoutStyle = computed(() => {
@@ -26,12 +30,6 @@ export const useStudioEditorLayout = () => {
   })
 
   const syncStudioViewport = () => {
-    if (!import.meta.client) {
-      return
-    }
-
-    viewportWidth.value = window.innerWidth
-
     if (!layoutShellRef.value) {
       return
     }
@@ -71,12 +69,14 @@ export const useStudioEditorLayout = () => {
     }
 
     const onUp = () => {
-      window.removeEventListener('pointermove', onMove)
-      window.removeEventListener('pointerup', onUp)
+      stopPointerMove()
+      stopPointerUp()
     }
 
-    window.addEventListener('pointermove', onMove)
-    window.addEventListener('pointerup', onUp)
+    const stopPointerMove = useEventListener(window, 'pointermove', onMove)
+    const stopPointerUp = useEventListener(window, 'pointerup', onUp, {
+      once: true
+    })
   }
 
   const showEditorPanel = () => {
@@ -88,16 +88,17 @@ export const useStudioEditorLayout = () => {
   }
 
   const toggleEditorPanelVisibility = () => {
-    isEditorPanelVisible.value = !isEditorPanelVisible.value
+    toggleEditorPanel()
   }
 
-  onMounted(() => {
+  watch(viewportWidth, () => {
     syncStudioViewport()
-    window.addEventListener('resize', syncStudioViewport)
+  }, {
+    immediate: true
   })
 
-  onBeforeUnmount(() => {
-    window.removeEventListener('resize', syncStudioViewport)
+  useResizeObserver(layoutShellRef, () => {
+    syncStudioViewport()
   })
 
   return {

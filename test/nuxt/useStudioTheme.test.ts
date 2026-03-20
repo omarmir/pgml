@@ -48,8 +48,8 @@ describe('studio theme persistence', () => {
   it('loads the stored theme choice and writes updates back to storage', async () => {
     window.localStorage.clear()
     window.localStorage.setItem('pgml-studio-theme', 'light')
-    let studioThemeRef: Ref<'dark' | 'light'> | null = null
-    let toggleTheme: (() => void) | null = null
+    let studioThemeRef!: Ref<'dark' | 'light'>
+    let toggleTheme!: () => void
 
     const wrapper = await mountSuspended(defineComponent({
       setup() {
@@ -73,10 +73,10 @@ describe('studio theme persistence', () => {
     expect(document.documentElement.style.getPropertyValue('--studio-shell-bg')).toBe('#f4f1ea')
     expect(document.documentElement.style.getPropertyValue('--studio-editor-punctuation')).toBe('#475569')
 
-    toggleTheme?.()
+    toggleTheme()
     await nextTick()
 
-    expect(studioThemeRef?.value).toBe('dark')
+    expect(studioThemeRef.value).toBe('dark')
     expect(window.localStorage.getItem('pgml-studio-theme')).toBe('dark')
     expect(document.documentElement.dataset.studioTheme).toBe('dark')
     expect(document.documentElement.style.getPropertyValue('--studio-shell-bg')).toBe('#0a151d')
