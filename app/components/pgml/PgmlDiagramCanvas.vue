@@ -281,28 +281,20 @@ const attachmentPopoverContent = {
 const attachmentPopoverUi = {
   content: 'w-[22rem] rounded-none border border-[color:var(--studio-shell-border)] bg-[color:var(--studio-control-bg)] p-3 shadow-[var(--studio-floating-shadow)] backdrop-blur-sm'
 }
-const { buttonClasses } = useStudioUi()
-const exportSelectUi = {
-  base: 'studio-select-trigger rounded-none border-[color:var(--studio-shell-border)] bg-[color:var(--studio-input-bg)] text-[color:var(--studio-shell-text)]',
-  value: 'text-[color:var(--studio-shell-text)]',
-  placeholder: 'text-[color:var(--studio-shell-muted)]',
-  trailingIcon: 'text-[color:var(--studio-shell-muted)]',
-  content: 'rounded-none border border-[color:var(--studio-shell-border)] bg-[color:var(--studio-control-bg)] p-1 shadow-[var(--studio-floating-shadow)] backdrop-blur-sm',
-  viewport: 'scroll-py-1 overflow-y-auto',
-  item: 'studio-select-item rounded-none before:rounded-none text-[color:var(--studio-shell-text)]',
-  itemLabel: 'truncate',
-  itemDescription: 'whitespace-normal break-words text-[color:var(--studio-shell-muted)]',
-  itemLeadingIcon: 'text-[color:var(--studio-shell-muted)]',
-  itemTrailingIcon: 'text-[color:var(--studio-shell-label)]'
-}
-const exportToggleButtonBaseClass = 'rounded-none border border-[color:var(--studio-shell-border)] bg-[color:var(--studio-control-bg)] text-[color:var(--studio-shell-text)] hover:bg-[color:var(--studio-surface-hover)] hover:text-[color:var(--studio-shell-text)]'
-const exportToggleButtonActiveClass = 'border-[color:var(--studio-shell-label)] bg-[color:var(--studio-input-bg)] text-[color:var(--studio-shell-text)]'
-const exportArtifactButtonBaseClass = 'rounded-none border border-[color:var(--studio-shell-border)] bg-[color:var(--studio-control-bg)] text-[color:var(--studio-shell-text)] hover:bg-[color:var(--studio-surface-hover)] hover:text-[color:var(--studio-shell-text)]'
-const exportArtifactButtonActiveClass = 'border-[color:var(--studio-shell-label)] bg-[color:var(--studio-input-bg)] text-[color:var(--studio-shell-text)]'
+const {
+  buttonClasses,
+  getStudioChoiceButtonClass,
+  getStudioStateButtonClass,
+  getStudioTabButtonClass,
+  joinStudioClasses,
+  studioCompactInputClass,
+  studioSelectUi,
+  studioToolbarButtonClass
+} = useStudioUi()
 const exportArtifactButtonErrorClass = 'border-[color:var(--studio-shell-error)] bg-[color:var(--studio-shell-error)]/8 text-[color:var(--studio-shell-error)] hover:bg-[color:var(--studio-shell-error)]/12 hover:text-[color:var(--studio-shell-error)]'
-const panelToggleButtonClass = `${buttonClasses.secondary} px-2 py-1 font-mono text-[0.62rem] uppercase tracking-[0.08em]`
-const sidePanelCloseButtonClass = `${buttonClasses.iconGhost} h-7 w-7 justify-center px-0`
-const sidePanelActionButtonClass = `${buttonClasses.secondary} px-2 py-1 font-mono text-[0.62rem] uppercase tracking-[0.08em]`
+const panelToggleButtonClass = joinStudioClasses(buttonClasses.secondary, studioToolbarButtonClass)
+const sidePanelCloseButtonClass = joinStudioClasses(buttonClasses.iconGhost, 'h-7 w-7 justify-center px-0')
+const sidePanelActionButtonClass = joinStudioClasses(buttonClasses.secondary, studioToolbarButtonClass)
 const attachmentKindOrder: Record<TableAttachmentKind, number> = {
   Index: 0,
   Constraint: 1,
@@ -1484,15 +1476,15 @@ const getExportCopyButtonLabel = (key: string) => {
 const getExportCopyButtonClass = (key: string) => {
   const status = getExportCopyFeedbackStatus(key)
 
-  if (status === 'success') {
-    return exportArtifactButtonActiveClass
-  }
-
-  if (status === 'error') {
-    return exportArtifactButtonErrorClass
-  }
-
-  return ''
+  // Copy buttons reuse the same active/error treatment as the rest of the
+  // studio so export feedback reads consistently with selection state.
+  return joinStudioClasses(
+    getStudioChoiceButtonClass({
+      active: status === 'success',
+      extraClass: 'justify-center'
+    }),
+    status === 'error' && exportArtifactButtonErrorClass
+  )
 }
 
 const getClipboardCopyFailureMessage = (error: unknown) => {
@@ -4106,6 +4098,19 @@ const isBrowserItemEffectivelyVisible = (item: EntityBrowserItem) => {
 const isBrowserItemHiddenByAncestor = (item: EntityBrowserItem) => {
   return !isBrowserItemEffectivelyVisible(item) && isBrowserItemDirectlyVisible(item)
 }
+const getBrowserItemVisibilityButtonClass = (
+  item: EntityBrowserItem,
+  compact = false
+) => {
+  // Hidden descendants keep the same button API but render in a disabled state
+  // so the tree explains why an item cannot be toggled independently.
+  return getStudioStateButtonClass({
+    compact,
+    disabled: isBrowserItemHiddenByAncestor(item),
+    emphasized: !isBrowserItemDirectlyVisible(item),
+    extraClass: 'shrink-0'
+  })
+}
 const getBrowserItemTableId = (item: EntityBrowserItem) => {
   const selection = item.selection
 
@@ -6568,8 +6573,10 @@ defineExpose<{
           type="button"
           data-grid-snap-toggle="true"
           :aria-pressed="snapToGrid"
-          class="inline-flex items-center gap-1.5 border px-2 py-1 font-mono text-[0.62rem] uppercase tracking-[0.08em] transition-colors duration-150"
-          :class="snapToGrid ? 'border-[color:var(--studio-shell-label)] bg-[color:var(--studio-input-bg)] text-[color:var(--studio-shell-text)]' : 'border-[color:var(--studio-shell-border)] text-[color:var(--studio-shell-muted)]'"
+          :class="getStudioStateButtonClass({
+            emphasized: snapToGrid,
+            extraClass: 'inline-flex items-center gap-1.5 text-[0.62rem]'
+          })"
           @click="snapToGrid = !snapToGrid"
         >
           <UIcon
@@ -6658,8 +6665,7 @@ defineExpose<{
         <button
           type="button"
           data-diagram-panel-tab="inspector"
-          class="border-r border-[color:var(--studio-divider)] px-3 py-2 font-mono text-[0.6rem] uppercase tracking-[0.08em] transition-colors duration-150"
-          :class="activePanelTab === 'inspector' ? 'bg-[color:var(--studio-input-bg)] text-[color:var(--studio-shell-text)]' : 'text-[color:var(--studio-shell-muted)] hover:bg-[color:var(--studio-surface-hover)]'"
+          :class="getStudioTabButtonClass(activePanelTab === 'inspector', true)"
           @click="activePanelTab = 'inspector'"
         >
           Inspector
@@ -6667,8 +6673,7 @@ defineExpose<{
         <button
           type="button"
           data-diagram-panel-tab="entities"
-          class="border-r border-[color:var(--studio-divider)] px-3 py-2 font-mono text-[0.6rem] uppercase tracking-[0.08em] transition-colors duration-150"
-          :class="activePanelTab === 'entities' ? 'bg-[color:var(--studio-input-bg)] text-[color:var(--studio-shell-text)]' : 'text-[color:var(--studio-shell-muted)] hover:bg-[color:var(--studio-surface-hover)]'"
+          :class="getStudioTabButtonClass(activePanelTab === 'entities', true)"
           @click="activePanelTab = 'entities'"
         >
           Entities
@@ -6676,8 +6681,7 @@ defineExpose<{
         <button
           type="button"
           data-diagram-panel-tab="export"
-          class="px-3 py-2 font-mono text-[0.6rem] uppercase tracking-[0.08em] transition-colors duration-150"
-          :class="activePanelTab === 'export' ? 'bg-[color:var(--studio-input-bg)] text-[color:var(--studio-shell-text)]' : 'text-[color:var(--studio-shell-muted)] hover:bg-[color:var(--studio-surface-hover)]'"
+          :class="getStudioTabButtonClass(activePanelTab === 'export')"
           @click="activePanelTab = 'export'"
         >
           Export
@@ -6698,7 +6702,7 @@ defineExpose<{
             <input
               :value="selectedNode.title"
               type="text"
-              class="w-full select-text border border-[color:var(--studio-rail)] bg-[color:var(--studio-input-bg)] px-2 py-1.5 text-[0.68rem] text-[color:var(--studio-shell-text)] outline-none"
+              :class="joinStudioClasses(studioCompactInputClass, 'select-text')"
               @input="updateNode(selectedNode.id, { title: ($event.target as HTMLInputElement).value })"
             >
           </label>
@@ -6780,7 +6784,7 @@ defineExpose<{
               data-entity-search="true"
               type="text"
               placeholder="Groups, tables, routines..."
-              class="w-full border border-[color:var(--studio-rail)] bg-[color:var(--studio-input-bg)] px-2 py-1.5 text-[0.68rem] text-[color:var(--studio-shell-text)] outline-none placeholder:text-[color:var(--studio-shell-muted)]"
+              :class="studioCompactInputClass"
             >
           </label>
           <div class="flex items-center justify-between gap-3 text-[0.62rem] text-[color:var(--studio-shell-muted)]">
@@ -6845,8 +6849,7 @@ defineExpose<{
                   <button
                     type="button"
                     :data-browser-visibility-toggle="groupItem.id"
-                    class="border px-2 py-1 font-mono text-[0.54rem] uppercase tracking-[0.08em] transition-colors duration-150"
-                    :class="isBrowserItemDirectlyVisible(groupItem) ? 'border-[color:var(--studio-divider)] text-[color:var(--studio-shell-text)] hover:bg-[color:var(--studio-surface-hover)]' : 'border-[color:var(--studio-shell-label)] bg-[color:var(--studio-input-bg)] text-[color:var(--studio-shell-label)] hover:bg-[color:var(--studio-surface-hover)]'"
+                    :class="getBrowserItemVisibilityButtonClass(groupItem)"
                     @click="toggleBrowserItemVisibility(groupItem)"
                   >
                     {{ isBrowserItemDirectlyVisible(groupItem) ? 'Hide' : 'Show' }}
@@ -6892,8 +6895,7 @@ defineExpose<{
                       type="button"
                       :data-browser-visibility-toggle="tableItem.id"
                       :disabled="isBrowserItemHiddenByAncestor(tableItem)"
-                      class="shrink-0 border px-2 py-1 font-mono text-[0.52rem] uppercase tracking-[0.08em] transition-colors duration-150 disabled:border-[color:var(--studio-divider)] disabled:text-[color:var(--studio-shell-muted)] disabled:opacity-60"
-                      :class="isBrowserItemDirectlyVisible(tableItem) ? 'border-[color:var(--studio-divider)] text-[color:var(--studio-shell-text)] hover:bg-[color:var(--studio-surface-hover)]' : 'border-[color:var(--studio-shell-label)] bg-[color:var(--studio-input-bg)] text-[color:var(--studio-shell-label)] hover:bg-[color:var(--studio-surface-hover)]'"
+                      :class="getBrowserItemVisibilityButtonClass(tableItem)"
                       @click="toggleBrowserItemVisibility(tableItem)"
                     >
                       {{ isBrowserItemHiddenByAncestor(tableItem) ? 'Group hidden' : (isBrowserItemDirectlyVisible(tableItem) ? 'Hide' : 'Show') }}
@@ -6943,8 +6945,7 @@ defineExpose<{
                         type="button"
                         :data-browser-visibility-toggle="childItem.id"
                         :disabled="isBrowserItemHiddenByAncestor(childItem)"
-                        class="shrink-0 border px-2 py-1 font-mono text-[0.5rem] uppercase tracking-[0.08em] transition-colors duration-150 disabled:border-[color:var(--studio-divider)] disabled:text-[color:var(--studio-shell-muted)] disabled:opacity-60"
-                        :class="isBrowserItemDirectlyVisible(childItem) ? 'border-[color:var(--studio-divider)] text-[color:var(--studio-shell-text)] hover:bg-[color:var(--studio-surface-hover)]' : 'border-[color:var(--studio-shell-label)] bg-[color:var(--studio-input-bg)] text-[color:var(--studio-shell-label)] hover:bg-[color:var(--studio-surface-hover)]'"
+                        :class="getBrowserItemVisibilityButtonClass(childItem, true)"
                         @click="toggleBrowserItemVisibility(childItem)"
                       >
                         {{ isBrowserItemHiddenByAncestor(childItem) ? 'Table hidden' : (isBrowserItemDirectlyVisible(childItem) ? 'Hide' : 'Show') }}
@@ -7001,8 +7002,7 @@ defineExpose<{
                 <button
                   type="button"
                   :data-browser-visibility-toggle="tableItem.id"
-                  class="shrink-0 border px-2 py-1 font-mono text-[0.52rem] uppercase tracking-[0.08em] transition-colors duration-150"
-                  :class="isBrowserItemDirectlyVisible(tableItem) ? 'border-[color:var(--studio-divider)] text-[color:var(--studio-shell-text)] hover:bg-[color:var(--studio-surface-hover)]' : 'border-[color:var(--studio-shell-label)] bg-[color:var(--studio-input-bg)] text-[color:var(--studio-shell-label)] hover:bg-[color:var(--studio-surface-hover)]'"
+                  :class="getBrowserItemVisibilityButtonClass(tableItem)"
                   @click="toggleBrowserItemVisibility(tableItem)"
                 >
                   {{ isBrowserItemDirectlyVisible(tableItem) ? 'Hide' : 'Show' }}
@@ -7051,8 +7051,7 @@ defineExpose<{
                     v-if="browserItemSupportsVisibility(childItem)"
                     type="button"
                     :data-browser-visibility-toggle="childItem.id"
-                    class="shrink-0 border px-2 py-1 font-mono text-[0.5rem] uppercase tracking-[0.08em] transition-colors duration-150"
-                    :class="isBrowserItemDirectlyVisible(childItem) ? 'border-[color:var(--studio-divider)] text-[color:var(--studio-shell-text)] hover:bg-[color:var(--studio-surface-hover)]' : 'border-[color:var(--studio-shell-label)] bg-[color:var(--studio-input-bg)] text-[color:var(--studio-shell-label)] hover:bg-[color:var(--studio-surface-hover)]'"
+                    :class="getBrowserItemVisibilityButtonClass(childItem, true)"
                     @click="toggleBrowserItemVisibility(childItem)"
                   >
                     {{ isBrowserItemDirectlyVisible(childItem) ? 'Hide' : 'Show' }}
@@ -7112,8 +7111,7 @@ defineExpose<{
               <button
                 type="button"
                 :data-browser-visibility-toggle="item.id"
-                class="shrink-0 border px-2 py-1 font-mono text-[0.52rem] uppercase tracking-[0.08em] transition-colors duration-150"
-                :class="isBrowserItemDirectlyVisible(item) ? 'border-[color:var(--studio-divider)] text-[color:var(--studio-shell-text)] hover:bg-[color:var(--studio-surface-hover)]' : 'border-[color:var(--studio-shell-label)] bg-[color:var(--studio-input-bg)] text-[color:var(--studio-shell-label)] hover:bg-[color:var(--studio-surface-hover)]'"
+                :class="getBrowserItemVisibilityButtonClass(item)"
                 @click="toggleBrowserItemVisibility(item)"
               >
                 {{ isBrowserItemDirectlyVisible(item) ? 'Hide' : 'Show' }}
@@ -7142,10 +7140,10 @@ defineExpose<{
               color="neutral"
               variant="outline"
               size="xs"
-              :class="[
-                exportToggleButtonBaseClass,
-                exportPreferences.format === 'sql' ? exportToggleButtonActiveClass : ''
-              ]"
+              :class="getStudioChoiceButtonClass({
+                active: exportPreferences.format === 'sql',
+                extraClass: 'justify-center'
+              })"
               @click="updateExportFormat('sql')"
             />
             <UButton
@@ -7154,10 +7152,10 @@ defineExpose<{
               color="neutral"
               variant="outline"
               size="xs"
-              :class="[
-                exportToggleButtonBaseClass,
-                exportPreferences.format === 'kysely' ? exportToggleButtonActiveClass : ''
-              ]"
+              :class="getStudioChoiceButtonClass({
+                active: exportPreferences.format === 'kysely',
+                extraClass: 'justify-center'
+              })"
               @click="updateExportFormat('kysely')"
             />
           </div>
@@ -7176,7 +7174,7 @@ defineExpose<{
               color="neutral"
               variant="outline"
               size="sm"
-              :ui="exportSelectUi"
+              :ui="studioSelectUi"
               @update:model-value="updateKyselyTypeStyle(String($event))"
             />
           </label>
@@ -7236,10 +7234,7 @@ defineExpose<{
                     color="neutral"
                     variant="outline"
                     size="xs"
-                    :class="[
-                      exportArtifactButtonBaseClass,
-                      getExportCopyButtonClass(artifact.key)
-                    ]"
+                    :class="getExportCopyButtonClass(artifact.key)"
                     @click="void copyExportArtifact(artifact)"
                   />
                   <UButton
@@ -7248,7 +7243,9 @@ defineExpose<{
                     color="neutral"
                     variant="outline"
                     size="xs"
-                    :class="exportArtifactButtonBaseClass"
+                    :class="getStudioChoiceButtonClass({
+                      extraClass: 'justify-center'
+                    })"
                     @click="downloadExportArtifact(artifact)"
                   />
                 </div>

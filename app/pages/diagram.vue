@@ -149,23 +149,31 @@ const {
 } = useStudioEditorLayout()
 const {
   buttonClasses,
+  getStudioChoiceButtonClass,
   getStudioSelectMenuSearchInputProps,
+  getStudioToggleChipClass,
+  joinStudioClasses,
+  studioCompactBodyCopyClass,
+  studioCompactFieldKickerClass,
+  studioEmptyStateClass,
+  studioFieldKickerClass,
   studioDefaultInputMenuProps,
   studioFieldUi,
   studioInputMenuUi,
-  studioModalSurfaceStyle,
   studioSelectUi,
   studioSwitchUi,
+  studioToolbarButtonClass,
   textareaClass
 } = useStudioUi()
 const secondaryModalButtonClass = buttonClasses.secondary
 const primaryModalButtonClass = buttonClasses.primary
-const iconGhostButtonClass = buttonClasses.iconGhost
-const overwriteTargetButtonClass = 'studio-choice-button grid gap-1 px-3 py-2 text-left'
-const editorVisibilityButtonClass = 'studio-button absolute left-3 top-3 z-[4] px-2 py-1 font-mono text-[0.62rem] uppercase tracking-[0.08em]'
+const editorVisibilityButtonClass = joinStudioClasses(
+  buttonClasses.secondary,
+  'absolute left-3 top-3 z-[4]',
+  studioToolbarButtonClass
+)
 const tableEditorAddButtonClass = buttonClasses.primary
 const tableEditorRemoveButtonClass = buttonClasses.iconGhost
-const tableEditorModifierButtonClass = 'studio-toggle-chip px-2 py-1 font-mono text-[0.58rem] uppercase tracking-[0.08em]'
 const sourceAnalysis = computed(() => analyzePgmlDocument(source.value))
 const sourceDiagnostics = computed(() => sourceAnalysis.value.diagnostics)
 const sourceErrorDiagnostics = computed(() => {
@@ -243,15 +251,17 @@ const requestCanvasViewportReset = () => {
   canvasViewportResetKey.value += 1
 }
 
-const loadExample = () => {
-  loadStudioExample()
-  requestCanvasViewportReset()
+const withViewportReset = (action: () => void) => {
+  // Loading or clearing a schema changes the rendered node set, so the viewport
+  // reset stays coupled to those entry points instead of being easy to forget.
+  return () => {
+    action()
+    requestCanvasViewportReset()
+  }
 }
 
-const clearSchema = () => {
-  clearStudioSchema()
-  requestCanvasViewportReset()
-}
+const loadExample = withViewportReset(loadStudioExample)
+const clearSchema = withViewportReset(clearStudioSchema)
 
 const loadSavedSchema = (schema: SavedPgmlSchema) => {
   loadStudioSavedSchema(schema)
@@ -323,18 +333,32 @@ const actionMenuItems = computed<DropdownMenuItem[][]>(() => {
   ]
 })
 
-const tableEditorTitle = computed(() => {
-  return tableEditorDraft.value?.mode === 'create' ? 'Add table' : 'Edit table'
-})
-const tableEditorActionLabel = computed(() => {
-  return tableEditorDraft.value?.mode === 'create' ? 'Create table' : 'Save table'
-})
-const groupEditorTitle = computed(() => {
-  return groupEditorDraft.value?.mode === 'create' ? 'Add table group' : 'Edit table group'
-})
-const groupEditorActionLabel = computed(() => {
-  return groupEditorDraft.value?.mode === 'create' ? 'Create group' : 'Save group'
-})
+const editorModeLabels = {
+  create: {
+    groupAction: 'Create group',
+    groupDescription: 'Create a new table group and assign tables to it in one pass.',
+    groupTitle: 'Add table group',
+    tableAction: 'Create table',
+    tableDescription: 'Create a new table block, leave it floating, or place it in a selected group.',
+    tableTitle: 'Add table'
+  },
+  edit: {
+    groupAction: 'Save group',
+    groupDescription: 'Update the selected group metadata and its table membership without leaving the diagram.',
+    groupTitle: 'Edit table group',
+    tableAction: 'Save table',
+    tableDescription: 'Update table metadata and column definitions from a structured editor.',
+    tableTitle: 'Edit table'
+  }
+} as const
+const tableEditorMode = computed(() => tableEditorDraft.value?.mode || 'create')
+const groupEditorMode = computed(() => groupEditorDraft.value?.mode || 'create')
+const tableEditorTitle = computed(() => editorModeLabels[tableEditorMode.value].tableTitle)
+const tableEditorActionLabel = computed(() => editorModeLabels[tableEditorMode.value].tableAction)
+const tableEditorDescription = computed(() => editorModeLabels[tableEditorMode.value].tableDescription)
+const groupEditorTitle = computed(() => editorModeLabels[groupEditorMode.value].groupTitle)
+const groupEditorActionLabel = computed(() => editorModeLabels[groupEditorMode.value].groupAction)
+const groupEditorDescription = computed(() => editorModeLabels[groupEditorMode.value].groupDescription)
 const groupSelectItems = computed<ReferenceTargetItem[]>(() => {
   return [
     {
@@ -762,15 +786,15 @@ onBeforeUnmount(() => {
       >
         <div
           data-editor-resize-hit-area="true"
-          class="absolute inset-y-0 left-1/2 w-5 -translate-x-1/2"
+          class="absolute inset-y-0 left-0 w-5"
         />
         <div
           data-editor-resize-divider="true"
-          class="absolute inset-y-0 left-1/2 w-px -translate-x-1/2 bg-[color:var(--studio-shell-border)] transition-colors duration-150 group-hover:bg-[color:var(--studio-ring)] group-focus-visible:bg-[color:var(--studio-ring)]"
+          class="absolute inset-y-0 left-0 w-px bg-[color:var(--studio-shell-border)] transition-colors duration-150 group-hover:bg-[color:var(--studio-ring)] group-focus-visible:bg-[color:var(--studio-ring)]"
         />
         <div
           data-editor-resize-grip="true"
-          class="absolute left-1/2 top-1/2 flex h-10 w-5 -translate-x-1/2 -translate-y-1/2 items-center justify-center border border-[color:var(--studio-shell-border)] bg-[color:var(--studio-control-bg)] text-[color:var(--studio-shell-muted)] transition-colors duration-150 group-hover:border-[color:var(--studio-ring)] group-hover:text-[color:var(--studio-shell-text)] group-focus-visible:border-[color:var(--studio-ring)] group-focus-visible:text-[color:var(--studio-shell-text)]"
+          class="absolute left-0 top-1/2 flex h-10 w-5 -translate-y-1/2 items-center justify-center border border-[color:var(--studio-shell-border)] bg-[color:var(--studio-control-bg)] text-[color:var(--studio-shell-muted)] transition-colors duration-150 group-hover:border-[color:var(--studio-ring)] group-hover:text-[color:var(--studio-shell-text)] group-focus-visible:border-[color:var(--studio-ring)] group-focus-visible:text-[color:var(--studio-shell-text)]"
         >
           <UIcon
             name="i-lucide-grip-vertical"
@@ -808,51 +832,321 @@ onBeforeUnmount(() => {
     </div>
 
     <ClientOnly>
-      <UModal
+      <StudioModalFrame
         v-model:open="schemaDialogOpen"
         :title="schemaActionTitle"
         :description="schemaActionDescription"
-        :ui="{
-          overlay: 'bg-black/60 backdrop-blur-[2px]',
-          content: 'overflow-visible border-none bg-transparent p-0 shadow-none ring-0'
-        }"
+        surface-id="schema"
+        body-class="grid gap-4 px-4 py-3"
       >
-        <template #content>
-          <div
-            data-studio-modal-surface="schema"
-            class="flex w-[calc(100vw-2rem)] max-w-2xl flex-col overflow-hidden rounded-none border"
-            :style="studioModalSurfaceStyle"
-          >
-            <div class="flex items-start justify-between gap-4 border-b border-[color:var(--studio-shell-border)] px-4 py-3">
-              <div class="grid gap-1">
-                <h2 class="text-[1rem] font-semibold leading-6 text-[color:var(--studio-shell-text)]">
-                  {{ schemaActionTitle }}
-                </h2>
-                <p class="text-[0.8rem] leading-5 text-[color:var(--studio-shell-muted)]">
-                  {{ schemaActionDescription }}
+        <div class="grid gap-3 lg:grid-cols-[minmax(0,0.95fr)_minmax(0,1.05fr)]">
+          <div class="grid gap-3">
+            <label class="grid gap-1">
+              <span :class="studioFieldKickerClass">
+                Schema Name
+              </span>
+              <UInput
+                v-model="currentSchemaName"
+                placeholder="Schema name"
+                color="neutral"
+                variant="outline"
+                size="sm"
+                :ui="studioFieldUi"
+              />
+            </label>
+
+            <USwitch
+              v-model="includeLayoutInSchema"
+              color="neutral"
+              size="sm"
+              :disabled="!canEmbedLayout"
+              label="Include current layout"
+              description="Embed node positions, colors, and grouped table columns into the PGML text."
+              :ui="studioSwitchUi"
+            />
+          </div>
+
+          <div class="grid gap-2 border border-[color:var(--studio-shell-border)] bg-[color:var(--studio-control-bg)] px-3 py-3">
+            <div class="flex items-center justify-between gap-3">
+              <div>
+                <div :class="studioFieldKickerClass">
+                  Overwrite Existing
+                </div>
+                <p class="mt-1 text-[0.7rem] leading-5 text-[color:var(--studio-shell-muted)]">
+                  Pick an existing local schema when you want this save to replace it instead of creating a new entry.
                 </p>
               </div>
 
               <UButton
-                icon="i-lucide-x"
+                v-if="saveSchemaTarget"
+                label="Save as new"
                 color="neutral"
-                variant="ghost"
-                :class="iconGhostButtonClass"
-                aria-label="Close"
-                @click="schemaDialogOpen = false"
+                variant="soft"
+                size="xs"
+                :class="primaryModalButtonClass"
+                @click="clearSaveSchemaTarget"
               />
             </div>
 
-            <div class="grid gap-4 px-4 py-3">
-              <div class="grid gap-3 lg:grid-cols-[minmax(0,0.95fr)_minmax(0,1.05fr)]">
-                <div class="grid gap-3">
+            <div
+              v-if="orderedSavedSchemas.length"
+              class="grid max-h-56 gap-2 overflow-y-auto pr-1"
+            >
+              <button
+                v-for="schema in orderedSavedSchemas"
+                :key="schema.id"
+                type="button"
+                :class="getStudioChoiceButtonClass({
+                  active: saveSchemaTarget?.id === schema.id,
+                  extraClass: 'grid gap-1 px-3 py-2 text-left'
+                })"
+                @click="selectSaveSchemaTarget(schema)"
+              >
+                <span class="truncate text-[0.78rem] font-semibold text-[color:var(--studio-shell-text)]">
+                  {{ schema.name }}
+                </span>
+                <span class="font-mono text-[0.62rem] uppercase tracking-[0.08em] text-[color:var(--studio-shell-muted)]">
+                  {{ formatSavedAt(schema.updatedAt) }}
+                </span>
+              </button>
+            </div>
+
+            <div
+              v-else
+              :class="studioEmptyStateClass"
+            >
+              No saved schemas in this browser yet.
+            </div>
+          </div>
+        </div>
+
+        <template #footer>
+          <UButton
+            label="Cancel"
+            color="neutral"
+            variant="outline"
+            :class="secondaryModalButtonClass"
+            @click="schemaDialogOpen = false"
+          />
+          <UButton
+            v-if="schemaDialogMode === 'save'"
+            :label="saveSchemaActionLabel"
+            color="neutral"
+            variant="soft"
+            :class="primaryModalButtonClass"
+            @click="saveSchemaToBrowser"
+          />
+          <UButton
+            v-else
+            label="Download .pgml"
+            color="neutral"
+            variant="soft"
+            :class="primaryModalButtonClass"
+            @click="downloadSchema"
+          />
+        </template>
+      </StudioModalFrame>
+
+      <StudioModalFrame
+        v-model:open="loadDialogOpen"
+        title="Load saved schema"
+        description="Saved PGML files stored in this browser."
+        surface-id="load"
+        body-class="max-h-[min(60vh,36rem)] overflow-y-auto px-4 py-3"
+      >
+        <div
+          v-if="orderedSavedSchemas.length"
+          class="grid gap-2"
+        >
+          <div
+            v-for="schema in orderedSavedSchemas"
+            :key="schema.id"
+            class="grid gap-2 border border-[color:var(--studio-shell-border)] bg-[color:var(--studio-control-bg)] px-3 py-3"
+          >
+            <div class="flex items-start justify-between gap-3">
+              <div class="min-w-0">
+                <div class="truncate text-[0.82rem] font-semibold text-[color:var(--studio-shell-text)]">
+                  {{ schema.name }}
+                </div>
+                <div class="font-mono text-[0.64rem] uppercase tracking-[0.08em] text-[color:var(--studio-shell-muted)]">
+                  {{ formatSavedAt(schema.updatedAt) }}
+                </div>
+              </div>
+
+              <div class="flex items-center gap-1">
+                <UButton
+                  label="Load"
+                  color="neutral"
+                  variant="outline"
+                  size="xs"
+                  :class="secondaryModalButtonClass"
+                  @click="loadSavedSchema(schema)"
+                />
+                <UButton
+                  icon="i-lucide-trash-2"
+                  color="neutral"
+                  variant="outline"
+                  size="xs"
+                  :class="secondaryModalButtonClass"
+                  aria-label="Delete saved schema"
+                  @click="deleteSavedSchema(schema.id)"
+                />
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div
+          v-else
+          :class="studioEmptyStateClass"
+        >
+          No saved schemas in this browser yet.
+        </div>
+
+        <template #footer>
+          <UButton
+            label="Close"
+            color="neutral"
+            variant="outline"
+            :class="secondaryModalButtonClass"
+            @click="loadDialogOpen = false"
+          />
+        </template>
+      </StudioModalFrame>
+
+      <StudioModalFrame
+        v-model:open="tableEditorOpen"
+        :title="tableEditorTitle"
+        :description="tableEditorDescription"
+        surface-id="table-editor"
+        width-class="max-w-5xl"
+        body-class="grid max-h-[min(74vh,52rem)] gap-5 overflow-y-auto px-4 py-4"
+      >
+        <div
+          v-if="tableEditorDraft"
+          class="contents"
+        >
+          <div
+            v-if="tableEditorErrors.length"
+            class="grid gap-1 border border-[color:var(--studio-shell-error)]/40 bg-[color:var(--studio-shell-error)]/8 px-3 py-3 text-[0.74rem] text-[color:var(--studio-shell-error)]"
+          >
+            <p
+              v-for="error in tableEditorErrors"
+              :key="error"
+            >
+              {{ error }}
+            </p>
+          </div>
+
+          <div class="grid gap-3 lg:grid-cols-3">
+            <label class="grid gap-1">
+              <span :class="studioFieldKickerClass">Table name</span>
+              <UInput
+                v-model="tableEditorDraft.name"
+                aria-label="Table name"
+                data-table-editor-name="true"
+                color="neutral"
+                variant="outline"
+                size="sm"
+                :ui="studioFieldUi"
+              />
+            </label>
+
+            <label class="grid gap-1">
+              <span :class="studioFieldKickerClass">Schema</span>
+              <USelect
+                v-model="tableEditorDraft.schema"
+                aria-label="Table schema"
+                :items="schemaSelectItems"
+                color="neutral"
+                variant="outline"
+                size="sm"
+                :ui="studioSelectUi"
+              />
+            </label>
+
+            <label class="grid gap-1">
+              <span :class="studioFieldKickerClass">Table group</span>
+              <USelectMenu
+                aria-label="Table group"
+                :model-value="tableEditorDraft.groupName || 'Ungrouped'"
+                :items="groupSelectItems"
+                :search-input="getStudioSelectMenuSearchInputProps('Search groups')"
+                :filter-fields="['label', 'description', 'value']"
+                value-key="value"
+                label-key="label"
+                description-key="description"
+                placeholder="Choose a group"
+                color="neutral"
+                variant="outline"
+                size="sm"
+                :ui="studioInputMenuUi"
+                @update:model-value="updateTableDraftGroup(String($event || 'Ungrouped'))"
+              />
+            </label>
+          </div>
+
+          <label class="grid gap-1">
+            <span :class="studioFieldKickerClass">Table note</span>
+            <textarea
+              v-model="tableEditorDraft.note"
+              rows="3"
+              :class="[textareaClass, 'min-h-[5rem]']"
+            />
+          </label>
+
+          <div class="grid gap-3">
+            <div class="flex items-center justify-between gap-3">
+              <div>
+                <div :class="studioFieldKickerClass">
+                  Columns
+                </div>
+                <p :class="joinStudioClasses(studioCompactBodyCopyClass, 'mt-1')">
+                  Choose types and references from structured inputs where available, then refine the exact values if needed.
+                </p>
+              </div>
+
+              <UButton
+                label="Add column"
+                icon="i-lucide-plus"
+                color="neutral"
+                variant="soft"
+                size="sm"
+                :class="tableEditorAddButtonClass"
+                @click="addTableDraftColumn"
+              />
+            </div>
+
+            <div class="grid gap-3">
+              <article
+                v-for="column in tableEditorDraft.columns"
+                :key="column.id"
+                :data-table-editor-column="column.id"
+                class="grid gap-3 border border-[color:var(--studio-shell-border)] bg-[color:var(--studio-control-bg)] px-3 py-3"
+              >
+                <div class="flex items-center justify-between gap-3">
+                  <div :class="studioFieldKickerClass">
+                    {{ column.name || 'New column' }}
+                  </div>
+
+                  <UButton
+                    icon="i-lucide-trash-2"
+                    color="neutral"
+                    variant="ghost"
+                    size="xs"
+                    :class="tableEditorRemoveButtonClass"
+                    aria-label="Remove column"
+                    :disabled="tableEditorDraft.columns.length <= 1"
+                    @click="removeTableDraftColumn(column.id)"
+                  />
+                </div>
+
+                <div class="grid gap-3 lg:grid-cols-[minmax(0,0.85fr)_minmax(0,1.15fr)]">
                   <label class="grid gap-1">
-                    <span class="font-mono text-[0.62rem] uppercase tracking-[0.08em] text-[color:var(--studio-shell-label)]">
-                      Schema Name
-                    </span>
+                    <span :class="studioCompactFieldKickerClass">Column name</span>
                     <UInput
-                      v-model="currentSchemaName"
-                      placeholder="Schema name"
+                      v-model="column.name"
+                      aria-label="Column name"
                       color="neutral"
                       variant="outline"
                       size="sm"
@@ -860,684 +1154,302 @@ onBeforeUnmount(() => {
                     />
                   </label>
 
-                  <USwitch
-                    v-model="includeLayoutInSchema"
-                    color="neutral"
-                    size="sm"
-                    :disabled="!canEmbedLayout"
-                    label="Include current layout"
-                    description="Embed node positions, colors, and grouped table columns into the PGML text."
-                    :ui="studioSwitchUi"
-                  />
-                </div>
-
-                <div class="grid gap-2 border border-[color:var(--studio-shell-border)] bg-[color:var(--studio-control-bg)] px-3 py-3">
-                  <div class="flex items-center justify-between gap-3">
-                    <div>
-                      <div class="font-mono text-[0.62rem] uppercase tracking-[0.08em] text-[color:var(--studio-shell-label)]">
-                        Overwrite Existing
-                      </div>
-                      <p class="mt-1 text-[0.7rem] leading-5 text-[color:var(--studio-shell-muted)]">
-                        Pick an existing local schema when you want this save to replace it instead of creating a new entry.
-                      </p>
-                    </div>
-
-                    <UButton
-                      v-if="saveSchemaTarget"
-                      label="Save as new"
-                      color="neutral"
-                      variant="soft"
-                      size="xs"
-                      :class="primaryModalButtonClass"
-                      @click="clearSaveSchemaTarget"
-                    />
-                  </div>
-
-                  <div
-                    v-if="orderedSavedSchemas.length"
-                    class="grid max-h-56 gap-2 overflow-y-auto pr-1"
-                  >
-                    <button
-                      v-for="schema in orderedSavedSchemas"
-                      :key="schema.id"
-                      type="button"
-                      :class="[
-                        overwriteTargetButtonClass,
-                        saveSchemaTarget?.id === schema.id
-                          ? 'studio-choice-button--active'
-                          : ''
-                      ]"
-                      @click="selectSaveSchemaTarget(schema)"
-                    >
-                      <span class="truncate text-[0.78rem] font-semibold text-[color:var(--studio-shell-text)]">
-                        {{ schema.name }}
-                      </span>
-                      <span class="font-mono text-[0.62rem] uppercase tracking-[0.08em] text-[color:var(--studio-shell-muted)]">
-                        {{ formatSavedAt(schema.updatedAt) }}
-                      </span>
-                    </button>
-                  </div>
-
-                  <div
-                    v-else
-                    class="border border-dashed border-[color:var(--studio-shell-border)] px-3 py-4 text-[0.72rem] text-[color:var(--studio-shell-muted)]"
-                  >
-                    No saved schemas in this browser yet.
-                  </div>
-                </div>
-              </div>
-            </div>
-
-            <div class="flex items-center justify-end gap-2 border-t border-[color:var(--studio-shell-border)] px-4 py-3">
-              <UButton
-                label="Cancel"
-                color="neutral"
-                variant="outline"
-                :class="secondaryModalButtonClass"
-                @click="schemaDialogOpen = false"
-              />
-              <UButton
-                v-if="schemaDialogMode === 'save'"
-                :label="saveSchemaActionLabel"
-                color="neutral"
-                variant="soft"
-                :class="primaryModalButtonClass"
-                @click="saveSchemaToBrowser"
-              />
-              <UButton
-                v-else
-                label="Download .pgml"
-                color="neutral"
-                variant="soft"
-                :class="primaryModalButtonClass"
-                @click="downloadSchema"
-              />
-            </div>
-          </div>
-        </template>
-      </UModal>
-
-      <UModal
-        v-model:open="loadDialogOpen"
-        title="Load saved schema"
-        description="Saved PGML files stored in this browser."
-        :ui="{
-          overlay: 'bg-black/60 backdrop-blur-[2px]',
-          content: 'overflow-visible border-none bg-transparent p-0 shadow-none ring-0'
-        }"
-      >
-        <template #content>
-          <div
-            data-studio-modal-surface="load"
-            class="flex w-[calc(100vw-2rem)] max-w-2xl flex-col overflow-hidden rounded-none border"
-            :style="studioModalSurfaceStyle"
-          >
-            <div class="flex items-start justify-between gap-4 border-b border-[color:var(--studio-shell-border)] px-4 py-3">
-              <div class="grid gap-1">
-                <h2 class="text-[1rem] font-semibold leading-6 text-[color:var(--studio-shell-text)]">
-                  Load saved schema
-                </h2>
-                <p class="text-[0.8rem] leading-5 text-[color:var(--studio-shell-muted)]">
-                  Saved PGML files stored in this browser.
-                </p>
-              </div>
-
-              <UButton
-                icon="i-lucide-x"
-                color="neutral"
-                variant="ghost"
-                :class="iconGhostButtonClass"
-                aria-label="Close"
-                @click="loadDialogOpen = false"
-              />
-            </div>
-
-            <div class="max-h-[min(60vh,36rem)] overflow-y-auto px-4 py-3">
-              <div
-                v-if="orderedSavedSchemas.length"
-                class="grid gap-2"
-              >
-                <div
-                  v-for="schema in orderedSavedSchemas"
-                  :key="schema.id"
-                  class="grid gap-2 border border-[color:var(--studio-shell-border)] bg-[color:var(--studio-control-bg)] px-3 py-3"
-                >
-                  <div class="flex items-start justify-between gap-3">
-                    <div class="min-w-0">
-                      <div class="truncate text-[0.82rem] font-semibold text-[color:var(--studio-shell-text)]">
-                        {{ schema.name }}
-                      </div>
-                      <div class="font-mono text-[0.64rem] uppercase tracking-[0.08em] text-[color:var(--studio-shell-muted)]">
-                        {{ formatSavedAt(schema.updatedAt) }}
-                      </div>
-                    </div>
-
-                    <div class="flex items-center gap-1">
-                      <UButton
-                        label="Load"
+                  <div class="grid gap-2">
+                    <span :class="studioCompactFieldKickerClass">Column type</span>
+                    <div class="grid gap-2 lg:grid-cols-[minmax(0,0.56fr)_minmax(0,0.44fr)]">
+                      <USelectMenu
+                        aria-label="Column type preset"
+                        :model-value="column.type"
+                        :items="tableTypeItems"
+                        :search-input="getStudioSelectMenuSearchInputProps('Search column types')"
+                        :filter-fields="['label', 'description', 'value']"
+                        value-key="value"
+                        label-key="label"
+                        description-key="description"
+                        placeholder="Choose a type"
                         color="neutral"
                         variant="outline"
-                        size="xs"
-                        :class="secondaryModalButtonClass"
-                        @click="loadSavedSchema(schema)"
+                        size="sm"
+                        :ui="studioInputMenuUi"
+                        @update:model-value="column.type = String($event || '')"
                       />
-                      <UButton
-                        icon="i-lucide-trash-2"
+                      <UInput
+                        v-model="column.type"
+                        aria-label="Column type"
+                        placeholder="Exact type"
                         color="neutral"
                         variant="outline"
-                        size="xs"
-                        :class="secondaryModalButtonClass"
-                        aria-label="Delete saved schema"
-                        @click="deleteSavedSchema(schema.id)"
+                        size="sm"
+                        :ui="studioFieldUi"
                       />
                     </div>
                   </div>
                 </div>
-              </div>
 
-              <div
-                v-else
-                class="border border-[color:var(--studio-shell-border)] bg-[color:var(--studio-control-bg)] px-3 py-4 text-[0.72rem] text-[color:var(--studio-shell-muted)]"
-              >
-                No saved schemas in this browser yet.
-              </div>
-            </div>
-
-            <div class="flex justify-end border-t border-[color:var(--studio-shell-border)] px-4 py-3">
-              <UButton
-                label="Close"
-                color="neutral"
-                variant="outline"
-                :class="secondaryModalButtonClass"
-                @click="loadDialogOpen = false"
-              />
-            </div>
-          </div>
-        </template>
-      </UModal>
-
-      <UModal
-        v-model:open="tableEditorOpen"
-        :title="tableEditorTitle"
-        :description="tableEditorDraft?.mode === 'create' ? 'Build a new table with structured inputs and choose whether it stays floating or belongs to a group.' : 'Adjust the selected table with structured fields so the generated PGML stays valid.'"
-        :ui="{
-          overlay: 'bg-black/60 backdrop-blur-[2px]',
-          content: 'overflow-visible border-none bg-transparent p-0 shadow-none ring-0'
-        }"
-      >
-        <template #content>
-          <div
-            v-if="tableEditorDraft"
-            data-studio-modal-surface="table-editor"
-            class="flex w-[calc(100vw-2rem)] max-w-5xl flex-col overflow-hidden rounded-none border"
-            :style="studioModalSurfaceStyle"
-          >
-            <div class="flex items-start justify-between gap-4 border-b border-[color:var(--studio-shell-border)] px-4 py-3">
-              <div class="grid gap-1">
-                <h2 class="text-[1rem] font-semibold leading-6 text-[color:var(--studio-shell-text)]">
-                  {{ tableEditorTitle }}
-                </h2>
-                <p class="text-[0.8rem] leading-5 text-[color:var(--studio-shell-muted)]">
-                  {{ tableEditorDraft.mode === 'create' ? 'Create a new table block, leave it floating, or place it in a selected group.' : 'Update table metadata and column definitions from a structured editor.' }}
-                </p>
-              </div>
-
-              <UButton
-                icon="i-lucide-x"
-                color="neutral"
-                variant="ghost"
-                :class="iconGhostButtonClass"
-                aria-label="Close"
-                @click="closeTableEditor"
-              />
-            </div>
-
-            <div class="grid max-h-[min(74vh,52rem)] gap-5 overflow-y-auto px-4 py-4">
-              <div
-                v-if="tableEditorErrors.length"
-                class="grid gap-1 border border-[color:var(--studio-shell-error)]/40 bg-[color:var(--studio-shell-error)]/8 px-3 py-3 text-[0.74rem] text-[color:var(--studio-shell-error)]"
-              >
-                <p
-                  v-for="error in tableEditorErrors"
-                  :key="error"
-                >
-                  {{ error }}
-                </p>
-              </div>
-
-              <div class="grid gap-3 lg:grid-cols-3">
-                <label class="grid gap-1">
-                  <span class="font-mono text-[0.62rem] uppercase tracking-[0.08em] text-[color:var(--studio-shell-label)]">Table name</span>
-                  <UInput
-                    v-model="tableEditorDraft.name"
-                    aria-label="Table name"
-                    data-table-editor-name="true"
-                    color="neutral"
-                    variant="outline"
-                    size="sm"
-                    :ui="studioFieldUi"
-                  />
-                </label>
-
-                <label class="grid gap-1">
-                  <span class="font-mono text-[0.62rem] uppercase tracking-[0.08em] text-[color:var(--studio-shell-label)]">Schema</span>
-                  <USelect
-                    v-model="tableEditorDraft.schema"
-                    aria-label="Table schema"
-                    :items="schemaSelectItems"
-                    color="neutral"
-                    variant="outline"
-                    size="sm"
-                    :ui="studioSelectUi"
-                  />
-                </label>
-
-                <label class="grid gap-1">
-                  <span class="font-mono text-[0.62rem] uppercase tracking-[0.08em] text-[color:var(--studio-shell-label)]">Table group</span>
-                  <USelectMenu
-                    aria-label="Table group"
-                    :model-value="tableEditorDraft.groupName || 'Ungrouped'"
-                    :items="groupSelectItems"
-                    :search-input="getStudioSelectMenuSearchInputProps('Search groups')"
-                    :filter-fields="['label', 'description', 'value']"
-                    value-key="value"
-                    label-key="label"
-                    description-key="description"
-                    placeholder="Choose a group"
-                    color="neutral"
-                    variant="outline"
-                    size="sm"
-                    :ui="studioInputMenuUi"
-                    @update:model-value="updateTableDraftGroup(String($event || 'Ungrouped'))"
-                  />
-                </label>
-              </div>
-
-              <label class="grid gap-1">
-                <span class="font-mono text-[0.62rem] uppercase tracking-[0.08em] text-[color:var(--studio-shell-label)]">Table note</span>
-                <textarea
-                  v-model="tableEditorDraft.note"
-                  rows="3"
-                  :class="[textareaClass, 'min-h-[5rem]']"
-                />
-              </label>
-
-              <div class="grid gap-3">
-                <div class="flex items-center justify-between gap-3">
-                  <div>
-                    <div class="font-mono text-[0.62rem] uppercase tracking-[0.08em] text-[color:var(--studio-shell-label)]">
-                      Columns
-                    </div>
-                    <p class="mt-1 text-[0.74rem] leading-5 text-[color:var(--studio-shell-muted)]">
-                      Choose types and references from structured inputs where available, then refine the exact values if needed.
-                    </p>
-                  </div>
-
-                  <UButton
-                    label="Add column"
-                    icon="i-lucide-plus"
-                    color="neutral"
-                    variant="soft"
-                    size="sm"
-                    :class="tableEditorAddButtonClass"
-                    @click="addTableDraftColumn"
-                  />
-                </div>
-
-                <div class="grid gap-3">
-                  <article
-                    v-for="column in tableEditorDraft.columns"
-                    :key="column.id"
-                    :data-table-editor-column="column.id"
-                    class="grid gap-3 border border-[color:var(--studio-shell-border)] bg-[color:var(--studio-control-bg)] px-3 py-3"
-                  >
-                    <div class="flex items-center justify-between gap-3">
-                      <div class="font-mono text-[0.62rem] uppercase tracking-[0.08em] text-[color:var(--studio-shell-label)]">
-                        {{ column.name || 'New column' }}
-                      </div>
-
-                      <UButton
-                        icon="i-lucide-trash-2"
-                        color="neutral"
-                        variant="ghost"
-                        size="xs"
-                        :class="tableEditorRemoveButtonClass"
-                        aria-label="Remove column"
-                        :disabled="tableEditorDraft.columns.length <= 1"
-                        @click="removeTableDraftColumn(column.id)"
-                      />
-                    </div>
-
-                    <div class="grid gap-3 lg:grid-cols-[minmax(0,0.85fr)_minmax(0,1.15fr)]">
-                      <label class="grid gap-1">
-                        <span class="font-mono text-[0.58rem] uppercase tracking-[0.08em] text-[color:var(--studio-shell-label)]">Column name</span>
-                        <UInput
-                          v-model="column.name"
-                          aria-label="Column name"
-                          color="neutral"
-                          variant="outline"
-                          size="sm"
-                          :ui="studioFieldUi"
-                        />
-                      </label>
-
-                      <div class="grid gap-2">
-                        <span class="font-mono text-[0.58rem] uppercase tracking-[0.08em] text-[color:var(--studio-shell-label)]">Column type</span>
-                        <div class="grid gap-2 lg:grid-cols-[minmax(0,0.56fr)_minmax(0,0.44fr)]">
-                          <USelectMenu
-                            aria-label="Column type preset"
-                            :model-value="column.type"
-                            :items="tableTypeItems"
-                            :search-input="getStudioSelectMenuSearchInputProps('Search column types')"
-                            :filter-fields="['label', 'description', 'value']"
-                            value-key="value"
-                            label-key="label"
-                            description-key="description"
-                            placeholder="Choose a type"
-                            color="neutral"
-                            variant="outline"
-                            size="sm"
-                            :ui="studioInputMenuUi"
-                            @update:model-value="column.type = String($event || '')"
-                          />
-                          <UInput
-                            v-model="column.type"
-                            aria-label="Column type"
-                            placeholder="Exact type"
-                            color="neutral"
-                            variant="outline"
-                            size="sm"
-                            :ui="studioFieldUi"
-                          />
-                        </div>
-                      </div>
-                    </div>
-
-                    <div class="grid gap-3 lg:grid-cols-3">
-                      <label class="grid gap-1">
-                        <span class="font-mono text-[0.58rem] uppercase tracking-[0.08em] text-[color:var(--studio-shell-label)]">Default</span>
-                        <UInputMenu
-                          v-model="column.defaultValue"
-                          v-bind="studioDefaultInputMenuProps"
-                          aria-label="Column default"
-                          :items="getColumnDefaultItems(column.type)"
-                          :filter-fields="['label', 'value', 'description']"
-                          value-key="value"
-                          label-key="label"
-                          description-key="description"
-                          :placeholder="getColumnDefaultPlaceholder(column.type)"
-                          color="neutral"
-                          variant="outline"
-                          size="sm"
-                          :ui="studioInputMenuUi"
-                        />
-                      </label>
-
-                      <label class="grid gap-1 lg:col-span-2">
-                        <span class="font-mono text-[0.58rem] uppercase tracking-[0.08em] text-[color:var(--studio-shell-label)]">Column note</span>
-                        <UInput
-                          v-model="column.note"
-                          aria-label="Column note"
-                          placeholder="Optional column note"
-                          color="neutral"
-                          variant="outline"
-                          size="sm"
-                          :ui="studioFieldUi"
-                        />
-                      </label>
-                    </div>
-
-                    <div class="flex flex-wrap gap-2">
-                      <button
-                        type="button"
-                        :class="[tableEditorModifierButtonClass, column.primaryKey ? 'studio-toggle-chip--active' : '']"
-                        @click="column.primaryKey = !column.primaryKey"
-                      >
-                        Primary key
-                      </button>
-                      <button
-                        type="button"
-                        :class="[tableEditorModifierButtonClass, column.notNull ? 'studio-toggle-chip--active' : '']"
-                        @click="column.notNull = !column.notNull"
-                      >
-                        Not null
-                      </button>
-                      <button
-                        type="button"
-                        :class="[tableEditorModifierButtonClass, column.unique ? 'studio-toggle-chip--active' : '']"
-                        @click="column.unique = !column.unique"
-                      >
-                        Unique
-                      </button>
-                    </div>
-
-                    <USwitch
-                      v-model="column.referenceEnabled"
+                <div class="grid gap-3 lg:grid-cols-3">
+                  <label class="grid gap-1">
+                    <span :class="studioCompactFieldKickerClass">Default</span>
+                    <UInputMenu
+                      v-model="column.defaultValue"
+                      v-bind="studioDefaultInputMenuProps"
+                      aria-label="Column default"
+                      :items="getColumnDefaultItems(column.type)"
+                      :filter-fields="['label', 'value', 'description']"
+                      value-key="value"
+                      label-key="label"
+                      description-key="description"
+                      :placeholder="getColumnDefaultPlaceholder(column.type)"
                       color="neutral"
+                      variant="outline"
                       size="sm"
-                      label="Reference"
-                      description="Choose the referenced table and column instead of typing a raw ref modifier."
-                      :ui="studioSwitchUi"
+                      :ui="studioInputMenuUi"
                     />
+                  </label>
 
-                    <div
-                      v-if="column.referenceEnabled"
-                      class="grid gap-3 lg:grid-cols-[minmax(0,0.34fr)_minmax(0,0.4fr)_minmax(0,0.26fr)]"
-                    >
-                      <label class="grid gap-1">
-                        <span class="font-mono text-[0.58rem] uppercase tracking-[0.08em] text-[color:var(--studio-shell-label)]">Relationship direction</span>
-                        <div class="grid gap-2 lg:grid-cols-[minmax(0,1fr)_4.5rem]">
-                          <USelect
-                            v-model="column.referenceRelation"
-                            aria-label="Relationship direction"
-                            :items="referenceRelationItems"
-                            value-key="value"
-                            label-key="label"
-                            description-key="description"
-                            color="neutral"
-                            variant="outline"
-                            size="sm"
-                            :ui="studioSelectUi"
-                          />
-                          <USelect
-                            v-model="column.referenceRelation"
-                            aria-label="Relationship direction symbol"
-                            :items="referenceRelationSymbolItems"
-                            value-key="value"
-                            label-key="label"
-                            description-key="description"
-                            color="neutral"
-                            variant="outline"
-                            size="sm"
-                            :ui="studioSelectUi"
-                          />
-                        </div>
-                      </label>
-
-                      <label class="grid gap-1">
-                        <span class="font-mono text-[0.58rem] uppercase tracking-[0.08em] text-[color:var(--studio-shell-label)]">Target table</span>
-                        <USelectMenu
-                          aria-label="Reference target table"
-                          :model-value="`${column.referenceSchema}.${column.referenceTable}`"
-                          :items="tableTargetItems"
-                          :search-input="getStudioSelectMenuSearchInputProps('Search tables')"
-                          :filter-fields="['label', 'description', 'value']"
-                          value-key="value"
-                          label-key="label"
-                          description-key="description"
-                          placeholder="Select a table"
-                          color="neutral"
-                          variant="outline"
-                          size="sm"
-                          :ui="studioInputMenuUi"
-                          @update:model-value="updateTableDraftReferenceTarget(column.id, String($event))"
-                        />
-                      </label>
-
-                      <label class="grid gap-1">
-                        <span class="font-mono text-[0.58rem] uppercase tracking-[0.08em] text-[color:var(--studio-shell-label)]">Target column</span>
-                        <USelectMenu
-                          aria-label="Reference target column"
-                          :items="getReferenceColumnItems(`${column.referenceSchema}.${column.referenceTable}`)"
-                          :model-value="column.referenceColumn"
-                          :search-input="getStudioSelectMenuSearchInputProps('Search columns')"
-                          :filter-fields="['label', 'description', 'value']"
-                          value-key="value"
-                          label-key="label"
-                          description-key="description"
-                          placeholder="Select a column"
-                          color="neutral"
-                          variant="outline"
-                          size="sm"
-                          :ui="studioInputMenuUi"
-                          @update:model-value="updateTableDraftReferenceColumn(column.id, String($event || ''))"
-                        />
-                      </label>
-                    </div>
-                  </article>
+                  <label class="grid gap-1 lg:col-span-2">
+                    <span :class="studioCompactFieldKickerClass">Column note</span>
+                    <UInput
+                      v-model="column.note"
+                      aria-label="Column note"
+                      placeholder="Optional column note"
+                      color="neutral"
+                      variant="outline"
+                      size="sm"
+                      :ui="studioFieldUi"
+                    />
+                  </label>
                 </div>
-              </div>
-            </div>
 
-            <div class="flex items-center justify-end gap-2 border-t border-[color:var(--studio-shell-border)] px-4 py-3">
-              <UButton
-                label="Cancel"
-                color="neutral"
-                variant="outline"
-                :class="secondaryModalButtonClass"
-                @click="closeTableEditor"
-              />
-              <UButton
-                :label="tableEditorActionLabel"
-                data-table-editor-save="true"
-                color="neutral"
-                variant="soft"
-                :class="primaryModalButtonClass"
-                :disabled="tableEditorErrors.length > 0"
-                @click="saveTableEditor"
-              />
+                <div class="flex flex-wrap gap-2">
+                  <button
+                    type="button"
+                    :class="getStudioToggleChipClass({
+                      active: column.primaryKey,
+                      extraClass: 'px-2 py-1 font-mono text-[0.58rem] uppercase tracking-[0.08em]'
+                    })"
+                    @click="column.primaryKey = !column.primaryKey"
+                  >
+                    Primary key
+                  </button>
+                  <button
+                    type="button"
+                    :class="getStudioToggleChipClass({
+                      active: column.notNull,
+                      extraClass: 'px-2 py-1 font-mono text-[0.58rem] uppercase tracking-[0.08em]'
+                    })"
+                    @click="column.notNull = !column.notNull"
+                  >
+                    Not null
+                  </button>
+                  <button
+                    type="button"
+                    :class="getStudioToggleChipClass({
+                      active: column.unique,
+                      extraClass: 'px-2 py-1 font-mono text-[0.58rem] uppercase tracking-[0.08em]'
+                    })"
+                    @click="column.unique = !column.unique"
+                  >
+                    Unique
+                  </button>
+                </div>
+
+                <USwitch
+                  v-model="column.referenceEnabled"
+                  color="neutral"
+                  size="sm"
+                  label="Reference"
+                  description="Choose the referenced table and column instead of typing a raw ref modifier."
+                  :ui="studioSwitchUi"
+                />
+
+                <div
+                  v-if="column.referenceEnabled"
+                  class="grid gap-3 lg:grid-cols-[minmax(0,0.34fr)_minmax(0,0.4fr)_minmax(0,0.26fr)]"
+                >
+                  <label class="grid gap-1">
+                    <span :class="studioCompactFieldKickerClass">Relationship direction</span>
+                    <div class="grid gap-2 lg:grid-cols-[minmax(0,1fr)_4.5rem]">
+                      <USelect
+                        v-model="column.referenceRelation"
+                        aria-label="Relationship direction"
+                        :items="referenceRelationItems"
+                        value-key="value"
+                        label-key="label"
+                        description-key="description"
+                        color="neutral"
+                        variant="outline"
+                        size="sm"
+                        :ui="studioSelectUi"
+                      />
+                      <USelect
+                        v-model="column.referenceRelation"
+                        aria-label="Relationship direction symbol"
+                        :items="referenceRelationSymbolItems"
+                        value-key="value"
+                        label-key="label"
+                        description-key="description"
+                        color="neutral"
+                        variant="outline"
+                        size="sm"
+                        :ui="studioSelectUi"
+                      />
+                    </div>
+                  </label>
+
+                  <label class="grid gap-1">
+                    <span :class="studioCompactFieldKickerClass">Target table</span>
+                    <USelectMenu
+                      aria-label="Reference target table"
+                      :model-value="`${column.referenceSchema}.${column.referenceTable}`"
+                      :items="tableTargetItems"
+                      :search-input="getStudioSelectMenuSearchInputProps('Search tables')"
+                      :filter-fields="['label', 'description', 'value']"
+                      value-key="value"
+                      label-key="label"
+                      description-key="description"
+                      placeholder="Select a table"
+                      color="neutral"
+                      variant="outline"
+                      size="sm"
+                      :ui="studioInputMenuUi"
+                      @update:model-value="updateTableDraftReferenceTarget(column.id, String($event))"
+                    />
+                  </label>
+
+                  <label class="grid gap-1">
+                    <span :class="studioCompactFieldKickerClass">Target column</span>
+                    <USelectMenu
+                      aria-label="Reference target column"
+                      :items="getReferenceColumnItems(`${column.referenceSchema}.${column.referenceTable}`)"
+                      :model-value="column.referenceColumn"
+                      :search-input="getStudioSelectMenuSearchInputProps('Search columns')"
+                      :filter-fields="['label', 'description', 'value']"
+                      value-key="value"
+                      label-key="label"
+                      description-key="description"
+                      placeholder="Select a column"
+                      color="neutral"
+                      variant="outline"
+                      size="sm"
+                      :ui="studioInputMenuUi"
+                      @update:model-value="updateTableDraftReferenceColumn(column.id, String($event || ''))"
+                    />
+                  </label>
+                </div>
+              </article>
             </div>
           </div>
-        </template>
-      </UModal>
+        </div>
 
-      <UModal
+        <template #footer>
+          <UButton
+            label="Cancel"
+            color="neutral"
+            variant="outline"
+            :class="secondaryModalButtonClass"
+            @click="closeTableEditor"
+          />
+          <UButton
+            :label="tableEditorActionLabel"
+            data-table-editor-save="true"
+            color="neutral"
+            variant="soft"
+            :class="primaryModalButtonClass"
+            :disabled="tableEditorErrors.length > 0"
+            @click="saveTableEditor"
+          />
+        </template>
+      </StudioModalFrame>
+
+      <StudioModalFrame
         v-model:open="groupEditorOpen"
         :title="groupEditorTitle"
-        :description="groupEditorDraft?.mode === 'create' ? 'Create a table group block and choose which tables should belong to it.' : 'Rename the selected table group, choose its tables, and update its note.'"
-        :ui="{
-          overlay: 'bg-black/60 backdrop-blur-[2px]',
-          content: 'overflow-visible border-none bg-transparent p-0 shadow-none ring-0'
-        }"
+        :description="groupEditorDescription"
+        surface-id="group-editor"
+        body-class="grid max-h-[min(60vh,32rem)] gap-5 overflow-y-auto px-4 py-4"
       >
-        <template #content>
+        <div
+          v-if="groupEditorDraft"
+          class="contents"
+        >
           <div
-            v-if="groupEditorDraft"
-            data-studio-modal-surface="group-editor"
-            class="flex w-[calc(100vw-2rem)] max-w-2xl flex-col overflow-hidden rounded-none border"
-            :style="studioModalSurfaceStyle"
+            v-if="groupEditorErrors.length"
+            class="grid gap-1 border border-[color:var(--studio-shell-error)]/40 bg-[color:var(--studio-shell-error)]/8 px-3 py-3 text-[0.74rem] text-[color:var(--studio-shell-error)]"
           >
-            <div class="flex items-start justify-between gap-4 border-b border-[color:var(--studio-shell-border)] px-4 py-3">
-              <div class="grid gap-1">
-                <h2 class="text-[1rem] font-semibold leading-6 text-[color:var(--studio-shell-text)]">
-                  {{ groupEditorTitle }}
-                </h2>
-                <p class="text-[0.8rem] leading-5 text-[color:var(--studio-shell-muted)]">
-                  {{ groupEditorDraft.mode === 'create' ? 'Create a new table group and assign tables to it in one pass.' : 'Update the selected group metadata and its table membership without leaving the diagram.' }}
-                </p>
-              </div>
+            <p
+              v-for="error in groupEditorErrors"
+              :key="error"
+            >
+              {{ error }}
+            </p>
+          </div>
 
-              <UButton
-                icon="i-lucide-x"
-                color="neutral"
-                variant="ghost"
-                :class="iconGhostButtonClass"
-                aria-label="Close"
-                @click="closeGroupEditor"
-              />
-            </div>
-
-            <div class="grid max-h-[min(60vh,32rem)] gap-5 overflow-y-auto px-4 py-4">
-              <div
-                v-if="groupEditorErrors.length"
-                class="grid gap-1 border border-[color:var(--studio-shell-error)]/40 bg-[color:var(--studio-shell-error)]/8 px-3 py-3 text-[0.74rem] text-[color:var(--studio-shell-error)]"
-              >
-                <p
-                  v-for="error in groupEditorErrors"
-                  :key="error"
-                >
-                  {{ error }}
-                </p>
-              </div>
-
-              <div class="grid gap-3 lg:grid-cols-[minmax(0,0.9fr)_minmax(0,1.1fr)]">
-                <label class="grid gap-1">
-                  <span class="font-mono text-[0.62rem] uppercase tracking-[0.08em] text-[color:var(--studio-shell-label)]">Group name</span>
-                  <UInput
-                    v-model="groupEditorDraft.name"
-                    aria-label="Group name"
-                    data-group-editor-name="true"
-                    color="neutral"
-                    variant="outline"
-                    size="sm"
-                    :ui="studioFieldUi"
-                  />
-                </label>
-
-                <div class="grid gap-1">
-                  <span class="font-mono text-[0.62rem] uppercase tracking-[0.08em] text-[color:var(--studio-shell-label)]">Tables in this group</span>
-                  <USelectMenu
-                    aria-label="Group tables"
-                    :items="groupTableItems"
-                    :model-value="groupEditorDraft.tableNames"
-                    :multiple="true"
-                    :search-input="getStudioSelectMenuSearchInputProps('Search tables')"
-                    :filter-fields="['label', 'description', 'value']"
-                    value-key="value"
-                    label-key="label"
-                    description-key="description"
-                    placeholder="Choose tables"
-                    color="neutral"
-                    variant="outline"
-                    size="sm"
-                    :ui="studioInputMenuUi"
-                    @update:model-value="updateGroupDraftTableNames($event)"
-                  />
-                </div>
-              </div>
-
-              <label class="grid gap-1">
-                <span class="font-mono text-[0.62rem] uppercase tracking-[0.08em] text-[color:var(--studio-shell-label)]">Group note</span>
-                <textarea
-                  v-model="groupEditorDraft.note"
-                  data-group-editor-note="true"
-                  rows="4"
-                  :class="[textareaClass, 'min-h-[6rem]']"
-                />
-              </label>
-            </div>
-
-            <div class="flex items-center justify-end gap-2 border-t border-[color:var(--studio-shell-border)] px-4 py-3">
-              <UButton
-                label="Cancel"
+          <div class="grid gap-3 lg:grid-cols-[minmax(0,0.9fr)_minmax(0,1.1fr)]">
+            <label class="grid gap-1">
+              <span :class="studioFieldKickerClass">Group name</span>
+              <UInput
+                v-model="groupEditorDraft.name"
+                aria-label="Group name"
+                data-group-editor-name="true"
                 color="neutral"
                 variant="outline"
-                :class="secondaryModalButtonClass"
-                @click="closeGroupEditor"
+                size="sm"
+                :ui="studioFieldUi"
               />
-              <UButton
-                :label="groupEditorActionLabel"
-                data-group-editor-save="true"
+            </label>
+
+            <div class="grid gap-1">
+              <span :class="studioFieldKickerClass">Tables in this group</span>
+              <USelectMenu
+                aria-label="Group tables"
+                :items="groupTableItems"
+                :model-value="groupEditorDraft.tableNames"
+                :multiple="true"
+                :search-input="getStudioSelectMenuSearchInputProps('Search tables')"
+                :filter-fields="['label', 'description', 'value']"
+                value-key="value"
+                label-key="label"
+                description-key="description"
+                placeholder="Choose tables"
                 color="neutral"
-                variant="soft"
-                :class="primaryModalButtonClass"
-                :disabled="groupEditorErrors.length > 0"
-                @click="saveGroupEditor"
+                variant="outline"
+                size="sm"
+                :ui="studioInputMenuUi"
+                @update:model-value="updateGroupDraftTableNames($event)"
               />
             </div>
           </div>
+
+          <label class="grid gap-1">
+            <span :class="studioFieldKickerClass">Group note</span>
+            <textarea
+              v-model="groupEditorDraft.note"
+              data-group-editor-note="true"
+              rows="4"
+              :class="[textareaClass, 'min-h-[6rem]']"
+            />
+          </label>
+        </div>
+
+        <template #footer>
+          <UButton
+            label="Cancel"
+            color="neutral"
+            variant="outline"
+            :class="secondaryModalButtonClass"
+            @click="closeGroupEditor"
+          />
+          <UButton
+            :label="groupEditorActionLabel"
+            data-group-editor-save="true"
+            color="neutral"
+            variant="soft"
+            :class="primaryModalButtonClass"
+            :disabled="groupEditorErrors.length > 0"
+            @click="saveGroupEditor"
+          />
         </template>
-      </UModal>
+      </StudioModalFrame>
     </ClientOnly>
   </div>
 </template>

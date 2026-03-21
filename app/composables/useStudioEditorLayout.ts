@@ -1,11 +1,12 @@
 import type { Ref } from 'vue'
-import { useEventListener, useResizeObserver, useToggle, useWindowSize } from '@vueuse/core'
+import { useResizeObserver, useToggle, useWindowSize } from '@vueuse/core'
 import {
   clampStudioEditorWidth,
   getStudioLayoutColumns,
   studioCompactBreakpoint,
   studioEditorPanelMinWidth
 } from '~/utils/studio-layout'
+import { useWindowPointerSession } from '~/composables/useWindowPointerSession'
 
 export const useStudioEditorLayout = () => {
   const layoutShellRef: Ref<HTMLDivElement | null> = ref(null)
@@ -15,6 +16,7 @@ export const useStudioEditorLayout = () => {
     initialWidth: studioCompactBreakpoint
   })
   const toggleEditorPanel = useToggle(isEditorPanelVisible)
+  const { startPointerSession } = useWindowPointerSession()
 
   const isCompactStudioLayout = computed(() => viewportWidth.value < studioCompactBreakpoint)
   const studioLayoutStyle = computed(() => {
@@ -59,23 +61,18 @@ export const useStudioEditorLayout = () => {
     event.preventDefault()
     const originX = event.clientX
     const originWidth = editorPanelWidth.value
+
+    // Capture the container width once per drag so the resize math stays stable
+    // even if the window changes size mid-interaction.
     const containerWidth = layoutShellRef.value.clientWidth
 
-    const onMove = (moveEvent: PointerEvent) => {
-      editorPanelWidth.value = clampStudioEditorWidth(
-        originWidth + moveEvent.clientX - originX,
-        containerWidth
-      )
-    }
-
-    const onUp = () => {
-      stopPointerMove()
-      stopPointerUp()
-    }
-
-    const stopPointerMove = useEventListener(window, 'pointermove', onMove)
-    const stopPointerUp = useEventListener(window, 'pointerup', onUp, {
-      once: true
+    startPointerSession({
+      onMove: (moveEvent: PointerEvent) => {
+        editorPanelWidth.value = clampStudioEditorWidth(
+          originWidth + moveEvent.clientX - originX,
+          containerWidth
+        )
+      }
     })
   }
 

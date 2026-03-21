@@ -53,30 +53,38 @@ const isStudioRoute = computed(() => route.path.startsWith('/diagram'))
 const { studioTheme, studioThemeIcon, studioThemeLabel, toggleStudioTheme } = useStudioTheme()
 const { state: studioHeaderActions } = useStudioHeaderActions()
 const { state: studioSchemaStatus } = useStudioSchemaStatus()
+const { buttonClasses } = useStudioUi()
 const studioHeaderActionContent = {
   align: 'end' as const,
   side: 'bottom' as const,
   sideOffset: 6
 }
+const shellModeClasses = {
+  page: {
+    container: 'relative mx-auto flex min-h-screen w-full max-w-[1480px] min-w-0 flex-col px-4 sm:px-6 lg:px-8',
+    headerInner: 'flex min-h-[4.25rem] items-center justify-between gap-4 py-[0.9rem]',
+    main: 'flex-1 pb-14 pt-8 sm:pt-10',
+    root: 'min-h-screen w-full bg-[color:var(--studio-shell-bg)] text-[color:var(--studio-shell-text)] transition-colors duration-200'
+  },
+  studio: {
+    container: 'relative flex h-full w-full min-w-0 flex-col overflow-hidden',
+    headerInner: 'relative flex min-h-[4.25rem] items-center justify-between gap-4 px-4 py-[0.9rem] sm:px-6 lg:px-8',
+    main: 'flex-1 min-h-0 overflow-hidden',
+    root: 'h-dvh w-full overflow-hidden bg-[color:var(--studio-shell-bg)] text-[color:var(--studio-shell-text)] transition-colors duration-200'
+  }
+} as const
+const currentShellMode = computed(() => isStudioRoute.value ? 'studio' : 'page')
 const rootClass = computed(() => {
-  return isStudioRoute.value
-    ? 'h-dvh w-full overflow-hidden bg-[color:var(--studio-shell-bg)] text-[color:var(--studio-shell-text)] transition-colors duration-200'
-    : 'min-h-screen w-full bg-[color:var(--studio-shell-bg)] text-[color:var(--studio-shell-text)] transition-colors duration-200'
+  return shellModeClasses[currentShellMode.value].root
 })
 const shellContainerClass = computed(() => {
-  return isStudioRoute.value
-    ? 'relative flex h-full w-full min-w-0 flex-col overflow-hidden'
-    : 'relative mx-auto flex min-h-screen w-full max-w-[1480px] min-w-0 flex-col px-4 sm:px-6 lg:px-8'
+  return shellModeClasses[currentShellMode.value].container
 })
 const headerInnerClass = computed(() => {
-  return isStudioRoute.value
-    ? 'relative flex min-h-[4.25rem] items-center justify-between gap-4 px-4 py-[0.9rem] sm:px-6 lg:px-8'
-    : 'flex min-h-[4.25rem] items-center justify-between gap-4 py-[0.9rem]'
+  return shellModeClasses[currentShellMode.value].headerInner
 })
 const mainClass = computed(() => {
-  return isStudioRoute.value
-    ? 'flex-1 min-h-0 overflow-hidden'
-    : 'flex-1 pb-14 pt-8 sm:pt-10'
+  return shellModeClasses[currentShellMode.value].main
 })
 
 const navLinkClass = (to: string) => {
@@ -183,7 +191,7 @@ const studioSchemaStatusIconClass = computed(() => {
                     label="Actions"
                     color="neutral"
                     variant="soft"
-                    class="studio-button studio-button--primary"
+                    :class="buttonClasses.primary"
                     aria-label="Studio actions"
                     title="Studio actions"
                     :loading="studioHeaderActions.isLoading"
@@ -194,7 +202,7 @@ const studioSchemaStatusIconClass = computed(() => {
                 :icon="studioThemeIcon"
                 color="neutral"
                 variant="ghost"
-                class="studio-button studio-button--ghost studio-button--icon"
+                :class="buttonClasses.iconGhost"
                 :aria-label="studioThemeLabel"
                 :title="studioThemeLabel"
                 @click="toggleStudioTheme"
@@ -204,7 +212,7 @@ const studioSchemaStatusIconClass = computed(() => {
                 :label="isStudioRoute ? 'View Spec' : 'Open Studio'"
                 color="neutral"
                 trailing-icon="i-lucide-arrow-up-right"
-                class="studio-button"
+                :class="buttonClasses.secondary"
               />
             </div>
           </div>

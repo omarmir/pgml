@@ -156,6 +156,18 @@ Function register_entity(entity_kind text) returns trigger [replace] {
     $$ LANGUAGE plpgsql;
   $sql$
 }`
+
+const {
+  buttonClasses,
+  studioCodeBlockClass,
+  studioPanelSurfaceClass,
+  studioSectionKickerClass
+} = useStudioUi()
+const examplePanelClass = `${studioPanelSurfaceClass} min-w-0`
+const panelCardClass = `${studioPanelSurfaceClass} px-4 py-4`
+const pageOutlineCardClass = `${studioPanelSurfaceClass} p-4`
+const sectionDividerClass = 'scroll-mt-24 border-t border-[color:var(--studio-shell-border)] pt-6'
+const tableOfContentsLinkClass = 'border-l border-transparent pl-3 text-sm text-[color:var(--studio-shell-muted)] transition-colors duration-150 hover:border-[color:var(--studio-shell-border)] hover:text-[color:var(--studio-shell-text)]'
 </script>
 
 <template>
@@ -184,22 +196,22 @@ Function register_entity(entity_kind text) returns trigger [replace] {
             label="Open Diagram Studio"
             trailing-icon="i-lucide-arrow-right"
             color="neutral"
-            class="studio-button"
+            :class="buttonClasses.secondary"
           />
           <UButton
             to="#documentation"
             label="Read the docs"
             color="neutral"
             variant="ghost"
-            class="studio-button studio-button--ghost"
+            :class="buttonClasses.ghost"
           />
         </div>
       </div>
 
-      <div class="min-w-0 border border-[color:var(--studio-shell-border)] bg-[color:var(--studio-control-bg)]">
+      <div :class="examplePanelClass">
         <div class="flex items-center justify-between border-b border-[color:var(--studio-shell-border)] px-4 py-3">
           <div>
-            <div class="font-mono text-[0.68rem] uppercase tracking-[0.16em] text-[color:var(--studio-shell-label)]">
+            <div :class="studioSectionKickerClass">
               Example
             </div>
             <p class="mt-1 text-sm text-[color:var(--studio-shell-muted)]">
@@ -213,15 +225,15 @@ Function register_entity(entity_kind text) returns trigger [replace] {
 
         <pre
           data-testid="hero-quick-start"
-          class="spec-code-block max-w-full overflow-x-auto px-4 py-4 font-mono text-[0.77rem] leading-6 text-[color:var(--studio-shell-text)] sm:text-[0.8rem]"
+          :class="studioCodeBlockClass"
         >{{ heroQuickStartCode }}</pre>
       </div>
     </section>
 
     <div class="grid min-w-0 gap-8 lg:grid-cols-[220px_minmax(0,1fr)] lg:gap-10">
       <aside class="lg:sticky lg:top-24 lg:self-start">
-        <div class="border border-[color:var(--studio-shell-border)] bg-[color:var(--studio-control-bg)] p-4">
-          <div class="font-mono text-[0.68rem] uppercase tracking-[0.16em] text-[color:var(--studio-shell-label)]">
+        <div :class="pageOutlineCardClass">
+          <div :class="studioSectionKickerClass">
             On This Page
           </div>
 
@@ -230,7 +242,7 @@ Function register_entity(entity_kind text) returns trigger [replace] {
               v-for="item in pageOutline"
               :key="item.id"
               :href="`#${item.id}`"
-              class="border-l border-transparent pl-3 text-sm text-[color:var(--studio-shell-muted)] transition-colors duration-150 hover:border-[color:var(--studio-shell-border)] hover:text-[color:var(--studio-shell-text)]"
+              :class="tableOfContentsLinkClass"
             >
               {{ item.label }}
             </a>
@@ -246,7 +258,7 @@ Function register_entity(entity_kind text) returns trigger [replace] {
           <div class="flex flex-col gap-6">
             <div class="flex flex-col gap-4">
               <div>
-                <div class="font-mono text-[0.72rem] uppercase tracking-[0.16em] text-[color:var(--studio-shell-label)]">
+                <div :class="studioSectionKickerClass">
                   Why PGML
                 </div>
                 <h2 class="mt-2 text-2xl font-semibold tracking-[-0.02em] text-[color:var(--studio-shell-text)]">
@@ -267,7 +279,7 @@ Function register_entity(entity_kind text) returns trigger [replace] {
               <article
                 v-for="reason in reasons"
                 :key="reason.title"
-                class="border border-[color:var(--studio-shell-border)] bg-[color:var(--studio-control-bg)] px-4 py-4"
+                :class="panelCardClass"
               >
                 <h3 class="text-sm font-semibold text-[color:var(--studio-shell-text)]">
                   {{ reason.title }}
@@ -282,11 +294,11 @@ Function register_entity(entity_kind text) returns trigger [replace] {
 
         <section
           id="dbml"
-          class="scroll-mt-24 border-t border-[color:var(--studio-shell-border)] pt-6"
+          :class="sectionDividerClass"
         >
           <div class="flex flex-col gap-4">
             <div>
-              <div class="font-mono text-[0.72rem] uppercase tracking-[0.16em] text-[color:var(--studio-shell-label)]">
+              <div :class="studioSectionKickerClass">
                 DBML Compatibility
               </div>
               <h2 class="mt-2 text-2xl font-semibold tracking-[-0.02em] text-[color:var(--studio-shell-text)]">
@@ -298,7 +310,7 @@ Function register_entity(entity_kind text) returns trigger [replace] {
               <article
                 v-for="section in dbmlComparison"
                 :key="section.title"
-                class="border border-[color:var(--studio-shell-border)] bg-[color:var(--studio-control-bg)] p-4"
+                :class="`${studioPanelSurfaceClass} p-4`"
               >
                 <h3 class="text-sm font-semibold text-[color:var(--studio-shell-text)]">
                   {{ section.title }}
@@ -318,11 +330,11 @@ Function register_entity(entity_kind text) returns trigger [replace] {
 
         <section
           id="documentation"
-          class="scroll-mt-24 border-t border-[color:var(--studio-shell-border)] pt-6"
+          :class="sectionDividerClass"
         >
           <div class="flex flex-col gap-4">
             <div>
-              <div class="font-mono text-[0.72rem] uppercase tracking-[0.16em] text-[color:var(--studio-shell-label)]">
+              <div :class="studioSectionKickerClass">
                 Documentation
               </div>
               <h2 class="mt-2 text-2xl font-semibold tracking-[-0.02em] text-[color:var(--studio-shell-text)]">
@@ -338,7 +350,7 @@ Function register_entity(entity_kind text) returns trigger [replace] {
               <article
                 v-for="example in documentationExamples"
                 :key="example.title"
-                class="grid gap-0 border border-[color:var(--studio-shell-border)] bg-[color:var(--studio-control-bg)] xl:grid-cols-[minmax(240px,0.34fr)_minmax(0,0.66fr)]"
+                :class="`${studioPanelSurfaceClass} grid gap-0 xl:grid-cols-[minmax(240px,0.34fr)_minmax(0,0.66fr)]`"
               >
                 <div class="border-b border-[color:var(--studio-shell-border)] px-4 py-4 xl:border-r xl:border-b-0">
                   <h3 class="text-sm font-semibold text-[color:var(--studio-shell-text)]">
@@ -349,7 +361,7 @@ Function register_entity(entity_kind text) returns trigger [replace] {
                   </p>
                 </div>
 
-                <pre class="spec-code-block max-w-full overflow-x-auto px-4 py-4 font-mono text-[0.77rem] leading-6 text-[color:var(--studio-shell-text)] sm:text-[0.8rem]">{{ example.code }}</pre>
+                <pre :class="studioCodeBlockClass">{{ example.code }}</pre>
               </article>
             </div>
           </div>
