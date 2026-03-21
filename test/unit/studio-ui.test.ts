@@ -1,31 +1,42 @@
 import { describe, expect, it } from 'vitest'
 
-import { useStudioUi } from '../../app/composables/useStudioUi'
+import {
+  studioFieldUi,
+  studioInputMenuUi,
+  studioModalUi,
+  studioSelectUi,
+  studioSwitchUi
+} from '../../app/constants/ui'
+import {
+  getStudioChoiceButtonClass,
+  getStudioStateButtonClass,
+  getStudioToggleChipClass,
+  studioButtonClasses,
+  studioModalSurfaceClass
+} from '../../app/utils/uiStyles'
 
-describe('useStudioUi', () => {
+describe('studio ui modules', () => {
   it('builds consistent shared state button classes', () => {
-    const ui = useStudioUi()
-
-    expect(ui.getStudioChoiceButtonClass()).toContain('studio-choice-button')
-    expect(ui.getStudioChoiceButtonClass({
+    expect(getStudioChoiceButtonClass()).toContain('studio-choice-button')
+    expect(getStudioChoiceButtonClass({
       active: true,
       extraClass: 'justify-center'
     })).toContain('studio-choice-button--active')
-    expect(ui.getStudioToggleChipClass({
+    expect(getStudioToggleChipClass({
       active: true
     })).toContain('studio-toggle-chip--active')
-    expect(ui.getStudioStateButtonClass({
+    expect(getStudioStateButtonClass({
       emphasized: true
     })).toContain('border-[color:var(--studio-shell-label)]')
   })
 
   it('exposes the shared modal and field primitives used across the studio', () => {
-    const ui = useStudioUi()
-
-    expect(ui.studioModalUi.overlay).toContain('bg-black/60')
-    expect(ui.studioModalSurfaceClass).toContain('w-[calc(100vw-2rem)]')
-    expect(ui.studioFieldUi.base).toContain('bg-[color:var(--studio-input-bg)]')
-    expect(ui.studioSelectUi.base).toContain('studio-select-trigger')
-    expect(ui.buttonClasses.iconGhost).toContain('studio-button--icon')
+    expect(studioModalUi.overlay).toContain('bg-black/60')
+    expect(studioModalSurfaceClass).toContain('w-[calc(100vw-2rem)]')
+    expect(studioFieldUi.base).toContain('bg-[color:var(--studio-input-bg)]')
+    expect(studioInputMenuUi.base).toContain('studio-select-trigger')
+    expect(studioSelectUi.base).toContain('studio-select-trigger')
+    expect(studioSwitchUi.base).toContain('data-[state=checked]:bg-[color:var(--studio-shell-label)]')
+    expect(studioButtonClasses.iconGhost).toContain('studio-button--icon')
   })
 })

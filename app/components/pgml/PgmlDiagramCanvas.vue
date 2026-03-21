@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { useClipboard, useResizeObserver, useTimeoutFn } from '@vueuse/core'
+import { studioSelectUi } from '~/constants/ui'
 import type {
   PgmlCustomType,
   PgmlNodeProperties,
@@ -43,6 +44,15 @@ import type {
   TableAttachmentKind,
   TableRow
 } from '~/utils/pgml-diagram-canvas'
+import {
+  getStudioChoiceButtonClass,
+  getStudioStateButtonClass,
+  getStudioTabButtonClass,
+  joinStudioClasses,
+  studioButtonClasses,
+  studioCompactInputClass,
+  studioToolbarButtonClass
+} from '~/utils/uiStyles'
 
 const {
   exportBaseName = 'pgml-schema',
@@ -281,20 +291,10 @@ const attachmentPopoverContent = {
 const attachmentPopoverUi = {
   content: 'w-[22rem] rounded-none border border-[color:var(--studio-shell-border)] bg-[color:var(--studio-control-bg)] p-3 shadow-[var(--studio-floating-shadow)] backdrop-blur-sm'
 }
-const {
-  buttonClasses,
-  getStudioChoiceButtonClass,
-  getStudioStateButtonClass,
-  getStudioTabButtonClass,
-  joinStudioClasses,
-  studioCompactInputClass,
-  studioSelectUi,
-  studioToolbarButtonClass
-} = useStudioUi()
 const exportArtifactButtonErrorClass = 'border-[color:var(--studio-shell-error)] bg-[color:var(--studio-shell-error)]/8 text-[color:var(--studio-shell-error)] hover:bg-[color:var(--studio-shell-error)]/12 hover:text-[color:var(--studio-shell-error)]'
-const panelToggleButtonClass = joinStudioClasses(buttonClasses.secondary, studioToolbarButtonClass)
-const sidePanelCloseButtonClass = joinStudioClasses(buttonClasses.iconGhost, 'h-7 w-7 justify-center px-0')
-const sidePanelActionButtonClass = joinStudioClasses(buttonClasses.secondary, studioToolbarButtonClass)
+const panelToggleButtonClass = joinStudioClasses(studioButtonClasses.secondary, studioToolbarButtonClass)
+const sidePanelCloseButtonClass = joinStudioClasses(studioButtonClasses.iconGhost, 'h-7 w-7 justify-center px-0')
+const sidePanelActionButtonClass = joinStudioClasses(studioButtonClasses.secondary, studioToolbarButtonClass)
 const attachmentKindOrder: Record<TableAttachmentKind, number> = {
   Index: 0,
   Constraint: 1,
@@ -6665,7 +6665,7 @@ defineExpose<{
         <button
           type="button"
           data-diagram-panel-tab="inspector"
-          :class="getStudioTabButtonClass(activePanelTab === 'inspector', true)"
+          :class="getStudioTabButtonClass({ active: activePanelTab === 'inspector', withTrailingBorder: true })"
           @click="activePanelTab = 'inspector'"
         >
           Inspector
@@ -6673,7 +6673,7 @@ defineExpose<{
         <button
           type="button"
           data-diagram-panel-tab="entities"
-          :class="getStudioTabButtonClass(activePanelTab === 'entities', true)"
+          :class="getStudioTabButtonClass({ active: activePanelTab === 'entities', withTrailingBorder: true })"
           @click="activePanelTab = 'entities'"
         >
           Entities
@@ -6681,7 +6681,7 @@ defineExpose<{
         <button
           type="button"
           data-diagram-panel-tab="export"
-          :class="getStudioTabButtonClass(activePanelTab === 'export')"
+          :class="getStudioTabButtonClass({ active: activePanelTab === 'export' })"
           @click="activePanelTab = 'export'"
         >
           Export

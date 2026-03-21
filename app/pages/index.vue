@@ -1,4 +1,11 @@
 <script setup lang="ts">
+import {
+  studioButtonClasses,
+  studioCodeBlockClass,
+  studioPanelSurfaceClass,
+  studioSectionKickerClass
+} from '~/utils/uiStyles'
+
 const pageOutline = [
   { id: 'reasons', label: 'Why PGML' },
   { id: 'dbml', label: 'DBML Compatibility' },
@@ -157,15 +164,11 @@ Function register_entity(entity_kind text) returns trigger [replace] {
   $sql$
 }`
 
-const {
-  buttonClasses,
-  studioCodeBlockClass,
-  studioPanelSurfaceClass,
-  studioSectionKickerClass
-} = useStudioUi()
 const examplePanelClass = `${studioPanelSurfaceClass} min-w-0`
 const panelCardClass = `${studioPanelSurfaceClass} px-4 py-4`
 const pageOutlineCardClass = `${studioPanelSurfaceClass} p-4`
+const primaryCtaButtonClass = studioButtonClasses.secondary
+const secondaryCtaButtonClass = studioButtonClasses.ghost
 const sectionDividerClass = 'scroll-mt-24 border-t border-[color:var(--studio-shell-border)] pt-6'
 const tableOfContentsLinkClass = 'border-l border-transparent pl-3 text-sm text-[color:var(--studio-shell-muted)] transition-colors duration-150 hover:border-[color:var(--studio-shell-border)] hover:text-[color:var(--studio-shell-text)]'
 </script>
@@ -196,14 +199,14 @@ const tableOfContentsLinkClass = 'border-l border-transparent pl-3 text-sm text-
             label="Open Diagram Studio"
             trailing-icon="i-lucide-arrow-right"
             color="neutral"
-            :class="buttonClasses.secondary"
+            :class="primaryCtaButtonClass"
           />
           <UButton
             to="#documentation"
             label="Read the docs"
             color="neutral"
             variant="ghost"
-            :class="buttonClasses.ghost"
+            :class="secondaryCtaButtonClass"
           />
         </div>
       </div>

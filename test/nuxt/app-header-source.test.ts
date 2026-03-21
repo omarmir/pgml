@@ -1,14 +1,20 @@
-import { readFileSync } from 'node:fs'
-
 import { describe, expect, it } from 'vitest'
+import { readSourceFile } from './source-test-utils'
 
 describe('App header source', () => {
-  it('delegates header state to a composable and keeps the shell template focused on presentation', () => {
-    const file = readFileSync('/home/omar/Code/pgml/app/app.vue', 'utf8')
+  it('delegates header state to a composable and keeps presentation in the shell component', () => {
+    const appFile = readSourceFile('app/app.vue')
+    const headerFile = readSourceFile('app/components/AppHeader.vue')
+    const composableFile = readSourceFile('app/composables/useAppHeader.ts')
 
-    expect(file).toContain('import { useAppHeader } from \'./composables/useAppHeader\'')
-    expect(file).toContain('data-app-header-title="true"')
-    expect(file).toContain('title="Open header menu"')
-    expect(file).not.toContain('label="Actions"')
+    expect(appFile).toContain('<AppHeader>')
+    expect(headerFile).toContain('import { useAppHeader } from \'~/composables/useAppHeader\'')
+    expect(headerFile).toContain('import { tv } from \'tailwind-variants\'')
+    expect(headerFile).toContain('data-app-header-title="true"')
+    expect(headerFile).toContain('title="Open header menu"')
+    expect(headerFile).not.toContain('label="Actions"')
+    expect(composableFile).not.toContain('shellModeClasses')
+    expect(composableFile).not.toContain('baseHeaderLinkClass')
+    expect(composableFile).not.toContain('desktopMenuUi')
   })
 })

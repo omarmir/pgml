@@ -1,4 +1,17 @@
 <script setup lang="ts">
+import {
+  studioModalUi,
+  studioModalSurfaceStyle
+} from '~/constants/ui'
+import {
+  joinStudioClasses,
+  studioBodyCopyClass,
+  studioButtonClasses,
+  studioModalFooterClass,
+  studioModalHeaderClass,
+  studioModalSurfaceClass
+} from '~/utils/uiStyles'
+
 const {
   bodyClass = 'px-4 py-4',
   description,
@@ -19,17 +32,6 @@ const emit = defineEmits<{
   'close': []
   'update:open': [value: boolean]
 }>()
-
-const {
-  buttonClasses,
-  joinStudioClasses,
-  studioBodyCopyClass,
-  studioModalFooterClass,
-  studioModalHeaderClass,
-  studioModalSurfaceClass,
-  studioModalSurfaceStyle,
-  studioModalUi
-} = useStudioUi()
 
 const handleOpenChange = (nextValue: boolean) => {
   emit('update:open', nextValue)
@@ -68,7 +70,7 @@ const handleOpenChange = (nextValue: boolean) => {
             icon="i-lucide-x"
             color="neutral"
             variant="ghost"
-            :class="buttonClasses.iconGhost"
+            :class="studioButtonClasses.iconGhost"
             aria-label="Close"
             @click="handleOpenChange(false)"
           />

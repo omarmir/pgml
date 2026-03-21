@@ -234,21 +234,21 @@ test('studio header keeps named menus on the left and the current schema centere
   const schemaMenu = appHeader.getByRole('button', { name: 'Schema', exact: true })
   const exportMenu = appHeader.getByRole('button', { name: 'Export', exact: true })
   const schemaTitle = page.locator('[data-app-header-title="true"]')
-  const saveStatus = page.locator('[data-studio-schema-status]').first()
+  const themeToggle = appHeader.getByRole('button', { name: /Switch to (light|dark) mode/ })
 
   await expect(schemaMenu).toBeVisible()
   await expect(exportMenu).toBeVisible()
   await expect(schemaTitle).toHaveText('Example schema')
-  await expect(saveStatus).toBeVisible()
+  await expect(themeToggle).toBeVisible()
 
-  const [schemaMenuBox, exportMenuBox, schemaTitleBox, saveStatusBox] = await Promise.all([
+  const [schemaMenuBox, exportMenuBox, schemaTitleBox, themeToggleBox] = await Promise.all([
     schemaMenu.boundingBox(),
     exportMenu.boundingBox(),
     schemaTitle.boundingBox(),
-    saveStatus.boundingBox()
+    themeToggle.boundingBox()
   ])
 
-  if (!schemaMenuBox || !exportMenuBox || !schemaTitleBox || !saveStatusBox) {
+  if (!schemaMenuBox || !exportMenuBox || !schemaTitleBox || !themeToggleBox) {
     throw new Error('Header layout metrics are not measurable.')
   }
 
@@ -260,7 +260,7 @@ test('studio header keeps named menus on the left and the current schema centere
 
   expect(schemaMenuBox.x).toBeLessThan(exportMenuBox.x)
   expect(exportMenuBox.x + exportMenuBox.width).toBeLessThan(schemaTitleBox.x)
-  expect(schemaTitleBox.x + schemaTitleBox.width).toBeLessThan(saveStatusBox.x + saveStatusBox.width)
+  expect(schemaTitleBox.x + schemaTitleBox.width).toBeLessThan(themeToggleBox.x)
   expect(Math.abs((schemaTitleBox.x + schemaTitleBox.width / 2) - viewportSize.width / 2)).toBeLessThanOrEqual(28)
 })
 

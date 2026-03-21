@@ -1,13 +1,12 @@
-import { readFileSync } from 'node:fs'
-
 import { describe, expect, it } from 'vitest'
+import { readSourceFile } from './source-test-utils'
 
 describe('VueUse adoption source', () => {
   it('uses VueUse primitives for shared theme and editor layout state', () => {
-    const themeFile = readFileSync('/home/omar/Code/pgml/app/composables/useStudioTheme.ts', 'utf8')
-    const layoutFile = readFileSync('/home/omar/Code/pgml/app/composables/useStudioEditorLayout.ts', 'utf8')
-    const canvasFile = readFileSync('/home/omar/Code/pgml/app/components/pgml/PgmlDiagramCanvas.vue', 'utf8')
-    const pointerSessionFile = readFileSync('/home/omar/Code/pgml/app/composables/useWindowPointerSession.ts', 'utf8')
+    const themeFile = readSourceFile('app/composables/useStudioTheme.ts')
+    const layoutFile = readSourceFile('app/composables/useStudioEditorLayout.ts')
+    const canvasFile = readSourceFile('app/components/pgml/PgmlDiagramCanvas.vue')
+    const pointerSessionFile = readSourceFile('app/composables/useWindowPointerSession.ts')
 
     expect(themeFile).toContain('useStorage')
     expect(layoutFile).toContain('useWindowSize')

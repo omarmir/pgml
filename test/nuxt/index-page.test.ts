@@ -1,10 +1,9 @@
-import { readFileSync } from 'node:fs'
-
 import { describe, expect, it } from 'vitest'
+import { readSourceFile } from './source-test-utils'
 
 describe('Landing page source', () => {
   it('keeps the hero preview and the current documentation sections on the page', () => {
-    const file = readFileSync('/home/omar/Code/pgml/app/pages/index.vue', 'utf8')
+    const file = readSourceFile('app/pages/index.vue')
 
     expect(file).toContain('data-testid="hero-quick-start"')
     expect(file).toContain('TableGroup Commerce')

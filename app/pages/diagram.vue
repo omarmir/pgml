@@ -2,13 +2,19 @@
 import type { DropdownMenuItem } from '@nuxt/ui'
 import type { Ref } from 'vue'
 import { nanoid } from 'nanoid'
+import {
+  studioDefaultInputMenuProps,
+  studioFieldUi,
+  studioInputMenuUi,
+  studioSelectUi,
+  studioSwitchUi
+} from '~/constants/ui'
 import PgmlDiagramCanvas from '~/components/pgml/PgmlDiagramCanvas.vue'
 import PgmlSourceCodeEditor from '~/components/pgml/PgmlSourceCodeEditor.vue'
 import { usePgmlColumnDefaultSuggestions } from '~/composables/usePgmlColumnDefaultSuggestions'
 import { slugifySchemaName, type SavedPgmlSchema } from '~/composables/usePgmlStudioSchemas'
 import { useStudioHeaderActions, type StudioHeaderMenu } from '~/composables/useStudioHeaderActions'
 import { useStudioSchemaStatus } from '~/composables/useStudioSchemaStatus'
-import { useStudioUi } from '~/composables/useStudioUi'
 import { analyzePgmlDocument } from '~/utils/pgml-language'
 import {
   buildPgmlWithNodeProperties,
@@ -32,6 +38,19 @@ import {
   type PgmlEditableGroupDraft,
   type PgmlEditableTableDraft
 } from '~/utils/pgml-table-editor'
+import {
+  getStudioChoiceButtonClass,
+  getStudioSelectMenuSearchInputProps,
+  getStudioToggleChipClass,
+  joinStudioClasses,
+  studioButtonClasses,
+  studioCompactBodyCopyClass,
+  studioCompactFieldKickerClass,
+  studioEmptyStateClass,
+  studioFieldKickerClass,
+  studioToolbarButtonClass,
+  textareaClass
+} from '~/utils/uiStyles'
 
 type PgmlDiagramCanvasExposed = {
   exportDiagram: (format: 'svg' | 'png', scaleFactor?: number) => Promise<void>
@@ -147,33 +166,15 @@ const {
   studioLayoutStyle,
   toggleEditorPanelVisibility
 } = useStudioEditorLayout()
-const {
-  buttonClasses,
-  getStudioChoiceButtonClass,
-  getStudioSelectMenuSearchInputProps,
-  getStudioToggleChipClass,
-  joinStudioClasses,
-  studioCompactBodyCopyClass,
-  studioCompactFieldKickerClass,
-  studioEmptyStateClass,
-  studioFieldKickerClass,
-  studioDefaultInputMenuProps,
-  studioFieldUi,
-  studioInputMenuUi,
-  studioSelectUi,
-  studioSwitchUi,
-  studioToolbarButtonClass,
-  textareaClass
-} = useStudioUi()
-const secondaryModalButtonClass = buttonClasses.secondary
-const primaryModalButtonClass = buttonClasses.primary
+const secondaryModalButtonClass = studioButtonClasses.secondary
+const primaryModalButtonClass = studioButtonClasses.primary
 const editorVisibilityButtonClass = joinStudioClasses(
-  buttonClasses.secondary,
+  studioButtonClasses.secondary,
   'absolute left-3 top-3 z-[4]',
   studioToolbarButtonClass
 )
-const tableEditorAddButtonClass = buttonClasses.primary
-const tableEditorRemoveButtonClass = buttonClasses.iconGhost
+const tableEditorAddButtonClass = studioButtonClasses.primary
+const tableEditorRemoveButtonClass = studioButtonClasses.iconGhost
 const sourceAnalysis = computed(() => analyzePgmlDocument(source.value))
 const sourceDiagnostics = computed(() => sourceAnalysis.value.diagnostics)
 const sourceErrorDiagnostics = computed(() => {
@@ -812,7 +813,7 @@ onBeforeUnmount(() => {
         />
         <div
           data-editor-resize-grip="true"
-          class="absolute left-0 top-1/2 flex h-10 w-5 -translate-y-1/2 items-center justify-center border border-[color:var(--studio-shell-border)] bg-[color:var(--studio-control-bg)] text-[color:var(--studio-shell-muted)] transition-colors duration-150 group-hover:border-[color:var(--studio-ring)] group-hover:text-[color:var(--studio-shell-text)] group-focus-visible:border-[color:var(--studio-ring)] group-focus-visible:text-[color:var(--studio-shell-text)]"
+          class="absolute left-0 top-1/2 flex h-10 w-5 -translate-x-1/2 -translate-y-1/2 items-center justify-center border border-[color:var(--studio-shell-border)] bg-[color:var(--studio-control-bg)] text-[color:var(--studio-shell-muted)] transition-colors duration-150 group-hover:border-[color:var(--studio-ring)] group-hover:text-[color:var(--studio-shell-text)] group-focus-visible:border-[color:var(--studio-ring)] group-focus-visible:text-[color:var(--studio-shell-text)]"
         >
           <UIcon
             name="i-lucide-grip-vertical"
