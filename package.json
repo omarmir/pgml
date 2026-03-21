@@ -16,7 +16,7 @@
     "test:unit": "vitest --project unit",
     "test:nuxt": "vitest --project nuxt",
     "test:e2e": "playwright test",
-    "test:e2e:fast": "playwright test tests/homepage.spec.ts tests/studio-persistence.spec.ts tests/diagram-layout.spec.ts",
+    "test:e2e:fast": "playwright test tests/homepage.spec.ts tests/studio-persistence.spec.ts tests/diagram-layout.spec.ts tests/diagram-mobile.spec.ts",
     "test:e2e:fast:spec": "bun ./scripts/test-e2e-fast-spec.ts",
     "test:e2e:ui": "playwright test --ui"
   },

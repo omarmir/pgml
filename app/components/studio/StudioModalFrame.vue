@@ -76,7 +76,7 @@ const handleOpenChange = (nextValue: boolean) => {
           />
         </div>
 
-        <div :class="bodyClass">
+        <div :class="joinStudioClasses('min-h-0', bodyClass)">
           <slot />
         </div>
 

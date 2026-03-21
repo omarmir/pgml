@@ -37,6 +37,12 @@ import {
   isHorizontalDiagramSide,
   pickDiagramAnchorSlot
 } from '~/utils/diagram-routing'
+import {
+  getDiagramPinchViewportTransform,
+  getDiagramTouchGesture,
+  type DiagramTouchGesture,
+  type DiagramTouchPoint
+} from '~/utils/diagram-touch'
 import { normalizeSvgColor, normalizeSvgPaint, parseCssLinearGradient } from '~/utils/svg-paint'
 import type {
   TableAttachment,
@@ -53,17 +59,25 @@ import {
   studioCompactInputClass,
   studioToolbarButtonClass
 } from '~/utils/uiStyles'
+import type {
+  DiagramPanelTab,
+  StudioMobileCanvasView
+} from '~/utils/studio-workspace'
 
 const {
   exportBaseName = 'pgml-schema',
   exportPreferenceKey = 'name:pgml-schema',
   hasBlockingSourceErrors = false,
+  mobileActiveView = null,
+  mobilePanelTab = null,
   model,
   viewportResetKey = 0
 } = defineProps<{
   exportBaseName?: string
   exportPreferenceKey?: string
   hasBlockingSourceErrors?: boolean
+  mobileActiveView?: StudioMobileCanvasView | null
+  mobilePanelTab?: DiagramPanelTab | null
   model: PgmlSchemaModel
   viewportResetKey?: number
 }>()
@@ -74,6 +88,7 @@ const emit = defineEmits<{
   editTable: [tableId: string]
   focusSource: [sourceRange: PgmlSourceRange]
   nodePropertiesChange: [properties: Record<string, PgmlNodeProperties>]
+  panelTabChange: [tab: DiagramPanelTab]
 }>()
 const toast = useToast()
 const { startPointerSession } = useWindowPointerSession()
@@ -138,8 +153,6 @@ type CanvasSelection = {
   tableId: string
   attachmentId: string
 }
-
-type DiagramPanelTab = 'inspector' | 'entities' | 'export'
 type EntityBrowserItemKind = 'group' | 'table' | 'column' | 'attachment' | 'object'
 
 type EntityBrowserItem = {
@@ -175,6 +188,21 @@ type LayoutConnection = {
 }
 
 type ExportCopyFeedbackStatus = 'success' | 'error'
+
+type TouchPanSession = {
+  clientX: number
+  clientY: number
+  panX: number
+  panY: number
+  touchId: number
+}
+
+type TouchPinchSession = {
+  initialCenter: DiagramTouchPoint
+  initialDistance: number
+  initialPan: DiagramTouchPoint
+  initialScale: number
+}
 
 type PlacementMetrics = {
   overlapCount: number
@@ -222,8 +250,10 @@ const selectedNodeId: Ref<string | null> = ref(null)
 const selectedCanvasSelection: Ref<CanvasSelection | null> = ref(null)
 const nodeStates: Ref<Record<string, CanvasNodeState>> = ref({})
 const connectionLines: Ref<ConnectionLine[]> = ref([])
-const isSidePanelOpen: Ref<boolean> = ref(true)
+const isDesktopSidePanelOpen: Ref<boolean> = ref(true)
 const activePanelTab: Ref<DiagramPanelTab> = ref('inspector')
+const touchPanSession: Ref<TouchPanSession | null> = ref(null)
+const touchPinchSession: Ref<TouchPinchSession | null> = ref(null)
 const entitySearchQuery: Ref<string> = ref('')
 const exportPreferences: Ref<PgmlExportPreferences> = ref({
   ...defaultPgmlExportPreferences
@@ -315,6 +345,15 @@ let suppressLayoutObserverUntil = 0
 let previousViewportResetKey: number | null = null
 
 const canvasNodes = computed(() => Object.values(nodeStates.value))
+const isMobileCanvasShell = computed(() => mobileActiveView !== null)
+const isMobilePanelView = computed(() => mobileActiveView === 'panel')
+const isDiagramPanelVisible = computed(() => {
+  if (isMobileCanvasShell.value) {
+    return isMobilePanelView.value
+  }
+
+  return isDesktopSidePanelOpen.value
+})
 const isEntityDirectlyVisible = (id: string) => model.nodeProperties[id]?.visible !== false
 const getStoredGroupId = (groupName: string) => `group:${groupName}`
 const getTableGroupName = (table: PgmlSchemaModel['tables'][number]) => table.groupName || null
@@ -563,6 +602,13 @@ const diagramPanelDescription = computed(() => {
 
   return `${hiddenEntityCount.value} hidden in saved properties.`
 })
+const diagramPanelSurfaceClass = computed(() => {
+  return isMobilePanelView.value
+    ? 'absolute inset-0 z-[2] grid min-h-0 w-full grid-rows-[auto_auto_minmax(0,1fr)] overflow-hidden'
+    : 'absolute bottom-3 right-3 top-14 z-[2] grid w-[320px] grid-rows-[auto_auto_minmax(0,1fr)] overflow-hidden border max-[900px]:left-3 max-[900px]:w-auto'
+})
+const shouldShowDiagramPanelToggle = computed(() => !isMobileCanvasShell.value)
+const shouldShowZoomToolbar = computed(() => !isMobilePanelView.value)
 const selectedTableOutgoingReferences = computed(() => {
   if (!selectedTable.value) {
     return []
@@ -4212,7 +4258,11 @@ const selectBrowserItem = (item: EntityBrowserItem) => {
   }
 }
 const toggleSidePanel = () => {
-  isSidePanelOpen.value = !isSidePanelOpen.value
+  if (isMobileCanvasShell.value) {
+    return
+  }
+
+  isDesktopSidePanelOpen.value = !isDesktopSidePanelOpen.value
 }
 const getSelectionGlowStyle = (color: string) => {
   return {
@@ -5615,6 +5665,71 @@ const getViewportRelativePoint = (clientX: number, clientY: number) => {
   }
 }
 
+const canStartCanvasGesture = (target: EventTarget | null) => {
+  if (!(target instanceof HTMLElement)) {
+    return true
+  }
+
+  return !target.closest('[data-node-anchor], [data-diagram-panel], [data-diagram-panel-toggle], [data-diagram-zoom-toolbar]')
+}
+
+const getTouchGesture = (touches: TouchList): DiagramTouchGesture | null => {
+  const firstTouch = touches.item(0)
+  const secondTouch = touches.item(1)
+
+  if (!firstTouch || !secondTouch) {
+    return null
+  }
+
+  return getDiagramTouchGesture(
+    {
+      x: firstTouch.clientX,
+      y: firstTouch.clientY
+    },
+    {
+      x: secondTouch.clientX,
+      y: secondTouch.clientY
+    }
+  )
+}
+
+const startTouchPanSession = (touch: Touch) => {
+  touchPinchSession.value = null
+  touchPanSession.value = {
+    clientX: touch.clientX,
+    clientY: touch.clientY,
+    panX: pan.value.x,
+    panY: pan.value.y,
+    touchId: touch.identifier
+  }
+}
+
+const startTouchPinchSession = (gesture: DiagramTouchGesture) => {
+  touchPanSession.value = null
+  touchPinchSession.value = {
+    initialCenter: gesture.center,
+    initialDistance: gesture.distance,
+    initialPan: {
+      x: pan.value.x,
+      y: pan.value.y
+    },
+    initialScale: scale.value
+  }
+}
+
+const getTrackedTouch = (touches: TouchList) => {
+  if (!touchPanSession.value) {
+    return null
+  }
+
+  return Array.from(touches).find(touch => touch.identifier === touchPanSession.value?.touchId) || touches.item(0)
+}
+
+const resetTouchInteraction = () => {
+  touchPanSession.value = null
+  touchPinchSession.value = null
+}
+
 const suppressLayoutObserver = (durationMs = 180) => {
   suppressLayoutObserverUntil = Date.now() + durationMs
 }
@@ -5930,7 +6045,7 @@ const toggleNodeCollapsed = (id: string) => {
 }
 
 const startPan = (event: PointerEvent) => {
-  if (event.target instanceof HTMLElement && event.target.closest('[data-node-anchor]')) {
+  if (event.pointerType === 'touch' || !canStartCanvasGesture(event.target)) {
     return
   }
 
@@ -5951,7 +6066,121 @@ const startPan = (event: PointerEvent) => {
   })
 }
 
+const handleTouchStart = (event: TouchEvent) => {
+  if (isMobilePanelView.value || !canStartCanvasGesture(event.target)) {
+    return
+  }
+
+  if (event.touches.length >= 2) {
+    const gesture = getTouchGesture(event.touches)
+
+    if (!gesture) {
+      return
+    }
+
+    event.preventDefault()
+    startTouchPinchSession(gesture)
+    return
+  }
+
+  const touch = event.touches.item(0)
+
+  if (!touch) {
+    return
+  }
+
+  startTouchPanSession(touch)
+}
+
+const handleTouchMove = (event: TouchEvent) => {
+  if (isMobilePanelView.value) {
+    return
+  }
+
+  if (event.touches.length >= 2) {
+    const gesture = getTouchGesture(event.touches)
+
+    if (!gesture) {
+      return
+    }
+
+    if (!touchPinchSession.value) {
+      startTouchPinchSession(gesture)
+    }
+
+    if (!touchPinchSession.value) {
+      return
+    }
+
+    event.preventDefault()
+    const transform = getDiagramPinchViewportTransform({
+      currentCenter: gesture.center,
+      currentDistance: gesture.distance,
+      initialCenter: touchPinchSession.value.initialCenter,
+      initialDistance: touchPinchSession.value.initialDistance,
+      initialPan: touchPinchSession.value.initialPan,
+      initialScale: touchPinchSession.value.initialScale,
+      maxScale: maxCanvasScale,
+      minScale: minCanvasScale
+    })
+
+    suppressLayoutObserver()
+    pan.value = transform.pan
+    scale.value = transform.scale
+    return
+  }
+
+  const touch = getTrackedTouch(event.touches)
+
+  if (!touch || !touchPanSession.value) {
+    return
+  }
+
+  event.preventDefault()
+  pan.value = {
+    x: touchPanSession.value.panX + touch.clientX - touchPanSession.value.clientX,
+    y: touchPanSession.value.panY + touch.clientY - touchPanSession.value.clientY
+  }
+}
+
+const handleTouchEnd = (event: TouchEvent) => {
+  if (isMobilePanelView.value) {
+    resetTouchInteraction()
+    return
+  }
+
+  if (event.touches.length >= 2) {
+    const gesture = getTouchGesture(event.touches)
+
+    if (!gesture) {
+      resetTouchInteraction()
+      return
+    }
+
+    startTouchPinchSession(gesture)
+    return
+  }
+
+  if (event.touches.length === 1) {
+    const touch = event.touches.item(0)
+
+    if (!touch) {
+      resetTouchInteraction()
+      return
+    }
+
+    startTouchPanSession(touch)
+    return
+  }
+
+  resetTouchInteraction()
+}
+
 const startDragNode = (event: PointerEvent, id: string) => {
+  if (event.pointerType === 'touch') {
+    return
+  }
+
   event.stopPropagation()
   const node = nodeStates.value[id]
 
@@ -5995,6 +6224,10 @@ const startDragNode = (event: PointerEvent, id: string) => {
 }
 
 const startResizeNode = (event: PointerEvent, id: string) => {
+  if (event.pointerType === 'touch') {
+    return
+  }
+
   event.stopPropagation()
   selectedNodeId.value = id
   selectedCanvasSelection.value = {
@@ -6089,7 +6322,7 @@ const handleCreateTable = (groupName: string | null) => {
 }
 
 const handleCreateGroup = () => {
-  isSidePanelOpen.value = true
+  isDesktopSidePanelOpen.value = true
   activePanelTab.value = 'entities'
   emit('createGroup')
 }
@@ -6102,6 +6335,30 @@ const handleWheel = (event: WheelEvent) => {
   event.preventDefault()
   zoomBy(event.deltaY > 0 ? -1 : 1, getViewportRelativePoint(event.clientX, event.clientY))
 }
+
+watch(
+  () => mobilePanelTab,
+  (nextTab) => {
+    if (nextTab && nextTab !== activePanelTab.value) {
+      activePanelTab.value = nextTab
+    }
+  },
+  { immediate: true }
+)
+
+watch(
+  activePanelTab,
+  (nextTab) => {
+    emit('panelTabChange', nextTab)
+  }
+)
+
+watch(
+  () => mobileActiveView,
+  () => {
+    resetTouchInteraction()
+  }
+)
 
 watch(
   () => exportPreferenceKey,
@@ -6191,6 +6448,7 @@ onMounted(() => {
 
 onBeforeUnmount(() => {
   stopExportCopyFeedbackReset()
+  resetTouchInteraction()
 })
 
 defineExpose<{
@@ -6220,6 +6478,10 @@ defineExpose<{
     class="relative h-full min-h-0 select-none overflow-hidden border"
     :style="canvasViewportStyle"
     @pointerdown="startPan"
+    @touchstart="handleTouchStart"
+    @touchmove="handleTouchMove"
+    @touchend="handleTouchEnd"
+    @touchcancel="handleTouchEnd"
     @wheel="handleWheel"
   >
     <div
@@ -6537,8 +6799,12 @@ defineExpose<{
       </svg>
     </div>
 
-    <div class="pointer-events-none absolute inset-x-0 bottom-3 z-[2] flex justify-center">
+    <div
+      v-if="shouldShowZoomToolbar"
+      class="pointer-events-none absolute inset-x-0 bottom-3 z-[2] flex justify-center"
+    >
       <div
+        data-diagram-zoom-toolbar="true"
         class="pointer-events-auto flex items-center gap-1 border px-1 py-1"
         :style="floatingPanelStyle"
       >
@@ -6588,11 +6854,14 @@ defineExpose<{
       </div>
     </div>
 
-    <div class="pointer-events-none absolute right-3 top-3 z-[3] flex justify-end gap-2">
+    <div
+      v-if="shouldShowDiagramPanelToggle"
+      class="pointer-events-none absolute right-3 top-3 z-[3] flex justify-end gap-2"
+    >
       <UButton
         data-diagram-panel-toggle="true"
-        :label="isSidePanelOpen ? 'Hide panel' : 'Show panel'"
-        :leading-icon="isSidePanelOpen ? 'i-lucide-panel-right-close' : 'i-lucide-panel-right-open'"
+        :label="isDiagramPanelVisible ? 'Hide panel' : 'Show panel'"
+        :leading-icon="isDiagramPanelVisible ? 'i-lucide-panel-right-close' : 'i-lucide-panel-right-open'"
         color="neutral"
         variant="outline"
         size="xs"
@@ -6603,9 +6872,9 @@ defineExpose<{
     </div>
 
     <aside
-      v-if="isSidePanelOpen"
+      v-if="isDiagramPanelVisible"
       data-diagram-panel="true"
-      class="absolute bottom-3 right-3 top-14 z-[2] grid w-[320px] grid-rows-[auto_auto_minmax(0,1fr)] overflow-hidden border max-[900px]:left-3 max-[900px]:w-auto"
+      :class="diagramPanelSurfaceClass"
       :style="floatingPanelStyle"
       @wheel.stop
     >
@@ -6625,6 +6894,7 @@ defineExpose<{
             </div>
 
             <UButton
+              v-if="shouldShowDiagramPanelToggle"
               icon="i-lucide-x"
               color="neutral"
               variant="ghost"

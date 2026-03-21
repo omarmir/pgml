@@ -61,6 +61,11 @@ body {
   scrollbar-color: var(--studio-scroll-thumb-start) var(--studio-scroll-track);
 }
 
+[data-pgml-editor-scroller='true'] {
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior: contain;
+}
+
 [data-pgml-editor-scroller='true']::-webkit-scrollbar,
 [data-studio-scrollable='true']::-webkit-scrollbar {
   width: 10px;

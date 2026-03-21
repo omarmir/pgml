@@ -10,8 +10,11 @@ import {
   studioSwitchUi
 } from '~/constants/ui'
 import PgmlDiagramCanvas from '~/components/pgml/PgmlDiagramCanvas.vue'
-import PgmlSourceCodeEditor from '~/components/pgml/PgmlSourceCodeEditor.vue'
+import StudioDesktopWorkspace from '~/components/studio/StudioDesktopWorkspace.vue'
+import StudioEditorSurface from '~/components/studio/StudioEditorSurface.vue'
+import StudioMobileWorkspace from '~/components/studio/StudioMobileWorkspace.vue'
 import { usePgmlColumnDefaultSuggestions } from '~/composables/usePgmlColumnDefaultSuggestions'
+import type { PgmlSourceEditorHandle } from '~/composables/usePgmlSourceEditor'
 import { slugifySchemaName, type SavedPgmlSchema } from '~/composables/usePgmlStudioSchemas'
 import { useStudioHeaderActions, type StudioHeaderMenu } from '~/composables/useStudioHeaderActions'
 import { useStudioSchemaStatus } from '~/composables/useStudioSchemaStatus'
@@ -21,7 +24,8 @@ import {
   parsePgml,
   pgmlExample,
   stripPgmlPropertiesBlocks,
-  type PgmlNodeProperties
+  type PgmlNodeProperties,
+  type PgmlSourceRange
 } from '~/utils/pgml'
 import {
   applyEditableGroupDraftToSource,
@@ -48,9 +52,14 @@ import {
   studioCompactFieldKickerClass,
   studioEmptyStateClass,
   studioFieldKickerClass,
-  studioToolbarButtonClass,
   textareaClass
 } from '~/utils/uiStyles'
+import {
+  defaultStudioMobilePanelTab,
+  type DiagramPanelTab,
+  type StudioMobileCanvasView,
+  type StudioMobileWorkspaceView
+} from '~/utils/studio-workspace'
 
 definePageMeta({
   layout: 'studio'
@@ -149,6 +158,8 @@ const source: Ref<string> = ref(pgmlExample)
 const canvasRef: Ref<PgmlDiagramCanvasExposed | null> = ref(null)
 const canvasViewportResetKey: Ref<number> = ref(0)
 const isExporting: Ref<boolean> = ref(false)
+const mobileWorkspaceView: Ref<StudioMobileWorkspaceView> = ref('diagram')
+const mobilePanelTab: Ref<DiagramPanelTab> = ref(defaultStudioMobilePanelTab)
 const tableEditorDraft: Ref<PgmlEditableTableDraft | null> = ref(null)
 const tableEditorOpen: Ref<boolean> = ref(false)
 const groupEditorDraft: Ref<PgmlEditableGroupDraft | null> = ref(null)
@@ -172,11 +183,6 @@ const {
 } = useStudioEditorLayout()
 const secondaryModalButtonClass = studioButtonClasses.secondary
 const primaryModalButtonClass = studioButtonClasses.primary
-const editorVisibilityButtonClass = joinStudioClasses(
-  studioButtonClasses.secondary,
-  'absolute left-3 top-3 z-[4]',
-  studioToolbarButtonClass
-)
 const tableEditorAddButtonClass = studioButtonClasses.primary
 const tableEditorRemoveButtonClass = studioButtonClasses.iconGhost
 const sourceAnalysis = computed(() => analyzePgmlDocument(source.value))
@@ -191,6 +197,15 @@ const visibleSourceDiagnostics = computed(() => sourceDiagnostics.value.slice(0,
 const hasBlockingSourceErrors = computed(() => sourceErrorDiagnostics.value.length > 0)
 const parsedModel = computed(() => parsePgml(source.value))
 const canEmbedLayout = computed(() => !hasBlockingSourceErrors.value)
+const mobileCanvasView = computed<StudioMobileCanvasView>(() => {
+  return mobileWorkspaceView.value === 'panel' ? 'panel' : 'diagram'
+})
+const assignEditorRef = (value: unknown) => {
+  editorRef.value = value as PgmlSourceEditorHandle | null
+}
+const assignLayoutShellRef = (value: unknown) => {
+  layoutShellRef.value = value instanceof HTMLDivElement ? value : null
+}
 
 const buildSchemaText = (includeLayout: boolean) => {
   const strippedSource = stripPgmlPropertiesBlocks(source.value)
@@ -692,6 +707,18 @@ const runExport = async (format: 'svg' | 'png', scaleFactor?: number) => {
   }
 }
 
+const handleCanvasFocusSource = (sourceRange: PgmlSourceRange) => {
+  if (isCompactStudioLayout.value) {
+    mobileWorkspaceView.value = 'pgml'
+  }
+
+  focusEditorSourceRange(sourceRange)
+}
+
+const handleCanvasPanelTabChange = (nextTab: DiagramPanelTab) => {
+  mobilePanelTab.value = nextTab
+}
+
 watchEffect(() => {
   setStudioHeaderActions({
     isLoading: isExporting.value,
@@ -736,107 +763,64 @@ onBeforeUnmount(() => {
 
 <template>
   <div class="h-full min-h-0">
-    <div
-      ref="layoutShellRef"
-      class="grid h-full min-h-0 w-full gap-0 overflow-hidden bg-[color:var(--studio-shell-bg)] text-[color:var(--studio-shell-text)] max-[1100px]:h-auto"
-      :style="studioLayoutStyle"
+    <StudioMobileWorkspace
+      v-if="isCompactStudioLayout"
+      v-model:active-view="mobileWorkspaceView"
+      v-model:active-panel-tab="mobilePanelTab"
     >
-      <aside
-        v-if="isEditorPanelVisible"
-        data-editor-panel="true"
-        class="min-h-0 overflow-hidden bg-[color:var(--studio-shell-bg)] pr-0"
-      >
-        <div class="flex h-full min-h-0 flex-col bg-[color:var(--studio-shell-bg)]">
-          <div class="min-h-0 flex-1 overflow-hidden bg-[color:var(--studio-shell-bg)]">
-            <PgmlSourceCodeEditor
-              ref="editorRef"
-              v-model="source"
-              placeholder="Paste PGML here..."
-            />
-          </div>
-        </div>
-
-        <div
-          v-if="sourceDiagnostics.length > 0"
-          data-pgml-diagnostics="true"
-          class="grid gap-2 border-t border-[color:var(--studio-shell-border)] bg-[color:var(--studio-shell-bg)] px-4 py-3 font-mono text-[0.72rem] leading-6"
-        >
-          <div class="flex flex-wrap items-center justify-between gap-3">
-            <span class="uppercase tracking-[0.08em] text-[color:var(--studio-shell-label)]">
-              Diagnostics
-            </span>
-            <span class="text-[color:var(--studio-shell-muted)]">
-              {{ sourceErrorDiagnostics.length }} error<span v-if="sourceErrorDiagnostics.length !== 1">s</span>
-              <template v-if="sourceWarningDiagnostics.length > 0">
-                · {{ sourceWarningDiagnostics.length }} warning<span v-if="sourceWarningDiagnostics.length !== 1">s</span>
-              </template>
-            </span>
-          </div>
-
-          <ul class="grid gap-1.5">
-            <li
-              v-for="diagnostic in visibleSourceDiagnostics"
-              :key="`${diagnostic.code}:${diagnostic.from}:${diagnostic.line}`"
-              class="flex gap-2"
-            >
-              <span
-                class="min-w-12 uppercase tracking-[0.08em]"
-                :class="diagnostic.severity === 'error' ? 'text-[color:var(--studio-shell-error)]' : 'text-[color:var(--studio-shell-label)]'"
-              >
-                L{{ diagnostic.line }}
-              </span>
-              <span
-                :class="diagnostic.severity === 'error' ? 'text-[color:var(--studio-shell-error)]' : 'text-[color:var(--studio-shell-muted)]'"
-              >
-                {{ diagnostic.message }}
-              </span>
-            </li>
-          </ul>
-        </div>
-      </aside>
-
-      <div
-        v-if="isEditorPanelVisible && !isCompactStudioLayout"
-        data-editor-resize-handle="true"
-        role="separator"
-        aria-orientation="vertical"
-        aria-label="Resize PGML editor"
-        tabindex="0"
-        class="group relative z-10 hidden h-full overflow-visible cursor-ew-resize bg-transparent outline-none min-[1100px]:block"
-        @pointerdown="startEditorResize"
-        @keydown.left.prevent="resizeEditorPanelBy(-32)"
-        @keydown.right.prevent="resizeEditorPanelBy(32)"
-      >
-        <div
-          data-editor-resize-hit-area="true"
-          class="absolute inset-y-0 left-0 w-5"
+      <template #canvas>
+        <PgmlDiagramCanvas
+          ref="canvasRef"
+          :model="parsedModel"
+          :export-base-name="exportBaseName"
+          :export-preference-key="exportPreferenceKey"
+          :has-blocking-source-errors="hasBlockingSourceErrors"
+          :mobile-active-view="mobileCanvasView"
+          :mobile-panel-tab="mobilePanelTab"
+          :viewport-reset-key="canvasViewportResetKey"
+          @create-group="openGroupCreator"
+          @focus-source="handleCanvasFocusSource"
+          @panel-tab-change="handleCanvasPanelTabChange"
+          @create-table="openTableCreator"
+          @edit-group="openGroupEditor"
+          @edit-table="openTableEditor"
+          @node-properties-change="syncSourceWithNodeProperties"
         />
-        <div
-          data-editor-resize-divider="true"
-          class="absolute inset-y-0 left-0 w-px bg-[color:var(--studio-shell-border)] transition-colors duration-150 group-hover:bg-[color:var(--studio-ring)] group-focus-visible:bg-[color:var(--studio-ring)]"
-        />
-        <div
-          data-editor-resize-grip="true"
-          class="absolute left-0 top-1/2 flex h-10 w-5 -translate-x-1/2 -translate-y-1/2 items-center justify-center border border-[color:var(--studio-shell-border)] bg-[color:var(--studio-control-bg)] text-[color:var(--studio-shell-muted)] transition-colors duration-150 group-hover:border-[color:var(--studio-ring)] group-hover:text-[color:var(--studio-shell-text)] group-focus-visible:border-[color:var(--studio-ring)] group-focus-visible:text-[color:var(--studio-shell-text)]"
-        >
-          <UIcon
-            name="i-lucide-grip-vertical"
-            class="h-3.5 w-3.5"
-          />
-        </div>
-      </div>
+      </template>
 
-      <section class="relative min-h-0 w-full overflow-hidden p-0">
-        <UButton
-          :label="isEditorPanelVisible ? 'Hide PGML' : 'Show PGML'"
-          :icon="isEditorPanelVisible ? 'i-lucide-panel-left-close' : 'i-lucide-panel-left-open'"
-          data-editor-visibility-toggle="true"
-          color="neutral"
-          variant="outline"
-          size="xs"
-          :class="editorVisibilityButtonClass"
-          @click="toggleEditorPanelVisibility"
+      <template #pgml>
+        <StudioEditorSurface
+          v-model="source"
+          :editor-ref-setter="assignEditorRef"
+          :source-diagnostics="sourceDiagnostics"
+          :source-error-count="sourceErrorDiagnostics.length"
+          :source-warning-count="sourceWarningDiagnostics.length"
+          :visible-source-diagnostics="visibleSourceDiagnostics"
         />
+      </template>
+    </StudioMobileWorkspace>
+
+    <StudioDesktopWorkspace
+      v-else
+      :is-editor-panel-visible="isEditorPanelVisible"
+      :layout-shell-ref-setter="assignLayoutShellRef"
+      :studio-layout-style="studioLayoutStyle"
+      @toggle-editor-visibility="toggleEditorPanelVisibility"
+      @resize-editor-by="resizeEditorPanelBy"
+      @start-editor-resize="startEditorResize"
+    >
+      <template #editor>
+        <StudioEditorSurface
+          v-model="source"
+          :editor-ref-setter="assignEditorRef"
+          :source-diagnostics="sourceDiagnostics"
+          :source-error-count="sourceErrorDiagnostics.length"
+          :source-warning-count="sourceWarningDiagnostics.length"
+          :visible-source-diagnostics="visibleSourceDiagnostics"
+        />
+      </template>
+
+      <template #canvas>
         <PgmlDiagramCanvas
           ref="canvasRef"
           :model="parsedModel"
@@ -845,14 +829,15 @@ onBeforeUnmount(() => {
           :has-blocking-source-errors="hasBlockingSourceErrors"
           :viewport-reset-key="canvasViewportResetKey"
           @create-group="openGroupCreator"
-          @focus-source="focusEditorSourceRange"
+          @focus-source="handleCanvasFocusSource"
+          @panel-tab-change="handleCanvasPanelTabChange"
           @create-table="openTableCreator"
           @edit-group="openGroupEditor"
           @edit-table="openTableEditor"
           @node-properties-change="syncSourceWithNodeProperties"
         />
-      </section>
-    </div>
+      </template>
+    </StudioDesktopWorkspace>
 
     <ClientOnly>
       <StudioModalFrame
