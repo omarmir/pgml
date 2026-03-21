@@ -18,6 +18,8 @@ describe('App header source', () => {
     expect(diagramPageFile).toContain('layout: \'studio\'')
     expect(mobileMenuFile).toContain('title="Open header menu"')
     expect(studioLayoutFile).not.toContain('label="Actions"')
+    expect(primaryNavigationFile).toContain('label: \'Home\'')
+    expect(primaryNavigationFile).not.toContain('label: \'Studio\'')
     expect(primaryNavigationFile).not.toContain('i-lucide')
     expect(studioHeaderStateFile).not.toContain('text-red-500')
     expect(studioHeaderStateFile).not.toContain('animate-spin')

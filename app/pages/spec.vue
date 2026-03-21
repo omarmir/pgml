@@ -195,8 +195,8 @@ const tableOfContentsLinkClass = 'border-l border-transparent pl-3 text-sm text-
 
         <div class="flex flex-wrap items-center gap-3">
           <UButton
-            to="/diagram"
-            label="Open Diagram Studio"
+            to="/"
+            label="Choose a studio source"
             trailing-icon="i-lucide-arrow-right"
             color="neutral"
             :class="primaryCtaButtonClass"

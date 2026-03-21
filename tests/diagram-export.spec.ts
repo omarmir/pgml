@@ -2,8 +2,13 @@ import { readFileSync } from 'node:fs'
 
 import { expect, test } from '@nuxt/test-utils/playwright'
 import { getPgmlEditor, readPgmlEditorValue, setPgmlEditorValue } from './helpers/pgml-editor'
+import { authorizeStudioLaunchAccess } from './helpers/studio-launch'
 
 test.setTimeout(120_000)
+
+test.beforeEach(async ({ page }) => {
+  await authorizeStudioLaunchAccess(page)
+})
 
 test('studio exports svg and png downloads', async ({ goto, page }) => {
   await goto('/diagram')

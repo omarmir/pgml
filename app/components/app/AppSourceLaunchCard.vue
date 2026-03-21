@@ -18,6 +18,10 @@ type SourceLaunchCardItem = {
   description?: string
   label: string
   to?: RouteLocationRaw
+  triggerAction?: {
+    id: string
+    value: string
+  }
 }
 
 type SourceLaunchCardOperation = {
@@ -27,6 +31,10 @@ type SourceLaunchCardOperation = {
   label: string
   placeholder?: boolean
   to?: RouteLocationRaw
+  triggerAction?: {
+    id: string
+    value: string
+  }
 }
 
 const {
@@ -49,7 +57,7 @@ const {
   title: string
 }>()
 const emit = defineEmits<{
-  'item-action': [payload: {
+  action: [payload: {
     actionId: string
     cardId: string
     value: string
@@ -75,16 +83,22 @@ const itemActionButtonClass = studioButtonClasses.iconGhost
 const statusBadgeClass = computed(() => {
   return statusTone === 'live' ? liveBadgeClass : placeholderBadgeClass
 })
+const emitLaunchAction = (action: {
+  id: string
+  value: string
+}) => {
+  emit('action', {
+    actionId: action.id,
+    cardId,
+    value: action.value
+  })
+}
 const emitItemAction = (item: SourceLaunchCardItem) => {
   if (!item.action) {
     return
   }
 
-  emit('item-action', {
-    actionId: item.action.id,
-    cardId,
-    value: item.action.value
-  })
+  emitLaunchAction(item.action)
 }
 </script>
 
@@ -168,6 +182,29 @@ const emitItemAction = (item: SourceLaunchCardItem) => {
                   />
                 </NuxtLink>
 
+                <button
+                  v-else-if="item.triggerAction"
+                  type="button"
+                  :class="`${nestedItemLinkClass} flex-1 text-left`"
+                  @click="emitLaunchAction(item.triggerAction)"
+                >
+                  <div class="min-w-0">
+                    <p class="truncate text-sm font-semibold text-[color:var(--studio-shell-text)]">
+                      {{ item.label }}
+                    </p>
+                    <p
+                      v-if="item.description"
+                      :class="studioCompactBodyCopyClass"
+                    >
+                      {{ item.description }}
+                    </p>
+                  </div>
+                  <UIcon
+                    name="i-lucide-arrow-up-right"
+                    class="mt-0.5 h-4 w-4 shrink-0 text-[color:var(--studio-shell-label)] transition-transform duration-150 group-hover:-translate-y-0.5 group-hover:translate-x-0.5"
+                  />
+                </button>
+
                 <div
                   v-else
                   :class="`${nestedItemStaticClass} flex-1`"
@@ -218,6 +255,26 @@ const emitItemAction = (item: SourceLaunchCardItem) => {
             class="mt-0.5 h-4 w-4 shrink-0 text-[color:var(--studio-shell-label)] transition-transform duration-150 group-hover:translate-x-0.5"
           />
         </NuxtLink>
+
+        <button
+          v-else-if="operation.triggerAction && !operation.placeholder"
+          type="button"
+          :class="`${operationLinkClass} text-left`"
+          @click="emitLaunchAction(operation.triggerAction)"
+        >
+          <div class="min-w-0">
+            <p class="text-sm font-semibold text-[color:var(--studio-shell-text)]">
+              {{ operation.label }}
+            </p>
+            <p :class="studioCompactBodyCopyClass">
+              {{ operation.description }}
+            </p>
+          </div>
+          <UIcon
+            :name="operation.icon"
+            class="mt-0.5 h-4 w-4 shrink-0 text-[color:var(--studio-shell-label)] transition-transform duration-150 group-hover:translate-x-0.5"
+          />
+        </button>
 
         <div
           v-else

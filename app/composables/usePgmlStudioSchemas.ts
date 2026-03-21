@@ -92,10 +92,34 @@ export const formatSavedPgmlSchemaTime = (value: string) => {
   }).format(date)
 }
 
+export const downloadSchemaText = (name: string, text: string) => {
+  if (!import.meta.client) {
+    return
+  }
+
+  const blob = new Blob([text], {
+    type: 'text/plain;charset=utf-8'
+  })
+  const objectUrl = URL.createObjectURL(blob)
+  const anchor = document.createElement('a')
+
+  anchor.href = objectUrl
+  anchor.download = `${slugifySchemaName(name)}.pgml`
+  document.body.appendChild(anchor)
+  anchor.click()
+  anchor.remove()
+
+  window.setTimeout(() => {
+    URL.revokeObjectURL(objectUrl)
+  }, 0)
+}
+
 type UsePgmlStudioSchemasOptions = {
+  autosaveEnabled?: ComputedRef<boolean>
   buildSchemaText: (includeLayout: boolean) => string
   canEmbedLayout: ComputedRef<boolean>
   initialSource: string
+  restoreLatestOnSetup?: boolean
   source: Ref<string>
 }
 
@@ -104,11 +128,14 @@ type PersistSchemaOptions = {
 }
 
 export const usePgmlStudioSchemas = ({
+  autosaveEnabled,
   buildSchemaText,
   canEmbedLayout,
   initialSource,
+  restoreLatestOnSetup = true,
   source
 }: UsePgmlStudioSchemasOptions) => {
+  const isAutosaveEnabled = autosaveEnabled ?? computed(() => true)
   const currentSchemaId: Ref<string | null> = ref(null)
   const currentSchemaName: Ref<string> = ref(exampleSchemaName)
   const currentSchemaUpdatedAt: Ref<string | null> = ref(null)
@@ -244,28 +271,6 @@ export const usePgmlStudioSchemas = ({
     saveSchemaTargetId.value = null
   }
 
-  const downloadSchemaText = (name: string, text: string) => {
-    if (!import.meta.client) {
-      return
-    }
-
-    const blob = new Blob([text], {
-      type: 'text/plain;charset=utf-8'
-    })
-    const objectUrl = URL.createObjectURL(blob)
-    const anchor = document.createElement('a')
-
-    anchor.href = objectUrl
-    anchor.download = `${slugifySchemaName(name)}.pgml`
-    document.body.appendChild(anchor)
-    anchor.click()
-    anchor.remove()
-
-    window.setTimeout(() => {
-      URL.revokeObjectURL(objectUrl)
-    }, 0)
-  }
-
   const persistSchemaToBrowser = (
     name: string,
     text: string,
@@ -311,11 +316,13 @@ export const usePgmlStudioSchemas = ({
     const text = buildSchemaText(includeLayoutInSchema.value)
 
     isSavingToLocalStorage.value = true
-    persistSchemaToBrowser(name, text, {
+    const didSave = persistSchemaToBrowser(name, text, {
       closeDialog: true
     })
     await nextTick()
     isSavingToLocalStorage.value = false
+
+    return didSave
   }
 
   const downloadSchema = () => {
@@ -360,16 +367,19 @@ export const usePgmlStudioSchemas = ({
 
   if (import.meta.client) {
     readSavedSchemas()
-    const latestSavedSchema = orderSavedSchemas(savedSchemas.value)[0]
 
-    if (latestSavedSchema) {
-      source.value = latestSavedSchema.text
-      syncPersistedState(latestSavedSchema)
+    if (restoreLatestOnSetup) {
+      const latestSavedSchema = orderSavedSchemas(savedSchemas.value)[0]
+
+      if (latestSavedSchema) {
+        source.value = latestSavedSchema.text
+        syncPersistedState(latestSavedSchema)
+      }
     }
   }
 
   watchDebounced([source, currentSchemaName], async () => {
-    if (!import.meta.client) {
+    if (!import.meta.client || !isAutosaveEnabled.value) {
       return
     }
 

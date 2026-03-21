@@ -5,6 +5,8 @@ describe('Spec page source', () => {
   it('moves the former landing-page documentation and hero preview to /spec', () => {
     const file = readSourceFile('app/pages/spec.vue')
 
+    expect(file).toContain('label="Choose a studio source"')
+    expect(file).toContain('to="/"')
     expect(file).toContain('data-testid="hero-quick-start"')
     expect(file).toContain('TableGroup Commerce')
     expect(file).toContain('Table public.orders')

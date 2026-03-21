@@ -57,7 +57,7 @@ const handleOpenChange = (nextValue: boolean) => {
         :style="studioModalSurfaceStyle"
       >
         <div :class="studioModalHeaderClass">
-          <div class="grid gap-1">
+          <div class="min-w-0 grid gap-1">
             <h2 class="text-[1rem] font-semibold leading-6 text-[color:var(--studio-shell-text)]">
               {{ title }}
             </h2>
@@ -70,7 +70,7 @@ const handleOpenChange = (nextValue: boolean) => {
             icon="i-lucide-x"
             color="neutral"
             variant="ghost"
-            :class="studioButtonClasses.iconGhost"
+            :class="joinStudioClasses(studioButtonClasses.iconGhost, 'self-start shrink-0')"
             aria-label="Close"
             @click="handleOpenChange(false)"
           />

@@ -1,9 +1,28 @@
 import { readFileSync } from 'node:fs'
 
+import type { Page } from '@playwright/test'
 import { expect, test } from '@nuxt/test-utils/playwright'
+import {
+  installMockComputerFiles,
+  primeMockComputerFile,
+  readMockComputerFileState,
+  setMockComputerFilePermission
+} from './helpers/computer-files'
 import { getPgmlEditor, readPgmlEditorValue, setPgmlEditorValue } from './helpers/pgml-editor'
+import { authorizeStudioLaunchAccess } from './helpers/studio-launch'
 
 test.setTimeout(120_000)
+
+test.beforeEach(async ({ page }) => {
+  await authorizeStudioLaunchAccess(page)
+})
+
+const confirmComputerFileAccess = async (page: Page, continueLabel: string) => {
+  const accessDialog = page.locator('[data-studio-modal-surface="computer-file-access"]')
+
+  await expect(accessDialog).toBeVisible()
+  await page.getByRole('button', { name: continueLabel }).click()
+}
 
 test('studio saves, reloads, and downloads PGML with embedded layout', async ({ goto, page }) => {
   await goto('/diagram')
@@ -34,6 +53,9 @@ test('studio saves, reloads, and downloads PGML with embedded layout', async ({ 
   expect(modalSurface?.backgroundColor).not.toBe('rgba(0, 0, 0, 0)')
   await page.getByPlaceholder('Schema name').fill('Roundtrip layout')
   await page.getByRole('button', { name: 'Save to browser' }).click()
+  await expect(
+    page.getByLabel('Notifications (F8)').getByText('Saved to browser local storage.', { exact: true })
+  ).toBeVisible()
 
   const savedSchemas = await page.evaluate(() => {
     return JSON.parse(window.localStorage.getItem('pgml-studio-schemas-v1') || '[]')
@@ -200,6 +222,108 @@ test('studio autosaves changes to local storage and updates the header status ic
     updatedAt: true,
     iconClass: expect.not.stringContaining('animate-spin')
   })
+})
+
+test('browser-backed save failures show a toast', async ({ goto, page }) => {
+  await goto('/diagram')
+
+  await page.evaluate(() => {
+    const storagePrototype = Object.getPrototypeOf(window.localStorage) as Storage
+
+    Object.defineProperty(storagePrototype, 'setItem', {
+      configurable: true,
+      value: () => {
+        throw new Error('Unable to save to local storage.')
+      }
+    })
+  })
+
+  await page.getByRole('button', { name: 'Schema' }).click()
+  await page.getByRole('menuitem', { name: 'Save schema' }).click()
+  await page.getByRole('button', { name: 'Save to browser' }).click()
+
+  await expect(
+    page.getByLabel('Notifications (F8)').getByText('Unable to save to local storage.', { exact: true })
+  ).toBeVisible()
+})
+
+test('file-backed studio saves back to the selected computer file', async ({ goto, page }) => {
+  await installMockComputerFiles(page)
+  await goto('/')
+  const recentFileId = await primeMockComputerFile(page, {
+    fileName: 'linked-file.pgml',
+    text: 'Table public.linked {\n  id uuid [pk]\n}',
+    updatedAt: '2026-03-20T11:00:00.000Z'
+  })
+
+  await goto(`/diagram?source=file&launch=recent&file=${recentFileId}`)
+
+  const editor = getPgmlEditor(page)
+
+  await expect.poll(async () => readPgmlEditorValue(editor)).toContain('Table public.linked')
+  await expect(page.locator('[data-studio-schema-name="true"]')).toHaveText('linked-file')
+
+  await setPgmlEditorValue(editor, 'Table public.linked {\n  id uuid [pk]\n  status text\n}')
+  await page.getByRole('button', { name: 'Schema' }).click()
+  await page.getByRole('menuitem', { name: 'Save schema' }).click()
+  await expect(page.getByRole('button', { name: 'Save to file' })).toBeVisible()
+  await page.getByRole('button', { name: 'Save to file' }).click()
+  await expect(
+    page.getByLabel('Notifications (F8)').getByText('Saved to the selected file.', { exact: true })
+  ).toBeVisible()
+
+  await expect.poll(async () => {
+    const state = await readMockComputerFileState(page)
+
+    return recentFileId ? state?.files[recentFileId]?.text || '' : ''
+  }).toContain('status text')
+})
+
+test('file-backed save asks for permission again after access is reset', async ({ goto, page }) => {
+  await installMockComputerFiles(page)
+  await goto('/')
+  const recentFileId = await primeMockComputerFile(page, {
+    fileName: 'reauthorize-file.pgml',
+    text: 'Table public.reauthorize {\n  id uuid [pk]\n}',
+    updatedAt: '2026-03-20T11:00:00.000Z'
+  })
+
+  await page.reload()
+  await page.locator('[data-source-card="computer-saved-file"]').getByRole('button', { name: /reauthorize-file/i }).click()
+  await confirmComputerFileAccess(page, 'Continue and reopen file')
+
+  const editor = getPgmlEditor(page)
+
+  await expect.poll(async () => readPgmlEditorValue(editor)).toContain('Table public.reauthorize')
+  await setMockComputerFilePermission(page, {
+    fileId: recentFileId || '',
+    queryPermission: 'prompt',
+    requestPermission: 'granted'
+  })
+  await setPgmlEditorValue(editor, 'Table public.reauthorize {\n  id uuid [pk]\n  status text\n}')
+
+  await expect.poll(async () => {
+    return await page.locator('body').textContent()
+  }, {
+    timeout: 8000
+  }).toContain('File access needs to be restored before PGML can save again. Use Save to grant permission again.')
+  await expect.poll(async () => {
+    const state = await readMockComputerFileState(page)
+
+    return recentFileId ? state?.files[recentFileId]?.text || '' : ''
+  }, {
+    timeout: 8000
+  }).not.toContain('status text')
+
+  await page.getByRole('button', { name: 'Schema' }).click()
+  await page.getByRole('menuitem', { name: 'Save schema' }).click()
+  await page.getByRole('button', { name: 'Save to file' }).click()
+
+  await expect.poll(async () => {
+    const state = await readMockComputerFileState(page)
+
+    return recentFileId ? state?.files[recentFileId]?.text || '' : ''
+  }).toContain('status text')
 })
 
 test('light mode keeps modal secondary actions and select highlights readable', async ({ goto, page }) => {

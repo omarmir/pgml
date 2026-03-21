@@ -14,13 +14,19 @@ import StudioDesktopWorkspace from '~/components/studio/StudioDesktopWorkspace.v
 import StudioEditorSurface from '~/components/studio/StudioEditorSurface.vue'
 import StudioMobileWorkspace from '~/components/studio/StudioMobileWorkspace.vue'
 import { usePgmlColumnDefaultSuggestions } from '~/composables/usePgmlColumnDefaultSuggestions'
+import { usePgmlStudioComputerFiles } from '~/composables/usePgmlStudioComputerFiles'
 import type { PgmlSourceEditorHandle } from '~/composables/usePgmlSourceEditor'
-import { slugifySchemaName, type SavedPgmlSchema } from '~/composables/usePgmlStudioSchemas'
+import {
+  downloadSchemaText,
+  slugifySchemaName,
+  type SavedPgmlSchema
+} from '~/composables/usePgmlStudioSchemas'
 import { useStudioHeaderActions, type StudioHeaderMenu } from '~/composables/useStudioHeaderActions'
 import { useStudioSchemaStatus } from '~/composables/useStudioSchemaStatus'
 import {
-  getBrowserStudioLaunchRequestKey,
-  parseBrowserStudioLaunchQuery
+  consumePreloadedFileStudioLaunch,
+  getStudioLaunchRequestKey,
+  parseStudioLaunchQuery
 } from '~/utils/studio-launch'
 import { analyzePgmlDocument } from '~/utils/pgml-language'
 import {
@@ -66,7 +72,8 @@ import {
 } from '~/utils/studio-workspace'
 
 definePageMeta({
-  layout: 'studio'
+  layout: 'studio',
+  middleware: 'require-studio-launch'
 })
 
 type PgmlDiagramCanvasExposed = {
@@ -161,7 +168,7 @@ const formatColumnTypeLabel = (value: string) => {
 const source: Ref<string> = ref(pgmlExample)
 const canvasRef: Ref<PgmlDiagramCanvasExposed | null> = ref(null)
 const canvasViewportResetKey: Ref<number> = ref(0)
-const appliedBrowserStudioLaunchKey: Ref<string | null> = ref(null)
+const appliedStudioLaunchKey: Ref<string | null> = ref(null)
 const isExporting: Ref<boolean> = ref(false)
 const mobileWorkspaceView: Ref<StudioMobileWorkspaceView> = ref('diagram')
 const mobilePanelTab: Ref<DiagramPanelTab> = ref(defaultStudioMobilePanelTab)
@@ -170,14 +177,20 @@ const tableEditorOpen: Ref<boolean> = ref(false)
 const groupEditorDraft: Ref<PgmlEditableGroupDraft | null> = ref(null)
 const groupEditorOpen: Ref<boolean> = ref(false)
 const exportScales = [1, 2, 3, 4, 8]
+const lastSaveErrorToastMessage: Ref<string | null> = ref(null)
 const { clearStudioHeaderActions, setStudioHeaderActions } = useStudioHeaderActions()
 const { clearStudioSchemaStatus, setStudioSchemaStatus } = useStudioSchemaStatus()
 const { getColumnDefaultPlaceholder, getColumnDefaultSuggestions } = usePgmlColumnDefaultSuggestions()
+const toast = useToast()
 const {
   editorRef,
   focusEditorSourceRange
 } = usePgmlSourceEditor()
 const route = useRoute()
+const studioLaunchRequest = computed(() => parseStudioLaunchQuery(route.query))
+const currentPersistenceSource: Ref<'browser' | 'file'> = ref(
+  studioLaunchRequest.value?.source === 'file' ? 'file' : 'browser'
+)
 const {
   isEditorPanelVisible,
   isCompactStudioLayout,
@@ -246,7 +259,6 @@ const {
   currentSchemaUpdatedAt,
   clearSaveSchemaTarget,
   deleteSavedSchema,
-  downloadSchema,
   formatSavedAt,
   hasPendingLocalChanges,
   includeLayoutInSchema,
@@ -267,9 +279,31 @@ const {
   schemaDialogMode,
   schemaDialogOpen
 } = usePgmlStudioSchemas({
+  autosaveEnabled: computed(() => currentPersistenceSource.value === 'browser'),
   buildSchemaText,
   canEmbedLayout,
   initialSource: pgmlExample,
+  restoreLatestOnSetup: studioLaunchRequest.value === null,
+  source
+})
+const {
+  computerFileSaveError,
+  currentComputerFileName,
+  currentComputerFileUpdatedAt,
+  formatSavedAt: formatComputerFileSavedAt,
+  hasPendingComputerFileChanges,
+  hasSelectedComputerFile,
+  isSavedToComputerFile,
+  isSavingToComputerFile,
+  loadRecentComputerFileById,
+  openComputerFileFromPicker,
+  recentComputerFiles,
+  refreshRecentComputerFiles,
+  saveSchemaToComputerFile,
+  syncLoadedComputerFile
+} = usePgmlStudioComputerFiles({
+  buildSchemaText,
+  enabled: computed(() => currentPersistenceSource.value === 'file'),
   source
 })
 
@@ -290,26 +324,161 @@ const loadExample = withViewportReset(loadStudioExample)
 const clearSchema = withViewportReset(clearStudioSchema)
 
 const loadSavedSchema = (schema: SavedPgmlSchema) => {
+  currentPersistenceSource.value = 'browser'
   loadStudioSavedSchema(schema)
   requestCanvasViewportReset()
 }
 
-const exportBaseName = computed(() => slugifySchemaName(currentSchemaName.value))
-const exportPreferenceKey = computed(() => `name:${slugifySchemaName(currentSchemaName.value)}`)
-const browserStudioLaunchRequest = computed(() => parseBrowserStudioLaunchQuery(route.query))
+const loadRecentComputerFile = async (recentFileId: string) => {
+  const didLoadRecentFile = await loadRecentComputerFileById(recentFileId)
 
-watch(browserStudioLaunchRequest, (request) => {
+  if (!didLoadRecentFile) {
+    return
+  }
+
+  currentPersistenceSource.value = 'file'
+  loadDialogOpen.value = false
+  requestCanvasViewportReset()
+}
+
+const chooseComputerFileFromLoadDialog = async () => {
+  const didOpenComputerFile = await openComputerFileFromPicker()
+
+  if (!didOpenComputerFile) {
+    return
+  }
+
+  currentPersistenceSource.value = 'file'
+  loadDialogOpen.value = false
+  requestCanvasViewportReset()
+}
+
+const activeSchemaName = computed(() => {
+  return currentPersistenceSource.value === 'file'
+    ? (currentComputerFileName.value || 'Untitled schema')
+    : currentSchemaName.value
+})
+const activeSchemaUpdatedAt = computed(() => {
+  return currentPersistenceSource.value === 'file'
+    ? currentComputerFileUpdatedAt.value
+    : currentSchemaUpdatedAt.value
+})
+const activeSaveError = computed(() => {
+  return currentPersistenceSource.value === 'file'
+    ? computerFileSaveError.value
+    : localStorageSaveError.value
+})
+const pushSaveErrorToast = (description: string) => {
+  lastSaveErrorToastMessage.value = description
+  toast.add({
+    title: 'Save failed',
+    description,
+    color: 'error',
+    icon: 'i-lucide-circle-alert'
+  })
+}
+const pushSaveSuccessToast = (description: string) => {
+  toast.add({
+    title: 'Schema saved',
+    description,
+    color: 'success',
+    icon: 'i-lucide-check'
+  })
+}
+const getSaveSuccessToastDescription = () => {
+  return currentPersistenceSource.value === 'file'
+    ? 'Saved to the selected file.'
+    : 'Saved to browser local storage.'
+}
+const activeIsSaving = computed(() => {
+  return currentPersistenceSource.value === 'file'
+    ? isSavingToComputerFile.value
+    : isSavingToLocalStorage.value
+})
+const activeHasPendingChanges = computed(() => {
+  return currentPersistenceSource.value === 'file'
+    ? hasPendingComputerFileChanges.value
+    : hasPendingLocalChanges.value
+})
+const activeIsSaved = computed(() => {
+  return currentPersistenceSource.value === 'file'
+    ? isSavedToComputerFile.value
+    : isSavedToLocalStorage.value
+})
+const activeSavedAtFormatter = computed(() => {
+  return currentPersistenceSource.value === 'file' ? formatComputerFileSavedAt : formatSavedAt
+})
+const saveDialogActionLabel = computed(() => {
+  return currentPersistenceSource.value === 'file' ? 'Save to file' : saveSchemaActionLabel.value
+})
+const schemaActionDescriptionText = computed(() => {
+  if (schemaDialogMode.value === 'download') {
+    return canEmbedLayout.value
+      ? 'Choose whether to embed the current canvas layout into the PGML text before downloading it.'
+      : 'The current PGML has a parse error, so only the raw text can be downloaded right now.'
+  }
+
+  if (currentPersistenceSource.value === 'file') {
+    return canEmbedLayout.value
+      ? 'Save the current PGML back to the selected `.pgml` file on your computer and optionally embed the current canvas layout.'
+      : 'The current PGML has a parse error, so only the raw text can be written back to the selected file right now.'
+  }
+
+  return schemaActionDescription.value
+})
+const loadDialogTitle = computed(() => {
+  return currentPersistenceSource.value === 'file' ? 'Open file' : 'Load saved schema'
+})
+const loadDialogDescription = computed(() => {
+  return currentPersistenceSource.value === 'file'
+    ? 'Recent `.pgml` files you opened or created on this computer.'
+    : 'Saved PGML files stored in this browser.'
+})
+const exportBaseName = computed(() => slugifySchemaName(activeSchemaName.value))
+const exportPreferenceKey = computed(() => `name:${slugifySchemaName(activeSchemaName.value)}`)
+
+watch(activeSaveError, (nextError) => {
+  if (!nextError) {
+    lastSaveErrorToastMessage.value = null
+    return
+  }
+
+  if (nextError === lastSaveErrorToastMessage.value) {
+    return
+  }
+
+  pushSaveErrorToast(nextError)
+})
+
+watch(studioLaunchRequest, async (request) => {
   if (!request) {
     return
   }
 
-  const requestKey = getBrowserStudioLaunchRequestKey(request)
+  const requestKey = getStudioLaunchRequestKey(request)
 
-  if (requestKey === appliedBrowserStudioLaunchKey.value) {
+  if (requestKey === appliedStudioLaunchKey.value) {
     return
   }
 
-  appliedBrowserStudioLaunchKey.value = requestKey
+  appliedStudioLaunchKey.value = requestKey
+
+  if (request.source === 'file') {
+    const preloadedFileLaunch = consumePreloadedFileStudioLaunch(request)
+
+    if (preloadedFileLaunch) {
+      syncLoadedComputerFile(preloadedFileLaunch)
+      await refreshRecentComputerFiles()
+      currentPersistenceSource.value = 'file'
+      requestCanvasViewportReset()
+      return
+    }
+
+    await loadRecentComputerFile(request.recentFileId)
+    return
+  }
+
+  currentPersistenceSource.value = 'browser'
 
   if (request.launch === 'example') {
     loadExample()
@@ -331,6 +500,31 @@ watch(browserStudioLaunchRequest, (request) => {
 }, {
   immediate: true
 })
+
+const downloadCurrentSchema = () => {
+  downloadSchemaText(activeSchemaName.value, buildSchemaText(includeLayoutInSchema.value))
+  schemaDialogOpen.value = false
+}
+const saveCurrentSchema = async () => {
+  if (currentPersistenceSource.value === 'file') {
+    const didSave = await saveSchemaToComputerFile(includeLayoutInSchema.value)
+
+    if (didSave) {
+      schemaDialogOpen.value = false
+      pushSaveSuccessToast(getSaveSuccessToastDescription())
+    }
+
+    return
+  }
+
+  const didSave = await saveSchemaToBrowser()
+
+  if (!didSave) {
+    return
+  }
+
+  pushSaveSuccessToast(getSaveSuccessToastDescription())
+}
 
 const actionMenus = computed<StudioHeaderMenu[]>(() => {
   const exportItems: DropdownMenuItem[] = exportScales.map((scaleOption) => {
@@ -374,13 +568,14 @@ const actionMenus = computed<StudioHeaderMenu[]>(() => {
         [
           {
             label: 'Save schema',
+            disabled: currentPersistenceSource.value === 'file' && !hasSelectedComputerFile.value,
             icon: 'i-lucide-save',
             onSelect: () => {
               openSchemaDialog('save')
             }
           },
           {
-            label: 'Load saved schema',
+            label: currentPersistenceSource.value === 'file' ? 'Open file' : 'Load saved schema',
             icon: 'i-lucide-folder-open',
             onSelect: () => {
               loadDialogOpen.value = true
@@ -768,26 +963,27 @@ watchEffect(() => {
 })
 
 watchEffect(() => {
-  const isWaitingToSave = hasPendingLocalChanges.value && !isSavingToLocalStorage.value
-  const showSchemaStatus = localStorageSaveError.value !== null
-    || isSavingToLocalStorage.value
-    || currentSchemaUpdatedAt.value !== null
-  const detail = localStorageSaveError.value
-    ? localStorageSaveError.value
-    : isSavingToLocalStorage.value
-      ? 'Saving to local storage...'
+  const isWaitingToSave = activeHasPendingChanges.value && !activeIsSaving.value
+  const showSchemaStatus = activeSaveError.value !== null
+    || activeIsSaving.value
+    || activeSchemaUpdatedAt.value !== null
+  const persistenceLabel = currentPersistenceSource.value === 'file' ? 'file' : 'local storage'
+  const detail = activeSaveError.value
+    ? activeSaveError.value
+    : activeIsSaving.value
+      ? `Saving to ${persistenceLabel}...`
       : isWaitingToSave
-        ? 'Waiting to save to local storage...'
-        : isSavedToLocalStorage.value && currentSchemaUpdatedAt.value
-          ? `Saved to local storage at ${formatSavedAt(currentSchemaUpdatedAt.value)}`
-          : 'Saved to local storage'
+        ? `Waiting to save to ${persistenceLabel}...`
+        : activeIsSaved.value && activeSchemaUpdatedAt.value
+          ? `Saved to ${persistenceLabel} at ${activeSavedAtFormatter.value(activeSchemaUpdatedAt.value)}`
+          : `Saved to ${persistenceLabel}`
 
   setStudioSchemaStatus({
     detail,
-    name: currentSchemaName.value,
-    saveState: localStorageSaveError.value
+    name: activeSchemaName.value,
+    saveState: activeSaveError.value
       ? 'error'
-      : isSavingToLocalStorage.value
+      : activeIsSaving.value
         ? 'saving'
         : isWaitingToSave
           ? 'pending'
@@ -884,13 +1080,16 @@ onBeforeUnmount(() => {
       <StudioModalFrame
         v-model:open="schemaDialogOpen"
         :title="schemaActionTitle"
-        :description="schemaActionDescription"
+        :description="schemaActionDescriptionText"
         surface-id="schema"
         body-class="grid gap-4 px-4 py-3"
       >
         <div class="grid gap-3 lg:grid-cols-[minmax(0,0.95fr)_minmax(0,1.05fr)]">
           <div class="grid gap-3">
-            <label class="grid gap-1">
+            <label
+              v-if="currentPersistenceSource === 'browser'"
+              class="grid gap-1"
+            >
               <span :class="studioFieldKickerClass">
                 Schema Name
               </span>
@@ -900,6 +1099,24 @@ onBeforeUnmount(() => {
                 color="neutral"
                 variant="outline"
                 size="sm"
+                :ui="studioFieldUi"
+              />
+            </label>
+
+            <label
+              v-else
+              class="grid gap-1"
+            >
+              <span :class="studioFieldKickerClass">
+                File Name
+              </span>
+              <UInput
+                :model-value="currentComputerFileName"
+                placeholder="No file selected"
+                color="neutral"
+                variant="outline"
+                size="sm"
+                readonly
                 :ui="studioFieldUi"
               />
             </label>
@@ -915,7 +1132,10 @@ onBeforeUnmount(() => {
             />
           </div>
 
-          <div class="grid gap-2 border border-[color:var(--studio-shell-border)] bg-[color:var(--studio-control-bg)] px-3 py-3">
+          <div
+            v-if="currentPersistenceSource === 'browser'"
+            class="grid gap-2 border border-[color:var(--studio-shell-border)] bg-[color:var(--studio-control-bg)] px-3 py-3"
+          >
             <div class="flex items-center justify-between gap-3">
               <div>
                 <div :class="studioFieldKickerClass">
@@ -967,6 +1187,39 @@ onBeforeUnmount(() => {
               No saved schemas in this browser yet.
             </div>
           </div>
+
+          <div
+            v-else
+            class="grid gap-3 border border-[color:var(--studio-shell-border)] bg-[color:var(--studio-control-bg)] px-3 py-3"
+          >
+            <div>
+              <div :class="studioFieldKickerClass">
+                Target File
+              </div>
+              <p class="mt-1 text-[0.7rem] leading-5 text-[color:var(--studio-shell-muted)]">
+                This schema writes back to the selected `.pgml` file on your computer and keeps autosave pointed at that file.
+              </p>
+            </div>
+
+            <div
+              v-if="hasSelectedComputerFile"
+              class="grid gap-1 border border-[color:var(--studio-shell-border)] bg-[color:var(--studio-input-bg)] px-3 py-3"
+            >
+              <div class="truncate text-[0.78rem] font-semibold text-[color:var(--studio-shell-text)]">
+                {{ currentComputerFileName }}
+              </div>
+              <div class="font-mono text-[0.62rem] uppercase tracking-[0.08em] text-[color:var(--studio-shell-muted)]">
+                {{ currentComputerFileUpdatedAt ? formatComputerFileSavedAt(currentComputerFileUpdatedAt) : 'Ready to save' }}
+              </div>
+            </div>
+
+            <div
+              v-else
+              :class="studioEmptyStateClass"
+            >
+              Choose or create a computer file before saving from this mode.
+            </div>
+          </div>
         </div>
 
         <template #footer>
@@ -979,11 +1232,12 @@ onBeforeUnmount(() => {
           />
           <UButton
             v-if="schemaDialogMode === 'save'"
-            :label="saveSchemaActionLabel"
+            :label="saveDialogActionLabel"
             color="neutral"
             variant="soft"
             :class="primaryModalButtonClass"
-            @click="saveSchemaToBrowser"
+            :disabled="currentPersistenceSource === 'file' && !hasSelectedComputerFile"
+            @click="saveCurrentSchema"
           />
           <UButton
             v-else
@@ -991,65 +1245,121 @@ onBeforeUnmount(() => {
             color="neutral"
             variant="soft"
             :class="primaryModalButtonClass"
-            @click="downloadSchema"
+            @click="downloadCurrentSchema"
           />
         </template>
       </StudioModalFrame>
 
       <StudioModalFrame
         v-model:open="loadDialogOpen"
-        title="Load saved schema"
-        description="Saved PGML files stored in this browser."
+        :title="loadDialogTitle"
+        :description="loadDialogDescription"
         surface-id="load"
         body-class="max-h-[min(60vh,36rem)] overflow-y-auto px-4 py-3"
       >
         <div
-          v-if="orderedSavedSchemas.length"
-          class="grid gap-2"
+          v-if="currentPersistenceSource === 'browser'"
+          class="contents"
         >
           <div
-            v-for="schema in orderedSavedSchemas"
-            :key="schema.id"
-            class="grid gap-2 border border-[color:var(--studio-shell-border)] bg-[color:var(--studio-control-bg)] px-3 py-3"
+            v-if="orderedSavedSchemas.length"
+            class="grid gap-2"
           >
-            <div class="flex items-start justify-between gap-3">
-              <div class="min-w-0">
-                <div class="truncate text-[0.82rem] font-semibold text-[color:var(--studio-shell-text)]">
-                  {{ schema.name }}
+            <div
+              v-for="schema in orderedSavedSchemas"
+              :key="schema.id"
+              class="grid gap-2 border border-[color:var(--studio-shell-border)] bg-[color:var(--studio-control-bg)] px-3 py-3"
+            >
+              <div class="flex items-start justify-between gap-3">
+                <div class="min-w-0">
+                  <div class="truncate text-[0.82rem] font-semibold text-[color:var(--studio-shell-text)]">
+                    {{ schema.name }}
+                  </div>
+                  <div class="font-mono text-[0.64rem] uppercase tracking-[0.08em] text-[color:var(--studio-shell-muted)]">
+                    {{ formatSavedAt(schema.updatedAt) }}
+                  </div>
                 </div>
-                <div class="font-mono text-[0.64rem] uppercase tracking-[0.08em] text-[color:var(--studio-shell-muted)]">
-                  {{ formatSavedAt(schema.updatedAt) }}
-                </div>
-              </div>
 
-              <div class="flex items-center gap-1">
-                <UButton
-                  label="Load"
-                  color="neutral"
-                  variant="outline"
-                  size="xs"
-                  :class="secondaryModalButtonClass"
-                  @click="loadSavedSchema(schema)"
-                />
-                <UButton
-                  icon="i-lucide-trash-2"
-                  color="neutral"
-                  variant="outline"
-                  size="xs"
-                  :class="secondaryModalButtonClass"
-                  aria-label="Delete saved schema"
-                  @click="deleteSavedSchema(schema.id)"
-                />
+                <div class="flex items-center gap-1">
+                  <UButton
+                    label="Load"
+                    color="neutral"
+                    variant="outline"
+                    size="xs"
+                    :class="secondaryModalButtonClass"
+                    @click="loadSavedSchema(schema)"
+                  />
+                  <UButton
+                    icon="i-lucide-trash-2"
+                    color="neutral"
+                    variant="outline"
+                    size="xs"
+                    :class="secondaryModalButtonClass"
+                    aria-label="Delete saved schema"
+                    @click="deleteSavedSchema(schema.id)"
+                  />
+                </div>
               </div>
             </div>
+          </div>
+
+          <div
+            v-else
+            :class="studioEmptyStateClass"
+          >
+            No saved schemas in this browser yet.
           </div>
         </div>
 
         <div
           v-else
-          :class="studioEmptyStateClass"
+          class="grid gap-3"
         >
-          No saved schemas in this browser yet.
+          <UButton
+            label="Choose .pgml file from computer"
+            color="neutral"
+            variant="soft"
+            :class="primaryModalButtonClass"
+            @click="chooseComputerFileFromLoadDialog"
+          />
+
+          <div
+            v-if="recentComputerFiles.length"
+            class="grid gap-2"
+          >
+            <div
+              v-for="recentFile in recentComputerFiles"
+              :key="recentFile.id"
+              class="grid gap-2 border border-[color:var(--studio-shell-border)] bg-[color:var(--studio-control-bg)] px-3 py-3"
+            >
+              <div class="flex items-start justify-between gap-3">
+                <div class="min-w-0">
+                  <div class="truncate text-[0.82rem] font-semibold text-[color:var(--studio-shell-text)]">
+                    {{ recentFile.name }}
+                  </div>
+                  <div class="font-mono text-[0.64rem] uppercase tracking-[0.08em] text-[color:var(--studio-shell-muted)]">
+                    {{ formatComputerFileSavedAt(recentFile.updatedAt) }}
+                  </div>
+                </div>
+
+                <UButton
+                  label="Open"
+                  color="neutral"
+                  variant="outline"
+                  size="xs"
+                  :class="secondaryModalButtonClass"
+                  @click="loadRecentComputerFile(recentFile.id)"
+                />
+              </div>
+            </div>
+          </div>
+
+          <div
+            v-else
+            :class="studioEmptyStateClass"
+          >
+            No recent computer files yet.
+          </div>
         </div>
 
         <template #footer>

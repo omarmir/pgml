@@ -14,8 +14,7 @@ const { extraMenuGroups = [], navigationItems } = defineProps<{
 
 const navigationIconByRoute: Readonly<Record<string, string>> = Object.freeze({
   '/': 'i-lucide-house',
-  '/spec': 'i-lucide-scroll-text',
-  '/diagram': 'i-lucide-workflow'
+  '/spec': 'i-lucide-scroll-text'
 })
 
 const buildThemeMenuItem = (label: string, icon: string, onSelect: () => void): DropdownMenuItem => {

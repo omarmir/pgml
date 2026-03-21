@@ -73,7 +73,7 @@ describe('usePgmlStudioSchemas', () => {
     api.selectSaveSchemaTarget(api.orderedSavedSchemas.value[0]!)
 
     source.value = 'Table public.users {\n  id uuid [pk]\n  email text\n}'
-    api.saveSchemaToBrowser()
+    await expect(api.saveSchemaToBrowser()).resolves.toBe(true)
 
     const persisted = JSON.parse(window.localStorage.getItem('pgml-studio-schemas-v1') || '[]')
 
@@ -120,7 +120,7 @@ describe('usePgmlStudioSchemas', () => {
 
     api.openSchemaDialog('save')
     api.currentSchemaName.value = 'Primary schema'
-    api.saveSchemaToBrowser()
+    await expect(api.saveSchemaToBrowser()).resolves.toBe(true)
 
     const savedSchema = api.orderedSavedSchemas.value[0]
 

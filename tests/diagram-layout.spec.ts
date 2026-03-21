@@ -1,7 +1,12 @@
 import { expect, test } from '@nuxt/test-utils/playwright'
 import { getPgmlEditor, readPgmlEditorValue, setPgmlEditorValue } from './helpers/pgml-editor'
+import { authorizeStudioLaunchAccess } from './helpers/studio-launch'
 
 test.setTimeout(120_000)
+
+test.beforeEach(async ({ page }) => {
+  await authorizeStudioLaunchAccess(page)
+})
 
 test('studio editor panel can expand beyond its default width', async ({ goto, page }) => {
   await goto('/diagram')

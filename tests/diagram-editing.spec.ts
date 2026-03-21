@@ -7,8 +7,13 @@ import {
   setPgmlEditorSelection,
   setPgmlEditorValue
 } from './helpers/pgml-editor'
+import { authorizeStudioLaunchAccess } from './helpers/studio-launch'
 
 test.setTimeout(120_000)
+
+test.beforeEach(async ({ page }) => {
+  await authorizeStudioLaunchAccess(page)
+})
 
 test('table edit modal can rename a table and add a new grouped table', async ({ goto, page }) => {
   await goto('/diagram')

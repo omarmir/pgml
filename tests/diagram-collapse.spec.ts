@@ -6,8 +6,13 @@ import {
   setPgmlEditorSelection,
   setPgmlEditorValue
 } from './helpers/pgml-editor'
+import { authorizeStudioLaunchAccess } from './helpers/studio-launch'
 
 test.setTimeout(120_000)
+
+test.beforeEach(async ({ page }) => {
+  await authorizeStudioLaunchAccess(page)
+})
 
 test('studio attaches table-scoped rows to tables and still lets floating nodes expand from the node header', async ({ goto, page }) => {
   await goto('/diagram')

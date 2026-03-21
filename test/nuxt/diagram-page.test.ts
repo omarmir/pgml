@@ -5,6 +5,7 @@ describe('diagram page source', () => {
   it('keeps the studio workspace shells and modal entry points in the page source', () => {
     const file = readSourceFile('app/pages/diagram.vue')
 
+    expect(file).toContain('middleware: \'require-studio-launch\'')
     expect(file).toContain('<StudioDesktopWorkspace')
     expect(file).toContain('<StudioMobileWorkspace')
     expect(file).toContain('<StudioEditorSurface')

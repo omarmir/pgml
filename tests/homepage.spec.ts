@@ -1,5 +1,22 @@
+import type { Page } from '@playwright/test'
 import { expect, test } from '@nuxt/test-utils/playwright'
+import {
+  installMockComputerFiles,
+  primeMockComputerFile,
+  queueMockComputerSave,
+  readMockComputerFileState,
+  setMockComputerFilePermission
+} from './helpers/computer-files'
 import { getPgmlEditor, readPgmlEditorValue, setPgmlEditorValue } from './helpers/pgml-editor'
+
+const confirmComputerFileAccess = async (page: Page, continueLabel: string) => {
+  const accessDialog = page.locator('[data-studio-modal-surface="computer-file-access"]')
+
+  await expect(accessDialog).toContainText('Why PGML asks')
+  await expect(accessDialog).toContainText('What PGML can access')
+  await expect(accessDialog).toContainText('What happens next')
+  await page.getByRole('button', { name: continueLabel }).click()
+}
 
 test('home page exposes the three schema-source lanes and the SQL dump placeholder', async ({ goto, page }) => {
   await goto('/')
@@ -11,6 +28,13 @@ test('home page exposes the three schema-source lanes and the SQL dump placehold
   await expect(page.getByText('SQL dump', { exact: true })).toHaveCount(3)
   await expect(page.locator('[data-spec-banner="true"]')).toContainText('Need the language reference before you open the studio?')
   await expect(page.getByRole('link', { name: 'Jump to spec' })).toHaveCount(1)
+})
+
+test('studio redirects back home until the user launches it from the source chooser', async ({ goto, page }) => {
+  await goto('/diagram')
+
+  await expect(page).toHaveURL(/\/$/)
+  await expect(page.locator('[data-source-card="browser-local-storage"]')).toBeVisible()
 })
 
 test('home page opens a specific browser-saved schema in the studio and keeps it linked to the original save slot', async ({ goto, page }) => {
@@ -70,6 +94,18 @@ test('home page can launch the studio with a blank schema from the browser lane'
   await expect(page.locator('[data-studio-schema-name="true"]')).toHaveText('Untitled schema')
 })
 
+test('studio header includes a Home link back to the source chooser', async ({ goto, page }) => {
+  await goto('/')
+
+  await page.locator('[data-source-card="browser-local-storage"]').getByRole('link', { name: 'Start from example' }).click()
+
+  await expect.poll(async () => readPgmlEditorValue(getPgmlEditor(page))).toContain('TableGroup Core')
+  await page.getByRole('link', { name: 'Home' }).click()
+
+  await expect(page).toHaveURL(/\/$/)
+  await expect(page.locator('[data-source-card="browser-local-storage"]')).toBeVisible()
+})
+
 test('home page can delete a browser-saved schema from the launch card', async ({ goto, page }) => {
   await goto('/')
 
@@ -99,6 +135,86 @@ test('home page can delete a browser-saved schema from the launch card', async (
       return JSON.parse(window.localStorage.getItem('pgml-studio-schemas-v1') || '[]').length
     })
   }).toBe(0)
+})
+
+test('home page can create a blank computer-backed file, autosave to it, and reopen it from recents', async ({ goto, page }) => {
+  await installMockComputerFiles(page)
+  await goto('/')
+  const recentFileId = await queueMockComputerSave(page, 'blank-computer-schema.pgml')
+
+  expect(recentFileId).toBeTruthy()
+  await page.locator('[data-source-card="computer-saved-file"]').getByRole('button', { name: 'Start new' }).click()
+  await confirmComputerFileAccess(page, 'Continue to save dialog')
+
+  const editor = getPgmlEditor(page)
+
+  await expect.poll(async () => readPgmlEditorValue(editor)).toBe('')
+  await expect(page.locator('[data-studio-schema-name="true"]')).toHaveText('blank-computer-schema')
+
+  await setPgmlEditorValue(editor, 'Table public.file_backed {\n  id uuid [pk]\n}')
+
+  await expect.poll(async () => {
+    const state = await readMockComputerFileState(page)
+
+    return recentFileId ? state?.files[recentFileId]?.text || '' : ''
+  }, {
+    timeout: 8000
+  }).toContain('Table public.file_backed')
+
+  await page.goBack()
+
+  const fileCard = page.locator('[data-source-card="computer-saved-file"]')
+
+  await expect(fileCard).toContainText('1 recent file')
+  await expect(fileCard.getByRole('button', { name: /blank-computer-schema/i })).toBeVisible()
+  await fileCard.getByRole('button', { name: /blank-computer-schema/i }).click()
+  await expect(page.locator('[data-studio-modal-surface="computer-file-access"]')).toHaveCount(0)
+
+  await expect.poll(async () => readPgmlEditorValue(getPgmlEditor(page))).toContain('Table public.file_backed')
+})
+
+test('home page can seed a new computer-backed file from the bundled example', async ({ goto, page }) => {
+  await installMockComputerFiles(page)
+  await goto('/')
+  const recentFileId = await queueMockComputerSave(page, 'example-seeded-schema.pgml')
+
+  expect(recentFileId).toBeTruthy()
+  await page.locator('[data-source-card="computer-saved-file"]').getByRole('button', { name: 'Start from example' }).click()
+  await confirmComputerFileAccess(page, 'Continue to save dialog')
+
+  const editor = getPgmlEditor(page)
+
+  await expect.poll(async () => readPgmlEditorValue(editor)).toContain('TableGroup Core')
+  await expect(page.locator('[data-studio-schema-name="true"]')).toHaveText('example-seeded-schema')
+
+  const state = await readMockComputerFileState(page)
+
+  expect(recentFileId ? state?.files[recentFileId]?.text : null).toContain('TableGroup Core')
+})
+
+test('home page still explains computer-file access when a recent file no longer has permission', async ({ goto, page }) => {
+  await installMockComputerFiles(page)
+  await goto('/')
+  const recentFileId = await primeMockComputerFile(page, {
+    fileName: 'permission-reset-schema.pgml',
+    text: 'Table public.permission_reset {\n  id uuid [pk]\n}'
+  })
+
+  expect(recentFileId).toBeTruthy()
+  await setMockComputerFilePermission(page, {
+    fileId: recentFileId as string,
+    queryPermission: 'prompt',
+    requestPermission: 'granted'
+  })
+  await page.reload()
+
+  const fileCard = page.locator('[data-source-card="computer-saved-file"]')
+
+  await expect(fileCard.getByRole('button', { name: /permission-reset-schema/i })).toBeVisible()
+  await fileCard.getByRole('button', { name: /permission-reset-schema/i }).click()
+  await confirmComputerFileAccess(page, 'Continue and reopen file')
+
+  await expect.poll(async () => readPgmlEditorValue(getPgmlEditor(page))).toContain('Table public.permission_reset')
 })
 
 test('spec page keeps the hero preview focused and documents the current sections', async ({ goto, page }) => {

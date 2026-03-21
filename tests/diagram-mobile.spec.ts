@@ -1,6 +1,11 @@
 import { expect, test } from '@nuxt/test-utils/playwright'
+import { authorizeStudioLaunchAccess } from './helpers/studio-launch'
 
 test.setTimeout(120_000)
+
+test.beforeEach(async ({ page }) => {
+  await authorizeStudioLaunchAccess(page)
+})
 
 test('mobile studio menu switches views and keeps modals inside the viewport', async ({ goto, page }) => {
   await page.setViewportSize({
