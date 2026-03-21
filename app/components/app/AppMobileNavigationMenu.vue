@@ -13,7 +13,8 @@ const { extraMenuGroups = [], navigationItems } = defineProps<{
 }>()
 
 const navigationIconByRoute: Readonly<Record<string, string>> = Object.freeze({
-  '/': 'i-lucide-scroll-text',
+  '/': 'i-lucide-house',
+  '/spec': 'i-lucide-scroll-text',
   '/diagram': 'i-lucide-workflow'
 })
 

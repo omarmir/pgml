@@ -9,7 +9,7 @@ type PrimaryNavigationDefinition = Omit<PrimaryNavigationItem, 'isActive'>
 const primaryNavigationDefinitions: Readonly<PrimaryNavigationDefinition[]> = Object.freeze([
   {
     label: 'Spec',
-    to: '/'
+    to: '/spec'
   },
   {
     label: 'Studio',

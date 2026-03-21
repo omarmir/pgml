@@ -12,13 +12,13 @@ export type SavedPgmlSchema = {
 
 export type PgmlStudioSchemaDialogMode = 'save' | 'download'
 
-const savedSchemaStorageKey = 'pgml-studio-schemas-v1'
-const exampleSchemaName = 'Example schema'
-const untitledSchemaName = 'Untitled schema'
+export const savedSchemaStorageKey = 'pgml-studio-schemas-v1'
+export const exampleSchemaName = 'Example schema'
+export const untitledSchemaName = 'Untitled schema'
 const schemaAutosaveDebounceMs = 5000
 const localStorageSaveErrorMessage = 'Unable to save to local storage.'
 
-const orderSavedSchemas = (schemas: SavedPgmlSchema[]) => {
+export const orderSavedSchemas = (schemas: SavedPgmlSchema[]) => {
   return [...schemas].sort((left, right) => {
     return new Date(right.updatedAt).getTime() - new Date(left.updatedAt).getTime()
   })
@@ -70,6 +70,26 @@ export const slugifySchemaName = (value: string) => {
     .replaceAll(/^-+|-+$/g, '')
 
   return slug.length > 0 ? slug : 'schema'
+}
+
+export const readSavedPgmlSchemasFromBrowserStorage = () => {
+  return orderSavedSchemas(parseSavedPgmlSchemas(readBrowserStorageItem(savedSchemaStorageKey)))
+}
+export const persistSavedPgmlSchemasToBrowserStorage = (schemas: SavedPgmlSchema[]) => {
+  return writeBrowserStorageItem(savedSchemaStorageKey, JSON.stringify(schemas))
+}
+
+export const formatSavedPgmlSchemaTime = (value: string) => {
+  const date = new Date(value)
+
+  if (Number.isNaN(date.getTime())) {
+    return 'Unknown time'
+  }
+
+  return new Intl.DateTimeFormat('en-CA', {
+    dateStyle: 'medium',
+    timeStyle: 'short'
+  }).format(date)
 }
 
 type UsePgmlStudioSchemasOptions = {
@@ -166,34 +186,39 @@ export const usePgmlStudioSchemas = ({
   }
 
   const readSavedSchemas = () => {
-    savedSchemas.value = parseSavedPgmlSchemas(readBrowserStorageItem(savedSchemaStorageKey))
+    savedSchemas.value = readSavedPgmlSchemasFromBrowserStorage()
     localStorageSaveError.value = null
   }
 
   const persistSavedSchemas = (schemas: SavedPgmlSchema[]) => {
-    return writeBrowserStorageItem(savedSchemaStorageKey, JSON.stringify(schemas))
+    return persistSavedPgmlSchemasToBrowserStorage(schemas)
   }
   const findMatchingSavedSchema = (name: string) => {
-    return savedSchemas.value.find((entry) => {
-      return (
-        entry.id === saveSchemaTargetId.value
-        || entry.id === currentSchemaId.value
-        || (
-          !saveSchemaTargetId.value
-          && !currentSchemaId.value
-          && entry.name.toLowerCase() === name.toLowerCase()
-        )
-      )
-    })
+    const explicitSchemaId = saveSchemaTargetId.value || currentSchemaId.value
+
+    if (explicitSchemaId) {
+      return savedSchemas.value.find(entry => entry.id === explicitSchemaId)
+    }
+
+    return savedSchemas.value.find(entry => entry.name.toLowerCase() === name.toLowerCase())
   }
   const upsertSavedSchema = (schema: SavedPgmlSchema, existingSchemaId: string | null) => {
     if (!existingSchemaId) {
       return [schema, ...savedSchemas.value]
     }
 
-    return savedSchemas.value.map((entry) => {
-      return entry.id === existingSchemaId ? schema : entry
+    let didReplaceExistingSchema = false
+    const nextSavedSchemas = savedSchemas.value.map((entry) => {
+      if (entry.id !== existingSchemaId) {
+        return entry
+      }
+
+      didReplaceExistingSchema = true
+
+      return schema
     })
+
+    return didReplaceExistingSchema ? nextSavedSchemas : [schema, ...nextSavedSchemas]
   }
 
   const syncPersistedState = (schema: SavedPgmlSchema) => {
@@ -248,6 +273,7 @@ export const usePgmlStudioSchemas = ({
   ) => {
     const updatedAt = new Date().toISOString()
     const matchingSchema = findMatchingSavedSchema(name)
+    const existingSchemaId = matchingSchema?.id || saveSchemaTargetId.value || currentSchemaId.value || null
     const nextSchema: SavedPgmlSchema = matchingSchema
       ? {
           ...matchingSchema,
@@ -256,12 +282,12 @@ export const usePgmlStudioSchemas = ({
           updatedAt
         }
       : {
-          id: nanoid(),
+          id: existingSchemaId || nanoid(),
           name,
           text,
           updatedAt
         }
-    const nextSavedSchemas = upsertSavedSchema(nextSchema, matchingSchema?.id || null)
+    const nextSavedSchemas = upsertSavedSchema(nextSchema, existingSchemaId)
 
     if (!persistSavedSchemas(nextSavedSchemas)) {
       localStorageSaveError.value = localStorageSaveErrorMessage
@@ -330,18 +356,7 @@ export const usePgmlStudioSchemas = ({
     localStorageSaveError.value = null
   }
 
-  const formatSavedAt = (value: string) => {
-    const date = new Date(value)
-
-    if (Number.isNaN(date.getTime())) {
-      return 'Unknown time'
-    }
-
-    return new Intl.DateTimeFormat('en-CA', {
-      dateStyle: 'medium',
-      timeStyle: 'short'
-    }).format(date)
-  }
+  const formatSavedAt = (value: string) => formatSavedPgmlSchemaTime(value)
 
   if (import.meta.client) {
     readSavedSchemas()

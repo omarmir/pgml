@@ -184,6 +184,44 @@ describe('usePgmlStudioSchemas', () => {
     expect(api.isSavedToLocalStorage.value).toBe(true)
   })
 
+  it('preserves the loaded schema id when autosaving a schema opened from an external source', async () => {
+    vi.useFakeTimers()
+
+    const source = ref('Table public.users {\n  id uuid [pk]\n}')
+    let api!: ReturnType<typeof usePgmlStudioSchemas>
+
+    await mountSuspended(defineComponent({
+      setup() {
+        api = usePgmlStudioSchemas({
+          buildSchemaText: () => source.value,
+          canEmbedLayout: computed(() => true),
+          initialSource: 'Table public.example {\n  id uuid [pk]\n}',
+          source
+        })
+
+        return () => null
+      }
+    }))
+
+    api.loadSavedSchema({
+      id: 'externally-loaded-schema',
+      name: 'Imported schema',
+      text: 'Table public.imported {\n  id uuid [pk]\n}',
+      updatedAt: '2026-03-20T10:00:00.000Z'
+    })
+
+    source.value = 'Table public.imported {\n  id uuid [pk]\n  status text\n}'
+
+    await vi.advanceTimersByTimeAsync(5000)
+
+    const persisted = JSON.parse(window.localStorage.getItem('pgml-studio-schemas-v1') || '[]')
+
+    expect(persisted).toHaveLength(1)
+    expect(persisted[0]?.id).toBe('externally-loaded-schema')
+    expect(persisted[0]?.text).toContain('status text')
+    expect(api.currentSchemaId.value).toBe('externally-loaded-schema')
+  })
+
   it('autosaves changes to local storage after five seconds', async () => {
     vi.useFakeTimers()
 

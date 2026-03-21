@@ -2,7 +2,7 @@
 import { usePrimaryNavigation } from '~/composables/usePrimaryNavigation'
 import { useStudioTheme } from '~/composables/useStudioTheme'
 
-const pageTitle = 'PGML Specification'
+const pageTitle = 'PGML'
 const pageDetail = 'Postgres-first markup language'
 const { navigationItems } = usePrimaryNavigation()
 const { studioTheme } = useStudioTheme()

@@ -2,15 +2,20 @@ import { describe, expect, it } from 'vitest'
 import { readSourceFile } from './source-test-utils'
 
 describe('Index page source', () => {
-  it('keeps the hero, outline, and documentation examples in the landing page source', () => {
+  it('wires the browser launch flows and keeps the unfinished paths marked as placeholders', () => {
     const file = readSourceFile('app/pages/index.vue')
 
-    expect(file).toContain('Write Postgres as a readable schema document instead of raw SQL.')
-    expect(file).toContain('data-testid="hero-quick-start"')
-    expect(file).toContain('On This Page')
-    expect(file).toContain('Why PGML')
-    expect(file).toContain('DBML Compatibility')
-    expect(file).toContain('Documentation')
-    expect(file).toContain('Layout properties')
+    expect(file).toContain('const sourceCards = computed<SourceCardDefinition[]>(() => {')
+    expect(file).toContain('readSavedPgmlSchemasFromBrowserStorage')
+    expect(file).toContain('persistSavedPgmlSchemasToBrowserStorage')
+    expect(file).toContain('buildBrowserStudioExampleQuery')
+    expect(file).toContain('buildBrowserStudioNewQuery')
+    expect(file).toContain('buildBrowserStudioSavedQuery')
+    expect(file).toContain('delete-saved-schema')
+    expect(file).toContain('@item-action="handleSourceCardItemAction"')
+    expect(file).toContain('const specBannerButtonClass = studioButtonClasses.ghost')
+    expect(file).toContain('data-spec-banner="true"')
+    expect(file).toContain('sqlDumpDescription')
+    expect(file).toContain('Placeholder')
   })
 })

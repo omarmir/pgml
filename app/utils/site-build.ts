@@ -1,4 +1,4 @@
-export const staticPrerenderRoutes = ['/', '/diagram'] as const
+export const staticPrerenderRoutes = ['/', '/spec', '/diagram'] as const
 
 type ResolveGitHubPagesBaseUrlOptions = {
   explicitBaseUrl?: string

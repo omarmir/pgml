@@ -18,6 +18,10 @@ import type { PgmlSourceEditorHandle } from '~/composables/usePgmlSourceEditor'
 import { slugifySchemaName, type SavedPgmlSchema } from '~/composables/usePgmlStudioSchemas'
 import { useStudioHeaderActions, type StudioHeaderMenu } from '~/composables/useStudioHeaderActions'
 import { useStudioSchemaStatus } from '~/composables/useStudioSchemaStatus'
+import {
+  getBrowserStudioLaunchRequestKey,
+  parseBrowserStudioLaunchQuery
+} from '~/utils/studio-launch'
 import { analyzePgmlDocument } from '~/utils/pgml-language'
 import {
   buildPgmlWithNodeProperties,
@@ -157,6 +161,7 @@ const formatColumnTypeLabel = (value: string) => {
 const source: Ref<string> = ref(pgmlExample)
 const canvasRef: Ref<PgmlDiagramCanvasExposed | null> = ref(null)
 const canvasViewportResetKey: Ref<number> = ref(0)
+const appliedBrowserStudioLaunchKey: Ref<string | null> = ref(null)
 const isExporting: Ref<boolean> = ref(false)
 const mobileWorkspaceView: Ref<StudioMobileWorkspaceView> = ref('diagram')
 const mobilePanelTab: Ref<DiagramPanelTab> = ref(defaultStudioMobilePanelTab)
@@ -172,6 +177,7 @@ const {
   editorRef,
   focusEditorSourceRange
 } = usePgmlSourceEditor()
+const route = useRoute()
 const {
   isEditorPanelVisible,
   isCompactStudioLayout,
@@ -290,6 +296,41 @@ const loadSavedSchema = (schema: SavedPgmlSchema) => {
 
 const exportBaseName = computed(() => slugifySchemaName(currentSchemaName.value))
 const exportPreferenceKey = computed(() => `name:${slugifySchemaName(currentSchemaName.value)}`)
+const browserStudioLaunchRequest = computed(() => parseBrowserStudioLaunchQuery(route.query))
+
+watch(browserStudioLaunchRequest, (request) => {
+  if (!request) {
+    return
+  }
+
+  const requestKey = getBrowserStudioLaunchRequestKey(request)
+
+  if (requestKey === appliedBrowserStudioLaunchKey.value) {
+    return
+  }
+
+  appliedBrowserStudioLaunchKey.value = requestKey
+
+  if (request.launch === 'example') {
+    loadExample()
+    return
+  }
+
+  if (request.launch === 'new') {
+    clearSchema()
+    return
+  }
+
+  const savedSchema = orderedSavedSchemas.value.find((schema) => {
+    return schema.id === request.schemaId
+  })
+
+  if (savedSchema) {
+    loadSavedSchema(savedSchema)
+  }
+}, {
+  immediate: true
+})
 
 const actionMenus = computed<StudioHeaderMenu[]>(() => {
   const exportItems: DropdownMenuItem[] = exportScales.map((scaleOption) => {

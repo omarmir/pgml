@@ -33,6 +33,7 @@ describe('site-build', () => {
   it('builds prerender route rules for the static app routes', () => {
     expect(buildPrerenderRouteRules(staticPrerenderRoutes)).toEqual({
       '/': { prerender: true },
+      '/spec': { prerender: true },
       '/diagram': { prerender: true }
     })
   })
