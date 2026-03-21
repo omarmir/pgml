@@ -7,7 +7,7 @@ const { studioThemeIcon, studioThemeLabel, toggleStudioTheme } = useStudioTheme(
 <template>
   <button
     type="button"
-    class="grid h-7 w-7 place-items-center border border-transparent text-[color:var(--studio-shell-muted)] transition-colors duration-150 hover:bg-[color:var(--studio-surface-hover)] hover:text-[color:var(--studio-shell-text)]"
+    class="grid h-7 w-7 cursor-default place-items-center border border-transparent text-[color:var(--studio-shell-muted)] transition-colors duration-150 hover:bg-[color:var(--studio-surface-hover)] hover:text-[color:var(--studio-shell-text)]"
     :aria-label="studioThemeLabel"
     :title="studioThemeLabel"
     @click="toggleStudioTheme"
