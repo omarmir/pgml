@@ -1,20 +1,27 @@
 import { describe, expect, it } from 'vitest'
-import { readSourceFile } from './source-test-utils'
+import { readSourceFile, sourceFileExists } from './source-test-utils'
 
 describe('App header source', () => {
-  it('delegates header state to a composable and keeps presentation in the shell component', () => {
+  it('uses route-specific layouts and keeps shared shell pieces in focused components', () => {
     const appFile = readSourceFile('app/app.vue')
-    const headerFile = readSourceFile('app/components/AppHeader.vue')
-    const composableFile = readSourceFile('app/composables/useAppHeader.ts')
+    const defaultLayoutFile = readSourceFile('app/layouts/default.vue')
+    const studioLayoutFile = readSourceFile('app/layouts/studio.vue')
+    const diagramPageFile = readSourceFile('app/pages/diagram.vue')
+    const mobileMenuFile = readSourceFile('app/components/app/AppMobileNavigationMenu.vue')
+    const primaryNavigationFile = readSourceFile('app/composables/usePrimaryNavigation.ts')
+    const studioHeaderStateFile = readSourceFile('app/composables/useStudioHeaderState.ts')
 
-    expect(appFile).toContain('<AppHeader>')
-    expect(headerFile).toContain('import { useAppHeader } from \'~/composables/useAppHeader\'')
-    expect(headerFile).toContain('import { tv } from \'tailwind-variants\'')
-    expect(headerFile).toContain('data-app-header-title="true"')
-    expect(headerFile).toContain('title="Open header menu"')
-    expect(headerFile).not.toContain('label="Actions"')
-    expect(composableFile).not.toContain('shellModeClasses')
-    expect(composableFile).not.toContain('baseHeaderLinkClass')
-    expect(composableFile).not.toContain('desktopMenuUi')
+    expect(appFile).toContain('<NuxtLayout>')
+    expect(defaultLayoutFile).toContain('<AppBrandLink />')
+    expect(defaultLayoutFile).toContain('<AppPrimaryNavigation :items="navigationItems" />')
+    expect(studioLayoutFile).toContain('<AppHeaderTitleBlock')
+    expect(diagramPageFile).toContain('layout: \'studio\'')
+    expect(mobileMenuFile).toContain('title="Open header menu"')
+    expect(studioLayoutFile).not.toContain('label="Actions"')
+    expect(primaryNavigationFile).not.toContain('i-lucide')
+    expect(studioHeaderStateFile).not.toContain('text-red-500')
+    expect(studioHeaderStateFile).not.toContain('animate-spin')
+    expect(sourceFileExists('app/components/AppHeader.vue')).toBe(false)
+    expect(sourceFileExists('app/composables/useAppHeader.ts')).toBe(false)
   })
 })

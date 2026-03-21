@@ -52,6 +52,10 @@ import {
   textareaClass
 } from '~/utils/uiStyles'
 
+definePageMeta({
+  layout: 'studio'
+})
+
 type PgmlDiagramCanvasExposed = {
   exportDiagram: (format: 'svg' | 'png', scaleFactor?: number) => Promise<void>
   exportPng: (scaleFactor: number) => Promise<void>

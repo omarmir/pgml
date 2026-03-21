@@ -15,7 +15,10 @@ describe('Shared button theming source', () => {
 
   it('uses the shared button classes in the app shell and diagram page controls', () => {
     const appFile = readSourceFile('app/app.vue')
-    const appHeaderFile = readSourceFile('app/components/AppHeader.vue')
+    const defaultLayoutFile = readSourceFile('app/layouts/default.vue')
+    const studioLayoutFile = readSourceFile('app/layouts/studio.vue')
+    const themeToggleFile = readSourceFile('app/components/app/AppThemeToggleButton.vue')
+    const mobileMenuFile = readSourceFile('app/components/app/AppMobileNavigationMenu.vue')
     const canvasFile = readSourceFile('app/components/pgml/PgmlDiagramCanvas.vue')
     const tableRowsFile = readSourceFile('app/components/pgml/PgmlDiagramTableRows.vue')
     const diagramFile = readSourceFile('app/pages/diagram.vue')
@@ -24,9 +27,11 @@ describe('Shared button theming source', () => {
     const uiStylesFile = readSourceFile('app/utils/uiStyles.ts')
     const uiConstantsFile = readSourceFile('app/constants/ui.ts')
 
-    expect(appFile).toContain('<AppHeader>')
-    expect(appHeaderFile).toContain('title="Open header menu"')
-    expect(appHeaderFile).toContain('@click="toggleStudioTheme"')
+    expect(appFile).toContain('<NuxtLayout>')
+    expect(defaultLayoutFile).toContain('<AppThemeToggleButton />')
+    expect(studioLayoutFile).toContain('<AppThemeToggleButton />')
+    expect(mobileMenuFile).toContain('title="Open header menu"')
+    expect(themeToggleFile).toContain('@click="toggleStudioTheme"')
     expect(indexFile).toContain(':class="primaryCtaButtonClass"')
     expect(indexFile).toContain(':class="secondaryCtaButtonClass"')
     expect(uiStylesFile).toContain('export const studioButtonClasses = Object.freeze({')
