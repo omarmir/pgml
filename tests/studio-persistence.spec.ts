@@ -7,7 +7,7 @@ test.setTimeout(120_000)
 
 test('studio saves, reloads, and downloads PGML with embedded layout', async ({ goto, page }) => {
   await goto('/diagram')
-  const studioActionsButton = page.getByRole('button', { name: 'Studio actions' })
+  const schemaMenuButton = page.getByRole('button', { name: 'Schema' })
   const editor = getPgmlEditor(page)
 
   await page.locator('[data-node-anchor="group:Core"]').dispatchEvent('click')
@@ -16,7 +16,7 @@ test('studio saves, reloads, and downloads PGML with embedded layout', async ({ 
   await page.getByRole('button', { name: 'Expand email_address' }).click()
   await expect(page.locator('[data-node-body="custom-type:Domain:email_address"]')).toBeVisible()
 
-  await studioActionsButton.click()
+  await schemaMenuButton.click()
   await page.getByRole('menuitem', { name: 'Save schema' }).click()
 
   const modalSurface = await page.evaluate(() => {
@@ -53,18 +53,18 @@ test('studio saves, reloads, and downloads PGML with embedded layout', async ({ 
   expect(savedSchemas[0]?.text).not.toContain('Properties "constraint:chk_orders_total" {')
   expect(savedSchemas[0]?.text).not.toContain('Properties "function:register_entity" {')
 
-  await studioActionsButton.click()
+  await schemaMenuButton.click()
   await page.getByRole('menuitem', { name: 'Clear schema' }).click()
   await expect.poll(async () => readPgmlEditorValue(editor)).toBe('')
 
-  await studioActionsButton.click()
+  await schemaMenuButton.click()
   await page.getByRole('menuitem', { name: 'Load saved schema' }).click()
   await page.getByRole('button', { name: 'Load' }).click()
 
   await expect.poll(async () => readPgmlEditorValue(editor)).toMatch(/Properties "group:Core" \{/)
   await expect(page.locator('[data-node-body="custom-type:Domain:email_address"]')).toBeVisible()
 
-  await studioActionsButton.click()
+  await schemaMenuButton.click()
   await page.getByRole('menuitem', { name: 'Download schema' }).click()
 
   const downloadPromise = page.waitForEvent('download')
@@ -81,14 +81,14 @@ test('studio saves, reloads, and downloads PGML with embedded layout', async ({ 
 test('entity visibility persists when a saved schema is reloaded', async ({ goto, page }) => {
   await goto('/diagram')
 
-  const studioActionsButton = page.getByRole('button', { name: 'Studio actions' })
+  const schemaMenuButton = page.getByRole('button', { name: 'Schema' })
   const editor = getPgmlEditor(page)
 
   await page.locator('[data-diagram-panel-tab="entities"]').click()
   await page.locator('[data-browser-visibility-toggle="public.users"]').click()
   await expect(page.locator('[data-table-anchor="public.users"]')).toHaveCount(0)
 
-  await studioActionsButton.click()
+  await schemaMenuButton.click()
   await page.getByRole('menuitem', { name: 'Save schema' }).click()
   await page.getByPlaceholder('Schema name').fill('Hidden users')
   await page.getByRole('button', { name: 'Save to browser' }).click()
@@ -100,11 +100,11 @@ test('entity visibility persists when a saved schema is reloaded', async ({ goto
   expect(savedSchemas[0]?.text).toContain('Properties "public.users" {')
   expect(savedSchemas[0]?.text).toContain('visible: false')
 
-  await studioActionsButton.click()
+  await schemaMenuButton.click()
   await page.getByRole('menuitem', { name: 'Clear schema' }).click()
   await expect.poll(async () => readPgmlEditorValue(editor)).toBe('')
 
-  await studioActionsButton.click()
+  await schemaMenuButton.click()
   await page.getByRole('menuitem', { name: 'Load saved schema' }).click()
   await page.getByRole('button', { name: 'Load' }).click()
 
@@ -128,9 +128,9 @@ test('save modal lists existing schemas as explicit overwrite targets', async ({
 
   await page.reload()
 
-  const studioActionsButton = page.getByRole('button', { name: 'Studio actions' })
+  const schemaMenuButton = page.getByRole('button', { name: 'Schema' })
 
-  await studioActionsButton.click()
+  await schemaMenuButton.click()
   await page.getByRole('menuitem', { name: 'Save schema' }).click()
   await page.getByRole('button', { name: /Core schema/ }).click()
 
@@ -171,13 +171,13 @@ test('studio autosaves changes to local storage and updates the header status ic
   const editor = getPgmlEditor(page)
 
   await expect(page.locator('[data-studio-schema-name="true"]')).toHaveText('Example schema')
-  await expect(page.locator('[data-studio-schema-status]')).toHaveAttribute('data-studio-schema-status', 'pending')
-  await expect(page.locator('[data-studio-schema-status-icon="true"]')).toHaveClass(/animate-bounce/)
+  await expect(page.locator('[data-studio-schema-status]')).toHaveCount(0)
+  await expect(page.locator('[data-studio-schema-status-icon="true"]')).toHaveCount(0)
 
   await setPgmlEditorValue(editor, `${await readPgmlEditorValue(editor)}\n// autosave change`)
 
-  await expect(page.locator('[data-studio-schema-status]')).toHaveAttribute('data-studio-schema-status', 'pending')
-  await expect(page.locator('[data-studio-schema-status-icon="true"]')).toHaveClass(/animate-bounce/)
+  await expect(page.locator('[data-studio-schema-status]')).toHaveCount(0)
+  await expect(page.locator('[data-studio-schema-status-icon="true"]')).toHaveCount(0)
 
   await expect.poll(async () => {
     const savedSchemas = await page.evaluate(() => {
@@ -207,9 +207,9 @@ test('light mode keeps modal secondary actions and select highlights readable', 
 
   await page.getByRole('button', { name: 'Switch to light mode' }).click()
 
-  const studioActionsButton = page.getByRole('button', { name: 'Studio actions' })
+  const schemaMenuButton = page.getByRole('button', { name: 'Schema' })
 
-  await studioActionsButton.click()
+  await schemaMenuButton.click()
   await page.getByRole('menuitem', { name: 'Save schema' }).click()
 
   const cancelButtonStyles = await page.getByRole('button', { name: 'Cancel' }).evaluate((element) => {

@@ -8,16 +8,16 @@ test.setTimeout(120_000)
 test('studio exports svg and png downloads', async ({ goto, page }) => {
   await goto('/diagram')
 
-  const studioActionsButton = page.getByRole('button', { name: 'Studio actions' })
+  const exportMenuButton = page.getByRole('button', { name: 'Export' })
 
-  await expect(studioActionsButton).toBeVisible()
+  await expect(exportMenuButton).toBeVisible()
   await expect(page.locator('[data-attachment-row="index:idx_products_search"]')).toBeVisible()
   await expect(page.locator('[data-attachment-row="function:register_entity"]')).toBeVisible()
   await expect(page.locator('[data-attachment-row="constraint:chk_orders_total"]')).toBeVisible()
   await page.getByRole('button', { name: 'Expand email_address' }).click()
   await expect(page.locator('[data-node-body="custom-type:Domain:email_address"]')).toBeVisible()
 
-  await studioActionsButton.click()
+  await exportMenuButton.click()
 
   const svgDownloadPromise = page.waitForEvent('download')
 
@@ -56,7 +56,7 @@ test('studio exports svg and png downloads', async ({ goto, page }) => {
   expect(connectorPathIndex).toBeGreaterThan(coreGroupBaseIndex)
   expect(productsTableBaseIndex).toBeGreaterThan(connectorPathIndex)
 
-  await studioActionsButton.click()
+  await exportMenuButton.click()
 
   const pngDownloadPromise = page.waitForEvent('download')
 

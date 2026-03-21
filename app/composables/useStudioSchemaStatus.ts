@@ -7,12 +7,14 @@ type StudioSchemaStatusState = {
   detail: string
   name: string
   saveState: StudioSchemaSaveState
+  visible: boolean
 }
 
 const defaultStudioSchemaStatusState = (): StudioSchemaStatusState => ({
   detail: '',
   name: '',
-  saveState: 'pending'
+  saveState: 'pending',
+  visible: false
 })
 
 const useSharedStudioSchemaStatus = createSharedComposable(() => {

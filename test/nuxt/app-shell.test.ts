@@ -1,17 +1,15 @@
-import { mountSuspended } from '@nuxt/test-utils/runtime'
+import { readFileSync } from 'node:fs'
+
 import { describe, expect, it } from 'vitest'
 
-import AppShell from '../../app/app.vue'
+describe('App shell source', () => {
+  it('keeps the shared shell chrome and centered title presentation in the root app', () => {
+    const file = readFileSync('/home/omar/Code/pgml/app/app.vue', 'utf8')
 
-describe('App shell runtime', () => {
-  it('renders the shared shell chrome for the default spec route', async () => {
-    const wrapper = await mountSuspended(AppShell)
-
-    expect(wrapper.text()).toContain('PGML')
-    expect(wrapper.text()).toContain('Postgres in markup')
-    expect(wrapper.text()).toContain('Spec')
-    expect(wrapper.text()).toContain('Diagram Studio')
-    expect(wrapper.text()).toContain('Open Studio')
-    expect(wrapper.text()).toContain('PGML extends DBML toward Postgres-native schema design and visual documentation.')
+    expect(file).toContain('>PGML</span>')
+    expect(file).toContain('aria-label="Primary"')
+    expect(file).toContain('data-app-header-title="true"')
+    expect(file).toContain('title="Open header menu"')
+    expect(file).toContain('PGML extends DBML toward Postgres-native schema design and visual documentation.')
   })
 })

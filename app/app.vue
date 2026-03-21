@@ -1,6 +1,5 @@
 <script setup lang="ts">
-import { useStudioHeaderActions } from './composables/useStudioHeaderActions'
-import { useStudioSchemaStatus, type StudioSchemaSaveState } from './composables/useStudioSchemaStatus'
+import { useAppHeader } from './composables/useAppHeader'
 
 const title = 'PGML'
 const description = 'A Postgres-first markup language and live diagram studio built on top of DBML ideas.'
@@ -24,84 +23,31 @@ useSeoMeta({
   ogDescription: description,
   twitterCard: 'summary_large_image'
 })
-
-const navigation = [
-  {
-    label: 'Spec',
-    to: '/'
-  },
-  {
-    label: 'Diagram Studio',
-    to: '/diagram'
-  }
-]
-const studioSchemaStatusIcons: Record<StudioSchemaSaveState, string> = {
-  error: 'i-lucide-circle-alert',
-  pending: 'i-lucide-hard-drive-download',
-  saved: 'i-lucide-hard-drive-download',
-  saving: 'i-lucide-loader-circle'
-}
-const studioSchemaStatusIconClasses: Record<StudioSchemaSaveState, string> = {
-  error: 'text-red-500',
-  pending: 'animate-bounce text-emerald-500',
-  saved: 'text-emerald-500',
-  saving: 'animate-spin text-[color:var(--studio-shell-label)]'
-}
-
-const route = useRoute()
-const isStudioRoute = computed(() => route.path.startsWith('/diagram'))
-const { studioTheme, studioThemeIcon, studioThemeLabel, toggleStudioTheme } = useStudioTheme()
-const { state: studioHeaderActions } = useStudioHeaderActions()
-const { state: studioSchemaStatus } = useStudioSchemaStatus()
-const { buttonClasses } = useStudioUi()
-const studioHeaderActionContent = {
-  align: 'end' as const,
-  side: 'bottom' as const,
-  sideOffset: 6
-}
-const shellModeClasses = {
-  page: {
-    container: 'relative mx-auto flex min-h-screen w-full max-w-[1480px] min-w-0 flex-col px-4 sm:px-6 lg:px-8',
-    headerInner: 'flex min-h-[4.25rem] items-center justify-between gap-4 py-[0.9rem]',
-    main: 'flex-1 pb-14 pt-8 sm:pt-10',
-    root: 'min-h-screen w-full bg-[color:var(--studio-shell-bg)] text-[color:var(--studio-shell-text)] transition-colors duration-200'
-  },
-  studio: {
-    container: 'relative flex h-full w-full min-w-0 flex-col overflow-hidden',
-    headerInner: 'relative flex min-h-[4.25rem] items-center justify-between gap-4 px-4 py-[0.9rem] sm:px-6 lg:px-8',
-    main: 'flex-1 min-h-0 overflow-hidden',
-    root: 'h-dvh w-full overflow-hidden bg-[color:var(--studio-shell-bg)] text-[color:var(--studio-shell-text)] transition-colors duration-200'
-  }
-} as const
-const currentShellMode = computed(() => isStudioRoute.value ? 'studio' : 'page')
-const rootClass = computed(() => {
-  return shellModeClasses[currentShellMode.value].root
-})
-const shellContainerClass = computed(() => {
-  return shellModeClasses[currentShellMode.value].container
-})
-const headerInnerClass = computed(() => {
-  return shellModeClasses[currentShellMode.value].headerInner
-})
-const mainClass = computed(() => {
-  return shellModeClasses[currentShellMode.value].main
-})
-
-const navLinkClass = (to: string) => {
-  const isActive = route.path === to || (to !== '/' && route.path.startsWith(to))
-
-  return isActive
-    ? 'border-[color:var(--studio-shell-text)] text-[color:var(--studio-shell-text)]'
-    : 'border-transparent text-[color:var(--studio-shell-muted)] hover:border-[color:var(--studio-shell-border)] hover:text-[color:var(--studio-shell-text)]'
-}
-
-const studioSchemaStatusIcon = computed(() => {
-  return studioSchemaStatusIcons[studioSchemaStatus.value.saveState]
-})
-
-const studioSchemaStatusIconClass = computed(() => {
-  return studioSchemaStatusIconClasses[studioSchemaStatus.value.saveState]
-})
+const {
+  centerDetail,
+  centerTitle,
+  desktopMenuContent,
+  desktopMenuUi,
+  desktopNavigation,
+  desktopStatusBadge,
+  desktopStudioMenus,
+  flatIconButtonClass,
+  headerInnerClass,
+  headerMenuButtonClass,
+  isStudioActionLoading,
+  isStudioRoute,
+  mainClass,
+  mobileMenuContent,
+  mobileMenuItems,
+  mobileMenuUi,
+  resolveNavigationClass,
+  rootClass,
+  shellContainerClass,
+  studioTheme,
+  studioThemeIcon,
+  studioThemeLabel,
+  toggleStudioTheme
+} = useAppHeader()
 </script>
 
 <template>
@@ -113,107 +59,129 @@ const studioSchemaStatusIconClass = computed(() => {
       <div
         :class="shellContainerClass"
       >
-        <header class="sticky top-0 z-40 border-b border-[color:var(--studio-shell-border)] bg-[color:var(--studio-shell-bg)]/92 backdrop-blur">
+        <header class="sticky top-0 z-40 border-b border-[color:var(--studio-shell-border)] bg-[color:var(--studio-shell-bg)]/94 backdrop-blur">
           <div :class="headerInnerClass">
-            <div class="flex min-w-0 items-end gap-6">
+            <div class="flex min-w-0 flex-1 items-center gap-2 lg:gap-3">
               <NuxtLink
                 to="/"
-                class="flex min-w-0 items-end gap-3 text-[color:var(--studio-shell-text)] no-underline"
+                class="flex min-w-0 items-center gap-2.5 px-1 py-0.5 text-[color:var(--studio-shell-text)] no-underline"
               >
-                <span class="grid h-10 w-10 shrink-0 place-items-center border border-[color:var(--studio-shell-border)] bg-[color:var(--studio-control-bg)] font-mono text-[0.78rem] font-semibold uppercase tracking-[0.18em] text-[color:var(--studio-shell-label)]">
-                  PG
+                <span class="grid h-7 w-7 shrink-0 place-items-center border border-[color:var(--studio-shell-border)] bg-[color:var(--studio-control-bg)] font-mono text-[0.62rem] font-semibold uppercase tracking-[0.18em] text-[color:var(--studio-shell-label)]">
+                  DB
                 </span>
 
-                <span class="flex min-w-0 flex-col justify-end">
-                  <span class="font-mono text-[0.72rem] uppercase tracking-[0.14em] text-[color:var(--studio-shell-label)]">
-                    PGML
-                  </span>
-                  <span class="truncate pb-px text-base font-medium leading-[1.25] text-[color:var(--studio-shell-muted)] sm:text-[1.05rem]">
-                    Postgres in markup
-                  </span>
-                </span>
+                <span class="font-mono text-[0.78rem] font-semibold uppercase tracking-[0.16em] text-[color:var(--studio-shell-label)]">PGML</span>
               </NuxtLink>
 
-              <nav class="hidden self-end translate-y-[3px] md:flex md:items-baseline md:gap-3">
+              <nav
+                class="hidden items-center gap-1 lg:flex"
+                aria-label="Primary"
+              >
                 <NuxtLink
-                  v-for="item in navigation"
+                  v-for="item in desktopNavigation"
                   :key="item.to"
                   :to="item.to"
-                  class="border-b px-0 py-1 text-sm leading-none font-medium transition-colors duration-150"
-                  :class="navLinkClass(item.to)"
+                  class="no-underline"
+                  :class="resolveNavigationClass(item.isActive)"
                 >
                   {{ item.label }}
                 </NuxtLink>
               </nav>
+
+              <ClientOnly v-if="desktopStudioMenus.length">
+                <div class="hidden items-center gap-1 lg:flex">
+                  <UDropdownMenu
+                    v-for="menu in desktopStudioMenus"
+                    :key="menu.id"
+                    :items="menu.items"
+                    :content="desktopMenuContent"
+                    :ui="desktopMenuUi"
+                  >
+                    <button
+                      type="button"
+                      :class="headerMenuButtonClass"
+                      :title="menu.label"
+                    >
+                      <span class="inline-flex items-center gap-2">
+                        <UIcon
+                          :name="menu.icon"
+                          class="h-3.5 w-3.5 shrink-0 text-[color:var(--studio-shell-muted)]"
+                        />
+                        <span>{{ menu.label }}</span>
+                        <UIcon
+                          v-if="menu.id === 'export' && isStudioActionLoading"
+                          name="i-lucide-loader-circle"
+                          class="h-3.5 w-3.5 shrink-0 animate-spin text-[color:var(--studio-shell-label)]"
+                        />
+                      </span>
+                    </button>
+                  </UDropdownMenu>
+                </div>
+              </ClientOnly>
             </div>
 
-            <div
-              v-if="isStudioRoute && studioSchemaStatus.name"
-              class="pointer-events-none absolute left-1/2 top-1/2 flex max-w-[26rem] min-w-0 -translate-x-1/2 -translate-y-1/2 px-4 text-center"
-              :data-studio-schema-status="studioSchemaStatus.saveState"
-              :title="studioSchemaStatus.detail"
-            >
-              <div class="min-w-0">
+            <div class="pointer-events-none absolute left-1/2 top-1/2 hidden max-w-[30rem] min-w-0 -translate-x-1/2 -translate-y-1/2 px-4 md:flex">
+              <div class="min-w-0 text-center">
                 <p
+                  data-app-header-title="true"
                   data-studio-schema-name="true"
-                  class="truncate font-mono text-sm uppercase tracking-[0.12em] text-[color:var(--studio-shell-text)]"
+                  class="truncate text-[0.82rem] font-semibold tracking-[0.01em] text-[color:var(--studio-shell-text)]"
                 >
-                  {{ studioSchemaStatus.name }}
+                  {{ centerTitle }}
                 </p>
-                <p class="inline-flex max-w-full items-center justify-center gap-1.5 truncate text-[0.63rem] text-[color:var(--studio-shell-muted)]">
-                  <UIcon
-                    :name="studioSchemaStatusIcon"
-                    class="h-3.5 w-3.5 shrink-0"
-                    :class="studioSchemaStatusIconClass"
-                    data-studio-schema-status-icon="true"
-                  />
-                  {{ studioSchemaStatus.detail }}
+                <p class="truncate font-mono text-[0.58rem] uppercase tracking-[0.12em] text-[color:var(--studio-shell-muted)]">
+                  {{ centerDetail }}
                 </p>
               </div>
             </div>
 
             <div class="flex shrink-0 items-center gap-1.5">
-              <ClientOnly v-if="isStudioRoute && studioHeaderActions.items.length">
-                <UDropdownMenu
-                  :items="studioHeaderActions.items"
-                  :content="studioHeaderActionContent"
-                  :ui="{
-                    content: 'min-w-[14rem] rounded-none border border-[color:var(--studio-shell-border)] bg-[color:var(--studio-control-bg)] p-1 shadow-[var(--studio-floating-shadow)] backdrop-blur-sm',
-                    group: 'p-0',
-                    separator: 'my-1 bg-[color:var(--studio-shell-border)]',
-                    item: 'rounded-none px-2 py-1.5 text-[0.78rem] text-[color:var(--studio-shell-text)] data-[highlighted]:bg-[color:var(--studio-shell-text)]/12 data-[highlighted]:text-[color:var(--studio-shell-text)]',
-                    itemLeadingIcon: 'text-[color:var(--studio-shell-muted)]',
-                    itemLabel: 'truncate'
-                  }"
+              <div
+                v-if="desktopStatusBadge"
+                class="hidden items-center md:inline-flex"
+                :data-studio-schema-status="desktopStatusBadge.saveState"
+                :title="desktopStatusBadge.detail"
+              >
+                <UIcon
+                  :name="desktopStatusBadge.icon"
+                  class="h-3.5 w-3.5 shrink-0"
+                  :class="desktopStatusBadge.iconClass"
+                  data-studio-schema-status-icon="true"
+                />
+                <span class="sr-only">{{ desktopStatusBadge.label }}</span>
+              </div>
+
+              <UDropdownMenu
+                class="lg:hidden"
+                :items="mobileMenuItems"
+                :content="mobileMenuContent"
+                :ui="mobileMenuUi"
+              >
+                <button
+                  type="button"
+                  :class="flatIconButtonClass"
+                  aria-label="Open header menu"
+                  title="Open header menu"
                 >
-                  <UButton
-                    icon="i-lucide-panel-top-open"
-                    label="Actions"
-                    color="neutral"
-                    variant="soft"
-                    :class="buttonClasses.primary"
-                    aria-label="Studio actions"
-                    title="Studio actions"
-                    :loading="studioHeaderActions.isLoading"
+                  <UIcon
+                    name="i-lucide-menu"
+                    class="h-3.5 w-3.5"
                   />
-                </UDropdownMenu>
-              </ClientOnly>
-              <UButton
-                :icon="studioThemeIcon"
-                color="neutral"
-                variant="ghost"
-                :class="buttonClasses.iconGhost"
+                </button>
+              </UDropdownMenu>
+
+              <button
+                type="button"
+                :class="flatIconButtonClass"
                 :aria-label="studioThemeLabel"
                 :title="studioThemeLabel"
                 @click="toggleStudioTheme"
-              />
-              <UButton
-                :to="isStudioRoute ? '/' : '/diagram'"
-                :label="isStudioRoute ? 'View Spec' : 'Open Studio'"
-                color="neutral"
-                trailing-icon="i-lucide-arrow-up-right"
-                :class="buttonClasses.secondary"
-              />
+              >
+                <UIcon
+                  :name="studioThemeIcon"
+                  class="h-3.5 w-3.5"
+                />
+              </button>
             </div>
           </div>
         </header>

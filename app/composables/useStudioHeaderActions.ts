@@ -1,27 +1,32 @@
 import type { DropdownMenuItem } from '@nuxt/ui'
-import type { Ref } from 'vue'
 import { createSharedComposable } from '@vueuse/core'
+
+export type StudioHeaderMenu = {
+  icon: string
+  id: string
+  items: DropdownMenuItem[][]
+  label: string
+}
 
 type StudioHeaderActionState = {
   isLoading: boolean
-  items: DropdownMenuItem[][]
+  menus: StudioHeaderMenu[]
 }
 
+const defaultStudioHeaderActionState = (): StudioHeaderActionState => ({
+  isLoading: false,
+  menus: []
+})
+
 const useSharedStudioHeaderActions = createSharedComposable(() => {
-  const state: Ref<StudioHeaderActionState> = ref({
-    isLoading: false,
-    items: []
-  })
+  const state = shallowRef(defaultStudioHeaderActionState())
 
   const setStudioHeaderActions = (nextState: StudioHeaderActionState) => {
     state.value = nextState
   }
 
   const clearStudioHeaderActions = () => {
-    state.value = {
-      isLoading: false,
-      items: []
-    }
+    state.value = defaultStudioHeaderActionState()
   }
 
   return {

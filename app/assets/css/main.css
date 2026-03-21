@@ -249,3 +249,48 @@ button,
 .studio-select-item[data-highlighted]::before {
   background-color: transparent !important;
 }
+
+.pgml-selection-glow {
+  border-color: transparent !important;
+}
+
+.pgml-selection-glow::before,
+.pgml-selection-glow::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  box-sizing: border-box;
+  pointer-events: none;
+  border-radius: 0;
+}
+
+.pgml-selection-glow::before {
+  content: none;
+}
+
+.pgml-selection-glow::after {
+  border: 2px solid var(--pgml-selection-border);
+  box-shadow:
+    inset 0 0 0 1px color-mix(in srgb, var(--pgml-selection-border) 30%, transparent),
+    0 0 0 1px color-mix(in srgb, var(--pgml-selection-border) 38%, transparent),
+    0 0 8px color-mix(in srgb, var(--pgml-selection-shadow-near) 78%, transparent),
+    0 0 14px color-mix(in srgb, var(--pgml-selection-shadow-far) 82%, transparent);
+}
+
+.pgml-selection-glow-subtle::before,
+.pgml-selection-glow-subtle::after {
+  inset: 1px;
+}
+
+.pgml-selection-glow-subtle::before {
+  content: none;
+}
+
+.pgml-selection-glow-subtle::after {
+  border-width: 1px;
+  box-shadow:
+    inset 0 0 0 1px color-mix(in srgb, var(--pgml-selection-border) 18%, transparent),
+    0 0 0 1px color-mix(in srgb, var(--pgml-selection-border) 24%, transparent),
+    0 0 3px color-mix(in srgb, var(--pgml-selection-shadow-near) 36%, transparent),
+    0 0 6px color-mix(in srgb, var(--pgml-selection-shadow-far) 42%, transparent);
+}

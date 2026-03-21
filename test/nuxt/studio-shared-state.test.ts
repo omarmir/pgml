@@ -4,24 +4,30 @@ import { useStudioHeaderActions } from '../../app/composables/useStudioHeaderAct
 import { useStudioSchemaStatus } from '../../app/composables/useStudioSchemaStatus'
 
 describe('studio shared state composables', () => {
-  it('stores and clears header actions', () => {
+  it('stores and clears header menus', () => {
     const { clearStudioHeaderActions, setStudioHeaderActions, state } = useStudioHeaderActions()
 
     setStudioHeaderActions({
       isLoading: true,
-      items: [[{
-        label: 'Save'
-      }]]
+      menus: [{
+        icon: 'i-lucide-file-stack',
+        id: 'schema',
+        items: [[{
+          label: 'Save'
+        }]],
+        label: 'Schema'
+      }]
     })
 
     expect(state.value.isLoading).toBe(true)
-    expect(state.value.items[0]?.[0]?.label).toBe('Save')
+    expect(state.value.menus[0]?.label).toBe('Schema')
+    expect(state.value.menus[0]?.items[0]?.[0]?.label).toBe('Save')
 
     clearStudioHeaderActions()
 
     expect(state.value).toEqual({
       isLoading: false,
-      items: []
+      menus: []
     })
   })
 
@@ -31,13 +37,15 @@ describe('studio shared state composables', () => {
     setStudioSchemaStatus({
       detail: 'Saved to local storage',
       name: 'Example schema',
-      saveState: 'saved'
+      saveState: 'saved',
+      visible: true
     })
 
     expect(state.value).toEqual({
       detail: 'Saved to local storage',
       name: 'Example schema',
-      saveState: 'saved'
+      saveState: 'saved',
+      visible: true
     })
 
     clearStudioSchemaStatus()
@@ -45,7 +53,8 @@ describe('studio shared state composables', () => {
     expect(state.value).toEqual({
       detail: '',
       name: '',
-      saveState: 'pending'
+      saveState: 'pending',
+      visible: false
     })
   })
 })

@@ -23,9 +23,9 @@ describe('Shared button theming source', () => {
     const modalFrameFile = readFileSync('/home/omar/Code/pgml/app/components/studio/StudioModalFrame.vue', 'utf8')
     const studioUiFile = readFileSync('/home/omar/Code/pgml/app/composables/useStudioUi.ts', 'utf8')
 
-    expect(appFile).toContain(':class="buttonClasses.primary"')
-    expect(appFile).toContain(':class="buttonClasses.iconGhost"')
-    expect(appFile).toContain(':class="buttonClasses.secondary"')
+    expect(appFile).toContain('headerMenuButtonClass')
+    expect(appFile).toContain('title="Open header menu"')
+    expect(appFile).toContain('@click="toggleStudioTheme"')
     expect(indexFile).toContain(':class="buttonClasses.secondary"')
     expect(indexFile).toContain(':class="buttonClasses.ghost"')
     expect(studioUiFile).toContain('const studioButtonClasses = Object.freeze({')

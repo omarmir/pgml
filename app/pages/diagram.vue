@@ -6,7 +6,7 @@ import PgmlDiagramCanvas from '~/components/pgml/PgmlDiagramCanvas.vue'
 import PgmlSourceCodeEditor from '~/components/pgml/PgmlSourceCodeEditor.vue'
 import { usePgmlColumnDefaultSuggestions } from '~/composables/usePgmlColumnDefaultSuggestions'
 import { slugifySchemaName, type SavedPgmlSchema } from '~/composables/usePgmlStudioSchemas'
-import { useStudioHeaderActions } from '~/composables/useStudioHeaderActions'
+import { useStudioHeaderActions, type StudioHeaderMenu } from '~/composables/useStudioHeaderActions'
 import { useStudioSchemaStatus } from '~/composables/useStudioSchemaStatus'
 import { useStudioUi } from '~/composables/useStudioUi'
 import { analyzePgmlDocument } from '~/utils/pgml-language'
@@ -271,7 +271,7 @@ const loadSavedSchema = (schema: SavedPgmlSchema) => {
 const exportBaseName = computed(() => slugifySchemaName(currentSchemaName.value))
 const exportPreferenceKey = computed(() => `name:${slugifySchemaName(currentSchemaName.value)}`)
 
-const actionMenuItems = computed<DropdownMenuItem[][]>(() => {
+const actionMenus = computed<StudioHeaderMenu[]>(() => {
   const exportItems: DropdownMenuItem[] = exportScales.map((scaleOption) => {
     return {
       label: `PNG ${scaleOption}x`,
@@ -293,43 +293,57 @@ const actionMenuItems = computed<DropdownMenuItem[][]>(() => {
   })
 
   return [
-    [
-      {
-        label: 'Load example',
-        icon: 'i-lucide-flask-conical',
-        onSelect: loadExample
-      },
-      {
-        label: 'Clear schema',
-        icon: 'i-lucide-eraser',
-        color: 'error',
-        onSelect: clearSchema
-      }
-    ],
-    [
-      {
-        label: 'Save schema',
-        icon: 'i-lucide-save',
-        onSelect: () => {
-          openSchemaDialog('save')
-        }
-      },
-      {
-        label: 'Load saved schema',
-        icon: 'i-lucide-folder-open',
-        onSelect: () => {
-          loadDialogOpen.value = true
-        }
-      },
-      {
-        label: 'Download schema',
-        icon: 'i-lucide-file-down',
-        onSelect: () => {
-          openSchemaDialog('download')
-        }
-      }
-    ],
-    exportItems
+    {
+      icon: 'i-lucide-file-stack',
+      id: 'schema',
+      items: [
+        [
+          {
+            label: 'Load example',
+            icon: 'i-lucide-flask-conical',
+            onSelect: loadExample
+          },
+          {
+            label: 'Clear schema',
+            icon: 'i-lucide-eraser',
+            color: 'error',
+            onSelect: clearSchema
+          }
+        ],
+        [
+          {
+            label: 'Save schema',
+            icon: 'i-lucide-save',
+            onSelect: () => {
+              openSchemaDialog('save')
+            }
+          },
+          {
+            label: 'Load saved schema',
+            icon: 'i-lucide-folder-open',
+            onSelect: () => {
+              loadDialogOpen.value = true
+            }
+          },
+          {
+            label: 'Download schema',
+            icon: 'i-lucide-file-down',
+            onSelect: () => {
+              openSchemaDialog('download')
+            }
+          }
+        ]
+      ],
+      label: 'Schema'
+    },
+    {
+      icon: 'i-lucide-image-down',
+      id: 'export',
+      items: [
+        exportItems
+      ],
+      label: 'Export'
+    }
   ]
 })
 
@@ -676,12 +690,15 @@ const runExport = async (format: 'svg' | 'png', scaleFactor?: number) => {
 watchEffect(() => {
   setStudioHeaderActions({
     isLoading: isExporting.value,
-    items: actionMenuItems.value
+    menus: actionMenus.value
   })
 })
 
 watchEffect(() => {
   const isWaitingToSave = hasPendingLocalChanges.value && !isSavingToLocalStorage.value
+  const showSchemaStatus = localStorageSaveError.value !== null
+    || isSavingToLocalStorage.value
+    || currentSchemaUpdatedAt.value !== null
   const detail = localStorageSaveError.value
     ? localStorageSaveError.value
     : isSavingToLocalStorage.value
@@ -701,7 +718,8 @@ watchEffect(() => {
         ? 'saving'
         : isWaitingToSave
           ? 'pending'
-          : 'saved'
+          : 'saved',
+    visible: showSchemaStatus
   })
 })
 

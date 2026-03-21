@@ -227,59 +227,41 @@ test('studio canvas stays viewport-bound and starts centered on the diagram', as
   expect(Math.abs(diagnostics?.centerOffsetY || 0)).toBeLessThan(120)
 })
 
-test('studio header aligns the navigation with the page title copy', async ({ goto, page }) => {
+test('studio header keeps named menus on the left and the current schema centered', async ({ goto, page }) => {
   await goto('/diagram')
 
-  const tagline = page.getByText('Postgres in markup').first()
-  const headerNav = page.locator('header nav')
-  const specLink = headerNav.getByRole('link', { name: 'Spec', exact: true })
-  const studioLink = headerNav.getByRole('link', { name: 'Diagram Studio', exact: true })
+  const appHeader = page.locator('header').first()
+  const schemaMenu = appHeader.getByRole('button', { name: 'Schema', exact: true })
+  const exportMenu = appHeader.getByRole('button', { name: 'Export', exact: true })
+  const schemaTitle = page.locator('[data-app-header-title="true"]')
+  const saveStatus = page.locator('[data-studio-schema-status]').first()
 
-  await expect(tagline).toBeVisible()
-  await expect(specLink).toBeVisible()
-  await expect(studioLink).toBeVisible()
+  await expect(schemaMenu).toBeVisible()
+  await expect(exportMenu).toBeVisible()
+  await expect(schemaTitle).toHaveText('Example schema')
+  await expect(saveStatus).toBeVisible()
 
-  const headerMetrics = await Promise.all([
-    tagline.evaluate((element) => {
-      const range = document.createRange()
-      range.selectNodeContents(element)
-      const rect = range.getBoundingClientRect()
-
-      return {
-        top: Math.round(rect.top),
-        bottom: Math.round(rect.bottom),
-        fontSize: Number.parseFloat(window.getComputedStyle(element).fontSize)
-      }
-    }),
-    specLink.evaluate((element) => {
-      const range = document.createRange()
-      range.selectNodeContents(element)
-      const rect = range.getBoundingClientRect()
-
-      return {
-        top: Math.round(rect.top),
-        bottom: Math.round(rect.bottom)
-      }
-    }),
-    studioLink.evaluate((element) => {
-      const range = document.createRange()
-      range.selectNodeContents(element)
-      const rect = range.getBoundingClientRect()
-
-      return {
-        top: Math.round(rect.top),
-        bottom: Math.round(rect.bottom)
-      }
-    })
+  const [schemaMenuBox, exportMenuBox, schemaTitleBox, saveStatusBox] = await Promise.all([
+    schemaMenu.boundingBox(),
+    exportMenu.boundingBox(),
+    schemaTitle.boundingBox(),
+    saveStatus.boundingBox()
   ])
 
-  const [taglineRect, specRect, studioRect] = headerMetrics
+  if (!schemaMenuBox || !exportMenuBox || !schemaTitleBox || !saveStatusBox) {
+    throw new Error('Header layout metrics are not measurable.')
+  }
 
-  expect(taglineRect.fontSize).toBeGreaterThanOrEqual(16)
-  expect(Math.abs(specRect.top - taglineRect.top)).toBeLessThanOrEqual(4)
-  expect(Math.abs(specRect.bottom - taglineRect.bottom)).toBeLessThanOrEqual(4)
-  expect(Math.abs(studioRect.top - taglineRect.top)).toBeLessThanOrEqual(4)
-  expect(Math.abs(studioRect.bottom - taglineRect.bottom)).toBeLessThanOrEqual(4)
+  const viewportSize = page.viewportSize()
+
+  if (!viewportSize) {
+    throw new Error('Viewport size is unavailable.')
+  }
+
+  expect(schemaMenuBox.x).toBeLessThan(exportMenuBox.x)
+  expect(exportMenuBox.x + exportMenuBox.width).toBeLessThan(schemaTitleBox.x)
+  expect(schemaTitleBox.x + schemaTitleBox.width).toBeLessThan(saveStatusBox.x + saveStatusBox.width)
+  expect(Math.abs((schemaTitleBox.x + schemaTitleBox.width / 2) - viewportSize.width / 2)).toBeLessThanOrEqual(28)
 })
 
 test('table groups keep their required width after changing the table column count', async ({ goto, page }) => {
