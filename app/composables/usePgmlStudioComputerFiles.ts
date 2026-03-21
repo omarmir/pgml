@@ -1,5 +1,7 @@
 import type { ComputedRef, Ref } from 'vue'
 import { watchDebounced } from '@vueuse/core'
+import { storeToRefs } from 'pinia'
+import { useStudioSourcesStore } from '~/stores/studio-sources'
 import {
   listRecentComputerPgmlFiles,
   loadRecentComputerPgmlFile,
@@ -8,7 +10,7 @@ import {
   type PgmlRecentComputerFile,
   type PgmlRecentComputerFileWriteResult
 } from '~/utils/computer-files'
-import { formatSavedPgmlSchemaTime } from '~/composables/usePgmlStudioSchemas'
+import { formatSavedPgmlSchemaTime } from '~/utils/studio-browser-schemas'
 
 const computerFileAutosaveDebounceMs = 5000
 const computerFileSaveErrorMessage = 'Unable to save to the selected file.'
@@ -41,10 +43,11 @@ export const usePgmlStudioComputerFiles = ({
   fileOperations,
   source
 }: UsePgmlStudioComputerFilesOptions) => {
+  const studioSourcesStore = useStudioSourcesStore()
+  const { recentComputerFiles } = storeToRefs(studioSourcesStore)
   const currentComputerFileId: Ref<string | null> = ref(null)
   const currentComputerFileName: Ref<string> = ref('')
   const currentComputerFileUpdatedAt: Ref<string | null> = ref(null)
-  const recentComputerFiles: Ref<PgmlRecentComputerFile[]> = ref([])
   const isSavingToComputerFile: Ref<boolean> = ref(false)
   const computerFileSaveError: Ref<string | null> = ref(null)
   const lastPersistedSnapshot: Ref<string | null> = ref(null)
@@ -75,7 +78,13 @@ export const usePgmlStudioComputerFiles = ({
   })
 
   const refreshRecentComputerFiles = async () => {
-    recentComputerFiles.value = await operations.listRecentComputerFiles()
+    if (fileOperations?.listRecentComputerFiles) {
+      recentComputerFiles.value = await operations.listRecentComputerFiles()
+
+      return recentComputerFiles.value
+    }
+
+    return await studioSourcesStore.refreshRecentComputerFiles()
   }
 
   const getComputerFileSaveFailureMessage = (

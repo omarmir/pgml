@@ -1,21 +1,20 @@
 <script setup lang="ts">
 import type { Ref } from 'vue'
-import type { SavedPgmlSchema } from '~/composables/usePgmlStudioSchemas'
+import { storeToRefs } from 'pinia'
 import {
   exampleSchemaName,
   formatSavedPgmlSchemaTime,
-  persistSavedPgmlSchemasToBrowserStorage,
-  readSavedPgmlSchemasFromBrowserStorage,
   untitledSchemaName
-} from '~/composables/usePgmlStudioSchemas'
+} from '~/utils/studio-browser-schemas'
 import type { PgmlRecentComputerFile } from '~/utils/computer-files'
 import {
   createComputerPgmlFile,
   getRecentComputerPgmlFilePermissionState,
   loadRecentComputerPgmlFile,
-  listRecentComputerPgmlFiles,
   openComputerPgmlFile
 } from '~/utils/computer-files'
+import { useStudioSessionStore } from '~/stores/studio-session'
+import { useStudioSourcesStore } from '~/stores/studio-sources'
 import { pgmlExample } from '~/utils/pgml'
 import {
   joinStudioClasses,
@@ -25,12 +24,10 @@ import {
   studioSectionKickerClass
 } from '~/utils/uiStyles'
 import {
-  authorizeStudioLaunchAccess,
   buildBrowserStudioExampleQuery,
   buildBrowserStudioNewQuery,
   buildBrowserStudioSavedQuery,
   buildFileStudioRecentQuery,
-  primePreloadedFileStudioLaunch,
   type FileStudioLaunchRequest
 } from '~/utils/studio-launch'
 
@@ -86,13 +83,17 @@ type PendingComputerFileAction
     | { kind: 'open-picker' }
     | { kind: 'open-recent', recentFileId: string }
 
-const savedSchemas: Ref<SavedPgmlSchema[]> = ref([])
-const recentComputerFiles: Ref<PgmlRecentComputerFile[]> = ref([])
 const computerFileAccessDialogOpen: Ref<boolean> = ref(false)
 const isConfirmingComputerFileAction: Ref<boolean> = ref(false)
 const pendingComputerFileAction: Ref<PendingComputerFileAction | null> = ref(null)
 const browserNewQuery = buildBrowserStudioNewQuery()
 const browserExampleQuery = buildBrowserStudioExampleQuery()
+const studioSessionStore = useStudioSessionStore()
+const studioSourcesStore = useStudioSourcesStore()
+const {
+  browserSchemas: savedSchemas,
+  recentComputerFiles
+} = storeToRefs(studioSourcesStore)
 const router = useRouter()
 const toast = useToast()
 const computerFileAccessInfoPanelClass = joinStudioClasses(
@@ -133,20 +134,16 @@ const pushComputerFileActionErrorToast = (description: string) => {
 }
 
 const refreshSavedSchemas = () => {
-  savedSchemas.value = readSavedPgmlSchemasFromBrowserStorage()
+  studioSourcesStore.refreshBrowserSchemas()
 }
 const refreshRecentComputerFiles = async () => {
-  recentComputerFiles.value = await listRecentComputerPgmlFiles()
+  await studioSourcesStore.refreshRecentComputerFiles()
 }
 const deleteBrowserSavedSchema = (schemaId: string) => {
-  const nextSavedSchemas = savedSchemas.value.filter(schema => schema.id !== schemaId)
-
-  if (!persistSavedPgmlSchemasToBrowserStorage(nextSavedSchemas)) {
+  if (!studioSourcesStore.deleteBrowserSchema(schemaId)) {
     pushSaveErrorToast('Unable to save to local storage.')
     return
   }
-
-  savedSchemas.value = nextSavedSchemas
 }
 const buildFileLaunchRequest = (recentFileId: string): FileStudioLaunchRequest => {
   return {
@@ -163,7 +160,7 @@ const navigateToRecentComputerFile = async (
   }
 ) => {
   if (preloadedFile) {
-    primePreloadedFileStudioLaunch(buildFileLaunchRequest(recentFileId), preloadedFile)
+    studioSessionStore.primePreloadedFileLaunch(buildFileLaunchRequest(recentFileId), preloadedFile)
   }
 
   await router.push({
@@ -549,7 +546,7 @@ onBeforeRouteLeave((to) => {
     return
   }
 
-  authorizeStudioLaunchAccess()
+  studioSessionStore.authorizeLaunchAccess()
 })
 </script>
 

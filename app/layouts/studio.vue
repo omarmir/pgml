@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import type { DropdownMenuItem } from '@nuxt/ui'
-import type { StudioSchemaSaveState } from '~/composables/useStudioSchemaStatus'
+import type { StudioSchemaSaveState } from '~/stores/studio-shell'
 import {
   appHeaderDesktopMenuContent,
   appHeaderDesktopMenuUi

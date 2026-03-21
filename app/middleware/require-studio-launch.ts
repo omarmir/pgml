@@ -1,7 +1,9 @@
-import { hasStudioLaunchAccess } from '~/utils/studio-launch'
+import { useStudioSessionStore } from '~/stores/studio-session'
 
 export default defineNuxtRouteMiddleware(() => {
-  if (hasStudioLaunchAccess()) {
+  const studioSessionStore = useStudioSessionStore()
+
+  if (studioSessionStore.hasLaunchAccess()) {
     return
   }
 

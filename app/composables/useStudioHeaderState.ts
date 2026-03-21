@@ -1,4 +1,4 @@
-import type { StudioSchemaSaveState } from './useStudioSchemaStatus'
+import type { StudioSchemaSaveState } from '~/stores/studio-shell'
 
 import { useStudioHeaderActions } from './useStudioHeaderActions'
 import { useStudioSchemaStatus } from './useStudioSchemaStatus'

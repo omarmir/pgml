@@ -35,7 +35,7 @@ export type FileStudioLaunchRequest = FileStudioRecentLaunchRequest
 
 export type StudioLaunchRequest = BrowserStudioLaunchRequest | FileStudioLaunchRequest
 
-type PreloadedFileStudioLaunchPayload = {
+export type PreloadedFileStudioLaunchPayload = {
   entry: PgmlRecentComputerFile
   text: string
 }

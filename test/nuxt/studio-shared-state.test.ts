@@ -1,9 +1,14 @@
-import { describe, expect, it } from 'vitest'
+import { createPinia, setActivePinia } from 'pinia'
+import { beforeEach, describe, expect, it } from 'vitest'
 
 import { useStudioHeaderActions } from '../../app/composables/useStudioHeaderActions'
 import { useStudioSchemaStatus } from '../../app/composables/useStudioSchemaStatus'
 
 describe('studio shared state composables', () => {
+  beforeEach(() => {
+    setActivePinia(createPinia())
+  })
+
   it('stores and clears header menus', () => {
     const { clearStudioHeaderActions, setStudioHeaderActions, state } = useStudioHeaderActions()
 

@@ -1,32 +1,25 @@
-import type { DropdownMenuItem } from '@nuxt/ui'
-import { createSharedComposable } from '@vueuse/core'
+import { storeToRefs } from 'pinia'
+import {
+  useStudioShellStore,
+  type StudioHeaderActionState
+} from '~/stores/studio-shell'
 
-export type StudioHeaderMenu = {
-  icon: string
-  id: string
-  items: DropdownMenuItem[][]
-  label: string
-}
-
-type StudioHeaderActionState = {
-  isLoading: boolean
-  menus: StudioHeaderMenu[]
-}
-
-const defaultStudioHeaderActionState = (): StudioHeaderActionState => ({
-  isLoading: false,
-  menus: []
-})
-
-const useSharedStudioHeaderActions = createSharedComposable(() => {
-  const state = shallowRef(defaultStudioHeaderActionState())
+export const useStudioHeaderActions = () => {
+  const studioShellStore = useStudioShellStore()
+  const { headerMenus, isHeaderLoading } = storeToRefs(studioShellStore)
+  const state = computed<StudioHeaderActionState>(() => {
+    return {
+      isLoading: isHeaderLoading.value,
+      menus: headerMenus.value
+    }
+  })
 
   const setStudioHeaderActions = (nextState: StudioHeaderActionState) => {
-    state.value = nextState
+    studioShellStore.setHeaderActions(nextState)
   }
 
   const clearStudioHeaderActions = () => {
-    state.value = defaultStudioHeaderActionState()
+    studioShellStore.clearHeaderActions()
   }
 
   return {
@@ -34,8 +27,4 @@ const useSharedStudioHeaderActions = createSharedComposable(() => {
     setStudioHeaderActions,
     state
   }
-})
-
-export const useStudioHeaderActions = () => {
-  return useSharedStudioHeaderActions()
 }

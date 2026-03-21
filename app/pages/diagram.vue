@@ -2,6 +2,8 @@
 import type { DropdownMenuItem } from '@nuxt/ui'
 import type { Ref } from 'vue'
 import { nanoid } from 'nanoid'
+import { storeToRefs } from 'pinia'
+import type { StudioHeaderMenu } from '~/stores/studio-shell'
 import {
   studioDefaultInputMenuProps,
   studioFieldUi,
@@ -16,15 +18,15 @@ import StudioMobileWorkspace from '~/components/studio/StudioMobileWorkspace.vue
 import { usePgmlColumnDefaultSuggestions } from '~/composables/usePgmlColumnDefaultSuggestions'
 import { usePgmlStudioComputerFiles } from '~/composables/usePgmlStudioComputerFiles'
 import type { PgmlSourceEditorHandle } from '~/composables/usePgmlSourceEditor'
+import { useStudioHeaderActions } from '~/composables/useStudioHeaderActions'
+import { useStudioSchemaStatus } from '~/composables/useStudioSchemaStatus'
+import { useStudioSessionStore } from '~/stores/studio-session'
 import {
   downloadSchemaText,
   slugifySchemaName,
   type SavedPgmlSchema
-} from '~/composables/usePgmlStudioSchemas'
-import { useStudioHeaderActions, type StudioHeaderMenu } from '~/composables/useStudioHeaderActions'
-import { useStudioSchemaStatus } from '~/composables/useStudioSchemaStatus'
+} from '~/utils/studio-browser-schemas'
 import {
-  consumePreloadedFileStudioLaunch,
   getStudioLaunchRequestKey,
   parseStudioLaunchQuery
 } from '~/utils/studio-launch'
@@ -168,7 +170,6 @@ const formatColumnTypeLabel = (value: string) => {
 const source: Ref<string> = ref(pgmlExample)
 const canvasRef: Ref<PgmlDiagramCanvasExposed | null> = ref(null)
 const canvasViewportResetKey: Ref<number> = ref(0)
-const appliedStudioLaunchKey: Ref<string | null> = ref(null)
 const isExporting: Ref<boolean> = ref(false)
 const mobileWorkspaceView: Ref<StudioMobileWorkspaceView> = ref('diagram')
 const mobilePanelTab: Ref<DiagramPanelTab> = ref(defaultStudioMobilePanelTab)
@@ -186,11 +187,18 @@ const {
   editorRef,
   focusEditorSourceRange
 } = usePgmlSourceEditor()
+const studioSessionStore = useStudioSessionStore()
+const {
+  appliedLaunchKey: appliedStudioLaunchKey,
+  currentSourceKind: currentPersistenceSource,
+  includeLayoutInSchema,
+  loadDialogOpen,
+  schemaDialogMode,
+  schemaDialogOpen
+} = storeToRefs(studioSessionStore)
 const route = useRoute()
 const studioLaunchRequest = computed(() => parseStudioLaunchQuery(route.query))
-const currentPersistenceSource: Ref<'browser' | 'file'> = ref(
-  studioLaunchRequest.value?.source === 'file' ? 'file' : 'browser'
-)
+currentPersistenceSource.value = studioLaunchRequest.value?.source === 'file' ? 'file' : 'browser'
 const {
   isEditorPanelVisible,
   isCompactStudioLayout,
@@ -261,11 +269,9 @@ const {
   deleteSavedSchema,
   formatSavedAt,
   hasPendingLocalChanges,
-  includeLayoutInSchema,
   isSavedToLocalStorage,
   isSavingToLocalStorage,
   localStorageSaveError,
-  loadDialogOpen,
   loadExample: loadStudioExample,
   loadSavedSchema: loadStudioSavedSchema,
   openSchemaDialog,
@@ -275,9 +281,7 @@ const {
   saveSchemaToBrowser,
   selectSaveSchemaTarget,
   schemaActionDescription,
-  schemaActionTitle,
-  schemaDialogMode,
-  schemaDialogOpen
+  schemaActionTitle
 } = usePgmlStudioSchemas({
   autosaveEnabled: computed(() => currentPersistenceSource.value === 'browser'),
   buildSchemaText,
@@ -464,7 +468,7 @@ watch(studioLaunchRequest, async (request) => {
   appliedStudioLaunchKey.value = requestKey
 
   if (request.source === 'file') {
-    const preloadedFileLaunch = consumePreloadedFileStudioLaunch(request)
+    const preloadedFileLaunch = studioSessionStore.consumePreloadedFileLaunch(request)
 
     if (preloadedFileLaunch) {
       syncLoadedComputerFile(preloadedFileLaunch)
@@ -995,6 +999,7 @@ watchEffect(() => {
 onBeforeUnmount(() => {
   clearStudioHeaderActions()
   clearStudioSchemaStatus()
+  studioSessionStore.resetStudioUiState()
 })
 </script>
 

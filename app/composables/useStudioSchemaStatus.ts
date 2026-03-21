@@ -1,40 +1,38 @@
 import type { Ref } from 'vue'
-import { createSharedComposable } from '@vueuse/core'
+import { storeToRefs } from 'pinia'
+import {
+  useStudioShellStore,
+  type StudioSchemaStatusState
+} from '~/stores/studio-shell'
 
-export type StudioSchemaSaveState = 'saved' | 'pending' | 'saving' | 'error'
-
-type StudioSchemaStatusState = {
-  detail: string
-  name: string
-  saveState: StudioSchemaSaveState
-  visible: boolean
-}
-
-const defaultStudioSchemaStatusState = (): StudioSchemaStatusState => ({
-  detail: '',
-  name: '',
-  saveState: 'pending',
-  visible: false
-})
-
-const useSharedStudioSchemaStatus = createSharedComposable(() => {
-  const state: Ref<StudioSchemaStatusState> = ref(defaultStudioSchemaStatusState())
+export const useStudioSchemaStatus = () => {
+  const studioShellStore = useStudioShellStore()
+  const {
+    schemaStatusDetail,
+    schemaStatusName,
+    schemaStatusSaveState,
+    schemaStatusVisible
+  } = storeToRefs(studioShellStore)
+  const state = computed<StudioSchemaStatusState>(() => {
+    return {
+      detail: schemaStatusDetail.value,
+      name: schemaStatusName.value,
+      saveState: schemaStatusSaveState.value,
+      visible: schemaStatusVisible.value
+    }
+  })
 
   const setStudioSchemaStatus = (nextState: StudioSchemaStatusState) => {
-    state.value = nextState
+    studioShellStore.setSchemaStatus(nextState)
   }
 
   const clearStudioSchemaStatus = () => {
-    state.value = defaultStudioSchemaStatusState()
+    studioShellStore.clearSchemaStatus()
   }
 
   return {
     clearStudioSchemaStatus,
     setStudioSchemaStatus,
-    state
+    state: state as Ref<StudioSchemaStatusState>
   }
-})
-
-export const useStudioSchemaStatus = () => {
-  return useSharedStudioSchemaStatus()
 }

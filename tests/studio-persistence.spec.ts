@@ -1,6 +1,5 @@
 import { readFileSync } from 'node:fs'
 
-import type { Page } from '@playwright/test'
 import { expect, test } from '@nuxt/test-utils/playwright'
 import {
   installMockComputerFiles,
@@ -16,13 +15,6 @@ test.setTimeout(120_000)
 test.beforeEach(async ({ page }) => {
   await authorizeStudioLaunchAccess(page)
 })
-
-const confirmComputerFileAccess = async (page: Page, continueLabel: string) => {
-  const accessDialog = page.locator('[data-studio-modal-surface="computer-file-access"]')
-
-  await expect(accessDialog).toBeVisible()
-  await page.getByRole('button', { name: continueLabel }).click()
-}
 
 test('studio saves, reloads, and downloads PGML with embedded layout', async ({ goto, page }) => {
   await goto('/diagram')
@@ -290,7 +282,7 @@ test('file-backed save asks for permission again after access is reset', async (
 
   await page.reload()
   await page.locator('[data-source-card="computer-saved-file"]').getByRole('button', { name: /reauthorize-file/i }).click()
-  await confirmComputerFileAccess(page, 'Continue and reopen file')
+  await expect(page.locator('[data-studio-modal-surface="computer-file-access"]')).toHaveCount(0)
 
   const editor = getPgmlEditor(page)
 

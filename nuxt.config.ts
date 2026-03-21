@@ -11,6 +11,7 @@ const appBaseUrl = resolveGitHubPagesBaseUrl({
 export default defineNuxtConfig({
   modules: [
     '@nuxt/eslint',
+    '@pinia/nuxt',
     '@nuxt/ui',
     '@nuxt/hints',
     '@nuxt/image',

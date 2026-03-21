@@ -1,118 +1,21 @@
 import type { ComputedRef, Ref } from 'vue'
 import { watchDebounced } from '@vueuse/core'
 import { nanoid } from 'nanoid'
-import { readBrowserStorageItem, writeBrowserStorageItem } from '../utils/browser-storage'
+import { storeToRefs } from 'pinia'
+import { useStudioSessionStore, type PgmlStudioSchemaDialogMode } from '~/stores/studio-session'
+import { useStudioSourcesStore } from '~/stores/studio-sources'
+import {
+  downloadSchemaText,
+  exampleSchemaName,
+  formatSavedPgmlSchemaTime,
+  normalizeSchemaName,
+  orderSavedSchemas,
+  type SavedPgmlSchema,
+  untitledSchemaName
+} from '~/utils/studio-browser-schemas'
 
-export type SavedPgmlSchema = {
-  id: string
-  name: string
-  text: string
-  updatedAt: string
-}
-
-export type PgmlStudioSchemaDialogMode = 'save' | 'download'
-
-export const savedSchemaStorageKey = 'pgml-studio-schemas-v1'
-export const exampleSchemaName = 'Example schema'
-export const untitledSchemaName = 'Untitled schema'
 const schemaAutosaveDebounceMs = 5000
 const localStorageSaveErrorMessage = 'Unable to save to local storage.'
-
-export const orderSavedSchemas = (schemas: SavedPgmlSchema[]) => {
-  return [...schemas].sort((left, right) => {
-    return new Date(right.updatedAt).getTime() - new Date(left.updatedAt).getTime()
-  })
-}
-
-const isSavedPgmlSchema = (value: unknown): value is SavedPgmlSchema => {
-  if (!value || typeof value !== 'object') {
-    return false
-  }
-
-  const candidate = value as Partial<SavedPgmlSchema>
-
-  return (
-    typeof candidate.id === 'string'
-    && typeof candidate.name === 'string'
-    && typeof candidate.text === 'string'
-    && typeof candidate.updatedAt === 'string'
-  )
-}
-
-export const parseSavedPgmlSchemas = (rawValue: string | null) => {
-  if (!rawValue) {
-    return []
-  }
-
-  try {
-    const parsedValue = JSON.parse(rawValue) as unknown
-
-    if (!Array.isArray(parsedValue)) {
-      return []
-    }
-
-    return parsedValue.filter(isSavedPgmlSchema)
-  } catch {
-    return []
-  }
-}
-
-export const normalizeSchemaName = (value: string) => {
-  const trimmed = value.trim()
-
-  return trimmed.length > 0 ? trimmed : untitledSchemaName
-}
-
-export const slugifySchemaName = (value: string) => {
-  const slug = normalizeSchemaName(value)
-    .toLowerCase()
-    .replaceAll(/[^a-z0-9]+/g, '-')
-    .replaceAll(/^-+|-+$/g, '')
-
-  return slug.length > 0 ? slug : 'schema'
-}
-
-export const readSavedPgmlSchemasFromBrowserStorage = () => {
-  return orderSavedSchemas(parseSavedPgmlSchemas(readBrowserStorageItem(savedSchemaStorageKey)))
-}
-export const persistSavedPgmlSchemasToBrowserStorage = (schemas: SavedPgmlSchema[]) => {
-  return writeBrowserStorageItem(savedSchemaStorageKey, JSON.stringify(schemas))
-}
-
-export const formatSavedPgmlSchemaTime = (value: string) => {
-  const date = new Date(value)
-
-  if (Number.isNaN(date.getTime())) {
-    return 'Unknown time'
-  }
-
-  return new Intl.DateTimeFormat('en-CA', {
-    dateStyle: 'medium',
-    timeStyle: 'short'
-  }).format(date)
-}
-
-export const downloadSchemaText = (name: string, text: string) => {
-  if (!import.meta.client) {
-    return
-  }
-
-  const blob = new Blob([text], {
-    type: 'text/plain;charset=utf-8'
-  })
-  const objectUrl = URL.createObjectURL(blob)
-  const anchor = document.createElement('a')
-
-  anchor.href = objectUrl
-  anchor.download = `${slugifySchemaName(name)}.pgml`
-  document.body.appendChild(anchor)
-  anchor.click()
-  anchor.remove()
-
-  window.setTimeout(() => {
-    URL.revokeObjectURL(objectUrl)
-  }, 0)
-}
 
 type UsePgmlStudioSchemasOptions = {
   autosaveEnabled?: ComputedRef<boolean>
@@ -136,17 +39,16 @@ export const usePgmlStudioSchemas = ({
   source
 }: UsePgmlStudioSchemasOptions) => {
   const isAutosaveEnabled = autosaveEnabled ?? computed(() => true)
+  const studioSessionStore = useStudioSessionStore()
+  const studioSourcesStore = useStudioSourcesStore()
+  const { browserSchemas: savedSchemas } = storeToRefs(studioSourcesStore)
+  const { includeLayoutInSchema, loadDialogOpen, schemaDialogMode, schemaDialogOpen } = storeToRefs(studioSessionStore)
   const currentSchemaId: Ref<string | null> = ref(null)
   const currentSchemaName: Ref<string> = ref(exampleSchemaName)
   const currentSchemaUpdatedAt: Ref<string | null> = ref(null)
-  const schemaDialogOpen: Ref<boolean> = ref(false)
-  const loadDialogOpen: Ref<boolean> = ref(false)
-  const schemaDialogMode: Ref<PgmlStudioSchemaDialogMode> = ref('save')
-  const includeLayoutInSchema: Ref<boolean> = ref(true)
   const isSavingToLocalStorage: Ref<boolean> = ref(false)
   const localStorageSaveError: Ref<string | null> = ref(null)
   const lastPersistedSnapshot: Ref<string | null> = ref(null)
-  const savedSchemas: Ref<SavedPgmlSchema[]> = ref([])
   const saveSchemaTargetId: Ref<string | null> = ref(null)
 
   const schemaActionTitle = computed(() => schemaDialogMode.value === 'save' ? 'Save schema' : 'Download schema')
@@ -213,12 +115,12 @@ export const usePgmlStudioSchemas = ({
   }
 
   const readSavedSchemas = () => {
-    savedSchemas.value = readSavedPgmlSchemasFromBrowserStorage()
+    studioSourcesStore.refreshBrowserSchemas()
     localStorageSaveError.value = null
   }
 
   const persistSavedSchemas = (schemas: SavedPgmlSchema[]) => {
-    return persistSavedPgmlSchemasToBrowserStorage(schemas)
+    return studioSourcesStore.persistBrowserSchemas(schemas)
   }
   const findMatchingSavedSchema = (name: string) => {
     const explicitSchemaId = saveSchemaTargetId.value || currentSchemaId.value
@@ -257,9 +159,8 @@ export const usePgmlStudioSchemas = ({
   }
 
   const openSchemaDialog = (mode: PgmlStudioSchemaDialogMode) => {
-    schemaDialogMode.value = mode
     saveSchemaTargetId.value = mode === 'save' ? currentSchemaId.value : null
-    schemaDialogOpen.value = true
+    studioSessionStore.openSchemaDialog(mode)
   }
 
   const selectSaveSchemaTarget = (schema: SavedPgmlSchema) => {
@@ -305,7 +206,7 @@ export const usePgmlStudioSchemas = ({
     syncPersistedState(nextSchema)
 
     if (options.closeDialog) {
-      schemaDialogOpen.value = false
+      studioSessionStore.closeSchemaDialog()
     }
 
     return true
@@ -331,13 +232,13 @@ export const usePgmlStudioSchemas = ({
 
     currentSchemaName.value = name
     downloadSchemaText(name, text)
-    schemaDialogOpen.value = false
+    studioSessionStore.closeSchemaDialog()
   }
 
   const loadSavedSchema = (schema: SavedPgmlSchema) => {
     source.value = schema.text
     syncPersistedState(schema)
-    loadDialogOpen.value = false
+    studioSessionStore.closeLoadDialog()
   }
 
   const deleteSavedSchema = (schemaId: string) => {
@@ -404,12 +305,12 @@ export const usePgmlStudioSchemas = ({
 
   return {
     clearSchema,
+    clearSaveSchemaTarget,
     currentSchemaId,
     currentSchemaName,
     currentSchemaUpdatedAt,
     deleteSavedSchema,
     downloadSchema,
-    clearSaveSchemaTarget,
     formatSavedAt,
     hasPendingLocalChanges,
     includeLayoutInSchema,

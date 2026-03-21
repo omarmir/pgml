@@ -4,7 +4,7 @@ import {
   normalizeSchemaName,
   parseSavedPgmlSchemas,
   slugifySchemaName
-} from '../../app/composables/usePgmlStudioSchemas'
+} from '../../app/utils/studio-browser-schemas'
 
 describe('PGML studio schema helpers', () => {
   it('keeps only valid saved schemas from browser storage payloads', () => {
