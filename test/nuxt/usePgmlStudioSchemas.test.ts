@@ -181,7 +181,35 @@ describe('usePgmlStudioSchemas', () => {
     expect(api.currentSchemaId.value).toBe('latest-schema')
     expect(api.currentSchemaName.value).toBe('Latest schema')
     expect(api.currentSchemaUpdatedAt.value).toBe('2026-03-19T09:30:00.000Z')
+    expect(api.hasSavedSchemaInSession.value).toBe(false)
     expect(api.isSavedToLocalStorage.value).toBe(true)
+  })
+
+  it('keeps the initial unsaved schema blank until the user edits it', async () => {
+    vi.useFakeTimers()
+
+    const source = ref('Table public.users {\n  id uuid [pk]\n}')
+    let api!: ReturnType<typeof usePgmlStudioSchemas>
+
+    await mountSuspended(defineComponent({
+      setup() {
+        api = usePgmlStudioSchemas({
+          buildSchemaText: () => source.value,
+          canEmbedLayout: computed(() => true),
+          initialSource: 'Table public.example {\n  id uuid [pk]\n}',
+          source
+        })
+
+        return () => null
+      }
+    }))
+
+    expect(api.hasPendingLocalChanges.value).toBe(false)
+    expect(api.isSavedToLocalStorage.value).toBe(false)
+
+    await vi.advanceTimersByTimeAsync(5000)
+
+    expect(window.localStorage.getItem('pgml-studio-schemas-v1')).toBeNull()
   })
 
   it('preserves the loaded schema id when autosaving a schema opened from an external source', async () => {
@@ -212,6 +240,10 @@ describe('usePgmlStudioSchemas', () => {
 
     source.value = 'Table public.imported {\n  id uuid [pk]\n  status text\n}'
 
+    await vi.advanceTimersByTimeAsync(4900)
+
+    expect(window.localStorage.getItem('pgml-studio-schemas-v1')).toBeNull()
+
     await vi.advanceTimersByTimeAsync(5000)
 
     const persisted = JSON.parse(window.localStorage.getItem('pgml-studio-schemas-v1') || '[]')
@@ -220,6 +252,7 @@ describe('usePgmlStudioSchemas', () => {
     expect(persisted[0]?.id).toBe('externally-loaded-schema')
     expect(persisted[0]?.text).toContain('status text')
     expect(api.currentSchemaId.value).toBe('externally-loaded-schema')
+    expect(api.hasSavedSchemaInSession.value).toBe(true)
   })
 
   it('autosaves changes to local storage after five seconds', async () => {
@@ -241,6 +274,8 @@ describe('usePgmlStudioSchemas', () => {
       }
     }))
 
+    expect(api.hasPendingLocalChanges.value).toBe(false)
+
     source.value = 'Table public.users {\n  id uuid [pk]\n  email text\n}'
 
     expect(api.hasPendingLocalChanges.value).toBe(true)
@@ -258,6 +293,7 @@ describe('usePgmlStudioSchemas', () => {
     expect(persisted[0]?.text).toContain('email text')
     expect(typeof persisted[0]?.updatedAt).toBe('string')
     expect(api.currentSchemaUpdatedAt.value).toBe(persisted[0]?.updatedAt)
+    expect(api.hasSavedSchemaInSession.value).toBe(true)
     expect(api.isSavedToLocalStorage.value).toBe(true)
     expect(api.hasPendingLocalChanges.value).toBe(false)
   })

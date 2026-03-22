@@ -79,7 +79,10 @@ const nestedItemLinkClass = getStudioChoiceButtonClass({
 })
 const nestedItemStaticClass = 'border border-dashed border-[color:var(--studio-shell-border)] bg-[color:var(--studio-control-bg)] px-3 py-2'
 const nestedItemRowClass = 'flex items-start gap-2'
-const itemActionButtonClass = studioButtonClasses.iconGhost
+const itemActionButtonClass = joinStudioClasses(
+  studioButtonClasses.iconGhost,
+  'self-center'
+)
 const statusBadgeClass = computed(() => {
   return statusTone === 'live' ? liveBadgeClass : placeholderBadgeClass
 })

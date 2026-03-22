@@ -22,6 +22,7 @@ describe('Index page source', () => {
     expect(file).toContain('studioSourcesStore.refreshRecentComputerFiles()')
     expect(file).toContain('onBeforeRouteLeave((to) => {')
     expect(file).toContain('delete-saved-schema')
+    expect(file).toContain('delete-recent-computer-file')
     expect(file).toContain('computerFileAccessDialogOpen')
     expect(file).toContain('Allow computer file access')
     expect(file).toContain('@action="handleSourceCardAction"')

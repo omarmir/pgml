@@ -46,6 +46,7 @@ export const usePgmlStudioSchemas = ({
   const currentSchemaId: Ref<string | null> = ref(null)
   const currentSchemaName: Ref<string> = ref(exampleSchemaName)
   const currentSchemaUpdatedAt: Ref<string | null> = ref(null)
+  const hasSavedSchemaInSession: Ref<boolean> = ref(false)
   const isSavingToLocalStorage: Ref<boolean> = ref(false)
   const localStorageSaveError: Ref<string | null> = ref(null)
   const lastPersistedSnapshot: Ref<string | null> = ref(null)
@@ -81,9 +82,16 @@ export const usePgmlStudioSchemas = ({
   const getCurrentSnapshot = () => {
     return getSnapshot(getAutosaveName(), getAutosaveText())
   }
+  const syncSchemaSnapshot = (name: string, text: string) => {
+    lastPersistedSnapshot.value = getSnapshot(name, text)
+  }
+  const syncCurrentSnapshot = () => {
+    lastPersistedSnapshot.value = getCurrentSnapshot()
+  }
   const clearPersistedSelection = () => {
     currentSchemaId.value = null
     currentSchemaUpdatedAt.value = null
+    hasSavedSchemaInSession.value = false
     lastPersistedSnapshot.value = null
     saveSchemaTargetId.value = null
     localStorageSaveError.value = null
@@ -92,6 +100,7 @@ export const usePgmlStudioSchemas = ({
     source.value = nextSchema.text
     currentSchemaName.value = nextSchema.name
     clearPersistedSelection()
+    syncSchemaSnapshot(nextSchema.name, nextSchema.text)
   }
   const hasPendingLocalChanges = computed(() => {
     return lastPersistedSnapshot.value !== getCurrentSnapshot()
@@ -155,7 +164,7 @@ export const usePgmlStudioSchemas = ({
     currentSchemaName.value = schema.name
     currentSchemaUpdatedAt.value = schema.updatedAt
     saveSchemaTargetId.value = schema.id
-    lastPersistedSnapshot.value = getSnapshot(schema.name, schema.text)
+    syncSchemaSnapshot(schema.name, schema.text)
   }
 
   const openSchemaDialog = (mode: PgmlStudioSchemaDialogMode) => {
@@ -202,6 +211,7 @@ export const usePgmlStudioSchemas = ({
 
     savedSchemas.value = nextSavedSchemas
     currentSchemaName.value = name
+    hasSavedSchemaInSession.value = true
     localStorageSaveError.value = null
     syncPersistedState(nextSchema)
 
@@ -237,6 +247,7 @@ export const usePgmlStudioSchemas = ({
 
   const loadSavedSchema = (schema: SavedPgmlSchema) => {
     source.value = schema.text
+    hasSavedSchemaInSession.value = false
     syncPersistedState(schema)
     studioSessionStore.closeLoadDialog()
   }
@@ -254,7 +265,8 @@ export const usePgmlStudioSchemas = ({
     if (currentSchemaId.value === schemaId) {
       currentSchemaId.value = null
       currentSchemaUpdatedAt.value = null
-      lastPersistedSnapshot.value = null
+      hasSavedSchemaInSession.value = false
+      syncCurrentSnapshot()
     }
 
     if (saveSchemaTargetId.value === schemaId) {
@@ -275,7 +287,11 @@ export const usePgmlStudioSchemas = ({
       if (latestSavedSchema) {
         source.value = latestSavedSchema.text
         syncPersistedState(latestSavedSchema)
+      } else {
+        syncCurrentSnapshot()
       }
+    } else {
+      syncCurrentSnapshot()
     }
   }
 
@@ -313,6 +329,7 @@ export const usePgmlStudioSchemas = ({
     downloadSchema,
     formatSavedAt,
     hasPendingLocalChanges,
+    hasSavedSchemaInSession,
     includeLayoutInSchema,
     isSavedToLocalStorage,
     isSavingToLocalStorage,

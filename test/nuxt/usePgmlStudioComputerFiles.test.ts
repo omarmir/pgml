@@ -59,9 +59,14 @@ describe('usePgmlStudioComputerFiles', () => {
 
     expect(source.value).toContain('Table public.linked')
     expect(api.currentComputerFileName.value).toBe('linked-schema')
+    expect(api.hasSavedComputerFileInSession.value).toBe(false)
     expect(api.isSavedToComputerFile.value).toBe(true)
 
     source.value = 'Table public.linked {\n  id uuid [pk]\n  status text\n}'
+
+    await vi.advanceTimersByTimeAsync(4900)
+
+    expect(writeRecentComputerFile).not.toHaveBeenCalled()
 
     await vi.advanceTimersByTimeAsync(5000)
 
@@ -72,6 +77,7 @@ describe('usePgmlStudioComputerFiles', () => {
       permissionMode: 'passive'
     })
     expect(api.currentComputerFileUpdatedAt.value).toBe('2026-03-20T10:05:00.000Z')
+    expect(api.hasSavedComputerFileInSession.value).toBe(true)
     expect(api.hasPendingComputerFileChanges.value).toBe(false)
   })
 
@@ -204,6 +210,7 @@ describe('usePgmlStudioComputerFiles', () => {
       permissionMode: 'interactive'
     })
     expect(api.computerFileSaveError.value).toBe(null)
+    expect(api.hasSavedComputerFileInSession.value).toBe(true)
     expect(api.currentComputerFileUpdatedAt.value).toBe('2026-03-20T10:10:00.000Z')
   })
 })

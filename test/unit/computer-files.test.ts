@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 
 import {
   createComputerPgmlFile,
+  deleteRecentComputerPgmlFile,
   ensurePgmlFileName,
   getRecentComputerPgmlFilePermissionState,
   listRecentComputerPgmlFiles,
@@ -208,6 +209,41 @@ describe('computer file utilities', () => {
 
     expect(firstOpen?.entry.id).toBe(secondOpen?.entry.id)
     expect(recentFiles).toHaveLength(1)
+  })
+
+  it('removes a recent computer file entry without deleting the underlying file', async () => {
+    const files = new Map<string, MemoryFile>([
+      ['recent-target', {
+        fileName: 'recent-schema.pgml',
+        text: 'Table public.recent {\n  id uuid [pk]\n}'
+      }]
+    ])
+    const store = createMemoryStore()
+    const access: PgmlFileSystemAccessApi = {
+      showOpenFilePicker: async () => {
+        return [createMemoryHandle('recent-target', files)]
+      },
+      showSaveFilePicker: async () => {
+        return createMemoryHandle('recent-target', files)
+      }
+    }
+
+    const openedFile = await openComputerPgmlFile({
+      access,
+      store
+    })
+
+    expect(openedFile?.entry.id).toBeTruthy()
+    await expect(deleteRecentComputerPgmlFile(openedFile?.entry.id || '', {
+      store
+    })).resolves.toBe(true)
+    await expect(listRecentComputerPgmlFiles({
+      store
+    })).resolves.toEqual([])
+    expect(files.get('recent-target')).toEqual({
+      fileName: 'recent-schema.pgml',
+      text: 'Table public.recent {\n  id uuid [pk]\n}'
+    })
   })
 
   it('re-prompts for permission on interactive saves after access is reset', async () => {

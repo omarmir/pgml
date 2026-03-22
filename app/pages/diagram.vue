@@ -21,6 +21,7 @@ import type { PgmlSourceEditorHandle } from '~/composables/usePgmlSourceEditor'
 import { useStudioHeaderActions } from '~/composables/useStudioHeaderActions'
 import { useStudioSchemaStatus } from '~/composables/useStudioSchemaStatus'
 import { useStudioSessionStore } from '~/stores/studio-session'
+import { useStudioSourcesStore } from '~/stores/studio-sources'
 import {
   downloadSchemaText,
   slugifySchemaName,
@@ -188,6 +189,7 @@ const {
   focusEditorSourceRange
 } = usePgmlSourceEditor()
 const studioSessionStore = useStudioSessionStore()
+const studioSourcesStore = useStudioSourcesStore()
 const {
   appliedLaunchKey: appliedStudioLaunchKey,
   currentSourceKind: currentPersistenceSource,
@@ -269,6 +271,7 @@ const {
   deleteSavedSchema,
   formatSavedAt,
   hasPendingLocalChanges,
+  hasSavedSchemaInSession,
   isSavedToLocalStorage,
   isSavingToLocalStorage,
   localStorageSaveError,
@@ -296,6 +299,7 @@ const {
   currentComputerFileUpdatedAt,
   formatSavedAt: formatComputerFileSavedAt,
   hasPendingComputerFileChanges,
+  hasSavedComputerFileInSession,
   hasSelectedComputerFile,
   isSavedToComputerFile,
   isSavingToComputerFile,
@@ -357,6 +361,18 @@ const chooseComputerFileFromLoadDialog = async () => {
   requestCanvasViewportReset()
 }
 
+const removeRecentComputerFile = async (recentFileId: string) => {
+  const didDeleteRecentFile = await studioSourcesStore.deleteRecentComputerFile(recentFileId)
+
+  if (didDeleteRecentFile) {
+    return
+  }
+
+  pushComputerFileActionErrorToast(
+    studioSourcesStore.recentComputerFilesError || 'Unable to remove the recent file.'
+  )
+}
+
 const activeSchemaName = computed(() => {
   return currentPersistenceSource.value === 'file'
     ? (currentComputerFileName.value || 'Untitled schema')
@@ -389,6 +405,14 @@ const pushSaveSuccessToast = (description: string) => {
     icon: 'i-lucide-check'
   })
 }
+const pushComputerFileActionErrorToast = (description: string) => {
+  toast.add({
+    title: 'Computer file action failed',
+    description,
+    color: 'error',
+    icon: 'i-lucide-circle-alert'
+  })
+}
 const getSaveSuccessToastDescription = () => {
   return currentPersistenceSource.value === 'file'
     ? 'Saved to the selected file.'
@@ -408,6 +432,11 @@ const activeIsSaved = computed(() => {
   return currentPersistenceSource.value === 'file'
     ? isSavedToComputerFile.value
     : isSavedToLocalStorage.value
+})
+const activeHasSavedInSession = computed(() => {
+  return currentPersistenceSource.value === 'file'
+    ? hasSavedComputerFileInSession.value
+    : hasSavedSchemaInSession.value
 })
 const activeSavedAtFormatter = computed(() => {
   return currentPersistenceSource.value === 'file' ? formatComputerFileSavedAt : formatSavedAt
@@ -968,9 +997,11 @@ watchEffect(() => {
 
 watchEffect(() => {
   const isWaitingToSave = activeHasPendingChanges.value && !activeIsSaving.value
+  const hasSavedInSession = activeHasSavedInSession.value && activeIsSaved.value && !isWaitingToSave
   const showSchemaStatus = activeSaveError.value !== null
+    || isWaitingToSave
     || activeIsSaving.value
-    || activeSchemaUpdatedAt.value !== null
+    || hasSavedInSession
   const persistenceLabel = currentPersistenceSource.value === 'file' ? 'file' : 'local storage'
   const detail = activeSaveError.value
     ? activeSaveError.value
@@ -978,9 +1009,11 @@ watchEffect(() => {
       ? `Saving to ${persistenceLabel}...`
       : isWaitingToSave
         ? `Waiting to save to ${persistenceLabel}...`
-        : activeIsSaved.value && activeSchemaUpdatedAt.value
+        : hasSavedInSession && activeSchemaUpdatedAt.value
           ? `Saved to ${persistenceLabel} at ${activeSavedAtFormatter.value(activeSchemaUpdatedAt.value)}`
-          : `Saved to ${persistenceLabel}`
+          : hasSavedInSession
+            ? `Saved to ${persistenceLabel}`
+            : ''
 
   setStudioSchemaStatus({
     detail,
@@ -1347,14 +1380,25 @@ onBeforeUnmount(() => {
                   </div>
                 </div>
 
-                <UButton
-                  label="Open"
-                  color="neutral"
-                  variant="outline"
-                  size="xs"
-                  :class="secondaryModalButtonClass"
-                  @click="loadRecentComputerFile(recentFile.id)"
-                />
+                <div class="flex items-center gap-1">
+                  <UButton
+                    label="Open"
+                    color="neutral"
+                    variant="outline"
+                    size="xs"
+                    :class="secondaryModalButtonClass"
+                    @click="loadRecentComputerFile(recentFile.id)"
+                  />
+                  <UButton
+                    icon="i-lucide-trash-2"
+                    color="neutral"
+                    variant="outline"
+                    size="xs"
+                    :class="secondaryModalButtonClass"
+                    :aria-label="`Remove ${recentFile.name} from recent files`"
+                    @click="removeRecentComputerFile(recentFile.id)"
+                  />
+                </div>
               </div>
             </div>
           </div>

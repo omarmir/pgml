@@ -145,6 +145,17 @@ const deleteBrowserSavedSchema = (schemaId: string) => {
     return
   }
 }
+const deleteRecentComputerFile = async (recentFileId: string) => {
+  const didDeleteRecentFile = await studioSourcesStore.deleteRecentComputerFile(recentFileId)
+
+  if (didDeleteRecentFile) {
+    return
+  }
+
+  pushComputerFileActionErrorToast(
+    studioSourcesStore.recentComputerFilesError || 'Unable to remove the recent file.'
+  )
+}
 const buildFileLaunchRequest = (recentFileId: string): FileStudioLaunchRequest => {
   return {
     launch: 'recent',
@@ -300,6 +311,11 @@ const handleSourceCardAction = async (payload: {
     return
   }
 
+  if (payload.actionId === 'delete-recent-computer-file') {
+    await deleteRecentComputerFile(payload.value)
+    return
+  }
+
   if (payload.actionId === 'create-computer-file:new') {
     queueComputerFileAccessAction({
       kind: 'create-new'
@@ -419,6 +435,12 @@ const computerFileItems = computed<SourceCardOperationItem[]>(() => {
     chooseFileItem,
     ...recentComputerFiles.value.map((file) => {
       return {
+        action: {
+          ariaLabel: `Remove ${file.name} from recent files`,
+          icon: 'i-lucide-trash-2',
+          id: 'delete-recent-computer-file',
+          value: file.id
+        },
         description: `Opened ${formatSavedPgmlSchemaTime(file.updatedAt)}`,
         label: file.name,
         triggerAction: {

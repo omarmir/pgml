@@ -1,6 +1,9 @@
 import { createPinia, setActivePinia } from 'pinia'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { listRecentComputerPgmlFiles } from '../../app/utils/computer-files'
+import {
+  deleteRecentComputerPgmlFile,
+  listRecentComputerPgmlFiles
+} from '../../app/utils/computer-files'
 import { useStudioSourcesStore } from '../../app/stores/studio-sources'
 import {
   persistSavedPgmlSchemasToBrowserStorage,
@@ -12,6 +15,7 @@ vi.mock('../../app/utils/computer-files', async (importOriginal) => {
 
   return {
     ...actual,
+    deleteRecentComputerPgmlFile: vi.fn(async () => true),
     listRecentComputerPgmlFiles: vi.fn(async () => [])
   }
 })
@@ -29,9 +33,11 @@ vi.mock('../../app/utils/studio-browser-schemas', async (importOriginal) => {
 describe('studio sources store', () => {
   beforeEach(() => {
     setActivePinia(createPinia())
+    vi.mocked(deleteRecentComputerPgmlFile).mockReset()
     vi.mocked(listRecentComputerPgmlFiles).mockReset()
     vi.mocked(persistSavedPgmlSchemasToBrowserStorage).mockReset()
     vi.mocked(readSavedPgmlSchemasFromBrowserStorage).mockReset()
+    vi.mocked(deleteRecentComputerPgmlFile).mockResolvedValue(true)
     vi.mocked(persistSavedPgmlSchemasToBrowserStorage).mockReturnValue(true)
   })
 
@@ -136,6 +142,23 @@ describe('studio sources store', () => {
       updatedAt: '2026-03-21T13:00:00.000Z'
     }])
     expect(store.recentComputerFiles).toEqual(recentFiles)
+    expect(store.recentComputerFilesError).toBeNull()
+  })
+
+  it('deletes a recent computer file from the shared inventory', async () => {
+    vi.mocked(listRecentComputerPgmlFiles).mockResolvedValueOnce([{
+      id: 'recent-file-1',
+      name: 'team-schema',
+      updatedAt: '2026-03-21T13:00:00.000Z'
+    }])
+
+    const store = useStudioSourcesStore()
+
+    await store.refreshRecentComputerFiles()
+
+    await expect(store.deleteRecentComputerFile('recent-file-1')).resolves.toBe(true)
+    expect(deleteRecentComputerPgmlFile).toHaveBeenCalledWith('recent-file-1')
+    expect(store.recentComputerFiles).toEqual([])
     expect(store.recentComputerFilesError).toBeNull()
   })
 })

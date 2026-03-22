@@ -12,7 +12,7 @@ import { useStudioTheme } from '~/composables/useStudioTheme'
 const schemaStatusIconByState: Readonly<Record<StudioSchemaSaveState, string>> = Object.freeze({
   error: 'i-lucide-x',
   pending: 'i-lucide-loader-circle',
-  saved: 'i-lucide-check-check',
+  saved: 'i-lucide-check',
   saving: 'i-lucide-loader-circle'
 })
 

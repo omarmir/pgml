@@ -21,6 +21,8 @@ describe('App header source', () => {
     expect(primaryNavigationFile).toContain('label: \'Home\'')
     expect(primaryNavigationFile).not.toContain('label: \'Studio\'')
     expect(primaryNavigationFile).not.toContain('i-lucide')
+    expect(studioLayoutFile).toContain('saved: \'i-lucide-check\'')
+    expect(studioLayoutFile).not.toContain('i-lucide-check-check')
     expect(studioHeaderStateFile).not.toContain('text-red-500')
     expect(studioHeaderStateFile).not.toContain('animate-spin')
     expect(sourceFileExists('app/components/AppHeader.vue')).toBe(false)

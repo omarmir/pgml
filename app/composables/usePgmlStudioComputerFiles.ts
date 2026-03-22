@@ -48,6 +48,7 @@ export const usePgmlStudioComputerFiles = ({
   const currentComputerFileId: Ref<string | null> = ref(null)
   const currentComputerFileName: Ref<string> = ref('')
   const currentComputerFileUpdatedAt: Ref<string | null> = ref(null)
+  const hasSavedComputerFileInSession: Ref<boolean> = ref(false)
   const isSavingToComputerFile: Ref<boolean> = ref(false)
   const computerFileSaveError: Ref<string | null> = ref(null)
   const lastPersistedSnapshot: Ref<string | null> = ref(null)
@@ -112,6 +113,7 @@ export const usePgmlStudioComputerFiles = ({
     currentComputerFileId.value = payload.entry.id
     currentComputerFileName.value = payload.entry.name
     currentComputerFileUpdatedAt.value = payload.entry.updatedAt
+    hasSavedComputerFileInSession.value = false
     lastPersistedSnapshot.value = getSnapshot(payload.text)
     computerFileSaveError.value = null
   }
@@ -176,6 +178,7 @@ export const usePgmlStudioComputerFiles = ({
 
     currentComputerFileName.value = updatedFile.entry.name
     currentComputerFileUpdatedAt.value = updatedFile.entry.updatedAt
+    hasSavedComputerFileInSession.value = true
     lastPersistedSnapshot.value = getSnapshot(text)
     computerFileSaveError.value = null
     await refreshRecentComputerFiles()
@@ -231,6 +234,7 @@ export const usePgmlStudioComputerFiles = ({
     currentComputerFileUpdatedAt,
     formatSavedAt,
     hasPendingComputerFileChanges,
+    hasSavedComputerFileInSession,
     hasSelectedComputerFile,
     isSavedToComputerFile,
     isSavingToComputerFile,

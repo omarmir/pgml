@@ -1,7 +1,10 @@
 import { ref, type Ref } from 'vue'
 import { defineStore } from 'pinia'
 import type { PgmlRecentComputerFile } from '../utils/computer-files'
-import { listRecentComputerPgmlFiles } from '../utils/computer-files'
+import {
+  deleteRecentComputerPgmlFile,
+  listRecentComputerPgmlFiles
+} from '../utils/computer-files'
 import {
   orderSavedSchemas,
   persistSavedPgmlSchemasToBrowserStorage,
@@ -11,6 +14,7 @@ import {
 
 const browserSchemaRefreshErrorMessage = 'Unable to read saved schemas from local storage.'
 const browserSchemaSaveErrorMessage = 'Unable to save to local storage.'
+const recentComputerFileDeleteErrorMessage = 'Unable to remove the recent file.'
 const recentComputerFilesRefreshErrorMessage = 'Unable to load recent computer files.'
 
 const getActionErrorMessage = (error: unknown, fallbackMessage: string) => {
@@ -85,10 +89,34 @@ export const useStudioSourcesStore = defineStore('studio-sources', () => {
     }
   }
 
+  const deleteRecentComputerFile = async (recentFileId: string) => {
+    try {
+      const didDelete = await deleteRecentComputerPgmlFile(recentFileId)
+
+      if (!didDelete) {
+        recentComputerFilesError.value = recentComputerFileDeleteErrorMessage
+
+        return false
+      }
+
+      recentComputerFiles.value = recentComputerFiles.value.filter((file) => {
+        return file.id !== recentFileId
+      })
+      recentComputerFilesError.value = null
+
+      return true
+    } catch (error) {
+      recentComputerFilesError.value = getActionErrorMessage(error, recentComputerFileDeleteErrorMessage)
+
+      return false
+    }
+  }
+
   return {
     browserSchemas,
     browserSchemasError,
     deleteBrowserSchema,
+    deleteRecentComputerFile,
     isRefreshingBrowserSchemas,
     isRefreshingRecentComputerFiles,
     persistBrowserSchemas,

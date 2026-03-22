@@ -176,7 +176,7 @@ test('studio restores the most recently saved schema after reload and shows its 
 
   await expect.poll(async () => readPgmlEditorValue(getPgmlEditor(page))).toMatch(/Table public\.latest \{/)
   await expect(page.locator('[data-studio-schema-name="true"]')).toHaveText('Latest schema')
-  await expect(page.locator('[data-studio-schema-status]')).toHaveAttribute('data-studio-schema-status', 'saved')
+  await expect(page.locator('[data-studio-schema-status]')).toHaveCount(0)
 })
 
 test('studio autosaves changes to local storage and updates the header status icon', async ({ goto, page }) => {
@@ -190,8 +190,8 @@ test('studio autosaves changes to local storage and updates the header status ic
 
   await setPgmlEditorValue(editor, `${await readPgmlEditorValue(editor)}\n// autosave change`)
 
-  await expect(page.locator('[data-studio-schema-status]')).toHaveCount(0)
-  await expect(page.locator('[data-studio-schema-status-icon="true"]')).toHaveCount(0)
+  await expect(page.locator('[data-studio-schema-status]')).toHaveAttribute('data-studio-schema-status', 'pending')
+  await expect(page.locator('[data-studio-schema-status-icon="true"]')).toHaveClass(/animate-spin/)
 
   await expect.poll(async () => {
     const savedSchemas = await page.evaluate(() => {
@@ -281,7 +281,9 @@ test('file-backed save asks for permission again after access is reset', async (
   })
 
   await page.reload()
-  await page.locator('[data-source-card="computer-saved-file"]').getByRole('button', { name: /reauthorize-file/i }).click()
+  await page.locator('[data-source-card="computer-saved-file"]').locator('button.studio-choice-button').filter({
+    hasText: 'reauthorize-file'
+  }).click()
   await expect(page.locator('[data-studio-modal-surface="computer-file-access"]')).toHaveCount(0)
 
   const editor = getPgmlEditor(page)

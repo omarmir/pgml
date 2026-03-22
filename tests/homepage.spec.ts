@@ -164,13 +164,52 @@ test('home page can create a blank computer-backed file, autosave to it, and reo
   await page.goBack()
 
   const fileCard = page.locator('[data-source-card="computer-saved-file"]')
+  const blankSchemaRecentButton = fileCard.locator('button.studio-choice-button').filter({
+    hasText: 'blank-computer-schema'
+  })
 
   await expect(fileCard).toContainText('1 recent file')
-  await expect(fileCard.getByRole('button', { name: /blank-computer-schema/i })).toBeVisible()
-  await fileCard.getByRole('button', { name: /blank-computer-schema/i }).click()
+  await expect(blankSchemaRecentButton).toBeVisible()
+  await blankSchemaRecentButton.click()
   await expect(page.locator('[data-studio-modal-surface="computer-file-access"]')).toHaveCount(0)
 
   await expect.poll(async () => readPgmlEditorValue(getPgmlEditor(page))).toContain('Table public.file_backed')
+})
+
+test('home page can remove a recent computer file without deleting the underlying file', async ({ goto, page }) => {
+  await installMockComputerFiles(page)
+  await goto('/')
+  const recentFileId = await primeMockComputerFile(page, {
+    fileName: 'remove-me-schema.pgml',
+    text: 'Table public.remove_me {\n  id uuid [pk]\n}'
+  })
+
+  expect(recentFileId).toBeTruthy()
+  await page.reload()
+
+  const fileCard = page.locator('[data-source-card="computer-saved-file"]')
+  const removeMeRecentButton = fileCard.locator('button.studio-choice-button').filter({
+    hasText: 'remove-me-schema'
+  })
+
+  await expect(removeMeRecentButton).toBeVisible()
+  await fileCard.getByRole('button', { name: 'Remove remove-me-schema from recent files' }).click()
+
+  await expect(removeMeRecentButton).toHaveCount(0)
+  await expect(fileCard).toContainText('No recent computer files yet.')
+  await expect(fileCard).toContainText('0 recent files')
+
+  await expect.poll(async () => {
+    const state = await readMockComputerFileState(page)
+
+    return {
+      fileExists: recentFileId ? Boolean(state?.files[recentFileId]) : false,
+      recentCount: state?.recent.length || 0
+    }
+  }).toEqual({
+    fileExists: true,
+    recentCount: 0
+  })
 })
 
 test('home page can seed a new computer-backed file from the bundled example', async ({ goto, page }) => {
@@ -209,9 +248,12 @@ test('home page still explains computer-file access when a recent file no longer
   await page.reload()
 
   const fileCard = page.locator('[data-source-card="computer-saved-file"]')
+  const permissionResetRecentButton = fileCard.locator('button.studio-choice-button').filter({
+    hasText: 'permission-reset-schema'
+  })
 
-  await expect(fileCard.getByRole('button', { name: /permission-reset-schema/i })).toBeVisible()
-  await fileCard.getByRole('button', { name: /permission-reset-schema/i }).click()
+  await expect(permissionResetRecentButton).toBeVisible()
+  await permissionResetRecentButton.click()
   await confirmComputerFileAccess(page, 'Continue and reopen file')
 
   await expect.poll(async () => readPgmlEditorValue(getPgmlEditor(page))).toContain('Table public.permission_reset')
