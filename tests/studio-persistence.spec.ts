@@ -320,6 +320,63 @@ test('file-backed save asks for permission again after access is reset', async (
   }).toContain('status text')
 })
 
+test('android-style file sessions keep edits pending until an explicit save', async ({ goto, page }) => {
+  await page.addInitScript(() => {
+    Object.defineProperty(window.navigator, 'userAgent', {
+      configurable: true,
+      get: () => 'Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Mobile Safari/537.36'
+    })
+  })
+  await installMockComputerFiles(page)
+  await page.setViewportSize({
+    width: 390,
+    height: 844
+  })
+  await goto('/')
+  const recentFileId = await primeMockComputerFile(page, {
+    fileName: 'android-file.pgml',
+    text: 'Table public.android_schema {\n  id uuid [pk]\n}',
+    updatedAt: '2026-03-20T11:00:00.000Z'
+  })
+
+  await goto(`/diagram?source=file&launch=recent&file=${recentFileId}`)
+
+  const editor = getPgmlEditor(page)
+
+  await expect.poll(async () => readPgmlEditorValue(editor)).toContain('Table public.android_schema')
+  await setPgmlEditorValue(editor, 'Table public.android_schema {\n  id uuid [pk]\n  status text\n}')
+  await page.waitForTimeout(6000)
+
+  await expect.poll(async () => {
+    const state = await readMockComputerFileState(page)
+
+    return recentFileId ? state?.files[recentFileId]?.text || '' : ''
+  }).not.toContain('status text')
+  await expect(page.locator('body')).not.toContainText(
+    'File access needs to be restored before PGML can save again. Use Save to grant permission again.'
+  )
+  await expect(page.locator('body')).toContainText(
+    'Changes are pending. Use Save to write them to the selected file on mobile Chrome.'
+  )
+
+  await page.setViewportSize({
+    width: 1280,
+    height: 844
+  })
+  await page.getByRole('button', { name: 'Schema' }).click()
+  await page.getByRole('menuitem', { name: 'Save schema' }).click()
+  await page.getByRole('button', { name: 'Save to file' }).click()
+
+  await expect(
+    page.getByLabel('Notifications (F8)').getByText('Saved to the selected file.', { exact: true })
+  ).toBeVisible()
+  await expect.poll(async () => {
+    const state = await readMockComputerFileState(page)
+
+    return recentFileId ? state?.files[recentFileId]?.text || '' : ''
+  }).toContain('status text')
+})
+
 test('light mode keeps modal secondary actions and select highlights readable', async ({ goto, page }) => {
   await goto('/diagram')
 

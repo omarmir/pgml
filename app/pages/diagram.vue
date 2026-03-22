@@ -305,6 +305,7 @@ const {
   isSavingToComputerFile,
   loadRecentComputerFileById,
   openComputerFileFromPicker,
+  passiveComputerFileWritesSupported,
   recentComputerFiles,
   refreshRecentComputerFiles,
   saveSchemaToComputerFile,
@@ -453,8 +454,12 @@ const schemaActionDescriptionText = computed(() => {
 
   if (currentPersistenceSource.value === 'file') {
     return canEmbedLayout.value
-      ? 'Save the current PGML back to the selected `.pgml` file on your computer and optionally embed the current canvas layout.'
-      : 'The current PGML has a parse error, so only the raw text can be written back to the selected file right now.'
+      ? passiveComputerFileWritesSupported.value
+        ? 'Save the current PGML back to the selected `.pgml` file on your computer and optionally embed the current canvas layout.'
+        : 'Mobile Chrome requires explicit saves for `.pgml` files, so use Save to write the current PGML back to the selected file and optionally embed the current canvas layout.'
+      : passiveComputerFileWritesSupported.value
+        ? 'The current PGML has a parse error, so only the raw text can be written back to the selected file right now.'
+        : 'Mobile Chrome requires explicit saves for `.pgml` files, and the current PGML has a parse error, so only the raw text can be written back to the selected file right now.'
   }
 
   return schemaActionDescription.value
@@ -998,22 +1003,29 @@ watchEffect(() => {
 watchEffect(() => {
   const isWaitingToSave = activeHasPendingChanges.value && !activeIsSaving.value
   const hasSavedInSession = activeHasSavedInSession.value && activeIsSaved.value && !isWaitingToSave
+  const showsManualMobileChromeSaveState = currentPersistenceSource.value === 'file'
+    && !passiveComputerFileWritesSupported.value
+    && activeHasPendingChanges.value
   const showSchemaStatus = activeSaveError.value !== null
     || isWaitingToSave
     || activeIsSaving.value
     || hasSavedInSession
   const persistenceLabel = currentPersistenceSource.value === 'file' ? 'file' : 'local storage'
-  const detail = activeSaveError.value
-    ? activeSaveError.value
-    : activeIsSaving.value
-      ? `Saving to ${persistenceLabel}...`
-      : isWaitingToSave
-        ? `Waiting to save to ${persistenceLabel}...`
-        : hasSavedInSession && activeSchemaUpdatedAt.value
-          ? `Saved to ${persistenceLabel} at ${activeSavedAtFormatter.value(activeSchemaUpdatedAt.value)}`
-          : hasSavedInSession
-            ? `Saved to ${persistenceLabel}`
-            : ''
+  let detail = ''
+
+  if (activeSaveError.value) {
+    detail = activeSaveError.value
+  } else if (activeIsSaving.value) {
+    detail = `Saving to ${persistenceLabel}...`
+  } else if (showsManualMobileChromeSaveState) {
+    detail = 'Changes are pending. Use Save to write them to the selected file on mobile Chrome.'
+  } else if (isWaitingToSave) {
+    detail = `Waiting to save to ${persistenceLabel}...`
+  } else if (hasSavedInSession && activeSchemaUpdatedAt.value) {
+    detail = `Saved to ${persistenceLabel} at ${activeSavedAtFormatter.value(activeSchemaUpdatedAt.value)}`
+  } else if (hasSavedInSession) {
+    detail = `Saved to ${persistenceLabel}`
+  }
 
   setStudioSchemaStatus({
     detail,

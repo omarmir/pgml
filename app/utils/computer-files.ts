@@ -95,6 +95,10 @@ type PgmlComputerFileWindow = Window & {
   showSaveFilePicker?: PgmlFileSystemAccessApi['showSaveFilePicker']
 }
 
+type PgmlPassiveRecentComputerFileWriteSupportOptions = {
+  userAgent?: string | null
+}
+
 const pgmlComputerFileDatabaseName = 'pgml-computer-files-v1'
 const pgmlComputerFileStoreName = 'recent-files'
 const pgmlFileTypeFilters: PgmlFilePickerType[] = [{
@@ -112,6 +116,12 @@ const getClientWindow = () => {
   }
 
   return window as PgmlComputerFileWindow
+}
+
+const getUserAgent = () => {
+  const candidateWindow = getClientWindow()
+
+  return candidateWindow?.navigator.userAgent || ''
 }
 
 const getDateValue = (value: string) => {
@@ -143,6 +153,14 @@ export const ensurePgmlFileName = (value: string) => {
   const safeValue = trimmedValue.length > 0 ? trimmedValue : pgmlFileFallbackName
 
   return safeValue.toLowerCase().endsWith('.pgml') ? safeValue : `${safeValue}.pgml`
+}
+
+export const supportsPassiveRecentComputerFileWrites = (
+  options?: PgmlPassiveRecentComputerFileWriteSupportOptions
+) => {
+  const userAgent = options?.userAgent ?? getUserAgent()
+
+  return !/Android/iu.test(userAgent)
 }
 
 const isAbortError = (value: unknown) => {

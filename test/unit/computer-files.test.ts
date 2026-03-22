@@ -9,6 +9,7 @@ import {
   loadRecentComputerPgmlFile,
   openComputerPgmlFile,
   stripPgmlFileExtension,
+  supportsPassiveRecentComputerFileWrites,
   writeRecentComputerPgmlFile,
   type PgmlComputerFileHandle,
   type PgmlComputerFileStore,
@@ -107,6 +108,15 @@ describe('computer file utilities', () => {
     expect(ensurePgmlFileName('schema')).toBe('schema.pgml')
     expect(ensurePgmlFileName('schema.pgml')).toBe('schema.pgml')
     expect(ensurePgmlFileName('')).toBe('schema.pgml')
+  })
+
+  it('disables passive recent-file writes on Android user agents', () => {
+    expect(supportsPassiveRecentComputerFileWrites({
+      userAgent: 'Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 Chrome/123.0.0.0 Mobile Safari/537.36'
+    })).toBe(false)
+    expect(supportsPassiveRecentComputerFileWrites({
+      userAgent: 'Mozilla/5.0 (Macintosh; Intel Mac OS X 14_4) AppleWebKit/537.36 Chrome/123.0.0.0 Safari/537.36'
+    })).toBe(true)
   })
 
   it('creates, lists, loads, and writes recent computer files', async () => {

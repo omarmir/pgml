@@ -3,10 +3,12 @@ import { defineComponent } from 'vue'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import { usePgmlStudioComputerFiles } from '../../app/composables/usePgmlStudioComputerFiles'
+import * as computerFiles from '../../app/utils/computer-files'
 
 describe('usePgmlStudioComputerFiles', () => {
   afterEach(() => {
     vi.useRealTimers()
+    vi.restoreAllMocks()
   })
 
   it('loads a recent computer file and autosaves edits back to it', async () => {
@@ -212,5 +214,78 @@ describe('usePgmlStudioComputerFiles', () => {
     expect(api.computerFileSaveError.value).toBe(null)
     expect(api.hasSavedComputerFileInSession.value).toBe(true)
     expect(api.currentComputerFileUpdatedAt.value).toBe('2026-03-20T10:10:00.000Z')
+  })
+
+  it('keeps file-backed changes pending when passive saves are unsupported', async () => {
+    vi.useFakeTimers()
+    vi.spyOn(computerFiles, 'supportsPassiveRecentComputerFileWrites').mockReturnValue(false)
+
+    const source = ref('')
+    let api!: ReturnType<typeof usePgmlStudioComputerFiles>
+    const writeRecentComputerFile = vi.fn(async ({ recentFileId }: {
+      recentFileId: string
+      text: string
+    }) => {
+      return {
+        entry: {
+          id: recentFileId,
+          name: 'linked-schema',
+          updatedAt: '2026-03-20T10:15:00.000Z'
+        },
+        ok: true as const
+      }
+    })
+
+    await mountSuspended(defineComponent({
+      setup() {
+        api = usePgmlStudioComputerFiles({
+          buildSchemaText: () => source.value,
+          fileOperations: {
+            listRecentComputerFiles: async () => [{
+              id: 'linked-file',
+              name: 'linked-schema',
+              updatedAt: '2026-03-20T10:00:00.000Z'
+            }],
+            loadRecentComputerFile: async () => {
+              return {
+                entry: {
+                  id: 'linked-file',
+                  name: 'linked-schema',
+                  updatedAt: '2026-03-20T10:00:00.000Z'
+                },
+                text: 'Table public.linked {\n  id uuid [pk]\n}'
+              }
+            },
+            openComputerFile: async () => null,
+            writeRecentComputerFile
+          },
+          source
+        })
+
+        return () => null
+      }
+    }))
+
+    await api.loadRecentComputerFileById('linked-file')
+
+    source.value = 'Table public.linked {\n  id uuid [pk]\n  status text\n}'
+
+    await vi.advanceTimersByTimeAsync(5000)
+
+    expect(writeRecentComputerFile).not.toHaveBeenCalled()
+    expect(api.hasPendingComputerFileChanges.value).toBe(true)
+    expect(api.isSavedToComputerFile.value).toBe(false)
+    expect(api.computerFileSaveError.value).toBe(null)
+    expect(api.passiveComputerFileWritesSupported.value).toBe(false)
+
+    await expect(api.saveSchemaToComputerFile(false)).resolves.toBe(true)
+    expect(writeRecentComputerFile).toHaveBeenCalledWith({
+      recentFileId: 'linked-file',
+      text: 'Table public.linked {\n  id uuid [pk]\n  status text\n}'
+    }, {
+      permissionMode: 'interactive'
+    })
+    expect(api.hasPendingComputerFileChanges.value).toBe(false)
+    expect(api.currentComputerFileUpdatedAt.value).toBe('2026-03-20T10:15:00.000Z')
   })
 })
