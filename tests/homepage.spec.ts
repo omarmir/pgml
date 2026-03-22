@@ -18,6 +18,10 @@ const confirmComputerFileAccess = async (page: Page, continueLabel: string) => {
   await page.getByRole('button', { name: continueLabel }).click()
 }
 
+const getPgDumpImportDialog = (page: Page) => {
+  return page.locator('[data-studio-modal-surface="pg-dump-import"]')
+}
+
 test('home page exposes the three schema-source lanes and the SQL dump placeholder', async ({ goto, page }) => {
   await goto('/')
 
@@ -26,6 +30,7 @@ test('home page exposes the three schema-source lanes and the SQL dump placehold
   await expect(page.locator('[data-source-card="computer-saved-file"]')).toContainText('Computer saved file')
   await expect(page.locator('[data-source-card="hosted-database"]')).toContainText('Hosted database')
   await expect(page.getByText('SQL dump', { exact: true })).toHaveCount(3)
+  await expect(page.getByRole('button', { name: 'Import a pg_dump' })).toHaveCount(3)
   await expect(page.locator('[data-spec-banner="true"]')).toContainText('Need the language reference before you open the studio?')
   await expect(page.getByRole('link', { name: 'Jump to spec' })).toHaveCount(1)
 })
@@ -92,6 +97,32 @@ test('home page can launch the studio with a blank schema from the browser lane'
 
   await expect.poll(async () => readPgmlEditorValue(getPgmlEditor(page))).toBe('')
   await expect(page.locator('[data-studio-schema-name="true"]')).toHaveText('Untitled schema')
+})
+
+test('home page can import a pasted pg_dump into the browser lane', async ({ goto, page }) => {
+  await goto('/')
+
+  const browserCard = page.locator('[data-source-card="browser-local-storage"]')
+
+  await browserCard.getByRole('button', { name: 'Import a pg_dump' }).click()
+
+  const importDialog = getPgDumpImportDialog(page)
+
+  await expect(importDialog).toContainText('Import pg_dump into browser storage')
+  await importDialog.locator('textarea').fill(`CREATE TABLE public.users (
+  id uuid NOT NULL,
+  email text NOT NULL
+);
+ALTER TABLE ONLY public.users ADD CONSTRAINT users_pkey PRIMARY KEY (id);`)
+  await page.getByRole('button', { name: 'Import into browser storage' }).click()
+
+  await expect.poll(async () => readPgmlEditorValue(getPgmlEditor(page))).toContain('Table public.users')
+  await expect(page.locator('[data-studio-schema-name="true"]')).toHaveText('Imported schema')
+  await expect.poll(async () => {
+    return await page.evaluate(() => {
+      return JSON.parse(window.localStorage.getItem('pgml-studio-schemas-v1') || '[]').length
+    })
+  }).toBe(1)
 })
 
 test('studio header includes a Home link back to the source chooser', async ({ goto, page }) => {
@@ -176,6 +207,36 @@ test('home page can create a blank computer-backed file, autosave to it, and reo
   await expect.poll(async () => readPgmlEditorValue(getPgmlEditor(page))).toContain('Table public.file_backed')
 })
 
+test('home page can import a pg_dump file into a new computer-backed file', async ({ goto, page }) => {
+  await installMockComputerFiles(page)
+  await goto('/')
+  const recentFileId = await queueMockComputerSave(page, 'orders-import.pgml')
+
+  expect(recentFileId).toBeTruthy()
+  await page.locator('[data-source-card="computer-saved-file"]').getByRole('button', { name: 'Import a pg_dump' }).click()
+
+  const importDialog = getPgDumpImportDialog(page)
+
+  await importDialog.locator('input[type="file"]').setInputFiles({
+    buffer: Buffer.from(`CREATE TABLE public.orders (
+  id uuid NOT NULL,
+  customer_id uuid
+);
+ALTER TABLE ONLY public.orders ADD CONSTRAINT orders_pkey PRIMARY KEY (id);`),
+    mimeType: 'text/plain',
+    name: 'orders.sql'
+  })
+  await page.getByRole('button', { name: 'Import into new file' }).click()
+  await confirmComputerFileAccess(page, 'Continue to save dialog')
+
+  await expect.poll(async () => readPgmlEditorValue(getPgmlEditor(page))).toContain('Table public.orders')
+  await expect(page.locator('[data-studio-schema-name="true"]')).toHaveText('orders-import')
+
+  const state = await readMockComputerFileState(page)
+
+  expect(recentFileId ? state?.files[recentFileId]?.text : null).toContain('Table public.orders')
+})
+
 test('home page can remove a recent computer file without deleting the underlying file', async ({ goto, page }) => {
   await installMockComputerFiles(page)
   await goto('/')
@@ -229,6 +290,25 @@ test('home page can seed a new computer-backed file from the bundled example', a
   const state = await readMockComputerFileState(page)
 
   expect(recentFileId ? state?.files[recentFileId]?.text : null).toContain('TableGroup Core')
+})
+
+test('home page shows an error when both pasted text and a pg_dump file are provided', async ({ goto, page }) => {
+  await goto('/')
+
+  await page.locator('[data-source-card="browser-local-storage"]').getByRole('button', { name: 'Import a pg_dump' }).click()
+
+  const importDialog = getPgDumpImportDialog(page)
+
+  await importDialog.locator('textarea').fill('CREATE TABLE public.users (id uuid NOT NULL);')
+  await importDialog.locator('input[type="file"]').setInputFiles({
+    buffer: Buffer.from('CREATE TABLE public.accounts (id uuid NOT NULL);'),
+    mimeType: 'text/plain',
+    name: 'accounts.sql'
+  })
+
+  await expect(importDialog).toContainText('Choose either pasted pg_dump text or a file upload, not both.')
+  await page.getByRole('button', { name: 'Import into browser storage' }).click()
+  await expect(importDialog).toBeVisible()
 })
 
 test('home page still explains computer-file access when a recent file no longer has permission', async ({ goto, page }) => {

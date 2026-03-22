@@ -125,6 +125,38 @@ describe('studio sources store', () => {
     ])
   })
 
+  it('creates a browser-backed schema entry with a normalized name', () => {
+    vi.useFakeTimers()
+    vi.setSystemTime(new Date('2026-03-21T13:00:00.000Z'))
+
+    const store = useStudioSourcesStore()
+    const createdSchema = store.createBrowserSchema({
+      name: '  Imported schema  ',
+      text: 'Table public.imported {\n  id uuid [pk]\n}'
+    })
+
+    expect(createdSchema).not.toBeNull()
+    expect(createdSchema?.name).toBe('Imported schema')
+    expect(createdSchema?.text).toContain('Table public.imported')
+    expect(createdSchema?.updatedAt).toBe('2026-03-21T13:00:00.000Z')
+    expect(store.browserSchemas).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        id: createdSchema?.id,
+        name: 'Imported schema'
+      })
+    ]))
+    expect(persistSavedPgmlSchemasToBrowserStorage).toHaveBeenCalledWith(expect.arrayContaining([
+      expect.objectContaining({
+        id: createdSchema?.id,
+        name: 'Imported schema',
+        text: 'Table public.imported {\n  id uuid [pk]\n}',
+        updatedAt: '2026-03-21T13:00:00.000Z'
+      })
+    ]))
+
+    vi.useRealTimers()
+  })
+
   it('refreshes the recent computer file inventory', async () => {
     vi.mocked(listRecentComputerPgmlFiles).mockResolvedValueOnce([{
       id: 'recent-file-1',
