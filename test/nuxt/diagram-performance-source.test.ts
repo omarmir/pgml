@@ -34,4 +34,17 @@ describe('diagram performance source', () => {
     expect(canvasFile).toContain('pendingNodeUpdateNeedsRemeasure = pendingNodeUpdateNeedsRemeasure || remeasure')
     expect(canvasFile).toContain('scheduleNodeUpdateFollowUp(remeasure)')
   })
+
+  it('defers connection reroutes during node drags and reuses cached lines for the preview', () => {
+    const canvasFile = readSourceFile('app/components/pgml/PgmlDiagramCanvas.vue')
+
+    expect(canvasFile).toContain('const activeNodeDrag: Ref<DiagramConnectionPreviewDragState | null> = ref(null)')
+    expect(canvasFile).toContain('buildDiagramConnectionPreviewLayers(')
+    expect(canvasFile).toContain('scheduleFollowUp?: boolean')
+    expect(canvasFile).toContain('scheduleFollowUp: false')
+    expect(canvasFile).toContain('if (activeNodeDrag.value) {')
+    expect(canvasFile).toContain('const getNodeDragStyle = (nodeId: string): CSSProperties | undefined => {')
+    expect(canvasFile).toContain('transform: `translate3d(${activeNodeDrag.value.deltaX}px, ${activeNodeDrag.value.deltaY}px, 0)`')
+    expect(canvasFile).toContain(':transform="`translate(${activeNodeDrag.deltaX} ${activeNodeDrag.deltaY})`"')
+  })
 })

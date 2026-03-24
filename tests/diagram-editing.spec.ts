@@ -1119,6 +1119,7 @@ test('dragging a group or custom type preserves the current zoom and pan', async
     })
   }).not.toEqual(viewportStateBeforeZoom)
 
+  const connectionPathCount = await page.locator('[data-connection-layer="true"] path').count()
   const zoomedViewportState = await plane.evaluate((element) => {
     const planeElement = element as HTMLElement
 
@@ -1140,6 +1141,7 @@ test('dragging a group or custom type preserves the current zoom and pan', async
     await page.mouse.move(headerBox.x + headerBox.width / 2, headerBox.y + 16)
     await page.mouse.down()
     await page.mouse.move(headerBox.x + headerBox.width / 2 + deltaX, headerBox.y + 16 + deltaY, { steps: 8 })
+    await expect.poll(async () => page.locator('[data-connection-layer="true"] path').count()).toBe(connectionPathCount)
     await page.mouse.up()
   }
 
@@ -1157,6 +1159,8 @@ test('dragging a group or custom type preserves the current zoom and pan', async
     })
   }).toEqual(zoomedViewportState)
 
+  await expect.poll(async () => page.locator('[data-connection-layer="true"] path').count()).toBe(connectionPathCount)
+
   await dragNodeBy('custom-type:Domain:email_address', 48, 42)
 
   await expect.poll(async () => {
@@ -1170,6 +1174,8 @@ test('dragging a group or custom type preserves the current zoom and pan', async
       }
     })
   }).toEqual(zoomedViewportState)
+
+  await expect.poll(async () => page.locator('[data-connection-layer="true"] path').count()).toBe(connectionPathCount)
 })
 
 test('editing PGML preserves the current canvas viewport', async ({ goto, page }) => {
