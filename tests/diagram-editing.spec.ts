@@ -638,6 +638,30 @@ test('canvas snaps dragged nodes to the grid and zooms around the mouse position
   expect(Math.abs(projectedPoint.y - zoomPoint.y)).toBeLessThan(8)
 })
 
+test('relationship lines can be hidden and restored from the bottom toolbar', async ({ goto, page }) => {
+  await goto('/diagram')
+
+  const relationshipLinesToggle = page.locator('[data-relationship-lines-toggle="true"]')
+  const connectionPaths = page.locator('[data-connection-layer="true"] path')
+
+  await expect(relationshipLinesToggle).toHaveAttribute('aria-pressed', 'true')
+  await expect(connectionPaths.first()).toBeVisible()
+
+  const initialPathCount = await connectionPaths.count()
+
+  expect(initialPathCount).toBeGreaterThan(0)
+
+  await relationshipLinesToggle.click()
+
+  await expect(relationshipLinesToggle).toHaveAttribute('aria-pressed', 'false')
+  await expect.poll(async () => page.locator('[data-connection-layer="true"] path').count()).toBe(0)
+
+  await relationshipLinesToggle.click()
+
+  await expect(relationshipLinesToggle).toHaveAttribute('aria-pressed', 'true')
+  await expect.poll(async () => page.locator('[data-connection-layer="true"] path').count()).toBe(initialPathCount)
+})
+
 test('connection routing stays stable when zoom changes', async ({ goto, page }) => {
   await goto('/diagram')
 

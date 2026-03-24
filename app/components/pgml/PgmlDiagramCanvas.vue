@@ -255,6 +255,7 @@ const pan: Ref<{ x: number, y: number }> = ref({
 })
 const isViewportGpuAccelerated: Ref<boolean> = ref(false)
 const snapToGrid: Ref<boolean> = ref(true)
+const showRelationshipLines: Ref<boolean> = ref(true)
 const selectedNodeId: Ref<string | null> = ref(null)
 const selectedCanvasSelection: Ref<CanvasSelection | null> = ref(null)
 const nodeStates: Ref<Record<string, CanvasNodeState>> = ref({})
@@ -488,8 +489,11 @@ const getGroupBackgroundLayerZIndex = (nodeId: string) => {
 const getNodeForegroundLayerZIndex = (nodeId: string) => {
   return getDiagramNodeZIndex(getNodeLayerOrder(nodeId))
 }
+const visibleConnectionLines = computed(() => {
+  return showRelationshipLines.value ? connectionLines.value : []
+})
 const connectionLineLayers = computed(() => {
-  const layers = connectionLines.value.reduce<Record<string, ConnectionLine[]>>((entries, line) => {
+  const layers = visibleConnectionLines.value.reduce<Record<string, ConnectionLine[]>>((entries, line) => {
     const key = String(line.zIndex)
 
     if (!entries[key]) {
@@ -1520,7 +1524,7 @@ const buildExportSvgString = async (padding = exportPadding) => {
     }
   })
 
-  connectionLines.value.forEach((line) => {
+  visibleConnectionLines.value.forEach((line) => {
     connectionParts.push(
       `<path d="${escapeXml(translatePathData(line.path, offsetX, offsetY))}" fill="none" ${buildSvgPaintAttributes('stroke', line.color, line.color)} stroke-width="2" stroke-dasharray="${line.dashed ? '10 7' : '0'}" stroke-linecap="square" stroke-linejoin="miter" opacity="0.9" />`
     )
@@ -7164,6 +7168,22 @@ defineExpose<{
           class="rounded-none text-[color:var(--studio-shell-muted)] hover:bg-[color:var(--studio-surface-hover)] hover:text-[color:var(--studio-shell-text)]"
           @click="resetView"
         />
+        <button
+          type="button"
+          data-relationship-lines-toggle="true"
+          :aria-pressed="showRelationshipLines"
+          :class="getStudioStateButtonClass({
+            emphasized: showRelationshipLines,
+            extraClass: 'inline-flex items-center gap-1.5 text-[0.62rem]'
+          })"
+          @click="showRelationshipLines = !showRelationshipLines"
+        >
+          <UIcon
+            :name="showRelationshipLines ? 'i-lucide-eye' : 'i-lucide-eye-off'"
+            class="h-3.5 w-3.5"
+          />
+          Lines
+        </button>
         <button
           type="button"
           data-grid-snap-toggle="true"
