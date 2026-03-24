@@ -638,6 +638,152 @@ test('canvas snaps dragged nodes to the grid and zooms around the mouse position
   expect(Math.abs(projectedPoint.y - zoomPoint.y)).toBeLessThan(8)
 })
 
+test('dragging a grouped table owner settles near the drop point and keeps reference endpoints attached', async ({ goto, page }) => {
+  await goto('/diagram')
+
+  const editor = getPgmlEditor(page)
+
+  await setPgmlEditorValue(editor, `TableGroup Core {
+  public.users
+}
+
+Table public.users in Core {
+  id uuid [pk]
+  tenant_id uuid [ref: > public.tenants.id]
+}
+
+Table public.tenants {
+  id uuid [pk]
+}`)
+
+  const groupHeader = page.locator('[data-node-header="group:Core"]')
+  const connection = page.locator('[data-connection-key="ref:public.users:tenant_id:public.tenants:id"]').first()
+
+  await expect(groupHeader).toBeVisible()
+  await expect(connection).toBeVisible()
+
+  const headerBox = await groupHeader.boundingBox()
+
+  if (!headerBox) {
+    throw new Error('Core group header is not measurable.')
+  }
+
+  const dragStart = {
+    x: headerBox.x + headerBox.width / 2,
+    y: headerBox.y + 16
+  }
+  const dropPoint = {
+    x: dragStart.x + 126,
+    y: dragStart.y + 78
+  }
+
+  await page.mouse.move(dragStart.x, dragStart.y)
+  await page.mouse.down()
+  await page.mouse.move(dropPoint.x, dropPoint.y, { steps: 10 })
+  await page.mouse.up()
+
+  await expect.poll(async () => {
+    const settledBox = await groupHeader.boundingBox()
+
+    if (!settledBox) {
+      return Number.POSITIVE_INFINITY
+    }
+
+    return Math.abs((settledBox.x + settledBox.width / 2) - dropPoint.x)
+  }).toBeLessThanOrEqual(10)
+
+  await expect.poll(async () => {
+    const settledBox = await groupHeader.boundingBox()
+
+    if (!settledBox) {
+      return Number.POSITIVE_INFINITY
+    }
+
+    return Math.abs((settledBox.y + 16) - dropPoint.y)
+  }).toBeLessThanOrEqual(10)
+
+  await expect.poll(async () => {
+    return page.evaluate(() => {
+      const plane = document.querySelector('[data-diagram-plane="true"]')
+      const fromTable = document.querySelector('[data-diagram-plane="true"] [data-table-anchor="public.users"]')
+      const toTable = document.querySelector('[data-diagram-plane="true"] [data-table-anchor="public.tenants"]')
+      const path = document.querySelector('[data-connection-key="ref:public.users:tenant_id:public.tenants:id"]')
+
+      if (
+        !(plane instanceof HTMLElement)
+        || !(fromTable instanceof HTMLElement)
+        || !(toTable instanceof HTMLElement)
+        || !(path instanceof SVGPathElement)
+      ) {
+        return null
+      }
+
+      const getOffsetWithinPlane = (element: HTMLElement) => {
+        let current: HTMLElement | null = element
+        let x = 0
+        let y = 0
+
+        while (current && current !== plane) {
+          x += current.offsetLeft
+          y += current.offsetTop
+          current = current.offsetParent instanceof HTMLElement ? current.offsetParent : null
+        }
+
+        return { x, y }
+      }
+
+      const hosts = [fromTable, toTable].map((element) => {
+        const offset = getOffsetWithinPlane(element)
+
+        return {
+          label: element.getAttribute('data-table-anchor'),
+          left: offset.x,
+          top: offset.y,
+          right: offset.x + element.offsetWidth,
+          bottom: offset.y + element.offsetHeight
+        }
+      })
+
+      const points = Array.from((path.getAttribute('d') || '').matchAll(/[ML]\s*(-?\d+(?:\.\d+)?)\s+(-?\d+(?:\.\d+)?)/g)).map((match) => {
+        return {
+          x: Number.parseFloat(match[1] || '0'),
+          y: Number.parseFloat(match[2] || '0')
+        }
+      })
+
+      const resolveHost = (point: { x: number, y: number }) => {
+        return hosts.find((bounds) => {
+          return point.x >= bounds.left - 1
+            && point.x <= bounds.right + 1
+            && point.y >= bounds.top - 1
+            && point.y <= bounds.bottom + 1
+            && (
+              Math.abs(point.x - bounds.left) < 1
+              || Math.abs(point.x - bounds.right) < 1
+              || Math.abs(point.y - bounds.top) < 1
+              || Math.abs(point.y - bounds.bottom) < 1
+            )
+        })?.label || null
+      }
+
+      const start = points[0]
+      const end = points.at(-1)
+
+      if (!start || !end) {
+        return null
+      }
+
+      return {
+        from: resolveHost(start),
+        to: resolveHost(end)
+      }
+    })
+  }).toEqual({
+    from: 'public.users',
+    to: 'public.tenants'
+  })
+})
+
 test('column modifier badges start below the field name to preserve label space', async ({ goto, page }) => {
   await goto('/diagram')
 

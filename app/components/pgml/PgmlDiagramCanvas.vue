@@ -22,10 +22,6 @@ import {
 } from '~/utils/pgml-export'
 import { readPgmlExportPreferences, writePgmlExportPreferences } from '~/utils/pgml-export-preferences'
 import {
-  buildDiagramConnectionPreviewLayers,
-  type DiagramConnectionPreviewDragState
-} from '~/utils/diagram-connection-preview'
-import {
   getDiagramConnectionZIndex,
   getDiagramGroupBackgroundZIndex,
   getDiagramNodeZIndex
@@ -154,14 +150,11 @@ type CanvasNodeState = {
 type ConnectionLine = {
   key: string
   path: string
-  points: LayoutPoint[]
   color: string
   dashed: boolean
   dashPattern: string
   animated: boolean
   zIndex: number
-  fromOwnerNodeId: string | null
-  toOwnerNodeId: string | null
 }
 
 type CanvasSelection = {
@@ -291,7 +284,6 @@ const selectedNodeId: Ref<string | null> = ref(null)
 const selectedCanvasSelection: Ref<CanvasSelection | null> = ref(null)
 const nodeStates: Ref<Record<string, CanvasNodeState>> = ref({})
 const connectionLines: Ref<ConnectionLine[]> = ref([])
-const activeNodeDrag: Ref<DiagramConnectionPreviewDragState | null> = ref(null)
 const isDesktopSidePanelOpen: Ref<boolean> = ref(true)
 const activePanelTab: Ref<DiagramPanelTab> = ref('inspector')
 const touchPanSession: Ref<TouchPanSession | null> = ref(null)
@@ -549,28 +541,27 @@ const getCanvasNodeZIndex = (node: CanvasNodeState) => {
 
   return node.kind === 'group' ? 'auto' : getNodeForegroundLayerZIndex(node.id)
 }
-const getNodeDragStyle = (nodeId: string): CSSProperties | undefined => {
-  if (
-    !activeNodeDrag.value
-    || activeNodeDrag.value.nodeId !== nodeId
-    || (activeNodeDrag.value.deltaX === 0 && activeNodeDrag.value.deltaY === 0)
-  ) {
-    return undefined
-  }
-
-  return {
-    transform: `translate3d(${activeNodeDrag.value.deltaX}px, ${activeNodeDrag.value.deltaY}px, 0)`,
-    willChange: 'transform'
-  }
-}
 const visibleConnectionLines = computed(() => {
   return showRelationshipLines.value ? connectionLines.value : []
 })
 const connectionLineLayers = computed(() => {
-  return buildDiagramConnectionPreviewLayers(
-    visibleConnectionLines.value,
-    activeNodeDrag.value
-  )
+  const layers = visibleConnectionLines.value.reduce<Record<string, ConnectionLine[]>>((entries, line) => {
+    const key = String(line.zIndex)
+
+    if (!entries[key]) {
+      entries[key] = []
+    }
+
+    entries[key]?.push(line)
+    return entries
+  }, {})
+
+  return Object.entries(layers)
+    .map(([key, lines]) => ({
+      zIndex: Number.parseInt(key, 10),
+      lines
+    }))
+    .sort((left, right) => left.zIndex - right.zIndex)
 })
 const hasEmbeddedLayout = computed(() => Object.keys(model.nodeProperties).length > 0)
 const selectedNode = computed(() => {
@@ -4458,10 +4449,6 @@ const setViewportScale = (nextScale: number) => {
   scheduleViewportTransformSync()
 }
 const scheduleConnectionRefresh = () => {
-  if (activeNodeDrag.value) {
-    return
-  }
-
   connectionRefreshBatcher.schedule(() => {
     updateConnections()
   })
@@ -5196,130 +5183,6 @@ const buildPathFromPoints = (points: LayoutPoint[]) => {
   }).join(' ')
 }
 
-const buildDraggedEndpointBridgePoint = (
-  originalPoint: LayoutPoint,
-  movedPoint: LayoutPoint,
-  fixedPoint: LayoutPoint
-) => {
-  const segmentAxis = getSharedAxis(originalPoint, fixedPoint)
-
-  if (segmentAxis === 'x') {
-    return {
-      x: movedPoint.x,
-      y: fixedPoint.y
-    }
-  }
-
-  if (segmentAxis === 'y') {
-    return {
-      x: fixedPoint.x,
-      y: movedPoint.y
-    }
-  }
-
-  return Math.abs(movedPoint.x - fixedPoint.x) >= Math.abs(movedPoint.y - fixedPoint.y)
-    ? {
-        x: fixedPoint.x,
-        y: movedPoint.y
-      }
-    : {
-        x: movedPoint.x,
-        y: fixedPoint.y
-      }
-}
-
-const buildDraggedConnectionBridgePath = (
-  points: LayoutPoint[],
-  deltaX: number,
-  deltaY: number,
-  movedEnd: 'from' | 'to'
-) => {
-  const firstPoint = points[0]
-
-  if (!firstPoint || (deltaX === 0 && deltaY === 0)) {
-    return buildPathFromPoints(points)
-  }
-
-  if (points.length === 1) {
-    return buildPathFromPoints([{
-      x: firstPoint.x + deltaX,
-      y: firstPoint.y + deltaY
-    }])
-  }
-
-  const previewPoints: LayoutPoint[] = []
-
-  if (movedEnd === 'from') {
-    const secondPoint = points[1]
-
-    if (!secondPoint) {
-      return buildPathFromPoints([{
-        x: firstPoint.x + deltaX,
-        y: firstPoint.y + deltaY
-      }])
-    }
-
-    const movedPoint = {
-      x: firstPoint.x + deltaX,
-      y: firstPoint.y + deltaY
-    }
-    const bridgePoint = buildDraggedEndpointBridgePoint(firstPoint, movedPoint, secondPoint)
-
-    appendRoutePoint(previewPoints, movedPoint)
-    appendRoutePoint(previewPoints, bridgePoint)
-    points.slice(1).forEach((point) => {
-      appendRoutePoint(previewPoints, point)
-    })
-
-    return buildPathFromPoints(previewPoints)
-  }
-
-  const movedPoint = {
-    x: points.at(-1)!.x + deltaX,
-    y: points.at(-1)!.y + deltaY
-  }
-  const lastFixedPoint = points.at(-2)!
-  const bridgePoint = buildDraggedEndpointBridgePoint(points.at(-1)!, movedPoint, lastFixedPoint)
-
-  points.slice(0, -1).forEach((point) => {
-    appendRoutePoint(previewPoints, point)
-  })
-  appendRoutePoint(previewPoints, bridgePoint)
-  appendRoutePoint(previewPoints, movedPoint)
-
-  return buildPathFromPoints(previewPoints)
-}
-
-const getConnectionDragPreviewPath = (line: ConnectionLine) => {
-  if (!activeNodeDrag.value || (activeNodeDrag.value.deltaX === 0 && activeNodeDrag.value.deltaY === 0)) {
-    return line.path
-  }
-
-  if (line.fromOwnerNodeId === activeNodeDrag.value.nodeId && line.toOwnerNodeId === activeNodeDrag.value.nodeId) {
-    return line.path
-  }
-
-  if (line.fromOwnerNodeId === activeNodeDrag.value.nodeId) {
-    return buildDraggedConnectionBridgePath(
-      line.points,
-      activeNodeDrag.value.deltaX,
-      activeNodeDrag.value.deltaY,
-      'from'
-    )
-  }
-
-  if (line.toOwnerNodeId === activeNodeDrag.value.nodeId) {
-    return buildDraggedConnectionBridgePath(
-      line.points,
-      activeNodeDrag.value.deltaX,
-      activeNodeDrag.value.deltaY,
-      'to'
-    )
-  }
-
-  return line.path
-}
-
 const getVerticalSegmentUsageKey = (x: number) => {
   return `vertical:${Math.round(x * verticalSegmentKeyScale) / verticalSegmentKeyScale}`
 }
@@ -5804,7 +5667,7 @@ const buildPathPointsFromLegs = (
   return offsetOverlappingVerticalSegments(points, verticalUsage, headerBands)
 }
 
-const buildSharedGroupPathPoints = (
+const buildSharedGroupPath = (
   fromElement: HTMLElement,
   toElement: HTMLElement,
   groupElement: HTMLElement,
@@ -5887,7 +5750,7 @@ const buildSharedGroupPathPoints = (
     appendRoutePoint(points, { x: laneX, y: toAnchor.y })
     appendRoutePoint(points, { x: toAnchor.x, y: toAnchor.y })
 
-    return offsetOverlappingVerticalSegments(points, verticalUsage, headerBands)
+    return buildPathFromPoints(offsetOverlappingVerticalSegments(points, verticalUsage, headerBands))
   }
 
   const laneY = Math.min(groupBottom - groupLaneInnerBorderClearance, Math.max(fromAnchor.y, toAnchor.y) + laneOffset)
@@ -5896,7 +5759,7 @@ const buildSharedGroupPathPoints = (
   appendRoutePoint(points, { x: toAnchor.x, y: laneY })
   appendRoutePoint(points, { x: toAnchor.x, y: toAnchor.y })
 
-  return offsetOverlappingVerticalSegments(points, verticalUsage, headerBands)
+  return buildPathFromPoints(offsetOverlappingVerticalSegments(points, verticalUsage, headerBands))
 }
 
 const decideAnchorSides = (fromElement: HTMLElement, toElement: HTMLElement): { from: AnchorSide, to: AnchorSide } => {
@@ -5937,19 +5800,8 @@ const buildPathBetween = (
   const sharedGroupElement = !dashed ? getSharedGroupElement(fromElement, toElement) : null
 
   if (sharedGroupElement) {
-    const sharedGroupPoints = buildSharedGroupPathPoints(
-      fromElement,
-      toElement,
-      sharedGroupElement,
-      planeBounds,
-      usage,
-      verticalUsage,
-      headerBands
-    )
-
     return {
-      path: buildPathFromPoints(sharedGroupPoints),
-      points: sharedGroupPoints,
+      path: buildSharedGroupPath(fromElement, toElement, sharedGroupElement, planeBounds, usage, verticalUsage, headerBands),
       color,
       dashed
     }
@@ -6048,7 +5900,6 @@ const buildPathBetween = (
 
   return {
     path: buildPathFromPoints(chosenCandidate.points),
-    points: chosenCandidate.points,
     color,
     dashed
   }
@@ -6154,22 +6005,16 @@ const updateConnections = () => {
         return null
       }
 
-      const fromOwnerNodeId = getConnectionOwnerNodeId(descriptor.fromElement)
-      const toOwnerNodeId = getConnectionOwnerNodeId(descriptor.toElement)
-
       return {
         key: descriptor.key,
         path: result.path,
-        points: result.points,
         color: result.color,
         dashed: result.dashed,
         dashPattern: descriptor.dashPattern,
         animated: descriptor.animated,
-        fromOwnerNodeId,
-        toOwnerNodeId,
         zIndex: getDiagramConnectionZIndex(
-          nodeOrders[fromOwnerNodeId || ''] || 1,
-          nodeOrders[toOwnerNodeId || ''] || 1,
+          nodeOrders[getConnectionOwnerNodeId(descriptor.fromElement) || ''] || 1,
+          nodeOrders[getConnectionOwnerNodeId(descriptor.toElement) || ''] || 1,
           descriptor.selectedForeground
         )
       } satisfies ConnectionLine
@@ -6526,20 +6371,6 @@ const emitNodePropertiesChange = () => {
   emit('nodePropertiesChange', getNodeLayoutProperties())
 }
 
-const setActiveNodeDrag = (nextDrag: DiagramConnectionPreviewDragState | null) => {
-  const currentDrag = activeNodeDrag.value
-
-  if (
-    currentDrag?.nodeId === nextDrag?.nodeId
-    && currentDrag?.deltaX === nextDrag?.deltaX
-    && currentDrag?.deltaY === nextDrag?.deltaY
-  ) {
-    return
-  }
-
-  activeNodeDrag.value = nextDrag
-}
-
 const hasCanvasNodeStateChanged = (current: CanvasNodeState, nextNode: CanvasNodeState) => {
   const keys = new Set<keyof CanvasNodeState>([
     ...(Object.keys(current) as Array<keyof CanvasNodeState>),
@@ -6615,7 +6446,6 @@ const updateNode = (
   options: {
     remeasure?: boolean
     emitNodeProperties?: boolean
-    scheduleFollowUp?: boolean
   } = {}
 ) => {
   const current = nodeStates.value[id]
@@ -6626,7 +6456,6 @@ const updateNode = (
 
   const remeasure = options.remeasure !== false
   const emitNodeProperties = options.emitNodeProperties !== false
-  const scheduleFollowUp = options.scheduleFollowUp !== false
 
   const nextNode = {
     ...current,
@@ -6694,9 +6523,7 @@ const updateNode = (
     emitNodePropertiesChange()
   }
 
-  if (scheduleFollowUp) {
-    scheduleNodeUpdateFollowUp(remeasure)
-  }
+  scheduleNodeUpdateFollowUp(remeasure)
 }
 
 const toggleNodeCollapsed = (id: string) => {
@@ -6913,64 +6740,21 @@ const startDragNode = (event: PointerEvent, id: string) => {
 
   flushViewportTransformSync()
   beginViewportGpuAcceleration()
-  setActiveNodeDrag({
-    nodeId: id,
-    deltaX: 0,
-    deltaY: 0
-  })
 
   startPointerSession({
     frameThrottle: true,
     onMove: (moveEvent) => {
-      const nextX = snapCoordinate(origin.nodeX + (moveEvent.clientX - origin.x) / scale.value)
-      const nextY = snapCoordinate(origin.nodeY + (moveEvent.clientY - origin.y) / scale.value)
-
-      setActiveNodeDrag(
-        nextX === origin.nodeX && nextY === origin.nodeY
-          ? {
-              nodeId: id,
-              deltaX: 0,
-              deltaY: 0
-            }
-          : {
-              nodeId: id,
-              deltaX: nextX - origin.nodeX,
-              deltaY: nextY - origin.nodeY
-            }
-      )
+      updateNode(id, {
+        x: snapCoordinate(origin.nodeX + (moveEvent.clientX - origin.x) / scale.value),
+        y: snapCoordinate(origin.nodeY + (moveEvent.clientY - origin.y) / scale.value)
+      }, {
+        remeasure: false,
+        emitNodeProperties: false
+      })
     },
     onEnd: () => {
-      const finalDeltaX = activeNodeDrag.value?.deltaX || 0
-      const finalDeltaY = activeNodeDrag.value?.deltaY || 0
-      const hasMoved = finalDeltaX !== 0 || finalDeltaY !== 0
-      const hadActiveNodeDrag = Boolean(activeNodeDrag.value)
-
-      if (hasMoved) {
-        updateNode(id, {
-          x: snapCoordinate(origin.nodeX + finalDeltaX),
-          y: snapCoordinate(origin.nodeY + finalDeltaY)
-        }, {
-          remeasure: false,
-          emitNodeProperties: false,
-          scheduleFollowUp: false
-        })
-      }
-
-      setActiveNodeDrag(null)
-
-      if (hasMoved) {
-        emitNodePropertiesChange()
-      }
-
-      if (!hadActiveNodeDrag) {
-        scheduleViewportGpuAccelerationReset()
-        return
-      }
-
-      nextTick(() => {
-        updateConnections()
-        scheduleViewportGpuAccelerationReset()
-      })
+      emitNodePropertiesChange()
+      scheduleViewportGpuAccelerationReset()
     }
   })
 }
@@ -7288,7 +7072,6 @@ defineExpose<{
             borderColor: node.kind === 'group' ? 'transparent' : getNodeBorderColor(node),
             background: node.kind === 'group' ? 'transparent' : getNodeBackground(node)
           },
-          getNodeDragStyle(node.id),
           node.kind === 'table' || node.kind === 'object' ? getSelectionGlowStyle(node.color) : undefined
         ]"
         :data-node-anchor="node.id"
@@ -7558,7 +7341,7 @@ defineExpose<{
         preserveAspectRatio="none"
       >
         <path
-          v-for="line in layer.staticLines"
+          v-for="line in layer.lines"
           :key="line.key"
           :class="line.animated ? 'pgml-reference-race-path' : undefined"
           :d="line.path"
@@ -7573,45 +7356,6 @@ defineExpose<{
           stroke-linejoin="miter"
           opacity="0.9"
         />
-        <path
-          v-for="line in layer.bridgedLines"
-          :key="`${line.key}:bridge-preview`"
-          :class="line.animated ? 'pgml-reference-race-path' : undefined"
-          :d="getConnectionDragPreviewPath(line)"
-          fill="none"
-          :stroke="line.color"
-          stroke-width="2"
-          :stroke-dasharray="line.dashPattern"
-          :style="line.animated ? getReferenceRaceStyle(line.color) : undefined"
-          :data-connection-key="line.key"
-          :data-connection-highlighted="line.animated ? 'true' : undefined"
-          stroke-linecap="square"
-          stroke-linejoin="miter"
-          opacity="0.9"
-        />
-        <g
-          v-if="activeNodeDrag && layer.translatedLines.length > 0"
-          data-connection-drag-preview="true"
-          :data-connection-drag-node="activeNodeDrag.nodeId"
-          :transform="`translate(${activeNodeDrag.deltaX} ${activeNodeDrag.deltaY})`"
-        >
-          <path
-            v-for="line in layer.translatedLines"
-            :key="`${line.key}:drag-preview`"
-            :class="line.animated ? 'pgml-reference-race-path' : undefined"
-            :d="line.path"
-            fill="none"
-            :stroke="line.color"
-            stroke-width="2"
-            :stroke-dasharray="line.dashPattern"
-            :style="line.animated ? getReferenceRaceStyle(line.color) : undefined"
-            :data-connection-key="line.key"
-            :data-connection-highlighted="line.animated ? 'true' : undefined"
-            stroke-linecap="square"
-            stroke-linejoin="miter"
-            opacity="0.9"
-          />
-        </g>
       </svg>
     </div>
 
