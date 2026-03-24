@@ -220,6 +220,35 @@ type ConnectionGeometryRegistry = {
   planeBounds: MeasuredElementBounds
 }
 
+type RoutingWorkerGeometryInput = {
+  bounds: MeasuredElementBounds
+  groupNodeId: string | null
+  identity: string
+  isColumnAnchor: boolean
+  isColumnLabelAnchor: boolean
+  locator: ConnectionEndpointLocator | null
+  nodeAnchorId: string | null
+  ownerNodeId: string | null
+  rowKey: string | null
+  tableId: string | null
+}
+
+type RoutingWorkerDescriptorInput = {
+  animated: boolean
+  color: string
+  dashPattern: string
+  dashed: boolean
+  fromGeometry: RoutingWorkerGeometryInput
+  key: string
+  selectedForeground: boolean
+  toGeometry: RoutingWorkerGeometryInput
+}
+
+type RoutingWorkerResponse = {
+  lines: ConnectionLine[]
+  requestId: number
+}
+
 type DiagramViewportBounds = DiagramSpatialBounds
 
 type CanvasSelection = {
@@ -396,6 +425,13 @@ let hasPendingNodeUpdateSync = false
 let pendingNodeUpdateNeedsRemeasure = false
 let connectionGeometryRegistry: ConnectionGeometryRegistry | null = null
 let pendingConnectionDirtyNodeIds: Set<string> | null = null
+let routingWorker: Worker | null = null
+let routingWorkerRequestId = 0
+let activeConnectionUpdateRequestId = 0
+const pendingRoutingWorkerRequests = new Map<number, {
+  reject: (reason?: unknown) => void
+  resolve: (lines: ConnectionLine[]) => void
+}>()
 const exportTypeStyleItems = [
   {
     label: 'Pragmatic app types',
@@ -1164,11 +1200,11 @@ const waitForCanvasRender = async () => {
   await withForcedFullNodeRendering(async () => {
     flushViewportTransformSync()
     await nextTick()
-    updateConnections()
+    await updateConnections()
     await nextTick()
     await waitForAnimationFrame()
 
-    updateConnections()
+    await updateConnections()
   })
 }
 
@@ -4881,7 +4917,7 @@ const scheduleConnectionRefresh = (options: { full?: boolean } = {}) => {
     const dirtyNodeIds = options.full ? null : pendingConnectionDirtyNodeIds
 
     pendingConnectionDirtyNodeIds = null
-    updateConnections(dirtyNodeIds)
+    void updateConnections(dirtyNodeIds)
   })
 }
 const canvasViewportStyle = {
@@ -6133,6 +6169,76 @@ const syncConnectionGeometryRegistry = () => {
   return connectionGeometryRegistry
 }
 
+const getRoutingWorker = () => {
+  if (routingWorker) {
+    return routingWorker
+  }
+
+  const worker = new Worker(new URL('../../workers/diagram-routing.worker.ts', import.meta.url), {
+    type: 'module'
+  })
+
+  worker.onmessage = (event: MessageEvent<RoutingWorkerResponse>) => {
+    const pendingRequest = pendingRoutingWorkerRequests.get(event.data.requestId)
+
+    if (!pendingRequest) {
+      return
+    }
+
+    pendingRoutingWorkerRequests.delete(event.data.requestId)
+    pendingRequest.resolve(event.data.lines)
+  }
+  worker.onerror = (error) => {
+    for (const pendingRequest of pendingRoutingWorkerRequests.values()) {
+      pendingRequest.reject(error)
+    }
+
+    pendingRoutingWorkerRequests.clear()
+  }
+  routingWorker = worker
+
+  return worker
+}
+
+const serializeConnectionGeometry = (geometry: ConnectionAnchorGeometry): RoutingWorkerGeometryInput => {
+  return {
+    bounds: geometry.bounds,
+    groupNodeId: geometry.groupNodeId,
+    identity: geometry.identity,
+    isColumnAnchor: geometry.locator?.attribute === 'data-column-anchor',
+    isColumnLabelAnchor: geometry.locator?.attribute === 'data-column-label-anchor',
+    locator: geometry.locator,
+    nodeAnchorId: geometry.element.getAttribute('data-node-anchor'),
+    ownerNodeId: geometry.ownerNodeId,
+    rowKey: geometry.rowKey,
+    tableId: geometry.tableId
+  }
+}
+
+const computeConnectionLinesInWorker = (descriptors: RoutingWorkerDescriptorInput[], groupHeaderBands: DiagramRect[]) => {
+  if (!connectionGeometryRegistry) {
+    return Promise.resolve<ConnectionLine[]>([])
+  }
+
+  const worker = getRoutingWorker()
+  const requestId = ++routingWorkerRequestId
+
+  return new Promise<ConnectionLine[]>((resolve, reject) => {
+    pendingRoutingWorkerRequests.set(requestId, {
+      resolve,
+      reject
+    })
+    worker.postMessage({
+      descriptors,
+      groupHeaderBands,
+      nodeOrders: nodeLayerOrderById.value,
+      planeBounds: connectionGeometryRegistry?.planeBounds,
+      requestId,
+      scale: scale.value
+    })
+  })
+}
+
 const collectGroupHeaderBands = () => {
   if (connectionGeometryRegistry) {
     return connectionGeometryRegistry.groupHeaderBands
@@ -7258,7 +7364,7 @@ const buildPathBetween = (
   }
 }
 
-const updateConnections = (dirtyNodeIds: Set<string> | null = null) => {
+const updateConnections = async (dirtyNodeIds: Set<string> | null = null) => {
   flushViewportTransformSync()
 
   if (!planeRef.value) {
@@ -7353,6 +7459,30 @@ const updateConnections = (dirtyNodeIds: Set<string> | null = null) => {
     && dirtyNodeIds.size > 0
     && connectionLines.value.length > 0
   )
+
+  if (!shouldAttemptDirtyReroute) {
+    const requestId = ++activeConnectionUpdateRequestId
+
+    try {
+      const lines = await computeConnectionLinesInWorker(descriptors.map((descriptor) => {
+        return {
+          ...descriptor,
+          fromGeometry: serializeConnectionGeometry(descriptor.fromGeometry),
+          toGeometry: serializeConnectionGeometry(descriptor.toGeometry)
+        } satisfies RoutingWorkerDescriptorInput
+      }), groupHeaderBands)
+
+      if (requestId === activeConnectionUpdateRequestId) {
+        connectionLines.value = lines
+      }
+
+      pendingConnectionDirtyNodeIds = null
+      return
+    } catch {
+      // Fall back to the local router below if the worker fails to initialize or crashes.
+    }
+  }
+
   const dirtyKeys = new Set<string>()
 
   if (shouldAttemptDirtyReroute) {
@@ -8447,7 +8577,7 @@ watch(
         fitView()
       }
       await syncLayoutObserverTargets()
-      updateConnections()
+      await updateConnections()
       previousViewportResetKey = viewportResetKey
     })
   },
@@ -8495,19 +8625,19 @@ onMounted(() => {
       await refreshMeasuredGroupTableHeights()
       if (syncMeasuredNodeSizes()) {
         reflowAutoLayout()
-        updateConnections()
+        await updateConnections()
       }
-      updateConnections()
+      await updateConnections()
       await waitForAnimationFrame()
       await syncLayoutObserverTargets()
       if (syncMeasuredNodeSizes()) {
         reflowAutoLayout()
-        updateConnections()
+        await updateConnections()
       }
       fitView()
       await nextTick()
       await waitForAnimationFrame()
-      updateConnections()
+      await updateConnections()
     })
   })
 })
@@ -8519,6 +8649,12 @@ onBeforeUnmount(() => {
   wheelZoomBatcher.cancel()
   viewportTransformBatcher.cancel()
   connectionRefreshBatcher.cancel()
+  routingWorker?.terminate()
+  routingWorker = null
+  for (const pendingRequest of pendingRoutingWorkerRequests.values()) {
+    pendingRequest.reject(new Error('Diagram routing worker closed.'))
+  }
+  pendingRoutingWorkerRequests.clear()
   connectionGeometryRegistry = null
 })
 
