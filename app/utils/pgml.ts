@@ -1535,7 +1535,17 @@ export const buildPgmlWithNodeProperties = (
   nodeProperties: Record<string, PgmlNodeProperties>
 ) => {
   const strippedSource = stripPgmlPropertiesBlocks(source)
+  const parsedModel = parsePgml(strippedSource)
+  const persistablePropertyTargetIds = new Set<string>([
+    ...parsedModel.tables.map(table => table.fullName),
+    ...parsedModel.groups.map(group => `group:${group.name}`),
+    ...parsedModel.customTypes.map(customType => `custom-type:${customType.kind}:${customType.name}`),
+    ...parsedModel.sequences.map(sequence => `sequence:${sequence.name}`)
+  ])
   const propertyBlocks = Object.entries(nodeProperties)
+    .filter(([id]) => {
+      return persistablePropertyTargetIds.has(id)
+    })
     .filter(([, properties]) => {
       return [
         typeof properties.x === 'number',

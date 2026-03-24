@@ -133,6 +133,10 @@ Properties "group:Core" {
   it('builds self-contained PGML with fresh node properties blocks', () => {
     const sourceWithOldLayout = `${baseSource}
 
+Domain email_address {
+  base: text
+}
+
 Properties "group:Core" {
   x: 12
   y: 18
@@ -192,5 +196,38 @@ Properties "group:Core" {
     expect(reparsed.nodeProperties['custom-type:Domain:email_address']?.color).toBe('#f97316')
     expect(reparsed.nodeProperties['public.users']?.visible).toBe(false)
     expect(reparsed.nodeProperties['sequence:user_number_seq']?.height).toBeUndefined()
+  })
+
+  it('drops stale node properties for unsupported executable entities when rebuilding layout blocks', () => {
+    const sourceWithOldLayout = `${baseSource}
+
+Function public.touch_users() returns trigger {
+  source: $sql$
+    begin
+      return new;
+    end;
+  $sql$
+}
+
+Properties "function:public.touch_users" {
+  x: 1056
+  y: 1920
+  color: #c084fc
+}`
+
+    const built = buildPgmlWithNodeProperties(sourceWithOldLayout, {
+      'group:Core': {
+        x: 240,
+        y: 180
+      },
+      'function:public.touch_users': {
+        x: 1056,
+        y: 1920,
+        color: '#c084fc'
+      }
+    })
+
+    expect(built).toContain('Properties "group:Core" {')
+    expect(built).not.toContain('Properties "function:public.touch_users" {')
   })
 })

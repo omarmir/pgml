@@ -8,12 +8,14 @@ const source = defineModel<string>({
 
 const {
   editorRefSetter,
+  focusDiagnostic,
   sourceDiagnostics,
   sourceErrorCount,
   sourceWarningCount,
   visibleSourceDiagnostics
 } = defineProps<{
   editorRefSetter: (value: unknown) => void
+  focusDiagnostic: (diagnostic: PgmlLanguageDiagnostic) => void
   sourceDiagnostics: PgmlLanguageDiagnostic[]
   sourceErrorCount: number
   sourceWarningCount: number
@@ -57,12 +59,15 @@ const {
           :key="`${diagnostic.code}:${diagnostic.from}:${diagnostic.line}`"
           class="flex gap-2"
         >
-          <span
-            class="min-w-12 uppercase tracking-[0.08em]"
+          <button
+            type="button"
+            class="min-w-12 cursor-pointer text-left uppercase tracking-[0.08em] underline-offset-2 hover:underline focus-visible:underline"
+            data-pgml-diagnostic-line="true"
             :class="diagnostic.severity === 'error' ? 'text-[color:var(--studio-shell-error)]' : 'text-[color:var(--studio-shell-label)]'"
+            @click="focusDiagnostic(diagnostic)"
           >
             L{{ diagnostic.line }}
-          </span>
+          </button>
           <span
             :class="diagnostic.severity === 'error' ? 'text-[color:var(--studio-shell-error)]' : 'text-[color:var(--studio-shell-muted)]'"
           >

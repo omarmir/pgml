@@ -32,11 +32,18 @@ describe('studio ui modules', () => {
 
   it('exposes the shared modal and field primitives used across the studio', () => {
     expect(studioModalUi.overlay).toContain('bg-black/60')
+    expect(studioModalUi.content).toContain('z-[60]')
     expect(studioModalSurfaceClass).toContain('w-[calc(100vw-1rem)]')
     expect(studioModalSurfaceClass).toContain('max-h-[calc(100dvh-1rem)]')
     expect(studioFieldUi.base).toContain('bg-[color:var(--studio-input-bg)]')
     expect(studioInputMenuUi.base).toContain('studio-select-trigger')
+    expect(studioInputMenuUi.base).toContain('w-full')
+    expect(studioInputMenuUi.content).toContain('z-[70]')
+    expect(studioInputMenuUi.value).toContain('whitespace-normal')
     expect(studioSelectUi.base).toContain('studio-select-trigger')
+    expect(studioSelectUi.base).toContain('min-w-0')
+    expect(studioSelectUi.content).toContain('z-[70]')
+    expect(studioSelectUi.placeholder).toContain('break-words')
     expect(studioSwitchUi.base).toContain('data-[state=checked]:bg-[color:var(--studio-shell-label)]')
     expect(studioButtonClasses.iconGhost).toContain('studio-button--icon')
   })

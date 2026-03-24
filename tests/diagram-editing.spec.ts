@@ -369,6 +369,51 @@ test('code editor shows PGML diagnostics and autocomplete suggestions', async ({
   await expect(page.locator('.cm-tooltip-autocomplete')).toContainText('Table')
 })
 
+test('clicking a diagnostic line focuses and scrolls the editor to that source location', async ({ goto, page }) => {
+  await goto('/diagram')
+
+  const editor = getPgmlEditor(page)
+  const repeatedTables = Array.from({
+    length: 32
+  }, (_, index) => {
+    return `Table public.placeholder_${index} {\n  id uuid [pk]\n}`
+  }).join('\n\n')
+
+  await setPgmlEditorValue(editor, `${repeatedTables}
+
+Table public.users {
+  id uuid [pk]
+  id uuid
+}`)
+  await setPgmlEditorSelection(editor, 0, 0)
+  await setPgmlEditorScrollTop(editor, 0)
+
+  await expect(page.locator('[data-pgml-diagnostics="true"]')).toContainText('Duplicate column')
+  await page.locator('[data-pgml-diagnostic-line="true"]').first().click()
+
+  await expect.poll(async () => {
+    const state = await readPgmlEditorState(editor)
+
+    return {
+      anchor: state.anchor,
+      head: state.head,
+      scrollTop: state.scrollTop,
+      selectedText: state.value.slice(state.anchor, state.head)
+    }
+  }).toEqual({
+    anchor: expect.any(Number),
+    head: expect.any(Number),
+    scrollTop: expect.any(Number),
+    selectedText: 'id'
+  })
+
+  const state = await readPgmlEditorState(editor)
+
+  expect(state.anchor).toBeGreaterThan(0)
+  expect(state.head).toBeGreaterThan(state.anchor)
+  expect(state.scrollTop).toBeGreaterThan(0)
+})
+
 test('canvas snaps dragged nodes to the grid and zooms around the mouse position', async ({ goto, page }) => {
   await goto('/diagram')
 

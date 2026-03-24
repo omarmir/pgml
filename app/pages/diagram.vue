@@ -186,6 +186,7 @@ const { getColumnDefaultPlaceholder, getColumnDefaultSuggestions } = usePgmlColu
 const toast = useToast()
 const {
   editorRef,
+  focusEditorDiagnostic,
   focusEditorSourceRange
 } = usePgmlSourceEditor()
 const studioSessionStore = useStudioSessionStore()
@@ -1079,6 +1080,7 @@ onBeforeUnmount(() => {
         <StudioEditorSurface
           v-model="source"
           :editor-ref-setter="assignEditorRef"
+          :focus-diagnostic="focusEditorDiagnostic"
           :source-diagnostics="sourceDiagnostics"
           :source-error-count="sourceErrorDiagnostics.length"
           :source-warning-count="sourceWarningDiagnostics.length"
@@ -1100,6 +1102,7 @@ onBeforeUnmount(() => {
         <StudioEditorSurface
           v-model="source"
           :editor-ref-setter="assignEditorRef"
+          :focus-diagnostic="focusEditorDiagnostic"
           :source-diagnostics="sourceDiagnostics"
           :source-error-count="sourceErrorDiagnostics.length"
           :source-warning-count="sourceWarningDiagnostics.length"
