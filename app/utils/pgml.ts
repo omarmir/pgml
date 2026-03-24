@@ -1,3 +1,8 @@
+import {
+  hasStoredPgmlTableWidthScale,
+  normalizePgmlTableWidthScale
+} from './pgml-node-properties'
+
 export type PgmlColumn = {
   name: string
   type: string
@@ -62,6 +67,7 @@ export type PgmlNodeProperties = {
   width?: number
   height?: number
   tableColumns?: number | null
+  tableWidthScale?: number | null
   collapsed?: boolean
   visible?: boolean
   masonry?: boolean
@@ -1546,6 +1552,11 @@ const parseNodePropertiesBlock = (block: NamedBlock): { id: string, properties: 
 
     if (key === 'table_columns' || key === 'tablecolumns' || key === 'columns') {
       entries.tableColumns = numericValue
+      continue
+    }
+
+    if (key === 'table_width_scale' || key === 'tablewidthscale' || key === 'table_width' || key === 'tablewidth') {
+      entries.tableWidthScale = numericValue
     }
   }
 
@@ -1561,6 +1572,7 @@ const parseNodePropertiesBlock = (block: NamedBlock): { id: string, properties: 
     && !Number.isFinite(entries.width)
     && !Number.isFinite(entries.height)
     && !Number.isFinite(entries.tableColumns)
+    && !Number.isFinite(entries.tableWidthScale)
   ) {
     return null
   }
@@ -1601,6 +1613,10 @@ const parseNodePropertiesBlock = (block: NamedBlock): { id: string, properties: 
 
   if (Number.isFinite(entries.tableColumns)) {
     properties.tableColumns = Math.max(1, Math.round(entries.tableColumns || 1))
+  }
+
+  if (hasStoredPgmlTableWidthScale(entries.tableWidthScale)) {
+    properties.tableWidthScale = normalizePgmlTableWidthScale(entries.tableWidthScale)
   }
 
   return {
@@ -1671,6 +1687,7 @@ export const buildPgmlWithNodeProperties = (
         typeof properties.collapsed === 'boolean',
         properties.visible === false,
         typeof properties.tableColumns === 'number',
+        hasStoredPgmlTableWidthScale(properties.tableWidthScale),
         properties.masonry === true
       ].some(Boolean)
     })
@@ -1704,6 +1721,10 @@ export const buildPgmlWithNodeProperties = (
 
       if (typeof properties.tableColumns === 'number') {
         lines.push(`  table_columns: ${Math.max(1, Math.round(properties.tableColumns))}`)
+      }
+
+      if (hasStoredPgmlTableWidthScale(properties.tableWidthScale)) {
+        lines.push(`  table_width_scale: ${normalizePgmlTableWidthScale(properties.tableWidthScale)}`)
       }
 
       lines.push('}')

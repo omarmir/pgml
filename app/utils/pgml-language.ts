@@ -214,7 +214,8 @@ const propertyKeywordTemplates = [
   { label: 'collapsed', detail: 'Set collapsed state.', apply: 'collapsed: false' },
   { label: 'visible', detail: 'Set visibility state.', apply: 'visible: false' },
   { label: 'masonry', detail: 'Pack grouped tables to reduce whitespace.', apply: 'masonry: true' },
-  { label: 'table_columns', detail: 'Set group table column count.', apply: 'table_columns: 2' }
+  { label: 'table_columns', detail: 'Set group table column count.', apply: 'table_columns: 2' },
+  { label: 'table_width_scale', detail: 'Scale grouped table widths.', apply: 'table_width_scale: 1.5' }
 ] as const
 
 const modifierKeywordTemplates = [
@@ -228,9 +229,9 @@ const modifierKeywordTemplates = [
   { label: 'update:', detail: 'Set the ON UPDATE action for a reference.', apply: 'update: cascade' }
 ] as const
 
-const propertyKeySet = new Set(['x', 'y', 'width', 'height', 'color', 'collapsed', 'visible', 'masonry', 'table_columns', 'tablecolumns', 'columns'])
+const propertyKeySet = new Set(['x', 'y', 'width', 'height', 'color', 'collapsed', 'visible', 'masonry', 'table_columns', 'tablecolumns', 'columns', 'table_width_scale', 'tablewidthscale', 'table_width', 'tablewidth'])
 const booleanPropertyKeys = new Set(['collapsed', 'visible', 'masonry'])
-const numericPropertyKeys = new Set(['x', 'y', 'width', 'height', 'table_columns', 'tablecolumns', 'columns'])
+const numericPropertyKeys = new Set(['x', 'y', 'width', 'height', 'table_columns', 'tablecolumns', 'columns', 'table_width_scale', 'tablewidthscale', 'table_width', 'tablewidth'])
 const validColorPattern = /^#(?:[\da-f]{3}|[\da-f]{6})$/i
 let analysisCache: PgmlAnalysisCache | null = null
 

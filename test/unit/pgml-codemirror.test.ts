@@ -101,6 +101,7 @@ Domain email_address {
   color: #f59e0b
   masonry: true
   table_columns: 1
+  table_width_scale: 1.5
 }`
 
     const tokens = tokenizePgmlSource(source).filter(token => token.value.trim().length > 0)
@@ -120,6 +121,10 @@ Domain email_address {
       }),
       expect.objectContaining({
         value: 'table_columns',
+        type: 'propertyName'
+      }),
+      expect.objectContaining({
+        value: 'table_width_scale',
         type: 'propertyName'
       })
     ]))

@@ -778,6 +778,28 @@ test('canvas interactions keep the PGML editor source in sync', async ({ goto, p
 
   await expect.poll(async () => readPgmlEditorValue(editor)).toMatch(/Properties "group:Core" \{[\s\S]*table_columns: 2/)
 
+  const groupedTables = [
+    page.locator('[data-node-anchor="group:Core"] [data-table-anchor="public.tenants"]'),
+    page.locator('[data-node-anchor="group:Core"] [data-table-anchor="public.users"]')
+  ]
+  const getGroupedTableWidths = async () => {
+    return Promise.all(groupedTables.map((table) => {
+      return table.evaluate(element => Math.round(element.getBoundingClientRect().width))
+    }))
+  }
+  const [tenantsWidthBefore, usersWidthBefore] = await getGroupedTableWidths()
+
+  await page.getByLabel('Table width scale', { exact: true }).click()
+  await page.getByRole('option', { name: '1.5x' }).click()
+
+  await expect.poll(async () => readPgmlEditorValue(editor)).toMatch(/Properties "group:Core" \{[\s\S]*table_width_scale: 1.5/)
+  await expect.poll(async () => (await getGroupedTableWidths())[0]).toBeGreaterThan(tenantsWidthBefore)
+  await expect.poll(async () => (await getGroupedTableWidths())[1]).toBeGreaterThan(usersWidthBefore)
+
+  const [tenantsWidthAfter, usersWidthAfter] = await getGroupedTableWidths()
+
+  expect(tenantsWidthAfter).toBe(usersWidthAfter)
+
   const masonrySwitch = page.getByRole('switch', { name: 'Masonry' })
 
   await masonrySwitch.click()

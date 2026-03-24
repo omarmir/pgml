@@ -296,7 +296,7 @@ const readPgmlToken = (stream: StringStream, state: PgmlStreamState) => {
     return 'keyword'
   }
 
-  if (stream.match(/\b(?:pk|unique|not|null|default|note|ref|language|volatility|security|timing|events|level|function|arguments|as|base|start|increment|min|max|cache|cycle|owned_by|summary|writes|sets|depends_on|reads|calls|uses|visible|collapsed|masonry|table_columns|width|height|color|x|y)\b(?=\s|:|\])/)) {
+  if (stream.match(/\b(?:pk|unique|not|null|default|note|ref|language|volatility|security|timing|events|level|function|arguments|as|base|start|increment|min|max|cache|cycle|owned_by|summary|writes|sets|depends_on|reads|calls|uses|visible|collapsed|masonry|table_columns|table_width_scale|width|height|color|x|y)\b(?=\s|:|\])/)) {
     state.lastNamedTokenType = 'propertyName'
     state.lastPropertyName = stream.current()
     return 'propertyName'

@@ -25,6 +25,8 @@ test('studio saves, reloads, and downloads PGML with embedded layout', async ({ 
   await expect(page.locator('input[type="color"]')).toBeVisible()
   await page.locator('input[type="color"]').fill('#14b8a6')
   await page.getByRole('switch', { name: 'Masonry' }).click()
+  await page.getByLabel('Table width scale', { exact: true }).click()
+  await page.getByRole('option', { name: '1.5x' }).click()
   await page.getByRole('button', { name: 'Expand email_address' }).click()
   await expect(page.locator('[data-node-body="custom-type:Domain:email_address"]')).toBeVisible()
 
@@ -59,6 +61,7 @@ test('studio saves, reloads, and downloads PGML with embedded layout', async ({ 
   expect(savedSchemas[0]?.text).toContain('Properties "group:Core" {')
   expect(savedSchemas[0]?.text).toContain('color: #14b8a6')
   expect(savedSchemas[0]?.text).toContain('masonry: true')
+  expect(savedSchemas[0]?.text).toContain('table_width_scale: 1.5')
   expect(savedSchemas[0]?.text).toContain('Properties "custom-type:Domain:email_address" {')
   expect(savedSchemas[0]?.text).toContain('x:')
   expect(savedSchemas[0]?.text).toContain('y:')
@@ -79,6 +82,7 @@ test('studio saves, reloads, and downloads PGML with embedded layout', async ({ 
 
   await expect.poll(async () => readPgmlEditorValue(editor)).toMatch(/Properties "group:Core" \{/)
   await expect.poll(async () => readPgmlEditorValue(editor)).toMatch(/Properties "group:Core" \{[\s\S]*masonry: true/)
+  await expect.poll(async () => readPgmlEditorValue(editor)).toMatch(/Properties "group:Core" \{[\s\S]*table_width_scale: 1.5/)
   await expect(page.locator('[data-node-body="custom-type:Domain:email_address"]')).toBeVisible()
 
   await schemaMenuButton.click()
@@ -94,6 +98,7 @@ test('studio saves, reloads, and downloads PGML with embedded layout', async ({ 
   expect(download.suggestedFilename()).toBe('roundtrip-layout.pgml')
   expect(readFileSync(downloadPath!, 'utf8')).toContain('Properties "group:Core" {')
   expect(readFileSync(downloadPath!, 'utf8')).toContain('masonry: true')
+  expect(readFileSync(downloadPath!, 'utf8')).toContain('table_width_scale: 1.5')
 })
 
 test('entity visibility persists when a saved schema is reloaded', async ({ goto, page }) => {

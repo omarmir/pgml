@@ -18,6 +18,7 @@ Properties "public.users" {
   y: 84
   collapsed: false
   masonry: true
+  table_width_scale: 1.5
 }`
 
     const analysis = analyzePgmlDocument(source)
@@ -110,6 +111,28 @@ Enum public.language_preference {
       expect.objectContaining({
         label: 'Ref:',
         kind: 'keyword'
+      })
+    ]))
+  })
+
+  it('offers table width scale as a properties completion', () => {
+    const source = `TableGroup Core {
+  public.users
+}
+
+Table public.users in Core {
+  id uuid [pk]
+}
+
+Properties "group:Core" {
+  table_
+}`
+    const items = getPgmlCompletionItems(source, source.indexOf('table_') + 'table_'.length)
+
+    expect(items).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        label: 'table_width_scale',
+        kind: 'property'
       })
     ]))
   })

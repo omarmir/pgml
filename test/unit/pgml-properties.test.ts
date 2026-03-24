@@ -32,6 +32,7 @@ Properties "group:Core" {
   y: 96
   masonry: true
   table_columns: 2
+  table_width_scale: 1.5
 }`
 
     const model = parsePgml(source)
@@ -41,7 +42,8 @@ Properties "group:Core" {
       x: 144,
       y: 96,
       masonry: true,
-      tableColumns: 2
+      tableColumns: 2,
+      tableWidthScale: 1.5
     })
   })
 
@@ -153,7 +155,8 @@ Properties "group:Core" {
         x: 240,
         y: 180,
         masonry: true,
-        tableColumns: 2
+        tableColumns: 2,
+        tableWidthScale: 1.5
       },
       'custom-type:Domain:email_address': {
         color: '#f97316',
@@ -179,6 +182,7 @@ Properties "group:Core" {
     expect(built).not.toContain('width:')
     expect(built).not.toContain('height:')
     expect(built).toContain('table_columns: 2')
+    expect(built).toContain('table_width_scale: 1.5')
     expect(built).toContain('Properties "custom-type:Domain:email_address" {')
     expect(built).toContain('color: #f97316')
     expect(built).toContain('x: 1188')
@@ -194,6 +198,7 @@ Properties "group:Core" {
     expect(reparsed.nodeProperties['group:Core']?.color).toBe('#14b8a6')
     expect(reparsed.nodeProperties['group:Core']?.masonry).toBe(true)
     expect(reparsed.nodeProperties['group:Core']?.tableColumns).toBe(2)
+    expect(reparsed.nodeProperties['group:Core']?.tableWidthScale).toBe(1.5)
     expect(reparsed.nodeProperties['group:Core']?.width).toBeUndefined()
     expect(reparsed.nodeProperties['custom-type:Domain:email_address']?.collapsed).toBe(false)
     expect(reparsed.nodeProperties['custom-type:Domain:email_address']?.x).toBe(1188)

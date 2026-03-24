@@ -9,6 +9,7 @@ import {
   type PgmlSourceRange,
   type PgmlTable
 } from './pgml'
+import { hasStoredPgmlTableWidthScale } from './pgml-node-properties'
 
 export type PgmlEditableColumnDraft = {
   id: string
@@ -716,6 +717,7 @@ export const applyEditableGroupDraftToSource = (
       typeof nextProperties.collapsed === 'boolean',
       nextProperties.visible === false,
       typeof nextProperties.tableColumns === 'number',
+      hasStoredPgmlTableWidthScale(nextProperties.tableWidthScale),
       nextProperties.masonry === true
     ].some(Boolean)
 

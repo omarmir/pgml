@@ -56,6 +56,13 @@ import type {
 import { buildTableGroupMasonryLayout } from '~/utils/pgml-diagram-canvas'
 import { createAnimationFrameBatcher } from '~/utils/animation-frame'
 import {
+  defaultPgmlTableWidthScale,
+  hasStoredPgmlTableWidthScale,
+  normalizePgmlTableWidthScale,
+  type PgmlTableWidthScale,
+  pgmlTableWidthScaleValues
+} from '~/utils/pgml-node-properties'
+import {
   getStudioChoiceButtonClass,
   getStudioStateButtonClass,
   getStudioTabButtonClass,
@@ -132,6 +139,7 @@ type CanvasNodeState = {
   impactTargets?: ImpactTarget[]
   tableCount?: number
   columnCount?: number
+  tableWidthScale?: PgmlTableWidthScale
   note?: string | null
   minWidth?: number
   minHeight?: number
@@ -312,6 +320,12 @@ const exportTypeStyleItems = [
     value: 'loose'
   }
 ] satisfies Array<{ label: string, value: PgmlKyselyTypeStyle }>
+const tableWidthScaleItems = pgmlTableWidthScaleValues.map((value) => {
+  return {
+    label: `${value}x`,
+    value
+  }
+}) satisfies Array<{ label: string, value: number }>
 
 const palette = ['#8b5cf6', '#f59e0b', '#06b6d4', '#10b981', '#ef4444', '#ec4899', '#f97316']
 const schemaBadgePalette = ['#0f766e', '#f59e0b', '#2563eb', '#dc2626', '#7c3aed', '#0891b2', '#ea580c', '#65a30d']
@@ -726,6 +740,23 @@ const getGroupNodeColumnCount = (groupName: string) => {
   return getGroupSafeColumnCount(columnCount, tableCount)
 }
 
+const getScaledGroupTableWidth = (tableWidthScale: number | null | undefined) => {
+  return Math.round(groupTableWidth * normalizePgmlTableWidthScale(tableWidthScale))
+}
+
+const getGroupNodeTableWidthScale = (groupName: string) => {
+  const groupId = getStoredGroupId(groupName)
+  const tableWidthScale = nodeStates.value[groupId]?.tableWidthScale
+    ?? model.nodeProperties[groupId]?.tableWidthScale
+    ?? defaultPgmlTableWidthScale
+
+  return normalizePgmlTableWidthScale(tableWidthScale)
+}
+
+const getGroupNodeTableWidth = (groupName: string) => {
+  return getScaledGroupTableWidth(getGroupNodeTableWidthScale(groupName))
+}
+
 const groupTableLayouts = computed<Record<string, TableGroupMasonryLayout>>(() => {
   return model.groups.reduce<Record<string, TableGroupMasonryLayout>>((entries, group) => {
     entries[group.name] = buildTableGroupMasonryLayout(
@@ -734,7 +765,7 @@ const groupTableLayouts = computed<Record<string, TableGroupMasonryLayout>>(() =
         height: getGroupTableRenderHeight(table.fullName)
       })),
       getGroupNodeColumnCount(group.name),
-      groupTableWidth,
+      getGroupNodeTableWidth(group.name),
       groupTableGap
     )
     return entries
@@ -743,14 +774,16 @@ const groupTableLayouts = computed<Record<string, TableGroupMasonryLayout>>(() =
 
 const getGroupTableLayout = (groupName: string) => {
   return groupTableLayouts.value[groupName]
-    || buildTableGroupMasonryLayout([], 1, groupTableWidth, groupTableGap)
+    || buildTableGroupMasonryLayout([], 1, getGroupNodeTableWidth(groupName), groupTableGap)
 }
 
 const getGroupContentStyle = (node: CanvasNodeState): CSSProperties => {
+  const tableWidth = getScaledGroupTableWidth(node.tableWidthScale)
+
   if (node.kind !== 'group' || !node.masonry) {
     return {
       gap: `${groupTableGap}px`,
-      gridTemplateColumns: `repeat(${node.columnCount || 1}, ${groupTableWidth}px)`
+      gridTemplateColumns: `repeat(${node.columnCount || 1}, ${tableWidth}px)`
     }
   }
 
@@ -764,9 +797,11 @@ const getGroupContentStyle = (node: CanvasNodeState): CSSProperties => {
 }
 
 const getGroupTableLayoutStyle = (node: CanvasNodeState, tableId: string): CSSProperties => {
+  const tableWidth = getScaledGroupTableWidth(node.tableWidthScale)
+
   if (node.kind !== 'group' || !node.masonry) {
     return {
-      width: `${groupTableWidth}px`
+      width: `${tableWidth}px`
     }
   }
 
@@ -776,13 +811,19 @@ const getGroupTableLayoutStyle = (node: CanvasNodeState, tableId: string): CSSPr
     left: `${placement?.x || 0}px`,
     position: 'absolute',
     top: `${placement?.y || 0}px`,
-    width: `${groupTableWidth}px`
+    width: `${tableWidth}px`
   }
 }
 
-const getGroupMinimumSize = (groupName: string, columnCount: number, masonry = false) => {
+const getGroupMinimumSize = (
+  groupName: string,
+  columnCount: number,
+  masonry = false,
+  tableWidthScale: number | null | undefined = defaultPgmlTableWidthScale
+) => {
   const tables = getRenderedGroupTables(groupName)
   const safeColumnCount = getGroupSafeColumnCount(columnCount, tables.length)
+  const tableWidth = getScaledGroupTableWidth(tableWidthScale)
 
   if (masonry) {
     const layout = buildTableGroupMasonryLayout(
@@ -791,7 +832,7 @@ const getGroupMinimumSize = (groupName: string, columnCount: number, masonry = f
         height: getGroupTableRenderHeight(table.fullName)
       })),
       safeColumnCount,
-      groupTableWidth,
+      tableWidth,
       groupTableGap
     )
 
@@ -812,7 +853,7 @@ const getGroupMinimumSize = (groupName: string, columnCount: number, masonry = f
   const contentHeight = rowHeights.reduce((sum, height) => sum + height, 0) + Math.max(0, rowHeights.length - 1) * groupTableGap
 
   return {
-    minWidth: groupHorizontalPadding * 2 + safeColumnCount * groupTableWidth + Math.max(0, safeColumnCount - 1) * groupTableGap,
+    minWidth: groupHorizontalPadding * 2 + safeColumnCount * tableWidth + Math.max(0, safeColumnCount - 1) * groupTableGap,
     minHeight: groupHeaderHeight + groupVerticalPadding + contentHeight
   }
 }
@@ -1777,7 +1818,8 @@ const measureGroupMinimumSize = (groupId: string) => {
   const baselineSize = getGroupMinimumSize(
     groupId.replace(/^group:/, ''),
     groupState?.columnCount || 1,
-    groupState?.masonry ?? false
+    groupState?.masonry ?? false,
+    groupState?.tableWidthScale
   )
   const wrapperStyles = contentWrapper ? window.getComputedStyle(contentWrapper) : null
   const paddingRight = wrapperStyles ? Number.parseFloat(wrapperStyles.paddingRight) : 0
@@ -4089,8 +4131,11 @@ const syncNodeStates = () => {
       tables.length
     )
     const masonry = storedLayout?.masonry ?? existing?.masonry ?? false
+    const tableWidthScale = normalizePgmlTableWidthScale(
+      storedLayout?.tableWidthScale ?? existing?.tableWidthScale ?? defaultPgmlTableWidthScale
+    )
     const note = model.groups.find(group => group.name === groupName)?.note || null
-    const minimumSize = getGroupMinimumSize(groupName, columnCount, masonry)
+    const minimumSize = getGroupMinimumSize(groupName, columnCount, masonry, tableWidthScale)
 
     groupNodes.push({
       id: groupId,
@@ -4109,6 +4154,7 @@ const syncNodeStates = () => {
       tableIds: tables.map(table => table.fullName),
       tableCount: tables.length,
       columnCount,
+      tableWidthScale,
       note,
       minWidth: minimumSize.minWidth,
       minHeight: minimumSize.minHeight,
@@ -6126,6 +6172,10 @@ const normalizeStoredNodeProperties = (properties: PgmlNodeProperties) => {
     normalized.tableColumns = Math.max(1, Math.round(properties.tableColumns))
   }
 
+  if (hasStoredPgmlTableWidthScale(properties.tableWidthScale)) {
+    normalized.tableWidthScale = normalizePgmlTableWidthScale(properties.tableWidthScale)
+  }
+
   return normalized
 }
 
@@ -6138,6 +6188,7 @@ const hasStoredNodeProperties = (properties: PgmlNodeProperties) => {
     || properties.visible === false
     || properties.masonry === true
     || typeof properties.tableColumns === 'number'
+    || hasStoredPgmlTableWidthScale(properties.tableWidthScale)
   )
 }
 
@@ -6162,6 +6213,12 @@ const getNodeLayoutProperties = () => {
       nextProperties.x = Math.round(node.x)
       nextProperties.y = Math.round(node.y)
       nextProperties.tableColumns = Math.max(1, Math.round(node.columnCount || 1))
+
+      if (hasStoredPgmlTableWidthScale(node.tableWidthScale)) {
+        nextProperties.tableWidthScale = normalizePgmlTableWidthScale(node.tableWidthScale)
+      } else {
+        delete nextProperties.tableWidthScale
+      }
 
       if (node.masonry) {
         nextProperties.masonry = true
@@ -6196,6 +6253,16 @@ const getNodeLayoutProperties = () => {
 
 const emitNodePropertiesChange = () => {
   emit('nodePropertiesChange', getNodeLayoutProperties())
+}
+
+const updateGroupTableWidthScale = (id: string, value: string | number | null | undefined) => {
+  const nextValue = typeof value === 'number'
+    ? value
+    : Number.parseFloat(String(value ?? defaultPgmlTableWidthScale))
+
+  updateNode(id, {
+    tableWidthScale: normalizePgmlTableWidthScale(nextValue)
+  })
 }
 
 const updateEntityVisibility = (id: string, visible: boolean) => {
@@ -6284,9 +6351,12 @@ const updateNode = (
     const minimumSize = getGroupMinimumSize(
       current.id.replace('group:', ''),
       nextNode.columnCount || 1,
-      nextNode.masonry ?? false
+      nextNode.masonry ?? false,
+      nextNode.tableWidthScale
     )
-    const resetGroupSize = typeof partial.columnCount === 'number' || typeof partial.masonry === 'boolean'
+    const resetGroupSize = typeof partial.columnCount === 'number'
+      || typeof partial.masonry === 'boolean'
+      || typeof partial.tableWidthScale === 'number'
     const nextGroupWidth = resetGroupSize
       ? minimumSize.minWidth
       : Math.max(nextNode.width, minimumSize.minWidth)
@@ -7381,6 +7451,26 @@ defineExpose<{
               @update:model-value="updateNode(selectedNode.id, { masonry: Boolean($event) })"
             />
           </div>
+
+          <label
+            v-if="selectedNode.kind === 'group'"
+            class="grid gap-1"
+          >
+            <span class="font-mono text-[0.58rem] uppercase tracking-[0.08em] text-[color:var(--studio-shell-label)]">Table Width</span>
+            <USelect
+              aria-label="Table width scale"
+              :items="tableWidthScaleItems"
+              :model-value="selectedNode.tableWidthScale ?? defaultPgmlTableWidthScale"
+              data-group-table-width-scale-select="true"
+              value-key="value"
+              label-key="label"
+              color="neutral"
+              variant="outline"
+              size="sm"
+              :ui="studioSelectUi"
+              @update:model-value="updateGroupTableWidthScale(selectedNode.id, $event)"
+            />
+          </label>
 
           <label
             v-if="selectedNode.kind === 'group'"
