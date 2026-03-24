@@ -54,6 +54,7 @@ import type {
   TableRow
 } from '~/utils/pgml-diagram-canvas'
 import { buildTableGroupMasonryLayout } from '~/utils/pgml-diagram-canvas'
+import { createAnimationFrameBatcher } from '~/utils/animation-frame'
 import {
   getStudioChoiceButtonClass,
   getStudioStateButtonClass,
@@ -247,6 +248,7 @@ type DiagramExportFormat = 'svg' | 'png'
 const planeRef: Ref<HTMLDivElement | null> = ref(null)
 const viewportRef: Ref<HTMLDivElement | null> = ref(null)
 const scale: Ref<number> = ref(0.62)
+const displayScale: Ref<number> = ref(scale.value)
 const pan: Ref<{ x: number, y: number }> = ref({
   x: 30,
   y: 36
@@ -260,6 +262,8 @@ const isDesktopSidePanelOpen: Ref<boolean> = ref(true)
 const activePanelTab: Ref<DiagramPanelTab> = ref('inspector')
 const touchPanSession: Ref<TouchPanSession | null> = ref(null)
 const touchPinchSession: Ref<TouchPinchSession | null> = ref(null)
+const viewportTransformBatcher = createAnimationFrameBatcher()
+const connectionRefreshBatcher = createAnimationFrameBatcher()
 const entitySearchQuery: Ref<string> = ref('')
 const exportPreferences: Ref<PgmlExportPreferences> = ref({
   ...defaultPgmlExportPreferences
@@ -818,6 +822,7 @@ const waitForAnimationFrame = () => {
 }
 
 const waitForCanvasRender = async () => {
+  flushViewportTransformSync()
   await nextTick()
   updateConnections()
   await nextTick()
@@ -2011,7 +2016,7 @@ const handleCanvasLayoutResize = () => {
         reflowAutoLayout()
       }
 
-      updateConnections()
+      scheduleConnectionRefresh()
     })
     return
   }
@@ -2020,7 +2025,7 @@ const handleCanvasLayoutResize = () => {
     reflowAutoLayout()
   }
 
-  updateConnections()
+  scheduleConnectionRefresh()
 }
 
 useResizeObserver(layoutObserverTargets, handleCanvasLayoutResize)
@@ -4233,11 +4238,50 @@ const getImpactAnchorElement = (nodeId: string, tableId: string) => {
     || planeRef.value.querySelector(`[data-node-anchor="${nodeId}"]`)
   )
 }
+const syncViewportTransform = () => {
+  if (!planeRef.value) {
+    return
+  }
+
+  planeRef.value.style.setProperty('--pgml-plane-pan-x', `${pan.value.x}px`)
+  planeRef.value.style.setProperty('--pgml-plane-pan-y', `${pan.value.y}px`)
+  planeRef.value.style.setProperty('--pgml-plane-scale', String(scale.value))
+  displayScale.value = scale.value
+}
+const scheduleViewportTransformSync = () => {
+  viewportTransformBatcher.schedule(() => {
+    syncViewportTransform()
+  })
+}
+const flushViewportTransformSync = () => {
+  viewportTransformBatcher.flush()
+}
+const setViewportPan = (nextPan: { x: number, y: number }) => {
+  pan.value = nextPan
+  scheduleViewportTransformSync()
+}
+const setViewportTransform = (nextPan: { x: number, y: number }, nextScale: number) => {
+  pan.value = nextPan
+  scale.value = nextScale
+  scheduleViewportTransformSync()
+}
+const setViewportScale = (nextScale: number) => {
+  scale.value = nextScale
+  scheduleViewportTransformSync()
+}
+const scheduleConnectionRefresh = () => {
+  connectionRefreshBatcher.schedule(() => {
+    updateConnections()
+  })
+}
 const canvasViewportStyle = {
   borderColor: 'var(--studio-shell-border)',
   backgroundColor: 'var(--studio-canvas-bg)',
   backgroundImage: 'radial-gradient(circle at center, var(--studio-canvas-dot) 1px, transparent 1px)',
   backgroundSize: '18px 18px'
+}
+const canvasPlaneStyle: CSSProperties = {
+  transform: `translate(var(--pgml-plane-pan-x, ${pan.value.x}px), var(--pgml-plane-pan-y, ${pan.value.y}px)) scale(var(--pgml-plane-scale, ${scale.value}))`
 }
 const floatingPanelStyle = {
   borderColor: 'var(--studio-control-border)',
@@ -5638,6 +5682,8 @@ const buildPathBetween = (
 }
 
 const updateConnections = () => {
+  flushViewportTransformSync()
+
   if (!planeRef.value) {
     return
   }
@@ -5898,18 +5944,17 @@ const zoomToScale = (nextScale: number, pivot: { x: number, y: number } | null =
   suppressLayoutObserver()
 
   if (!pivot) {
-    scale.value = normalizedScale
+    setViewportScale(normalizedScale)
     return
   }
 
   const planeX = (pivot.x - pan.value.x) / scale.value
   const planeY = (pivot.y - pan.value.y) / scale.value
 
-  scale.value = normalizedScale
-  pan.value = {
+  setViewportTransform({
     x: Math.round(pivot.x - planeX * normalizedScale),
     y: Math.round(pivot.y - planeY * normalizedScale)
-  }
+  }, normalizedScale)
 }
 
 const zoomBy = (direction: 1 | -1, pivot: { x: number, y: number } | null = null) => {
@@ -5944,11 +5989,10 @@ const fitView = () => {
   )
 
   suppressLayoutObserver()
-  scale.value = nextScale
-  pan.value = {
+  setViewportTransform({
     x: Math.round(padding.left + (availableWidth - bounds.width * nextScale) / 2 - bounds.minX * nextScale),
     y: Math.round(padding.top + (availableHeight - bounds.height * nextScale) / 2 - bounds.minY * nextScale)
-  }
+  }, nextScale)
 }
 
 const resetView = () => {
@@ -6182,7 +6226,7 @@ const updateNode = (
       syncMeasuredNodeSizes()
     }
 
-    updateConnections()
+    scheduleConnectionRefresh()
   })
 }
 
@@ -6227,11 +6271,12 @@ const startPan = (event: PointerEvent) => {
   }
 
   startPointerSession({
+    frameThrottle: true,
     onMove: (moveEvent) => {
-      pan.value = {
+      setViewportPan({
         x: origin.panX + moveEvent.clientX - origin.x,
         y: origin.panY + moveEvent.clientY - origin.y
-      }
+      })
     }
   })
 }
@@ -6295,8 +6340,7 @@ const handleTouchMove = (event: TouchEvent) => {
     })
 
     suppressLayoutObserver()
-    pan.value = transform.pan
-    scale.value = transform.scale
+    setViewportTransform(transform.pan, transform.scale)
     return
   }
 
@@ -6307,10 +6351,10 @@ const handleTouchMove = (event: TouchEvent) => {
   }
 
   event.preventDefault()
-  pan.value = {
+  setViewportPan({
     x: touchPanSession.value.panX + touch.clientX - touchPanSession.value.clientX,
     y: touchPanSession.value.panY + touch.clientY - touchPanSession.value.clientY
-  }
+  })
 }
 
 const handleTouchEnd = (event: TouchEvent) => {
@@ -6380,6 +6424,7 @@ const startDragNode = (event: PointerEvent, id: string) => {
   }
 
   startPointerSession({
+    frameThrottle: true,
     onMove: (moveEvent) => {
       updateNode(id, {
         x: snapCoordinate(origin.nodeX + (moveEvent.clientX - origin.x) / scale.value),
@@ -6420,11 +6465,13 @@ const startResizeNode = (event: PointerEvent, id: string) => {
   }
 
   startPointerSession({
+    frameThrottle: true,
     onMove: (moveEvent) => {
       updateNode(id, {
         width: Math.max(origin.minWidth, origin.width + (moveEvent.clientX - origin.x) / scale.value),
         height: Math.max(origin.minHeight, origin.height + (moveEvent.clientY - origin.y) / scale.value)
       }, {
+        remeasure: false,
         emitNodeProperties: false
       })
     },
@@ -6582,7 +6629,7 @@ watch(
   selectedCanvasSelection,
   () => {
     nextTick(() => {
-      updateConnections()
+      scheduleConnectionRefresh()
     })
   },
   { deep: true }
@@ -6597,6 +6644,8 @@ watch(
 )
 
 onMounted(() => {
+  syncViewportTransform()
+
   nextTick(async () => {
     await syncLayoutObserverTargets()
     await refreshMeasuredGroupTableHeights()
@@ -6621,6 +6670,8 @@ onMounted(() => {
 onBeforeUnmount(() => {
   stopExportCopyFeedbackReset()
   resetTouchInteraction()
+  viewportTransformBatcher.cancel()
+  connectionRefreshBatcher.cancel()
 })
 
 defineExpose<{
@@ -6660,9 +6711,7 @@ defineExpose<{
       ref="planeRef"
       data-diagram-plane="true"
       class="relative h-[1800px] w-[2600px] origin-top-left"
-      :style="{
-        transform: `translate(${pan.x}px, ${pan.y}px) scale(${scale})`
-      }"
+      :style="canvasPlaneStyle"
     >
       <div
         v-for="node in canvasNodes"
@@ -6986,7 +7035,7 @@ defineExpose<{
           @click="zoomBy(-1)"
         />
         <div class="min-w-[52px] text-center font-mono text-[0.7rem] text-[color:var(--studio-shell-text)]">
-          {{ Math.round(scale * 100) }}%
+          {{ Math.round(displayScale * 100) }}%
         </div>
         <UButton
           icon="i-lucide-zoom-in"

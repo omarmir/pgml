@@ -1,17 +1,20 @@
 import { useEventListener } from '@vueuse/core'
+import { createAnimationFrameBatcher } from '~/utils/animation-frame'
 
 type PointerSessionOptions = {
+  frameThrottle?: boolean
   onEnd?: () => void
   onMove: (event: PointerEvent) => void
 }
 
 export const useWindowPointerSession = () => {
-  const startPointerSession = ({ onEnd, onMove }: PointerSessionOptions) => {
+  const startPointerSession = ({ frameThrottle = false, onEnd, onMove }: PointerSessionOptions) => {
     if (!import.meta.client) {
       return
     }
 
     let isActive = true
+    const moveBatcher = createAnimationFrameBatcher()
     let stopMoveListener = () => {}
     let stopUpListener = () => {}
     let stopCancelListener = () => {}
@@ -22,13 +25,29 @@ export const useWindowPointerSession = () => {
       }
 
       isActive = false
+      moveBatcher.flush()
       stopMoveListener()
       stopUpListener()
       stopCancelListener()
       onEnd?.()
     }
 
-    stopMoveListener = useEventListener(window, 'pointermove', onMove, {
+    const handleMove = (event: PointerEvent) => {
+      if (!isActive) {
+        return
+      }
+
+      if (!frameThrottle) {
+        onMove(event)
+        return
+      }
+
+      moveBatcher.schedule(() => {
+        onMove(event)
+      })
+    }
+
+    stopMoveListener = useEventListener(window, 'pointermove', handleMove, {
       passive: true
     })
     stopUpListener = useEventListener(window, 'pointerup', stopSession, {
