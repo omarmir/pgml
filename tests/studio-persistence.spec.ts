@@ -24,6 +24,9 @@ test('studio saves, reloads, and downloads PGML with embedded layout', async ({ 
   await page.locator('[data-node-anchor="group:Core"]').dispatchEvent('click')
   await expect(page.locator('input[type="color"]')).toBeVisible()
   await page.locator('input[type="color"]').fill('#14b8a6')
+  await page.getByRole('switch', { name: 'Masonry' }).click()
+  await page.getByLabel('Table width scale', { exact: true }).click()
+  await page.getByRole('option', { name: '1.5x' }).click()
   await page.getByRole('button', { name: 'Expand email_address' }).click()
   await expect(page.locator('[data-node-body="custom-type:Domain:email_address"]')).toBeVisible()
 
@@ -57,6 +60,8 @@ test('studio saves, reloads, and downloads PGML with embedded layout', async ({ 
   expect(savedSchemas[0]?.name).toBe('Roundtrip layout')
   expect(savedSchemas[0]?.text).toContain('Properties "group:Core" {')
   expect(savedSchemas[0]?.text).toContain('color: #14b8a6')
+  expect(savedSchemas[0]?.text).toContain('masonry: true')
+  expect(savedSchemas[0]?.text).toContain('table_width_scale: 1.5')
   expect(savedSchemas[0]?.text).toContain('Properties "custom-type:Domain:email_address" {')
   expect(savedSchemas[0]?.text).toContain('x:')
   expect(savedSchemas[0]?.text).toContain('y:')
@@ -76,6 +81,8 @@ test('studio saves, reloads, and downloads PGML with embedded layout', async ({ 
   await page.getByRole('button', { name: 'Load' }).click()
 
   await expect.poll(async () => readPgmlEditorValue(editor)).toMatch(/Properties "group:Core" \{/)
+  await expect.poll(async () => readPgmlEditorValue(editor)).toMatch(/Properties "group:Core" \{[\s\S]*masonry: true/)
+  await expect.poll(async () => readPgmlEditorValue(editor)).toMatch(/Properties "group:Core" \{[\s\S]*table_width_scale: 1.5/)
   await expect(page.locator('[data-node-body="custom-type:Domain:email_address"]')).toBeVisible()
 
   await schemaMenuButton.click()
@@ -90,6 +97,8 @@ test('studio saves, reloads, and downloads PGML with embedded layout', async ({ 
 
   expect(download.suggestedFilename()).toBe('roundtrip-layout.pgml')
   expect(readFileSync(downloadPath!, 'utf8')).toContain('Properties "group:Core" {')
+  expect(readFileSync(downloadPath!, 'utf8')).toContain('masonry: true')
+  expect(readFileSync(downloadPath!, 'utf8')).toContain('table_width_scale: 1.5')
 })
 
 test('entity visibility persists when a saved schema is reloaded', async ({ goto, page }) => {
@@ -216,6 +225,75 @@ test('studio autosaves changes to local storage and updates the header status ic
   })
 })
 
+test('standalone function collapse toggles autosave and persists embedded PGML properties', async ({ goto, page }) => {
+  await goto('/diagram')
+
+  const editor = getPgmlEditor(page)
+  const source = `Function orphan_report() {
+  language: sql
+  source: $sql$
+    select 1;
+  $sql$
+}`
+
+  await setPgmlEditorValue(editor, source)
+  await expect(page.locator('[data-node-anchor="function:orphan_report"]')).toBeVisible()
+  await expect.poll(async () => {
+    return page.locator('[data-studio-schema-status]').getAttribute('data-studio-schema-status')
+  }, {
+    timeout: 8000
+  }).toBe('saved')
+
+  await page.getByRole('button', { name: 'Expand orphan_report' }).click()
+  await expect(page.locator('[data-node-body="function:orphan_report"]')).toBeVisible()
+  await expect(page.locator('[data-studio-schema-status]')).toHaveAttribute('data-studio-schema-status', 'pending')
+  await expect.poll(async () => readPgmlEditorValue(editor), {
+    timeout: 8000
+  }).toMatch(/Properties "function:orphan_report" \{[\s\S]*collapsed: false/)
+  await expect.poll(async () => {
+    const savedSchemas = await page.evaluate(() => {
+      return JSON.parse(window.localStorage.getItem('pgml-studio-schemas-v1') || '[]')
+    })
+    const status = await page.locator('[data-studio-schema-status]').getAttribute('data-studio-schema-status')
+
+    return {
+      count: savedSchemas.length,
+      status,
+      text: savedSchemas[0]?.text || ''
+    }
+  }, {
+    timeout: 8000
+  }).toEqual({
+    count: 1,
+    status: 'saved',
+    text: expect.stringMatching(/Properties "function:orphan_report" \{[\s\S]*collapsed: false/)
+  })
+
+  await page.getByRole('button', { name: 'Collapse orphan_report' }).click()
+  await expect(page.locator('[data-node-body="function:orphan_report"]')).toHaveCount(0)
+  await expect.poll(async () => readPgmlEditorValue(editor), {
+    timeout: 8000
+  }).toMatch(/Properties "function:orphan_report" \{[\s\S]*collapsed: true/)
+  await expect.poll(async () => {
+    const savedSchemas = await page.evaluate(() => {
+      return JSON.parse(window.localStorage.getItem('pgml-studio-schemas-v1') || '[]')
+    })
+    const status = await page.locator('[data-studio-schema-status]').getAttribute('data-studio-schema-status')
+
+    return {
+      count: savedSchemas.length,
+      status,
+      text: savedSchemas[0]?.text || ''
+    }
+  }, {
+    timeout: 8000
+  }).toEqual({
+    count: 1,
+    status: 'saved',
+    text: expect.stringMatching(/Properties "function:orphan_report" \{[\s\S]*collapsed: true/)
+  })
+})
+
 test('browser-backed save failures show a toast', async ({ goto, page }) => {
   await goto('/diagram')
 
@@ -313,6 +391,63 @@ test('file-backed save asks for permission again after access is reset', async (
   await page.getByRole('menuitem', { name: 'Save schema' }).click()
   await page.getByRole('button', { name: 'Save to file' }).click()
 
+  await expect.poll(async () => {
+    const state = await readMockComputerFileState(page)
+
+    return recentFileId ? state?.files[recentFileId]?.text || '' : ''
+  }).toContain('status text')
+})
+
+test('android-style file sessions keep edits pending until an explicit save', async ({ goto, page }) => {
+  await page.addInitScript(() => {
+    Object.defineProperty(window.navigator, 'userAgent', {
+      configurable: true,
+      get: () => 'Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Mobile Safari/537.36'
+    })
+  })
+  await installMockComputerFiles(page)
+  await page.setViewportSize({
+    width: 390,
+    height: 844
+  })
+  await goto('/')
+  const recentFileId = await primeMockComputerFile(page, {
+    fileName: 'android-file.pgml',
+    text: 'Table public.android_schema {\n  id uuid [pk]\n}',
+    updatedAt: '2026-03-20T11:00:00.000Z'
+  })
+
+  await goto(`/diagram?source=file&launch=recent&file=${recentFileId}`)
+
+  const editor = getPgmlEditor(page)
+
+  await expect.poll(async () => readPgmlEditorValue(editor)).toContain('Table public.android_schema')
+  await setPgmlEditorValue(editor, 'Table public.android_schema {\n  id uuid [pk]\n  status text\n}')
+  await page.waitForTimeout(6000)
+
+  await expect.poll(async () => {
+    const state = await readMockComputerFileState(page)
+
+    return recentFileId ? state?.files[recentFileId]?.text || '' : ''
+  }).not.toContain('status text')
+  await expect(page.locator('body')).not.toContainText(
+    'File access needs to be restored before PGML can save again. Use Save to grant permission again.'
+  )
+  await expect(page.locator('body')).toContainText(
+    'Changes are pending. Use Save to write them to the selected file on mobile Chrome.'
+  )
+
+  await page.setViewportSize({
+    width: 1280,
+    height: 844
+  })
+  await page.getByRole('button', { name: 'Schema' }).click()
+  await page.getByRole('menuitem', { name: 'Save schema' }).click()
+  await page.getByRole('button', { name: 'Save to file' }).click()
+
+  await expect(
+    page.getByLabel('Notifications (F8)').getByText('Saved to the selected file.', { exact: true })
+  ).toBeVisible()
   await expect.poll(async () => {
     const state = await readMockComputerFileState(page)
 

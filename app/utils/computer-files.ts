@@ -95,6 +95,10 @@ type PgmlComputerFileWindow = Window & {
   showSaveFilePicker?: PgmlFileSystemAccessApi['showSaveFilePicker']
 }
 
+type PgmlPassiveRecentComputerFileWriteSupportOptions = {
+  userAgent?: string | null
+}
+
 const pgmlComputerFileDatabaseName = 'pgml-computer-files-v1'
 const pgmlComputerFileStoreName = 'recent-files'
 const pgmlFileTypeFilters: PgmlFilePickerType[] = [{
@@ -112,6 +116,12 @@ const getClientWindow = () => {
   }
 
   return window as PgmlComputerFileWindow
+}
+
+const getUserAgent = () => {
+  const candidateWindow = getClientWindow()
+
+  return candidateWindow?.navigator.userAgent || ''
 }
 
 const getDateValue = (value: string) => {
@@ -143,6 +153,14 @@ export const ensurePgmlFileName = (value: string) => {
   const safeValue = trimmedValue.length > 0 ? trimmedValue : pgmlFileFallbackName
 
   return safeValue.toLowerCase().endsWith('.pgml') ? safeValue : `${safeValue}.pgml`
+}
+
+export const supportsPassiveRecentComputerFileWrites = (
+  options?: PgmlPassiveRecentComputerFileWriteSupportOptions
+) => {
+  const userAgent = options?.userAgent ?? getUserAgent()
+
+  return !/Android/iu.test(userAgent)
 }
 
 const isAbortError = (value: unknown) => {
@@ -456,11 +474,16 @@ export const createComputerPgmlFile = async (
     await writeComputerFileText(handle, input.text)
 
     const nextRecord = await upsertRecentComputerFileRecord(handle, store)
+    const loadedFile = await loadRecentComputerPgmlFile(nextRecord.id, {
+      store
+    })
 
-    return {
-      entry: toRecentComputerFile(nextRecord),
-      text: input.text
+    if (!loadedFile) {
+      await store.delete(nextRecord.id)
+      return null
     }
+
+    return loadedFile
   } catch (error) {
     if (isAbortError(error)) {
       return null

@@ -8,7 +8,8 @@ import {
   createEditableGroupDraft,
   createEditableGroupDraftForCreate,
   createEditableTableDraft,
-  createEditableTableDraftForGroup
+  createEditableTableDraftForGroup,
+  getEditableGroupDraftErrors
 } from '../../app/utils/pgml-table-editor'
 
 const source = `TableGroup Core {
@@ -83,6 +84,7 @@ describe('PGML table editor', () => {
 
     draft.name = 'Billing'
     draft.note = 'Invoices and payouts'
+    draft.color = '#0f766e'
 
     const nextSource = applyEditableGroupDraftToSource(source, model, draft)
     const nextModel = parsePgml(nextSource)
@@ -95,12 +97,14 @@ describe('PGML table editor', () => {
       note: 'Invoices and payouts',
       tableNames: []
     }))
+    expect(nextModel.nodeProperties['group:Billing']?.color).toBe('#0f766e')
   })
 
   it('renames a group, keeps its members, and migrates stored group properties', () => {
     const sourceWithProperties = `${source}
 
 Properties "group:Core" {
+  color: #14b8a6
   x: 120
   y: 90
 }`
@@ -111,17 +115,24 @@ Properties "group:Core" {
       throw new Error('Expected Core group in test model.')
     }
 
-    const draft = createEditableGroupDraft(coreGroup)
+    const draft = createEditableGroupDraft(coreGroup, model)
 
     draft.name = 'Identity'
     draft.note = 'Shared auth and tenant ownership.'
+    draft.color = '#f97316'
 
     const nextSource = applyEditableGroupDraftToSource(sourceWithProperties, model, draft)
+    const nextModel = parsePgml(nextSource)
 
     expect(nextSource).toContain('TableGroup Identity {\n  public.users\n  Note: Shared auth and tenant ownership.\n}')
     expect(nextSource).toContain('Table public.users in Identity {')
     expect(nextSource).toContain('Properties "group:Identity" {')
     expect(nextSource).not.toContain('Properties "group:Core" {')
+    expect(nextModel.nodeProperties['group:Identity']).toEqual({
+      color: '#f97316',
+      x: 120,
+      y: 90
+    })
   })
 
   it('reassigns tables through the group editor and keeps table headers aligned', () => {
@@ -196,5 +207,58 @@ Table billing.users {
 
     expect(nextSource).toContain('TableGroup Core {\n  public.users\n  billing.users\n}')
     expect(nextSource).toContain('Table billing.users in Core {')
+  })
+
+  it('persists reference delete and update actions through the table editor draft', () => {
+    const sourceWithReference = `Table public.users {
+  id uuid [pk]
+}
+
+Table public.orders {
+  id uuid [pk]
+  customer_id uuid [ref: > public.users.id]
+}`
+    const model = parsePgml(sourceWithReference)
+    const ordersTable = model.tables.find(table => table.fullName === 'public.orders')
+
+    if (!ordersTable) {
+      throw new Error('Expected orders table in test model.')
+    }
+
+    const draft = createEditableTableDraft(ordersTable)
+
+    draft.columns[1]!.referenceDeleteAction = 'restrict'
+    draft.columns[1]!.referenceUpdateAction = 'cascade'
+
+    const nextSource = applyEditableTableDraftToSource(sourceWithReference, model, draft)
+
+    expect(nextSource).toContain('customer_id uuid [ref: > public.users.id, delete: restrict, update: cascade]')
+  })
+
+  it('seeds the group editor draft from persisted group color properties', () => {
+    const sourceWithProperties = `${source}
+
+Properties "group:Core" {
+  color: #14b8a6
+  x: 120
+  y: 90
+}`
+    const model = parsePgml(sourceWithProperties)
+    const coreGroup = model.groups.find(group => group.name === 'Core')
+
+    if (!coreGroup) {
+      throw new Error('Expected Core group in test model.')
+    }
+
+    expect(createEditableGroupDraft(coreGroup, model).color).toBe('#14b8a6')
+  })
+
+  it('requires a valid hex group color in the editor draft', () => {
+    const draft = createEditableGroupDraftForCreate()
+
+    draft.name = 'Core'
+    draft.color = 'teal'
+
+    expect(getEditableGroupDraftErrors(draft)).toContain('Group color must use a 3- or 6-digit hex value.')
   })
 })

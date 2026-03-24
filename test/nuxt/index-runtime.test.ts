@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { readSourceFile } from './source-test-utils'
 
 describe('Index page source', () => {
-  it('wires the browser and computer-file launch flows while keeping hosted database unfinished', () => {
+  it('wires the launch flows and routes pg_dump imports through the modal for browser, file, and hosted lanes', () => {
     const file = readSourceFile('app/pages/index.vue')
 
     expect(file).toContain('const sourceCards = computed<SourceCardDefinition[]>(() => {')
@@ -16,14 +16,21 @@ describe('Index page source', () => {
     expect(file).toContain('buildBrowserStudioNewQuery')
     expect(file).toContain('buildBrowserStudioSavedQuery')
     expect(file).toContain('buildFileStudioRecentQuery')
+    expect(file).toContain('convertPgDumpToPgml')
+    expect(file).toContain('createBrowserSchemaFromImport')
+    expect(file).toContain('submitPgDumpImport')
+    expect(file).toContain('pgDumpImportTargetByCardId')
     expect(file).toContain('studioSessionStore.authorizeLaunchAccess()')
     expect(file).toContain('studioSessionStore.primePreloadedFileLaunch(')
     expect(file).toContain('studioSourcesStore.refreshBrowserSchemas()')
     expect(file).toContain('studioSourcesStore.refreshRecentComputerFiles()')
+    expect(file).toContain('studioSourcesStore.createBrowserSchema(')
     expect(file).toContain('onBeforeRouteLeave((to) => {')
     expect(file).toContain('delete-saved-schema')
     expect(file).toContain('delete-recent-computer-file')
+    expect(file).toContain('open-pg-dump-import')
     expect(file).toContain('computerFileAccessDialogOpen')
+    expect(file).toContain('pgDumpImportDialogOpen')
     expect(file).toContain('Allow computer file access')
     expect(file).toContain('@action="handleSourceCardAction"')
     expect(file).toContain('const specBannerButtonClass = studioButtonClasses.ghost')

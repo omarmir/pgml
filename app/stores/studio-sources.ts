@@ -1,3 +1,4 @@
+import { nanoid } from 'nanoid'
 import { ref, type Ref } from 'vue'
 import { defineStore } from 'pinia'
 import type { PgmlRecentComputerFile } from '../utils/computer-files'
@@ -6,6 +7,7 @@ import {
   listRecentComputerPgmlFiles
 } from '../utils/computer-files'
 import {
+  normalizeSchemaName,
   orderSavedSchemas,
   persistSavedPgmlSchemasToBrowserStorage,
   readSavedPgmlSchemasFromBrowserStorage,
@@ -72,6 +74,24 @@ export const useStudioSourcesStore = defineStore('studio-sources', () => {
     return persistBrowserSchemas(browserSchemas.value.filter(schema => schema.id !== schemaId))
   }
 
+  const createBrowserSchema = (input: {
+    name: string
+    text: string
+  }) => {
+    const nextSchema: SavedPgmlSchema = {
+      id: nanoid(),
+      name: normalizeSchemaName(input.name),
+      text: input.text,
+      updatedAt: new Date().toISOString()
+    }
+
+    if (!persistBrowserSchemas([nextSchema, ...browserSchemas.value])) {
+      return null
+    }
+
+    return nextSchema
+  }
+
   const refreshRecentComputerFiles = async () => {
     isRefreshingRecentComputerFiles.value = true
 
@@ -115,6 +135,7 @@ export const useStudioSourcesStore = defineStore('studio-sources', () => {
   return {
     browserSchemas,
     browserSchemasError,
+    createBrowserSchema,
     deleteBrowserSchema,
     deleteRecentComputerFile,
     isRefreshingBrowserSchemas,

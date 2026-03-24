@@ -25,4 +25,10 @@ describe('diagram layering utilities', () => {
     expect(getDiagramConnectionZIndex(1, 4)).toBeLessThan(getDiagramNodeZIndex(1))
     expect(getDiagramConnectionZIndex(1, 4)).toBeLessThan(getDiagramNodeZIndex(4))
   })
+
+  it('elevates selected table reference connections above every node foreground layer', () => {
+    expect(getDiagramConnectionZIndex(1, 1, true)).toBeGreaterThan(getDiagramNodeZIndex(1))
+    expect(getDiagramConnectionZIndex(1, 4, true)).toBeGreaterThan(getDiagramNodeZIndex(4))
+    expect(getDiagramConnectionZIndex(10, 25, true)).toBeGreaterThan(getDiagramNodeZIndex(1000))
+  })
 })

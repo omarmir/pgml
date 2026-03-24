@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { useClipboard, useResizeObserver, useTimeoutFn } from '@vueuse/core'
-import { studioSelectUi } from '~/constants/ui'
+import type { CSSProperties } from 'vue'
+import { studioSelectUi, studioSwitchUi } from '~/constants/ui'
 import type {
   PgmlCustomType,
   PgmlNodeProperties,
@@ -9,6 +10,7 @@ import type {
   PgmlSequence,
   PgmlSourceRange
 } from '~/utils/pgml'
+import { getOrderedGroupTables } from '~/utils/pgml'
 import { getRasterExportPlan } from '~/utils/diagram-export'
 import {
   buildPgmlExportBundle,
@@ -19,6 +21,10 @@ import {
   type PgmlKyselyTypeStyle
 } from '~/utils/pgml-export'
 import { readPgmlExportPreferences, writePgmlExportPreferences } from '~/utils/pgml-export-preferences'
+import {
+  buildDiagramConnectionPreviewLayers,
+  type DiagramConnectionPreviewDragState
+} from '~/utils/diagram-connection-preview'
 import {
   getDiagramConnectionZIndex,
   getDiagramGroupBackgroundZIndex,
@@ -48,14 +54,25 @@ import type {
   TableAttachment,
   TableAttachmentFlag,
   TableAttachmentKind,
+  TableGroupMasonryLayout,
   TableRow
 } from '~/utils/pgml-diagram-canvas'
+import { buildTableGroupMasonryLayout } from '~/utils/pgml-diagram-canvas'
+import { createAnimationFrameBatcher } from '~/utils/animation-frame'
+import {
+  defaultPgmlTableWidthScale,
+  hasStoredPgmlTableWidthScale,
+  normalizePgmlTableWidthScale,
+  type PgmlTableWidthScale,
+  pgmlTableWidthScaleValues
+} from '~/utils/pgml-node-properties'
 import {
   getStudioChoiceButtonClass,
   getStudioStateButtonClass,
   getStudioTabButtonClass,
   joinStudioClasses,
   studioButtonClasses,
+  studioColorInputClass,
   studioCompactInputClass,
   studioToolbarButtonClass
 } from '~/utils/uiStyles'
@@ -112,6 +129,7 @@ type CanvasNodeState = {
   kind: CanvasNodeKind
   objectKind?: ObjectKind
   collapsed: boolean
+  masonry?: boolean
   title: string
   subtitle: string
   details: string[]
@@ -125,6 +143,7 @@ type CanvasNodeState = {
   impactTargets?: ImpactTarget[]
   tableCount?: number
   columnCount?: number
+  tableWidthScale?: PgmlTableWidthScale
   note?: string | null
   minWidth?: number
   minHeight?: number
@@ -135,11 +154,27 @@ type CanvasNodeState = {
 type ConnectionLine = {
   key: string
   path: string
+  points: LayoutPoint[]
+  bounds: {
+    minX: number
+    minY: number
+    maxX: number
+    maxY: number
+  }
   color: string
   dashed: boolean
   dashPattern: string
   animated: boolean
   zIndex: number
+  fromOwnerNodeId: string | null
+  toOwnerNodeId: string | null
+  fromEndpoint: ConnectionEndpointLocator | null
+  toEndpoint: ConnectionEndpointLocator | null
+}
+
+type ConnectionEndpointLocator = {
+  attribute: string
+  value: string
 }
 
 type CanvasSelection = {
@@ -149,9 +184,25 @@ type CanvasSelection = {
   kind: 'table'
   tableId: string
 } | {
+  kind: 'column'
+  tableId: string
+  columnName: string
+} | {
   kind: 'attachment'
   tableId: string
   attachmentId: string
+}
+
+const storedCollapsedObjectKinds = new Set<ObjectKind>([
+  'Custom Type',
+  'Function',
+  'Procedure',
+  'Trigger',
+  'Sequence'
+])
+
+const storesCollapsedState = (objectKind: ObjectKind | undefined) => {
+  return typeof objectKind === 'string' && storedCollapsedObjectKinds.has(objectKind)
 }
 type EntityBrowserItemKind = 'group' | 'table' | 'column' | 'attachment' | 'object'
 
@@ -241,19 +292,31 @@ type DiagramExportFormat = 'svg' | 'png'
 const planeRef: Ref<HTMLDivElement | null> = ref(null)
 const viewportRef: Ref<HTMLDivElement | null> = ref(null)
 const scale: Ref<number> = ref(0.62)
+const displayScale: Ref<number> = ref(scale.value)
 const pan: Ref<{ x: number, y: number }> = ref({
   x: 30,
   y: 36
 })
+const isViewportGpuAccelerated: Ref<boolean> = ref(false)
 const snapToGrid: Ref<boolean> = ref(true)
+const showRelationshipLines: Ref<boolean> = ref(true)
 const selectedNodeId: Ref<string | null> = ref(null)
 const selectedCanvasSelection: Ref<CanvasSelection | null> = ref(null)
 const nodeStates: Ref<Record<string, CanvasNodeState>> = ref({})
 const connectionLines: Ref<ConnectionLine[]> = ref([])
+const activeNodeDrag: Ref<DiagramConnectionPreviewDragState | null> = ref(null)
+const dragPreviewPaths: Ref<Record<string, string>> = ref({})
 const isDesktopSidePanelOpen: Ref<boolean> = ref(true)
 const activePanelTab: Ref<DiagramPanelTab> = ref('inspector')
 const touchPanSession: Ref<TouchPanSession | null> = ref(null)
 const touchPinchSession: Ref<TouchPinchSession | null> = ref(null)
+const viewportSize: Ref<{ width: number, height: number }> = ref({
+  width: 0,
+  height: 0
+})
+const viewportTransformBatcher = createAnimationFrameBatcher()
+const connectionRefreshBatcher = createAnimationFrameBatcher()
+const wheelZoomBatcher = createAnimationFrameBatcher()
 const entitySearchQuery: Ref<string> = ref('')
 const exportPreferences: Ref<PgmlExportPreferences> = ref({
   ...defaultPgmlExportPreferences
@@ -271,6 +334,20 @@ const resetExportCopyFeedback = () => {
 const { start: scheduleExportCopyFeedbackReset, stop: stopExportCopyFeedbackReset } = useTimeoutFn(resetExportCopyFeedback, 1800, {
   immediate: false
 })
+const resetViewportGpuAcceleration = () => {
+  isViewportGpuAccelerated.value = false
+}
+const {
+  start: scheduleViewportGpuAccelerationReset,
+  stop: stopViewportGpuAccelerationReset
+} = useTimeoutFn(resetViewportGpuAcceleration, 140, {
+  immediate: false
+})
+let isApplyingPendingWheelZoom = false
+let pendingWheelZoomSteps = 0
+let pendingWheelZoomPivot: { x: number, y: number } | null = null
+let hasPendingNodeUpdateSync = false
+let pendingNodeUpdateNeedsRemeasure = false
 const exportTypeStyleItems = [
   {
     label: 'Pragmatic app types',
@@ -285,6 +362,12 @@ const exportTypeStyleItems = [
     value: 'loose'
   }
 ] satisfies Array<{ label: string, value: PgmlKyselyTypeStyle }>
+const tableWidthScaleItems = pgmlTableWidthScaleValues.map((value) => {
+  return {
+    label: `${value}x`,
+    value
+  }
+}) satisfies Array<{ label: string, value: number }>
 
 const palette = ['#8b5cf6', '#f59e0b', '#06b6d4', '#10b981', '#ef4444', '#ec4899', '#f97316']
 const schemaBadgePalette = ['#0f766e', '#f59e0b', '#2563eb', '#dc2626', '#7c3aed', '#0891b2', '#ea580c', '#65a30d']
@@ -292,6 +375,7 @@ const groupTableWidth = 232
 const groupTableGap = 16
 const groupHorizontalPadding = 20
 const groupHeaderHeight = 56
+const diagramLineViewportOverscan = 240
 const groupVerticalPadding = 18
 const groupColumnRowHeight = 31
 const objectColumnX = 1060
@@ -325,6 +409,7 @@ const exportArtifactButtonErrorClass = 'border-[color:var(--studio-shell-error)]
 const panelToggleButtonClass = joinStudioClasses(studioButtonClasses.secondary, studioToolbarButtonClass)
 const sidePanelCloseButtonClass = joinStudioClasses(studioButtonClasses.iconGhost, 'h-7 w-7 justify-center px-0')
 const sidePanelActionButtonClass = joinStudioClasses(studioButtonClasses.secondary, studioToolbarButtonClass)
+const selectedCanvasStackZIndex = 2147483644
 const attachmentKindOrder: Record<TableAttachmentKind, number> = {
   Index: 0,
   Constraint: 1,
@@ -375,6 +460,13 @@ const isAttachmentEffectivelyVisible = (tableId: string, attachmentId: string) =
 const visibleTables = computed(() => {
   return model.tables.filter(table => isTableEffectivelyVisible(table))
 })
+const orderedTablesByGroup = computed(() => {
+  return model.groups.reduce<Record<string, PgmlSchemaModel['tables']>>((entries, group) => {
+    entries[group.name] = getOrderedGroupTables(model, group.name)
+    return entries
+  }, {})
+})
+const getGroupTables = (groupName: string) => orderedTablesByGroup.value[groupName] || []
 const tableGroupColorByTableId = computed(() => {
   return model.tables.reduce<Record<string, string>>((colors, table) => {
     const groupName = getTableGroupName(table)
@@ -440,12 +532,26 @@ const getSchemaBadgeStyle = (schemaName: string) => {
 const getTableSchemaName = (tableId: string) => {
   return model.tables.find(table => table.fullName === tableId)?.schema || 'public'
 }
+const getSelectionStackTargetId = (selection: CanvasSelection | null) => {
+  if (!selection) {
+    return null
+  }
+
+  if (selection.kind === 'node') {
+    return selection.id
+  }
+
+  const groupName = tableGroupById.value[selection.tableId]
+
+  return groupName ? getStoredGroupId(groupName) : selection.tableId
+}
 const nodeLayerOrderById = computed(() => {
   return canvasNodes.value.reduce<Record<string, number>>((orders, node, index) => {
     orders[node.id] = index + 1
     return orders
   }, {})
 })
+const selectedStackTargetId = computed(() => getSelectionStackTargetId(selectedCanvasSelection.value))
 const getNodeLayerOrder = (nodeId: string) => {
   return nodeLayerOrderById.value[nodeId] || 1
 }
@@ -455,24 +561,84 @@ const getGroupBackgroundLayerZIndex = (nodeId: string) => {
 const getNodeForegroundLayerZIndex = (nodeId: string) => {
   return getDiagramNodeZIndex(getNodeLayerOrder(nodeId))
 }
-const connectionLineLayers = computed(() => {
-  const layers = connectionLines.value.reduce<Record<string, ConnectionLine[]>>((entries, line) => {
-    const key = String(line.zIndex)
+const getCanvasNodeZIndex = (node: CanvasNodeState) => {
+  if (selectedStackTargetId.value === node.id) {
+    return selectedCanvasStackZIndex
+  }
 
-    if (!entries[key]) {
-      entries[key] = []
+  return node.kind === 'group' ? 'auto' : getNodeForegroundLayerZIndex(node.id)
+}
+const getNodeDragStyle = (nodeId: string): CSSProperties | undefined => {
+  if (
+    !activeNodeDrag.value
+    || activeNodeDrag.value.nodeId !== nodeId
+    || (activeNodeDrag.value.deltaX === 0 && activeNodeDrag.value.deltaY === 0)
+  ) {
+    return undefined
+  }
+
+  return {
+    transform: `translate3d(${activeNodeDrag.value.deltaX}px, ${activeNodeDrag.value.deltaY}px, 0)`,
+    willChange: 'transform'
+  }
+}
+const doesLineBoundsIntersectViewport = (
+  bounds: ConnectionLine['bounds'],
+  viewportBounds: {
+    minX: number
+    minY: number
+    maxX: number
+    maxY: number
+  }
+) => {
+  return (
+    bounds.maxX >= viewportBounds.minX
+    && bounds.minX <= viewportBounds.maxX
+    && bounds.maxY >= viewportBounds.minY
+    && bounds.minY <= viewportBounds.maxY
+  )
+}
+const renderedLineViewportBounds = computed(() => {
+  if (viewportSize.value.width <= 0 || viewportSize.value.height <= 0) {
+    return null
+  }
+
+  const overscan = diagramLineViewportOverscan / Math.max(scale.value, 0.01)
+
+  return {
+    minX: (-pan.value.x) / scale.value - overscan,
+    minY: (-pan.value.y) / scale.value - overscan,
+    maxX: (viewportSize.value.width - pan.value.x) / scale.value + overscan,
+    maxY: (viewportSize.value.height - pan.value.y) / scale.value + overscan
+  }
+})
+const visibleConnectionLines = computed(() => {
+  return showRelationshipLines.value ? connectionLines.value : []
+})
+const renderedConnectionLines = computed(() => {
+  const activeDragNodeId = activeNodeDrag.value?.nodeId || null
+  const viewportBounds = renderedLineViewportBounds.value
+
+  if (!viewportBounds) {
+    return visibleConnectionLines.value
+  }
+
+  return visibleConnectionLines.value.filter((line) => {
+    if (
+      activeDragNodeId
+      && (line.fromOwnerNodeId === activeDragNodeId || line.toOwnerNodeId === activeDragNodeId)
+    ) {
+      return true
     }
 
-    entries[key]?.push(line)
-    return entries
-  }, {})
-
-  return Object.entries(layers)
-    .map(([key, lines]) => ({
-      zIndex: Number.parseInt(key, 10),
-      lines
-    }))
-    .sort((left, right) => left.zIndex - right.zIndex)
+    return doesLineBoundsIntersectViewport(line.bounds, viewportBounds)
+  })
+})
+const connectionLineLayers = computed(() => {
+  return buildDiagramConnectionPreviewLayers(
+    renderedConnectionLines.value,
+    activeNodeDrag.value
+  )
 })
 const hasEmbeddedLayout = computed(() => Object.keys(model.nodeProperties).length > 0)
 const selectedNode = computed(() => {
@@ -491,6 +657,25 @@ const selectedTable = computed(() => {
 
   return model.tables.find(table => table.fullName === selection.tableId) || null
 })
+const selectedColumn = computed(() => {
+  const selection = selectedCanvasSelection.value
+
+  if (selection?.kind !== 'column') {
+    return null
+  }
+
+  const table = model.tables.find(entry => entry.fullName === selection.tableId)
+  const column = table?.columns.find(entry => entry.name === selection.columnName)
+
+  if (!table || !column) {
+    return null
+  }
+
+  return {
+    table,
+    column
+  }
+})
 const selectedAttachment = computed(() => {
   const selection = selectedCanvasSelection.value
 
@@ -507,6 +692,10 @@ const selectedCanvasEntityTitle = computed(() => {
     return selectedNode.value.title
   }
 
+  if (selectedColumn.value) {
+    return selectedColumn.value.column.name
+  }
+
   if (selectedTable.value) {
     return selectedTable.value.name
   }
@@ -520,6 +709,10 @@ const selectedCanvasEntityTitle = computed(() => {
 const selectedCanvasEntityDescription = computed(() => {
   if (selectedNode.value) {
     return 'Adjust the selected node.'
+  }
+
+  if (selectedColumn.value) {
+    return `${selectedColumn.value.table.schema} schema field on ${selectedColumn.value.table.name}.`
   }
 
   if (selectedTable.value) {
@@ -645,24 +838,12 @@ const selectedObjectImpactRowKeys = computed(() => {
   }))
 })
 const isCollapsibleNode = (node: CanvasNodeState) => node.kind === 'object'
+const measuredGroupTableHeights: Ref<Record<string, number>> = ref({})
 const tablesByGroup = computed(() => {
-  const groups: Record<string, PgmlSchemaModel['tables']> = {}
-
-  for (const table of visibleTables.value) {
-    const groupName = getTableGroupName(table)
-
-    if (!groupName) {
-      continue
-    }
-
-    if (!groups[groupName]) {
-      groups[groupName] = []
-    }
-
-    groups[groupName]?.push(table)
-  }
-
-  return groups
+  return model.groups.reduce<Record<string, PgmlSchemaModel['tables']>>((entries, group) => {
+    entries[group.name] = getGroupTables(group.name).filter(table => isTableEffectivelyVisible(table))
+    return entries
+  }, {})
 })
 const tableGroupById = computed(() => {
   const groups: Record<string, string | null> = {}
@@ -679,21 +860,142 @@ const estimateTableHeight = (rowCount: number) => {
   return 40 + rowCount * groupColumnRowHeight
 }
 
-const getGroupMinimumSize = (groupName: string, columnCount: number) => {
-  const tables = tablesByGroup.value[groupName] || []
-  const safeColumnCount = Math.max(1, Math.min(columnCount, Math.max(tables.length, 1)))
+const getGroupSafeColumnCount = (columnCount: number, tableCount: number) => {
+  return Math.max(1, Math.min(Math.round(columnCount), Math.max(tableCount, 1)))
+}
+
+const getRenderedGroupTables = (groupName: string) => {
+  return tablesByGroup.value[groupName] || []
+}
+
+const getGroupTableRenderHeight = (tableId: string) => {
+  return measuredGroupTableHeights.value[tableId] || estimateTableHeight(getTableRows(tableId).length)
+}
+
+const getGroupNodeColumnCount = (groupName: string) => {
+  const groupId = getStoredGroupId(groupName)
+  const tableCount = getRenderedGroupTables(groupName).length
+  const columnCount = nodeStates.value[groupId]?.columnCount
+    ?? model.nodeProperties[groupId]?.tableColumns
+    ?? 1
+
+  return getGroupSafeColumnCount(columnCount, tableCount)
+}
+
+const getScaledGroupTableWidth = (tableWidthScale: number | null | undefined) => {
+  return Math.round(groupTableWidth * normalizePgmlTableWidthScale(tableWidthScale))
+}
+
+const getGroupNodeTableWidthScale = (groupName: string) => {
+  const groupId = getStoredGroupId(groupName)
+  const tableWidthScale = nodeStates.value[groupId]?.tableWidthScale
+    ?? model.nodeProperties[groupId]?.tableWidthScale
+    ?? defaultPgmlTableWidthScale
+
+  return normalizePgmlTableWidthScale(tableWidthScale)
+}
+
+const getGroupNodeTableWidth = (groupName: string) => {
+  return getScaledGroupTableWidth(getGroupNodeTableWidthScale(groupName))
+}
+
+const groupTableLayouts = computed<Record<string, TableGroupMasonryLayout>>(() => {
+  return model.groups.reduce<Record<string, TableGroupMasonryLayout>>((entries, group) => {
+    entries[group.name] = buildTableGroupMasonryLayout(
+      getRenderedGroupTables(group.name).map(table => ({
+        id: table.fullName,
+        height: getGroupTableRenderHeight(table.fullName)
+      })),
+      getGroupNodeColumnCount(group.name),
+      getGroupNodeTableWidth(group.name),
+      groupTableGap
+    )
+    return entries
+  }, {})
+})
+
+const getGroupTableLayout = (groupName: string) => {
+  return groupTableLayouts.value[groupName]
+    || buildTableGroupMasonryLayout([], 1, getGroupNodeTableWidth(groupName), groupTableGap)
+}
+
+const getGroupContentStyle = (node: CanvasNodeState): CSSProperties => {
+  const tableWidth = getScaledGroupTableWidth(node.tableWidthScale)
+
+  if (node.kind !== 'group' || !node.masonry) {
+    return {
+      gap: `${groupTableGap}px`,
+      gridTemplateColumns: `repeat(${node.columnCount || 1}, ${tableWidth}px)`
+    }
+  }
+
+  const layout = getGroupTableLayout(node.title)
+
+  return {
+    height: `${layout.contentHeight}px`,
+    position: 'relative',
+    width: `${layout.contentWidth}px`
+  }
+}
+
+const getGroupTableLayoutStyle = (node: CanvasNodeState, tableId: string): CSSProperties => {
+  const tableWidth = getScaledGroupTableWidth(node.tableWidthScale)
+
+  if (node.kind !== 'group' || !node.masonry) {
+    return {
+      width: `${tableWidth}px`
+    }
+  }
+
+  const placement = getGroupTableLayout(node.title).placements[tableId]
+
+  return {
+    left: `${placement?.x || 0}px`,
+    position: 'absolute',
+    top: `${placement?.y || 0}px`,
+    width: `${tableWidth}px`
+  }
+}
+
+const getGroupMinimumSize = (
+  groupName: string,
+  columnCount: number,
+  masonry = false,
+  tableWidthScale: number | null | undefined = defaultPgmlTableWidthScale
+) => {
+  const tables = getRenderedGroupTables(groupName)
+  const safeColumnCount = getGroupSafeColumnCount(columnCount, tables.length)
+  const tableWidth = getScaledGroupTableWidth(tableWidthScale)
+
+  if (masonry) {
+    const layout = buildTableGroupMasonryLayout(
+      tables.map(table => ({
+        id: table.fullName,
+        height: getGroupTableRenderHeight(table.fullName)
+      })),
+      safeColumnCount,
+      tableWidth,
+      groupTableGap
+    )
+
+    return {
+      minWidth: groupHorizontalPadding * 2 + layout.contentWidth,
+      minHeight: groupHeaderHeight + groupVerticalPadding + layout.contentHeight
+    }
+  }
+
   const rowHeights: number[] = []
 
   tables.forEach((table, index) => {
     const rowIndex = Math.floor(index / safeColumnCount)
-    const tableHeight = estimateTableHeight(getTableRows(table.fullName).length)
+    const tableHeight = getGroupTableRenderHeight(table.fullName)
     rowHeights[rowIndex] = Math.max(rowHeights[rowIndex] || 0, tableHeight)
   })
 
   const contentHeight = rowHeights.reduce((sum, height) => sum + height, 0) + Math.max(0, rowHeights.length - 1) * groupTableGap
 
   return {
-    minWidth: groupHorizontalPadding * 2 + safeColumnCount * groupTableWidth + Math.max(0, safeColumnCount - 1) * groupTableGap,
+    minWidth: groupHorizontalPadding * 2 + safeColumnCount * tableWidth + Math.max(0, safeColumnCount - 1) * groupTableGap,
     minHeight: groupHeaderHeight + groupVerticalPadding + contentHeight
   }
 }
@@ -723,6 +1025,7 @@ const waitForAnimationFrame = () => {
 }
 
 const waitForCanvasRender = async () => {
+  flushViewportTransformSync()
   await nextTick()
   updateConnections()
   await nextTick()
@@ -1075,7 +1378,7 @@ const buildExportSvgString = async (padding = exportPadding) => {
     )
 
     if (node.kind === 'group') {
-      const tables = model.tables.filter(table => node.tableIds.includes(table.fullName))
+      const tables = getRenderedGroupTables(node.title)
 
       tables.forEach((table) => {
         const tableElement = planeRef.value?.querySelector(`[data-table-anchor="${table.fullName}"]`)
@@ -1404,7 +1707,7 @@ const buildExportSvgString = async (padding = exportPadding) => {
     }
   })
 
-  connectionLines.value.forEach((line) => {
+  visibleConnectionLines.value.forEach((line) => {
     connectionParts.push(
       `<path d="${escapeXml(translatePathData(line.path, offsetX, offsetY))}" fill="none" ${buildSvgPaintAttributes('stroke', line.color, line.color)} stroke-width="2" stroke-dasharray="${line.dashed ? '10 7' : '0'}" stroke-linecap="square" stroke-linejoin="miter" opacity="0.9" />`
     )
@@ -1656,7 +1959,9 @@ const measureGroupMinimumSize = (groupId: string) => {
   const groupState = nodeStates.value[groupId]
   const baselineSize = getGroupMinimumSize(
     groupId.replace(/^group:/, ''),
-    groupState?.columnCount || 1
+    groupState?.columnCount || 1,
+    groupState?.masonry ?? false,
+    groupState?.tableWidthScale
   )
   const wrapperStyles = contentWrapper ? window.getComputedStyle(contentWrapper) : null
   const paddingRight = wrapperStyles ? Number.parseFloat(wrapperStyles.paddingRight) : 0
@@ -1815,36 +2120,165 @@ const syncMeasuredNodeSizes = () => {
   return hasChanges
 }
 
+const scheduleNodeUpdateFollowUp = (remeasure: boolean) => {
+  if (activeNodeDrag.value) {
+    return
+  }
+
+  pendingNodeUpdateNeedsRemeasure = pendingNodeUpdateNeedsRemeasure || remeasure
+
+  if (hasPendingNodeUpdateSync) {
+    return
+  }
+
+  hasPendingNodeUpdateSync = true
+
+  nextTick(() => {
+    hasPendingNodeUpdateSync = false
+    const shouldRemeasure = pendingNodeUpdateNeedsRemeasure
+
+    pendingNodeUpdateNeedsRemeasure = false
+
+    if (shouldRemeasure) {
+      syncMeasuredNodeSizes()
+    }
+
+    scheduleConnectionRefresh()
+  })
+}
+
 const getCanvasLayoutObserverTargets = () => {
   const targets: HTMLElement[] = []
+  const seenTargets = new Set<HTMLElement>()
+  const pushTarget = (element: HTMLElement | null) => {
+    if (!element || seenTargets.has(element)) {
+      return
+    }
+
+    seenTargets.add(element)
+    targets.push(element)
+  }
 
   if (viewportRef.value) {
-    targets.push(viewportRef.value)
+    pushTarget(viewportRef.value)
   }
 
   if (!planeRef.value) {
     return targets
   }
 
-  targets.push(planeRef.value)
+  pushTarget(planeRef.value)
 
   planeRef.value.querySelectorAll('[data-node-anchor]').forEach((element) => {
     if (element instanceof HTMLElement) {
-      targets.push(element)
+      pushTarget(element)
+    }
+  })
+
+  planeRef.value.querySelectorAll('[data-table-anchor]').forEach((element) => {
+    if (element instanceof HTMLElement) {
+      pushTarget(element)
     }
   })
 
   return targets
 }
 
+const syncMeasuredGroupTableHeights = () => {
+  if (!(planeRef.value instanceof HTMLElement)) {
+    if (Object.keys(measuredGroupTableHeights.value).length === 0) {
+      return false
+    }
+
+    measuredGroupTableHeights.value = {}
+    return true
+  }
+
+  const nextHeights: Record<string, number> = {}
+  const groupedTableElements = Array.from(planeRef.value.querySelectorAll('[data-group-content] [data-table-anchor]'))
+    .filter((element): element is HTMLElement => element instanceof HTMLElement)
+
+  groupedTableElements.forEach((element) => {
+    const tableId = element.getAttribute('data-table-anchor')
+
+    if (!tableId) {
+      return
+    }
+
+    nextHeights[tableId] = Math.ceil(element.offsetHeight)
+  })
+
+  const currentEntries = Object.entries(measuredGroupTableHeights.value)
+  const nextEntries = Object.entries(nextHeights)
+  const hasChanges = currentEntries.length !== nextEntries.length
+    || nextEntries.some(([tableId, height]) => measuredGroupTableHeights.value[tableId] !== height)
+
+  if (!hasChanges) {
+    return false
+  }
+
+  measuredGroupTableHeights.value = nextHeights
+  return true
+}
+
 const layoutObserverTargets: Ref<HTMLElement[]> = ref([])
+const syncViewportSize = () => {
+  if (!(viewportRef.value instanceof HTMLElement)) {
+    if (viewportSize.value.width === 0 && viewportSize.value.height === 0) {
+      return
+    }
+
+    viewportSize.value = {
+      width: 0,
+      height: 0
+    }
+    return
+  }
+
+  const nextSize = {
+    width: viewportRef.value.clientWidth,
+    height: viewportRef.value.clientHeight
+  }
+
+  if (
+    nextSize.width === viewportSize.value.width
+    && nextSize.height === viewportSize.value.height
+  ) {
+    return
+  }
+
+  viewportSize.value = nextSize
+}
 const syncLayoutObserverTargets = async () => {
   await nextTick()
+  syncViewportSize()
   layoutObserverTargets.value = getCanvasLayoutObserverTargets()
 }
 
+const refreshMeasuredGroupTableHeights = async () => {
+  if (!syncMeasuredGroupTableHeights()) {
+    return
+  }
+
+  await nextTick()
+  await syncLayoutObserverTargets()
+}
+
 const handleCanvasLayoutResize = () => {
-  if (Date.now() < suppressLayoutObserverUntil) {
+  syncViewportSize()
+
+  if (Date.now() < suppressLayoutObserverUntil || activeNodeDrag.value) {
+    return
+  }
+
+  if (syncMeasuredGroupTableHeights()) {
+    nextTick(() => {
+      if (syncMeasuredNodeSizes() && !hasEmbeddedLayout.value) {
+        reflowAutoLayout()
+      }
+
+      scheduleConnectionRefresh()
+    })
     return
   }
 
@@ -1852,7 +2286,7 @@ const handleCanvasLayoutResize = () => {
     reflowAutoLayout()
   }
 
-  updateConnections()
+  scheduleConnectionRefresh()
 }
 
 useResizeObserver(layoutObserverTargets, handleCanvasLayoutResize)
@@ -2767,8 +3201,9 @@ const buildBrowserTableItem = (table: PgmlSchemaModel['tables'][number]): Entity
       searchText: cleanForSearch(`field ${column.name} ${column.type} ${table.fullName}`),
       children: [],
       selection: {
-        kind: 'table',
-        tableId: table.fullName
+        kind: 'column',
+        tableId: table.fullName,
+        columnName: column.name
       },
       sourceRange: table.sourceRange
     }
@@ -2890,7 +3325,7 @@ const ungroupedBrowserItems = computed(() => {
 })
 const groupedBrowserItems = computed(() => {
   return browserGroupNames.value.map((groupName) => {
-    const tables = model.tables.filter(table => getTableGroupName(table) === groupName)
+    const tables = getGroupTables(groupName)
     const tableItems = tables.map(table => buildBrowserTableItem(table))
 
     const group = model.groups.find(entry => entry.name === groupName)
@@ -3858,39 +4293,32 @@ const buildObjectNodes = (groupStates: Record<string, CanvasNodeState>) => {
 
 const syncNodeStates = () => {
   const nextStates: Record<string, CanvasNodeState> = {}
-  const tableGroups = new Map<string, typeof model.tables>()
   const orderedNames = [...diagramGroupNames.value]
   const groupNodes: CanvasNodeState[] = []
   const floatingTableNodes: CanvasNodeState[] = []
 
-  orderedNames.forEach((groupName) => {
-    tableGroups.set(groupName, [])
-  })
-
-  for (const table of visibleTables.value) {
-    const groupName = getTableGroupName(table)
-
-    if (!groupName) {
-      continue
-    }
-
-    tableGroups.get(groupName)?.push(table)
-  }
-
   orderedNames.forEach((groupName, index) => {
-    const tables = tableGroups.get(groupName) || []
+    const tables = getRenderedGroupTables(groupName)
     const groupId = getStoredGroupId(groupName)
     const existing = nodeStates.value[`group:${groupName}`]
     const storedLayout = model.nodeProperties[groupId]
     const color = storedLayout?.color || existing?.color || palette[index % palette.length] || '#8b5cf6'
-    const columnCount = storedLayout?.tableColumns ?? existing?.columnCount ?? 1
+    const columnCount = getGroupSafeColumnCount(
+      storedLayout?.tableColumns ?? existing?.columnCount ?? 1,
+      tables.length
+    )
+    const masonry = storedLayout?.masonry ?? existing?.masonry ?? false
+    const tableWidthScale = normalizePgmlTableWidthScale(
+      storedLayout?.tableWidthScale ?? existing?.tableWidthScale ?? defaultPgmlTableWidthScale
+    )
     const note = model.groups.find(group => group.name === groupName)?.note || null
-    const minimumSize = getGroupMinimumSize(groupName, columnCount)
+    const minimumSize = getGroupMinimumSize(groupName, columnCount, masonry, tableWidthScale)
 
     groupNodes.push({
       id: groupId,
       kind: 'group',
       collapsed: false,
+      masonry,
       title: groupName,
       subtitle: note || '',
       details: tables.map(table => table.fullName),
@@ -3903,6 +4331,7 @@ const syncNodeStates = () => {
       tableIds: tables.map(table => table.fullName),
       tableCount: tables.length,
       columnCount,
+      tableWidthScale,
       note,
       minWidth: minimumSize.minWidth,
       minHeight: minimumSize.minHeight,
@@ -3967,7 +4396,7 @@ const syncNodeStates = () => {
   for (const objectNode of objectNodes) {
     const existing = nodeStates.value[objectNode.id]
     const storedLayout = model.nodeProperties[objectNode.id]
-    const collapsed = objectNode.objectKind === 'Custom Type'
+    const collapsed = storesCollapsedState(objectNode.objectKind)
       ? storedLayout?.collapsed ?? existing?.collapsed ?? true
       : existing?.collapsed ?? true
     const expandedHeight = Math.max(
@@ -4014,6 +4443,18 @@ const syncNodeStates = () => {
     selectedCanvasSelection.value = null
   }
 
+  const columnSelection = selectedCanvasSelection.value
+
+  if (columnSelection?.kind === 'column') {
+    const table = model.tables.find((entry) => {
+      return entry.fullName === columnSelection.tableId && isTableEffectivelyVisible(entry)
+    })
+
+    if (!table || !table.columns.some(column => column.name === columnSelection.columnName)) {
+      selectedCanvasSelection.value = null
+    }
+  }
+
   const attachmentSelection = selectedCanvasSelection.value
 
   if (attachmentSelection?.kind === 'attachment') {
@@ -4040,6 +4481,35 @@ const getElementIdentity = (element: HTMLElement) => {
     || element.getAttribute('data-node-anchor')
     || ''
   )
+}
+const getConnectionEndpointLocator = (element: HTMLElement): ConnectionEndpointLocator | null => {
+  const attributes = [
+    'data-impact-anchor',
+    'data-column-label-anchor',
+    'data-column-anchor',
+    'data-table-anchor',
+    'data-node-anchor'
+  ]
+
+  for (const attribute of attributes) {
+    const value = element.getAttribute(attribute)
+
+    if (value) {
+      return {
+        attribute,
+        value
+      }
+    }
+  }
+
+  return null
+}
+const getConnectionEndpointElement = (locator: ConnectionEndpointLocator | null) => {
+  if (!planeRef.value || !locator) {
+    return null
+  }
+
+  return planeRef.value.querySelector(`[${locator.attribute}="${locator.value}"]`)
 }
 const getConnectionOwnerNodeId = (element: HTMLElement) => {
   const owner = element.closest('[data-node-anchor]')
@@ -4075,12 +4545,74 @@ const getImpactAnchorElement = (nodeId: string, tableId: string) => {
     || planeRef.value.querySelector(`[data-node-anchor="${nodeId}"]`)
   )
 }
+const syncViewportTransform = () => {
+  if (!planeRef.value) {
+    return
+  }
+
+  planeRef.value.style.setProperty('--pgml-plane-pan-x', `${pan.value.x}px`)
+  planeRef.value.style.setProperty('--pgml-plane-pan-y', `${pan.value.y}px`)
+  planeRef.value.style.setProperty('--pgml-plane-scale', String(scale.value))
+  displayScale.value = scale.value
+}
+const scheduleViewportTransformSync = () => {
+  viewportTransformBatcher.schedule(() => {
+    syncViewportTransform()
+  })
+}
+const flushViewportTransformSync = () => {
+  if (!isApplyingPendingWheelZoom) {
+    wheelZoomBatcher.flush()
+  }
+
+  viewportTransformBatcher.flush()
+}
+const beginViewportGpuAcceleration = () => {
+  stopViewportGpuAccelerationReset()
+  isViewportGpuAccelerated.value = true
+}
+const endViewportGpuAcceleration = () => {
+  stopViewportGpuAccelerationReset()
+  isViewportGpuAccelerated.value = false
+}
+const setViewportPan = (nextPan: { x: number, y: number }) => {
+  pan.value = nextPan
+  scheduleViewportTransformSync()
+}
+const setViewportTransform = (nextPan: { x: number, y: number }, nextScale: number) => {
+  pan.value = nextPan
+  scale.value = nextScale
+  scheduleViewportTransformSync()
+}
+const setViewportScale = (nextScale: number) => {
+  scale.value = nextScale
+  scheduleViewportTransformSync()
+}
+const scheduleConnectionRefresh = () => {
+  if (activeNodeDrag.value) {
+    return
+  }
+
+  connectionRefreshBatcher.schedule(() => {
+    updateConnections()
+  })
+}
 const canvasViewportStyle = {
   borderColor: 'var(--studio-shell-border)',
   backgroundColor: 'var(--studio-canvas-bg)',
   backgroundImage: 'radial-gradient(circle at center, var(--studio-canvas-dot) 1px, transparent 1px)',
   backgroundSize: '18px 18px'
 }
+const canvasPlaneStyle = computed<CSSProperties>(() => {
+  const translate = isViewportGpuAccelerated.value
+    ? 'translate3d(var(--pgml-plane-pan-x, 0px), var(--pgml-plane-pan-y, 0px), 0)'
+    : 'translate(var(--pgml-plane-pan-x, 0px), var(--pgml-plane-pan-y, 0px))'
+
+  return {
+    transform: `${translate} scale(var(--pgml-plane-scale, 1))`,
+    willChange: isViewportGpuAccelerated.value ? 'transform' : undefined
+  }
+})
 const floatingPanelStyle = {
   borderColor: 'var(--studio-control-border)',
   backgroundColor: 'var(--studio-control-bg)',
@@ -4097,6 +4629,10 @@ const browserItemSelectionEquals = (left: CanvasSelection | null, right: CanvasS
 
   if (left.kind === 'table' && right.kind === 'table') {
     return left.tableId === right.tableId
+  }
+
+  if (left.kind === 'column' && right.kind === 'column') {
+    return left.tableId === right.tableId && left.columnName === right.columnName
   }
 
   if (left.kind === 'attachment' && right.kind === 'attachment') {
@@ -4116,6 +4652,10 @@ const isBrowserItemDirectlyVisible = (item: EntityBrowserItem) => {
     return isEntityDirectlyVisible(selection.tableId)
   }
 
+  if (selection.kind === 'column') {
+    return isEntityDirectlyVisible(selection.tableId)
+  }
+
   if (selection.kind === 'attachment') {
     return isEntityDirectlyVisible(selection.attachmentId)
   }
@@ -4126,6 +4666,12 @@ const isBrowserItemEffectivelyVisible = (item: EntityBrowserItem) => {
   const selection = item.selection
 
   if (selection.kind === 'table') {
+    const table = model.tables.find(entry => entry.fullName === selection.tableId)
+
+    return table ? isTableEffectivelyVisible(table) : false
+  }
+
+  if (selection.kind === 'column') {
     const table = model.tables.find(entry => entry.fullName === selection.tableId)
 
     return table ? isTableEffectivelyVisible(table) : false
@@ -4161,6 +4707,10 @@ const getBrowserItemTableId = (item: EntityBrowserItem) => {
   const selection = item.selection
 
   if (selection.kind === 'table') {
+    return selection.tableId
+  }
+
+  if (selection.kind === 'column') {
     return selection.tableId
   }
 
@@ -4210,7 +4760,11 @@ const getBrowserItemVisibilityId = (item: EntityBrowserItem) => {
     return item.selection.attachmentId
   }
 
-  return item.selection.id
+  if (item.selection.kind === 'node') {
+    return item.selection.id
+  }
+
+  return null
 }
 const toggleBrowserItemVisibility = (item: EntityBrowserItem) => {
   if (isBrowserItemHiddenByAncestor(item)) {
@@ -4247,6 +4801,11 @@ const selectBrowserItem = (item: EntityBrowserItem) => {
 
   if (selection.kind === 'table') {
     handleTableClick(selection.tableId)
+    return
+  }
+
+  if (selection.kind === 'column') {
+    handleColumnClick(selection.tableId, selection.columnName)
     return
   }
 
@@ -4330,6 +4889,13 @@ const isNodeSelectionActive = (nodeId: string) => {
 const isTableSelectionActive = (tableId: string) => {
   return selectedCanvasSelection.value?.kind === 'table' && selectedCanvasSelection.value.tableId === tableId
 }
+const isColumnSelectionActive = (tableId: string, columnName: string) => {
+  return (
+    selectedCanvasSelection.value?.kind === 'column'
+    && selectedCanvasSelection.value.tableId === tableId
+    && selectedCanvasSelection.value.columnName === columnName
+  )
+}
 const isAttachmentSelectionActive = (tableId: string, attachmentId: string) => {
   return (
     selectedCanvasSelection.value?.kind === 'attachment'
@@ -4338,6 +4904,10 @@ const isAttachmentSelectionActive = (tableId: string, attachmentId: string) => {
   )
 }
 const getRelationalRowHighlightColor = (tableId: string, columnName: string) => {
+  if (isColumnSelectionActive(tableId, columnName)) {
+    return tableGroupColorByTableId.value[tableId] || '#79e3ea'
+  }
+
   const rowKey = getColumnAnchorKey(tableId, columnName)
 
   if (selectedTableRelationalRowKeys.value.has(rowKey)) {
@@ -4755,6 +5325,157 @@ const buildPathFromPoints = (points: LayoutPoint[]) => {
   return points.map((point, index) => {
     return `${index === 0 ? 'M' : 'L'} ${point.x} ${point.y}`
   }).join(' ')
+}
+
+const getConnectionLineBounds = (points: LayoutPoint[]) => {
+  const firstPoint = points[0]
+
+  if (!firstPoint) {
+    return {
+      minX: 0,
+      minY: 0,
+      maxX: 0,
+      maxY: 0
+    }
+  }
+
+  return points.slice(1).reduce<ConnectionLine['bounds']>((bounds, point) => {
+    return {
+      minX: Math.min(bounds.minX, point.x),
+      minY: Math.min(bounds.minY, point.y),
+      maxX: Math.max(bounds.maxX, point.x),
+      maxY: Math.max(bounds.maxY, point.y)
+    }
+  }, {
+    minX: firstPoint.x,
+    minY: firstPoint.y,
+    maxX: firstPoint.x,
+    maxY: firstPoint.y
+  })
+}
+
+const getPreviewRouteAnchor = (
+  element: HTMLElement,
+  otherElement: HTMLElement,
+  fallbackSide: AnchorSide,
+  planeBounds: DOMRect
+) => {
+  const elementBounds = element.getBoundingClientRect()
+  const otherBounds = otherElement.getBoundingClientRect()
+  const targetCenterX = otherBounds.left + otherBounds.width / 2
+  const targetCenterY = otherBounds.top + otherBounds.height / 2
+  const tableElement = isFieldEndpointElement(element) ? getOwningTableElement(element) : null
+  const anchorHost = tableElement || element
+  const anchorBounds = anchorHost.getBoundingClientRect()
+  const groupElement = getOwningGroupElement(anchorHost)
+  const groupBounds = groupElement?.getBoundingClientRect()
+  let side: AnchorSide = fallbackSide
+
+  if (tableElement) {
+    side = targetCenterX >= anchorBounds.left + anchorBounds.width / 2 ? 'right' : 'left'
+  } else if (groupBounds) {
+    side = getHeaderSafeGroupLaneSide(
+      {
+        x: anchorBounds.left + anchorBounds.width / 2,
+        y: anchorBounds.top + anchorBounds.height / 2
+      },
+      {
+        x: targetCenterX,
+        y: targetCenterY
+      },
+      {
+        left: groupBounds.left,
+        right: groupBounds.right,
+        top: groupBounds.top,
+        bottom: groupBounds.bottom
+      }
+    )
+  }
+
+  const ratio = tableElement
+    ? clamp(
+        ((elementBounds.top + elementBounds.height / 2) - anchorBounds.top) / Math.max(anchorBounds.height, 1),
+        0.16,
+        0.84
+      )
+    : getDesiredAnchorRatio(side, anchorBounds, targetCenterX, targetCenterY)
+
+  return getExactAnchorPoint(anchorHost, side, ratio, planeBounds)
+}
+
+const buildMinimalConnectionDragPreviewPath = (fromElement: HTMLElement, toElement: HTMLElement) => {
+  if (!(planeRef.value instanceof HTMLElement)) {
+    return null
+  }
+
+  const planeBounds = planeRef.value.getBoundingClientRect()
+  const defaultSides = decideAnchorSides(fromElement, toElement)
+  const fromAnchor = getPreviewRouteAnchor(fromElement, toElement, defaultSides.from, planeBounds)
+  const toAnchor = getPreviewRouteAnchor(toElement, fromElement, defaultSides.to, planeBounds)
+  const previewOffset = Math.max(8, Math.min(18, getRouteOffset(fromAnchor, toAnchor)))
+  const fromExit = moveAnchorPoint(fromAnchor, previewOffset)
+  const toExit = moveAnchorPoint(toAnchor, previewOffset)
+  const points: LayoutPoint[] = []
+  const middlePoints = buildOrthogonalMiddlePoints(fromExit, fromAnchor.side, toExit, toAnchor.side)
+
+  ;[
+    { x: fromAnchor.x, y: fromAnchor.y },
+    fromExit,
+    ...middlePoints,
+    toExit,
+    { x: toAnchor.x, y: toAnchor.y }
+  ].forEach((point) => {
+    appendRoutePoint(points, point)
+  })
+
+  return buildPathFromPoints(points)
+}
+
+const syncDragConnectionPreviewPaths = () => {
+  if (
+    !activeNodeDrag.value
+    || (activeNodeDrag.value.deltaX === 0 && activeNodeDrag.value.deltaY === 0)
+  ) {
+    if (Object.keys(dragPreviewPaths.value).length > 0) {
+      dragPreviewPaths.value = {}
+    }
+
+    return
+  }
+
+  const nextPreviewPaths = renderedConnectionLines.value.reduce<Record<string, string>>((paths, line) => {
+    const fromDraggedNode = line.fromOwnerNodeId === activeNodeDrag.value?.nodeId
+    const toDraggedNode = line.toOwnerNodeId === activeNodeDrag.value?.nodeId
+
+    if (fromDraggedNode === toDraggedNode) {
+      return paths
+    }
+
+    const fromElement = getConnectionEndpointElement(line.fromEndpoint)
+    const toElement = getConnectionEndpointElement(line.toEndpoint)
+
+    if (!(fromElement instanceof HTMLElement) || !(toElement instanceof HTMLElement)) {
+      return paths
+    }
+
+    const previewPath = buildMinimalConnectionDragPreviewPath(fromElement, toElement)
+
+    if (previewPath) {
+      paths[line.key] = previewPath
+    }
+
+    return paths
+  }, {})
+
+  dragPreviewPaths.value = nextPreviewPaths
+}
+
+const getConnectionDragPreviewPath = (line: ConnectionLine) => {
+  if (!activeNodeDrag.value || (activeNodeDrag.value.deltaX === 0 && activeNodeDrag.value.deltaY === 0)) {
+    return line.path
+  }
+
+  return dragPreviewPaths.value[line.key] || line.path
 }
 
 const getVerticalSegmentUsageKey = (x: number) => {
@@ -5241,7 +5962,7 @@ const buildPathPointsFromLegs = (
   return offsetOverlappingVerticalSegments(points, verticalUsage, headerBands)
 }
 
-const buildSharedGroupPath = (
+const buildSharedGroupPathPoints = (
   fromElement: HTMLElement,
   toElement: HTMLElement,
   groupElement: HTMLElement,
@@ -5324,7 +6045,7 @@ const buildSharedGroupPath = (
     appendRoutePoint(points, { x: laneX, y: toAnchor.y })
     appendRoutePoint(points, { x: toAnchor.x, y: toAnchor.y })
 
-    return buildPathFromPoints(offsetOverlappingVerticalSegments(points, verticalUsage, headerBands))
+    return offsetOverlappingVerticalSegments(points, verticalUsage, headerBands)
   }
 
   const laneY = Math.min(groupBottom - groupLaneInnerBorderClearance, Math.max(fromAnchor.y, toAnchor.y) + laneOffset)
@@ -5333,7 +6054,7 @@ const buildSharedGroupPath = (
   appendRoutePoint(points, { x: toAnchor.x, y: laneY })
   appendRoutePoint(points, { x: toAnchor.x, y: toAnchor.y })
 
-  return buildPathFromPoints(offsetOverlappingVerticalSegments(points, verticalUsage, headerBands))
+  return offsetOverlappingVerticalSegments(points, verticalUsage, headerBands)
 }
 
 const decideAnchorSides = (fromElement: HTMLElement, toElement: HTMLElement): { from: AnchorSide, to: AnchorSide } => {
@@ -5374,8 +6095,19 @@ const buildPathBetween = (
   const sharedGroupElement = !dashed ? getSharedGroupElement(fromElement, toElement) : null
 
   if (sharedGroupElement) {
+    const sharedGroupPoints = buildSharedGroupPathPoints(
+      fromElement,
+      toElement,
+      sharedGroupElement,
+      planeBounds,
+      usage,
+      verticalUsage,
+      headerBands
+    )
+
     return {
-      path: buildSharedGroupPath(fromElement, toElement, sharedGroupElement, planeBounds, usage, verticalUsage, headerBands),
+      path: buildPathFromPoints(sharedGroupPoints),
+      points: sharedGroupPoints,
       color,
       dashed
     }
@@ -5474,12 +6206,15 @@ const buildPathBetween = (
 
   return {
     path: buildPathFromPoints(chosenCandidate.points),
+    points: chosenCandidate.points,
     color,
     dashed
   }
 }
 
 const updateConnections = () => {
+  flushViewportTransformSync()
+
   if (!planeRef.value) {
     return
   }
@@ -5490,6 +6225,7 @@ const updateConnections = () => {
     dashed: boolean
     dashPattern: string
     animated: boolean
+    selectedForeground: boolean
     fromElement: HTMLElement
     toElement: HTMLElement
   }> = []
@@ -5521,6 +6257,7 @@ const updateConnections = () => {
       dashed: isSelectedOutgoingReference,
       dashPattern: isSelectedOutgoingReference ? '10 7' : '0',
       animated: isSelectedOutgoingReference,
+      selectedForeground: isSelectedOutgoingReference,
       fromElement,
       toElement
     })
@@ -5552,6 +6289,7 @@ const updateConnections = () => {
         dashed: true,
         dashPattern: node.objectKind === 'Custom Type' && !isSelectedNodeImpact ? '2 5' : '10 7',
         animated: isSelectedNodeImpact,
+        selectedForeground: false,
         fromElement,
         toElement
       })
@@ -5574,16 +6312,28 @@ const updateConnections = () => {
         return null
       }
 
+      const fromOwnerNodeId = getConnectionOwnerNodeId(descriptor.fromElement)
+      const toOwnerNodeId = getConnectionOwnerNodeId(descriptor.toElement)
+      const fromEndpoint = getConnectionEndpointLocator(descriptor.fromElement)
+      const toEndpoint = getConnectionEndpointLocator(descriptor.toElement)
+
       return {
         key: descriptor.key,
         path: result.path,
+        points: result.points,
+        bounds: getConnectionLineBounds(result.points),
         color: result.color,
         dashed: result.dashed,
         dashPattern: descriptor.dashPattern,
         animated: descriptor.animated,
+        fromOwnerNodeId,
+        toOwnerNodeId,
+        fromEndpoint,
+        toEndpoint,
         zIndex: getDiagramConnectionZIndex(
-          nodeOrders[getConnectionOwnerNodeId(descriptor.fromElement) || ''] || 1,
-          nodeOrders[getConnectionOwnerNodeId(descriptor.toElement) || ''] || 1
+          nodeOrders[fromOwnerNodeId || ''] || 1,
+          nodeOrders[toOwnerNodeId || ''] || 1,
+          descriptor.selectedForeground
         )
       } satisfies ConnectionLine
     })
@@ -5728,10 +6478,34 @@ const getTrackedTouch = (touches: TouchList) => {
 const resetTouchInteraction = () => {
   touchPanSession.value = null
   touchPinchSession.value = null
+  endViewportGpuAcceleration()
 }
 
 const suppressLayoutObserver = (durationMs = 180) => {
   suppressLayoutObserverUntil = Date.now() + durationMs
+}
+
+const flushPendingWheelZoom = () => {
+  if (pendingWheelZoomSteps === 0) {
+    return
+  }
+
+  const stepCount = pendingWheelZoomSteps
+  const pivot = pendingWheelZoomPivot
+
+  pendingWheelZoomSteps = 0
+  pendingWheelZoomPivot = null
+  isApplyingPendingWheelZoom = true
+  zoomToScale(scale.value + stepCount * zoomStep, pivot)
+  isApplyingPendingWheelZoom = false
+}
+
+const scheduleWheelZoom = (stepDirection: 1 | -1, pivot: { x: number, y: number } | null) => {
+  pendingWheelZoomSteps += stepDirection
+  pendingWheelZoomPivot = pivot
+  wheelZoomBatcher.schedule(() => {
+    flushPendingWheelZoom()
+  })
 }
 
 const zoomToScale = (nextScale: number, pivot: { x: number, y: number } | null = null) => {
@@ -5740,25 +6514,30 @@ const zoomToScale = (nextScale: number, pivot: { x: number, y: number } | null =
   suppressLayoutObserver()
 
   if (!pivot) {
-    scale.value = normalizedScale
+    setViewportScale(normalizedScale)
     return
   }
 
   const planeX = (pivot.x - pan.value.x) / scale.value
   const planeY = (pivot.y - pan.value.y) / scale.value
 
-  scale.value = normalizedScale
-  pan.value = {
+  setViewportTransform({
     x: Math.round(pivot.x - planeX * normalizedScale),
     y: Math.round(pivot.y - planeY * normalizedScale)
-  }
+  }, normalizedScale)
 }
 
 const zoomBy = (direction: 1 | -1, pivot: { x: number, y: number } | null = null) => {
+  if (!isApplyingPendingWheelZoom) {
+    wheelZoomBatcher.flush()
+  }
+
   zoomToScale(scale.value + direction * zoomStep, pivot)
 }
 
 const fitView = () => {
+  wheelZoomBatcher.flush()
+
   if (!viewportRef.value) {
     return
   }
@@ -5786,11 +6565,10 @@ const fitView = () => {
   )
 
   suppressLayoutObserver()
-  scale.value = nextScale
-  pan.value = {
+  setViewportTransform({
     x: Math.round(padding.left + (availableWidth - bounds.width * nextScale) / 2 - bounds.minX * nextScale),
     y: Math.round(padding.top + (availableHeight - bounds.height * nextScale) / 2 - bounds.minY * nextScale)
-  }
+  }, nextScale)
 }
 
 const resetView = () => {
@@ -5820,8 +6598,16 @@ const normalizeStoredNodeProperties = (properties: PgmlNodeProperties) => {
     normalized.visible = false
   }
 
+  if (properties.masonry === true) {
+    normalized.masonry = true
+  }
+
   if (typeof properties.tableColumns === 'number') {
     normalized.tableColumns = Math.max(1, Math.round(properties.tableColumns))
+  }
+
+  if (hasStoredPgmlTableWidthScale(properties.tableWidthScale)) {
+    normalized.tableWidthScale = normalizePgmlTableWidthScale(properties.tableWidthScale)
   }
 
   return normalized
@@ -5834,7 +6620,9 @@ const hasStoredNodeProperties = (properties: PgmlNodeProperties) => {
     || typeof properties.color === 'string'
     || typeof properties.collapsed === 'boolean'
     || properties.visible === false
+    || properties.masonry === true
     || typeof properties.tableColumns === 'number'
+    || hasStoredPgmlTableWidthScale(properties.tableWidthScale)
   )
 }
 
@@ -5859,6 +6647,18 @@ const getNodeLayoutProperties = () => {
       nextProperties.x = Math.round(node.x)
       nextProperties.y = Math.round(node.y)
       nextProperties.tableColumns = Math.max(1, Math.round(node.columnCount || 1))
+
+      if (hasStoredPgmlTableWidthScale(node.tableWidthScale)) {
+        nextProperties.tableWidthScale = normalizePgmlTableWidthScale(node.tableWidthScale)
+      } else {
+        delete nextProperties.tableWidthScale
+      }
+
+      if (node.masonry) {
+        nextProperties.masonry = true
+      } else {
+        delete nextProperties.masonry
+      }
     }
 
     if (node.kind === 'table' || node.kind === 'object') {
@@ -5867,7 +6667,7 @@ const getNodeLayoutProperties = () => {
       nextProperties.y = Math.round(node.y)
     }
 
-    if (node.kind === 'object' && node.objectKind === 'Custom Type') {
+    if (node.kind === 'object' && storesCollapsedState(node.objectKind)) {
       nextProperties.collapsed = node.collapsed
     }
 
@@ -5887,6 +6687,45 @@ const getNodeLayoutProperties = () => {
 
 const emitNodePropertiesChange = () => {
   emit('nodePropertiesChange', getNodeLayoutProperties())
+}
+
+const setActiveNodeDrag = (nextDrag: DiagramConnectionPreviewDragState | null) => {
+  const currentDrag = activeNodeDrag.value
+
+  if (
+    currentDrag?.nodeId === nextDrag?.nodeId
+    && currentDrag?.deltaX === nextDrag?.deltaX
+    && currentDrag?.deltaY === nextDrag?.deltaY
+  ) {
+    return
+  }
+
+  activeNodeDrag.value = nextDrag
+}
+
+const hasCanvasNodeStateChanged = (current: CanvasNodeState, nextNode: CanvasNodeState) => {
+  const keys = new Set<keyof CanvasNodeState>([
+    ...(Object.keys(current) as Array<keyof CanvasNodeState>),
+    ...(Object.keys(nextNode) as Array<keyof CanvasNodeState>)
+  ])
+
+  for (const key of keys) {
+    if (current[key] !== nextNode[key]) {
+      return true
+    }
+  }
+
+  return false
+}
+
+const updateGroupTableWidthScale = (id: string, value: string | number | null | undefined) => {
+  const nextValue = typeof value === 'number'
+    ? value
+    : Number.parseFloat(String(value ?? defaultPgmlTableWidthScale))
+
+  updateNode(id, {
+    tableWidthScale: normalizePgmlTableWidthScale(nextValue)
+  })
 }
 
 const updateEntityVisibility = (id: string, visible: boolean) => {
@@ -5924,6 +6763,7 @@ const updateEntityVisibility = (id: string, visible: boolean) => {
     && (
       (selectedCanvasSelection.value?.kind === 'node' && selectedCanvasSelection.value.id === id)
       || (selectedCanvasSelection.value?.kind === 'table' && selectedCanvasSelection.value.tableId === id)
+      || (selectedCanvasSelection.value?.kind === 'column' && selectedCanvasSelection.value.tableId === id)
       || (selectedCanvasSelection.value?.kind === 'attachment' && selectedCanvasSelection.value.attachmentId === id)
     )
   ) {
@@ -5974,9 +6814,13 @@ const updateNode = (
   if (current.kind === 'group') {
     const minimumSize = getGroupMinimumSize(
       current.id.replace('group:', ''),
-      nextNode.columnCount || 1
+      nextNode.columnCount || 1,
+      nextNode.masonry ?? false,
+      nextNode.tableWidthScale
     )
     const resetGroupSize = typeof partial.columnCount === 'number'
+      || typeof partial.masonry === 'boolean'
+      || typeof partial.tableWidthScale === 'number'
     const nextGroupWidth = resetGroupSize
       ? minimumSize.minWidth
       : Math.max(nextNode.width, minimumSize.minWidth)
@@ -6001,19 +6845,17 @@ const updateNode = (
     nextNode.expandedHeight = nextNode.height
   }
 
+  if (!hasCanvasNodeStateChanged(current, nextNode)) {
+    return
+  }
+
   nodeStates.value[id] = nextNode
 
   if (emitNodeProperties) {
     emitNodePropertiesChange()
   }
 
-  nextTick(() => {
-    if (remeasure) {
-      syncMeasuredNodeSizes()
-    }
-
-    updateConnections()
-  })
+  scheduleNodeUpdateFollowUp(remeasure)
 }
 
 const toggleNodeCollapsed = (id: string) => {
@@ -6023,11 +6865,18 @@ const toggleNodeCollapsed = (id: string) => {
     return
   }
 
+  const emitCollapsedStateChange = () => {
+    emitNodePropertiesChange()
+  }
+
   if (node.collapsed) {
     updateNode(id, {
       collapsed: false,
       height: Math.max(node.expandedHeight || node.height, collapsedObjectHeight)
+    }, {
+      emitNodeProperties: false
     })
+    emitCollapsedStateChange()
     return
   }
 
@@ -6041,13 +6890,18 @@ const toggleNodeCollapsed = (id: string) => {
     collapsed: true,
     expandedHeight: node.height,
     height: nextCollapsedHeight
+  }, {
+    emitNodeProperties: false
   })
+  emitCollapsedStateChange()
 }
 
 const startPan = (event: PointerEvent) => {
   if (event.pointerType === 'touch' || !canStartCanvasGesture(event.target)) {
     return
   }
+
+  flushViewportTransformSync()
 
   const origin = {
     x: event.clientX,
@@ -6057,12 +6911,15 @@ const startPan = (event: PointerEvent) => {
   }
 
   startPointerSession({
+    frameThrottle: true,
     onMove: (moveEvent) => {
-      pan.value = {
+      beginViewportGpuAcceleration()
+      setViewportPan({
         x: origin.panX + moveEvent.clientX - origin.x,
         y: origin.panY + moveEvent.clientY - origin.y
-      }
-    }
+      })
+    },
+    onEnd: endViewportGpuAcceleration
   })
 }
 
@@ -6070,6 +6927,8 @@ const handleTouchStart = (event: TouchEvent) => {
   if (isMobilePanelView.value || !canStartCanvasGesture(event.target)) {
     return
   }
+
+  flushViewportTransformSync()
 
   if (event.touches.length >= 2) {
     const gesture = getTouchGesture(event.touches)
@@ -6079,6 +6938,7 @@ const handleTouchStart = (event: TouchEvent) => {
     }
 
     event.preventDefault()
+    beginViewportGpuAcceleration()
     startTouchPinchSession(gesture)
     return
   }
@@ -6113,6 +6973,7 @@ const handleTouchMove = (event: TouchEvent) => {
     }
 
     event.preventDefault()
+    beginViewportGpuAcceleration()
     const transform = getDiagramPinchViewportTransform({
       currentCenter: gesture.center,
       currentDistance: gesture.distance,
@@ -6125,8 +6986,7 @@ const handleTouchMove = (event: TouchEvent) => {
     })
 
     suppressLayoutObserver()
-    pan.value = transform.pan
-    scale.value = transform.scale
+    setViewportTransform(transform.pan, transform.scale)
     return
   }
 
@@ -6137,10 +6997,11 @@ const handleTouchMove = (event: TouchEvent) => {
   }
 
   event.preventDefault()
-  pan.value = {
+  beginViewportGpuAcceleration()
+  setViewportPan({
     x: touchPanSession.value.panX + touch.clientX - touchPanSession.value.clientX,
     y: touchPanSession.value.panY + touch.clientY - touchPanSession.value.clientY
-  }
+  })
 }
 
 const handleTouchEnd = (event: TouchEvent) => {
@@ -6209,17 +7070,46 @@ const startDragNode = (event: PointerEvent, id: string) => {
     nodeY: node.y
   }
 
+  flushViewportTransformSync()
+  beginViewportGpuAcceleration()
+  setActiveNodeDrag({
+    nodeId: id,
+    deltaX: 0,
+    deltaY: 0
+  })
+
   startPointerSession({
+    frameThrottle: true,
     onMove: (moveEvent) => {
-      updateNode(id, {
-        x: snapCoordinate(origin.nodeX + (moveEvent.clientX - origin.x) / scale.value),
-        y: snapCoordinate(origin.nodeY + (moveEvent.clientY - origin.y) / scale.value)
-      }, {
-        remeasure: false,
-        emitNodeProperties: false
+      const nextX = snapCoordinate(origin.nodeX + (moveEvent.clientX - origin.x) / scale.value)
+      const nextY = snapCoordinate(origin.nodeY + (moveEvent.clientY - origin.y) / scale.value)
+
+      setActiveNodeDrag({
+        nodeId: id,
+        deltaX: nextX - origin.nodeX,
+        deltaY: nextY - origin.nodeY
       })
     },
-    onEnd: emitNodePropertiesChange
+    onEnd: () => {
+      const finalDeltaX = activeNodeDrag.value?.nodeId === id ? activeNodeDrag.value.deltaX : 0
+      const finalDeltaY = activeNodeDrag.value?.nodeId === id ? activeNodeDrag.value.deltaY : 0
+      const hasMoved = finalDeltaX !== 0 || finalDeltaY !== 0
+
+      setActiveNodeDrag(null)
+
+      if (hasMoved) {
+        updateNode(id, {
+          x: snapCoordinate(origin.nodeX + finalDeltaX),
+          y: snapCoordinate(origin.nodeY + finalDeltaY)
+        }, {
+          remeasure: false,
+          emitNodeProperties: false
+        })
+        emitNodePropertiesChange()
+      }
+
+      scheduleViewportGpuAccelerationReset()
+    }
   })
 }
 
@@ -6249,16 +7139,24 @@ const startResizeNode = (event: PointerEvent, id: string) => {
     minHeight: node.minHeight || 96
   }
 
+  flushViewportTransformSync()
+  beginViewportGpuAcceleration()
+
   startPointerSession({
+    frameThrottle: true,
     onMove: (moveEvent) => {
       updateNode(id, {
         width: Math.max(origin.minWidth, origin.width + (moveEvent.clientX - origin.x) / scale.value),
         height: Math.max(origin.minHeight, origin.height + (moveEvent.clientY - origin.y) / scale.value)
       }, {
+        remeasure: false,
         emitNodeProperties: false
       })
     },
-    onEnd: emitNodePropertiesChange
+    onEnd: () => {
+      emitNodePropertiesChange()
+      scheduleViewportGpuAccelerationReset()
+    }
   })
 }
 
@@ -6283,6 +7181,15 @@ const handleTableClick = (tableId: string) => {
   selectedCanvasSelection.value = {
     kind: 'table',
     tableId
+  }
+}
+
+const handleColumnClick = (tableId: string, columnName: string) => {
+  selectedNodeId.value = null
+  selectedCanvasSelection.value = {
+    kind: 'column',
+    tableId,
+    columnName
   }
 }
 
@@ -6333,7 +7240,9 @@ const handleEditGroup = (groupName: string) => {
 
 const handleWheel = (event: WheelEvent) => {
   event.preventDefault()
-  zoomBy(event.deltaY > 0 ? -1 : 1, getViewportRelativePoint(event.clientX, event.clientY))
+  beginViewportGpuAcceleration()
+  scheduleViewportGpuAccelerationReset()
+  scheduleWheelZoom(event.deltaY > 0 ? -1 : 1, getViewportRelativePoint(event.clientX, event.clientY))
 }
 
 watch(
@@ -6383,6 +7292,7 @@ watch(
 
     syncNodeStates()
     await syncLayoutObserverTargets()
+    await refreshMeasuredGroupTableHeights()
     if (syncMeasuredNodeSizes()) {
       await syncLayoutObserverTargets()
     }
@@ -6411,10 +7321,23 @@ watch(
   selectedCanvasSelection,
   () => {
     nextTick(() => {
-      updateConnections()
+      scheduleConnectionRefresh()
     })
   },
   { deep: true }
+)
+
+watch(
+  [
+    () => activeNodeDrag.value?.nodeId || null,
+    () => activeNodeDrag.value?.deltaX || 0,
+    () => activeNodeDrag.value?.deltaY || 0,
+    () => renderedConnectionLines.value.map(line => line.key).join('|')
+  ],
+  () => {
+    syncDragConnectionPreviewPaths()
+  },
+  { flush: 'post' }
 )
 
 watch(
@@ -6426,8 +7349,12 @@ watch(
 )
 
 onMounted(() => {
+  syncViewportTransform()
+  syncViewportSize()
+
   nextTick(async () => {
     await syncLayoutObserverTargets()
+    await refreshMeasuredGroupTableHeights()
     if (syncMeasuredNodeSizes()) {
       reflowAutoLayout()
       updateConnections()
@@ -6448,7 +7375,11 @@ onMounted(() => {
 
 onBeforeUnmount(() => {
   stopExportCopyFeedbackReset()
+  stopViewportGpuAccelerationReset()
   resetTouchInteraction()
+  wheelZoomBatcher.cancel()
+  viewportTransformBatcher.cancel()
+  connectionRefreshBatcher.cancel()
 })
 
 defineExpose<{
@@ -6488,9 +7419,7 @@ defineExpose<{
       ref="planeRef"
       data-diagram-plane="true"
       class="relative h-[1800px] w-[2600px] origin-top-left"
-      :style="{
-        transform: `translate(${pan.x}px, ${pan.y}px) scale(${scale})`
-      }"
+      :style="canvasPlaneStyle"
     >
       <div
         v-for="node in canvasNodes"
@@ -6498,7 +7427,9 @@ defineExpose<{
         :class="[
           'absolute select-none',
           node.kind === 'group' ? 'overflow-hidden rounded-[2px]' : 'overflow-hidden rounded-none border',
-          node.kind === 'table' || node.kind === 'object' ? 'transition-transform duration-150 hover:-translate-y-0.5 hover:ring-1 hover:ring-[color:var(--studio-ring)]' : '',
+          node.kind === 'table' || node.kind === 'object'
+            ? 'hover:ring-1 hover:ring-[color:var(--studio-ring)]'
+            : '',
           isNodeSelectionActive(node.id) && node.kind !== 'group' ? 'pgml-selection-glow' : ''
         ]"
         :style="[
@@ -6507,10 +7438,11 @@ defineExpose<{
             top: `${node.y}px`,
             width: `${node.width}px`,
             height: `${node.height}px`,
-            zIndex: node.kind === 'group' ? 'auto' : getNodeForegroundLayerZIndex(node.id),
+            zIndex: getCanvasNodeZIndex(node),
             borderColor: node.kind === 'group' ? 'transparent' : getNodeBorderColor(node),
             background: node.kind === 'group' ? 'transparent' : getNodeBackground(node)
           },
+          getNodeDragStyle(node.id),
           node.kind === 'table' || node.kind === 'object' ? getSelectionGlowStyle(node.color) : undefined
         ]"
         :data-node-anchor="node.id"
@@ -6636,20 +7568,17 @@ defineExpose<{
           <div
             :data-group-content="node.id"
             class="grid items-start justify-start overflow-visible"
-            :style="{
-              gridTemplateColumns: `repeat(${node.columnCount || 1}, ${groupTableWidth}px)`,
-              gap: `${groupTableGap}px`
-            }"
+            :style="getGroupContentStyle(node)"
           >
             <article
-              v-for="table in model.tables.filter((table) => node.tableIds.includes(table.fullName))"
+              v-for="table in getRenderedGroupTables(node.title)"
               :key="table.fullName"
               :class="[
-                'relative min-w-0 self-start overflow-hidden rounded-[2px] border border-[color:var(--studio-shell-border)] bg-[color:var(--studio-table-surface)] transition-transform duration-150 hover:-translate-y-0.5 hover:ring-1 hover:ring-[color:var(--studio-ring)]',
+                'relative min-w-0 self-start overflow-hidden rounded-[2px] border border-[color:var(--studio-shell-border)] bg-[color:var(--studio-table-surface)] hover:ring-1 hover:ring-[color:var(--studio-ring)]',
                 isTableSelectionActive(table.fullName) ? 'pgml-selection-glow pgml-selection-glow-subtle' : ''
               ]"
               :style="[
-                { width: `${groupTableWidth}px` },
+                getGroupTableLayoutStyle(node, table.fullName),
                 getSelectionGlowStyle(tableGroupColorByTableId[table.fullName] || '#38bdf8')
               ]"
               :data-table-anchor="table.fullName"
@@ -6697,6 +7626,7 @@ defineExpose<{
                   :get-relational-row-highlight-color="getRelationalRowHighlightColor"
                   :get-selected-attachment-row-style="getSelectedAttachmentRowStyle"
                   :get-selection-glow-style="getSelectionGlowStyle"
+                  :is-column-selection-active="isColumnSelectionActive"
                   :is-attachment-selection-active="isAttachmentSelectionActive"
                   :is-highlighted-relational-row="isHighlightedRelationalRow"
                   :rows="getTableRows(table.fullName)"
@@ -6724,6 +7654,7 @@ defineExpose<{
             :get-relational-row-highlight-color="getRelationalRowHighlightColor"
             :get-selected-attachment-row-style="getSelectedAttachmentRowStyle"
             :get-selection-glow-style="getSelectionGlowStyle"
+            :is-column-selection-active="isColumnSelectionActive"
             :is-attachment-selection-active="isAttachmentSelectionActive"
             :is-highlighted-relational-row="isHighlightedRelationalRow"
             :rows="getTableRows(node.id)"
@@ -6781,7 +7712,7 @@ defineExpose<{
         preserveAspectRatio="none"
       >
         <path
-          v-for="line in layer.lines"
+          v-for="line in layer.staticLines"
           :key="line.key"
           :class="line.animated ? 'pgml-reference-race-path' : undefined"
           :d="line.path"
@@ -6796,6 +7727,45 @@ defineExpose<{
           stroke-linejoin="miter"
           opacity="0.9"
         />
+        <path
+          v-for="line in layer.bridgedLines"
+          :key="`${line.key}:bridge-preview`"
+          :class="line.animated ? 'pgml-reference-race-path' : undefined"
+          :d="getConnectionDragPreviewPath(line)"
+          fill="none"
+          :stroke="line.color"
+          stroke-width="2"
+          :stroke-dasharray="line.dashPattern"
+          :style="line.animated ? getReferenceRaceStyle(line.color) : undefined"
+          :data-connection-key="line.key"
+          :data-connection-highlighted="line.animated ? 'true' : undefined"
+          stroke-linecap="square"
+          stroke-linejoin="miter"
+          opacity="0.9"
+        />
+        <g
+          v-if="activeNodeDrag && layer.translatedLines.length > 0"
+          data-connection-drag-preview="true"
+          :data-connection-drag-node="activeNodeDrag.nodeId"
+          :transform="`translate(${activeNodeDrag.deltaX} ${activeNodeDrag.deltaY})`"
+        >
+          <path
+            v-for="line in layer.translatedLines"
+            :key="`${line.key}:drag-preview`"
+            :class="line.animated ? 'pgml-reference-race-path' : undefined"
+            :d="line.path"
+            fill="none"
+            :stroke="line.color"
+            stroke-width="2"
+            :stroke-dasharray="line.dashPattern"
+            :style="line.animated ? getReferenceRaceStyle(line.color) : undefined"
+            :data-connection-key="line.key"
+            :data-connection-highlighted="line.animated ? 'true' : undefined"
+            stroke-linecap="square"
+            stroke-linejoin="miter"
+            opacity="0.9"
+          />
+        </g>
       </svg>
     </div>
 
@@ -6817,7 +7787,7 @@ defineExpose<{
           @click="zoomBy(-1)"
         />
         <div class="min-w-[52px] text-center font-mono text-[0.7rem] text-[color:var(--studio-shell-text)]">
-          {{ Math.round(scale * 100) }}%
+          {{ Math.round(displayScale * 100) }}%
         </div>
         <UButton
           icon="i-lucide-zoom-in"
@@ -6835,6 +7805,22 @@ defineExpose<{
           class="rounded-none text-[color:var(--studio-shell-muted)] hover:bg-[color:var(--studio-surface-hover)] hover:text-[color:var(--studio-shell-text)]"
           @click="resetView"
         />
+        <button
+          type="button"
+          data-relationship-lines-toggle="true"
+          :aria-pressed="showRelationshipLines"
+          :class="getStudioStateButtonClass({
+            emphasized: showRelationshipLines,
+            extraClass: 'inline-flex items-center gap-1.5 text-[0.62rem]'
+          })"
+          @click="showRelationshipLines = !showRelationshipLines"
+        >
+          <UIcon
+            :name="showRelationshipLines ? 'i-lucide-eye' : 'i-lucide-eye-off'"
+            class="h-3.5 w-3.5"
+          />
+          Lines
+        </button>
         <button
           type="button"
           data-grid-snap-toggle="true"
@@ -6982,7 +7968,7 @@ defineExpose<{
             <input
               :value="selectedNode.color"
               type="color"
-              class="h-9 w-full border border-[color:var(--studio-rail)] bg-[color:var(--studio-input-bg)] p-0.5"
+              :class="studioColorInputClass"
               @input="updateNode(selectedNode.id, { color: ($event.target as HTMLInputElement).value })"
             >
           </label>
@@ -7017,6 +8003,42 @@ defineExpose<{
             >
           </label>
 
+          <div
+            v-if="selectedNode.kind === 'group'"
+            class="grid gap-1"
+          >
+            <USwitch
+              :model-value="selectedNode.masonry ?? false"
+              data-group-masonry-switch="true"
+              color="neutral"
+              size="sm"
+              label="Masonry"
+              description="Keep the chosen column count, but pack tables vertically to reduce whitespace."
+              :ui="studioSwitchUi"
+              @update:model-value="updateNode(selectedNode.id, { masonry: Boolean($event) })"
+            />
+          </div>
+
+          <label
+            v-if="selectedNode.kind === 'group'"
+            class="grid gap-1"
+          >
+            <span class="font-mono text-[0.58rem] uppercase tracking-[0.08em] text-[color:var(--studio-shell-label)]">Table Width</span>
+            <USelect
+              aria-label="Table width scale"
+              :items="tableWidthScaleItems"
+              :model-value="selectedNode.tableWidthScale ?? defaultPgmlTableWidthScale"
+              data-group-table-width-scale-select="true"
+              value-key="value"
+              label-key="label"
+              color="neutral"
+              variant="outline"
+              size="sm"
+              :ui="studioSelectUi"
+              @update:model-value="updateGroupTableWidthScale(selectedNode.id, $event)"
+            />
+          </label>
+
           <label
             v-if="selectedNode.kind === 'group'"
             class="grid gap-1"
@@ -7027,7 +8049,7 @@ defineExpose<{
               data-group-column-count-slider="true"
               type="range"
               min="1"
-              :max="Math.min(4, selectedNode.tableCount || 4)"
+              :max="Math.max(1, selectedNode.tableCount || 1)"
               class="w-full"
               @input="updateNode(selectedNode.id, { columnCount: Number(($event.target as HTMLInputElement).value) })"
             >

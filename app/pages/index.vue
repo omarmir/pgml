@@ -6,6 +6,7 @@ import {
   formatSavedPgmlSchemaTime,
   untitledSchemaName
 } from '~/utils/studio-browser-schemas'
+import { convertPgDumpToPgml } from '~/utils/pg-dump-import'
 import type { PgmlRecentComputerFile } from '~/utils/computer-files'
 import {
   createComputerPgmlFile,
@@ -30,6 +31,9 @@ import {
   buildFileStudioRecentQuery,
   type FileStudioLaunchRequest
 } from '~/utils/studio-launch'
+
+type SourceCardId = 'browser-local-storage' | 'computer-saved-file' | 'hosted-database'
+type PgDumpImportTarget = 'browser' | 'file' | 'hosted'
 
 type SourceCardOperationItem = {
   action?: {
@@ -67,25 +71,39 @@ type SourceCardOperation = {
 }
 
 type SourceCardDefinition = {
-  cardId: string
+  cardId: SourceCardId
   description: string
   inventory: string
   operations: SourceCardOperation[]
+  sqlDumpAction: {
+    id: string
+    value: SourceCardId
+  }
   sqlDumpDescription: string
   statusLabel: string
   statusTone: 'live' | 'placeholder'
   title: string
 }
 
-type PendingComputerFileAction
-  = { kind: 'create-example' }
-    | { kind: 'create-new' }
-    | { kind: 'open-picker' }
-    | { kind: 'open-recent', recentFileId: string }
+type PendingComputerFileAction = { kind: 'create-example' }
+  | {
+    kind: 'create-import'
+    schemaName: string
+    text: string
+  }
+  | { kind: 'create-new' }
+  | { kind: 'open-picker' }
+  | { kind: 'open-recent', recentFileId: string }
 
 const computerFileAccessDialogOpen: Ref<boolean> = ref(false)
 const isConfirmingComputerFileAction: Ref<boolean> = ref(false)
+const isSubmittingPgDumpImport: Ref<boolean> = ref(false)
 const pendingComputerFileAction: Ref<PendingComputerFileAction | null> = ref(null)
+const pgDumpImportDialogOpen: Ref<boolean> = ref(false)
+const pgDumpImportError: Ref<string | null> = ref(null)
+const pgDumpImportSelectedFile: Ref<File | null> = ref(null)
+const pgDumpImportTarget: Ref<PgDumpImportTarget | null> = ref(null)
+const pgDumpImportText: Ref<string> = ref('')
 const browserNewQuery = buildBrowserStudioNewQuery()
 const browserExampleQuery = buildBrowserStudioExampleQuery()
 const studioSessionStore = useStudioSessionStore()
@@ -105,6 +123,13 @@ const specBannerClass = joinStudioClasses(
   'border border-[color:var(--studio-shell-border)] bg-[color:var(--studio-control-bg)] px-5 py-5 sm:px-6 sm:py-6'
 )
 const specBannerButtonClass = studioButtonClasses.ghost
+const pgDumpImportConflictErrorMessage = 'Choose either pasted pg_dump text or a file upload, not both.'
+const pgDumpImportMissingInputErrorMessage = 'Paste pg_dump text or choose a text dump file before importing.'
+const pgDumpImportTargetByCardId: Record<SourceCardId, PgDumpImportTarget> = {
+  'browser-local-storage': 'browser',
+  'computer-saved-file': 'file',
+  'hosted-database': 'hosted'
+}
 const getActionErrorMessage = (error: unknown, fallbackMessage: string) => {
   if (error instanceof Error && error.message.trim().length > 0) {
     return error.message
@@ -138,6 +163,24 @@ const refreshSavedSchemas = () => {
 }
 const refreshRecentComputerFiles = async () => {
   await studioSourcesStore.refreshRecentComputerFiles()
+}
+const createBrowserSchemaFromImport = async (input: {
+  name: string
+  text: string
+}) => {
+  const createdSchema = studioSourcesStore.createBrowserSchema(input)
+
+  if (!createdSchema) {
+    pushSaveErrorToast('Unable to save to local storage.')
+    return false
+  }
+
+  await router.push({
+    path: '/diagram',
+    query: buildBrowserStudioSavedQuery(createdSchema.id)
+  })
+
+  return true
 }
 const deleteBrowserSavedSchema = (schemaId: string) => {
   if (!studioSourcesStore.deleteBrowserSchema(schemaId)) {
@@ -193,12 +236,12 @@ const openComputerFileFromPicker = async () => {
     pushComputerFileActionErrorToast(getActionErrorMessage(error, 'Unable to open the selected file.'))
   }
 }
-const createComputerFileFromLaunch = async (launchType: 'example' | 'new') => {
+const createComputerFile = async (input: {
+  name: string
+  text: string
+}) => {
   try {
-    const createdFile = await createComputerPgmlFile({
-      name: launchType === 'example' ? exampleSchemaName : untitledSchemaName,
-      text: launchType === 'example' ? pgmlExample : ''
-    })
+    const createdFile = await createComputerPgmlFile(input)
 
     if (!createdFile) {
       return
@@ -209,6 +252,12 @@ const createComputerFileFromLaunch = async (launchType: 'example' | 'new') => {
   } catch (error) {
     pushSaveErrorToast(getActionErrorMessage(error, 'Unable to save to the selected file.'))
   }
+}
+const createComputerFileFromLaunch = async (launchType: 'example' | 'new') => {
+  await createComputerFile({
+    name: launchType === 'example' ? exampleSchemaName : untitledSchemaName,
+    text: launchType === 'example' ? pgmlExample : ''
+  })
 }
 const openRecentComputerFileFromLaunch = async (recentFileId: string) => {
   try {
@@ -245,6 +294,111 @@ const queueComputerFileAccessAction = (action: PendingComputerFileAction) => {
   pendingComputerFileAction.value = action
   computerFileAccessDialogOpen.value = true
 }
+const resetPgDumpImportDialog = () => {
+  pgDumpImportDialogOpen.value = false
+  pgDumpImportError.value = null
+  pgDumpImportSelectedFile.value = null
+  pgDumpImportTarget.value = null
+  pgDumpImportText.value = ''
+}
+const syncPgDumpImportConflictError = () => {
+  const hasFile = pgDumpImportSelectedFile.value !== null
+  const hasText = pgDumpImportText.value.trim().length > 0
+
+  if (hasFile && hasText) {
+    pgDumpImportError.value = pgDumpImportConflictErrorMessage
+    return false
+  }
+
+  if (pgDumpImportError.value !== null) {
+    pgDumpImportError.value = null
+  }
+
+  return true
+}
+const openPgDumpImportDialog = (cardId: SourceCardId) => {
+  pgDumpImportDialogOpen.value = true
+  pgDumpImportError.value = null
+  pgDumpImportSelectedFile.value = null
+  pgDumpImportTarget.value = pgDumpImportTargetByCardId[cardId]
+  pgDumpImportText.value = ''
+}
+const closePgDumpImportDialog = () => {
+  if (isSubmittingPgDumpImport.value) {
+    return
+  }
+
+  resetPgDumpImportDialog()
+}
+const handlePgDumpImportDialogOpenChange = (nextOpen: boolean) => {
+  if (nextOpen) {
+    pgDumpImportDialogOpen.value = true
+    return
+  }
+
+  closePgDumpImportDialog()
+}
+const setPgDumpImportText = (value: string) => {
+  pgDumpImportText.value = value
+  syncPgDumpImportConflictError()
+}
+const setPgDumpImportFile = (files: FileList | null) => {
+  pgDumpImportSelectedFile.value = files?.[0] || null
+  syncPgDumpImportConflictError()
+}
+const clearPgDumpImportFile = () => {
+  pgDumpImportSelectedFile.value = null
+  syncPgDumpImportConflictError()
+}
+const submitPgDumpImport = async () => {
+  const importTarget = pgDumpImportTarget.value
+
+  if (!importTarget) {
+    return
+  }
+
+  if (!syncPgDumpImportConflictError()) {
+    return
+  }
+
+  const selectedFile = pgDumpImportSelectedFile.value
+  const trimmedText = pgDumpImportText.value.trim()
+
+  if (!selectedFile && trimmedText.length === 0) {
+    pgDumpImportError.value = pgDumpImportMissingInputErrorMessage
+    return
+  }
+
+  isSubmittingPgDumpImport.value = true
+
+  try {
+    const importedSql = selectedFile ? await selectedFile.text() : pgDumpImportText.value
+    const importedSchema = convertPgDumpToPgml({
+      preferredName: selectedFile?.name,
+      sql: importedSql
+    })
+
+    resetPgDumpImportDialog()
+
+    if (importTarget === 'file') {
+      queueComputerFileAccessAction({
+        kind: 'create-import',
+        schemaName: importedSchema.schemaName,
+        text: importedSchema.pgml
+      })
+      return
+    }
+
+    await createBrowserSchemaFromImport({
+      name: importedSchema.schemaName,
+      text: importedSchema.pgml
+    })
+  } catch (error) {
+    pgDumpImportError.value = getActionErrorMessage(error, 'Unable to import that pg_dump.')
+  } finally {
+    isSubmittingPgDumpImport.value = false
+  }
+}
 const closeComputerFileAccessDialog = () => {
   if (isConfirmingComputerFileAction.value) {
     return
@@ -279,6 +433,14 @@ const confirmComputerFileAccessAction = async () => {
       return
     }
 
+    if (pendingAction.kind === 'create-import') {
+      await createComputerFile({
+        name: pendingAction.schemaName,
+        text: pendingAction.text
+      })
+      return
+    }
+
     await createComputerFileFromLaunch('example')
   } finally {
     isConfirmingComputerFileAction.value = false
@@ -290,6 +452,11 @@ const handleSourceCardAction = async (payload: {
   cardId: string
   value: string
 }) => {
+  if (payload.actionId === 'open-pg-dump-import') {
+    openPgDumpImportDialog(payload.value as SourceCardId)
+    return
+  }
+
   if (payload.cardId === 'browser-local-storage' && payload.actionId === 'delete-saved-schema') {
     deleteBrowserSavedSchema(payload.value)
     return
@@ -369,10 +536,47 @@ const computerFileAccessDialogCopy = computed(() => {
     }
   }
 
+  if (pendingAction.kind === 'create-import') {
+    return {
+      confirmLabel: 'Continue to save dialog',
+      nextStepDescription: 'The next step opens the browser save dialog so you can choose where the imported `.pgml` file should live.',
+      title: 'Create an imported file on your computer'
+    }
+  }
+
   return {
     confirmLabel: 'Continue to save dialog',
     nextStepDescription: 'The next step opens the browser save dialog so you can choose where the example `.pgml` file should be created.',
     title: 'Create an example file on your computer'
+  }
+})
+const pgDumpImportSelectedFileName = computed(() => {
+  return pgDumpImportSelectedFile.value?.name || ''
+})
+const pgDumpImportDialogCopy = computed(() => {
+  if (pgDumpImportTarget.value === 'file') {
+    return {
+      confirmLabel: 'Import into new file',
+      description: 'Paste a text pg_dump or upload a text dump file. PGML will convert the schema objects first, then ask where the new `.pgml` file should be saved.',
+      inputDescription: 'Use one input method only. PGML imports schema objects from SQL and skips table data from COPY sections.',
+      title: 'Import pg_dump into a new computer file'
+    }
+  }
+
+  if (pgDumpImportTarget.value === 'hosted') {
+    return {
+      confirmLabel: 'Import into browser storage',
+      description: 'Paste a text pg_dump or upload a text dump file. Hosted persistence is still a placeholder, so this import opens as a browser-backed PGML schema for now.',
+      inputDescription: 'Use one input method only. PGML imports schema objects from SQL and skips table data from COPY sections.',
+      title: 'Import pg_dump from the hosted lane'
+    }
+  }
+
+  return {
+    confirmLabel: 'Import into browser storage',
+    description: 'Paste a text pg_dump or upload a text dump file. PGML will convert the schema objects and open them in browser local storage.',
+    inputDescription: 'Use one input method only. PGML imports schema objects from SQL and skips table data from COPY sections.',
+    title: 'Import pg_dump into browser storage'
   }
 })
 
@@ -483,7 +687,11 @@ const sourceCards = computed<SourceCardDefinition[]>(() => {
           }
         }
       ],
-      sqlDumpDescription: 'Import a SQL dump into browser storage from this card once that ingestion path is implemented.',
+      sqlDumpAction: {
+        id: 'open-pg-dump-import',
+        value: 'browser-local-storage'
+      },
+      sqlDumpDescription: 'Convert a text pg_dump into a browser-backed PGML schema and open it directly in the studio.',
       statusLabel: 'Available now',
       statusTone: 'live',
       title: 'Browser local storage'
@@ -518,7 +726,11 @@ const sourceCards = computed<SourceCardDefinition[]>(() => {
           }
         }
       ],
-      sqlDumpDescription: 'Import a SQL dump from disk into a new computer-backed `.pgml` file from this card once that path is implemented.',
+      sqlDumpAction: {
+        id: 'open-pg-dump-import',
+        value: 'computer-saved-file'
+      },
+      sqlDumpDescription: 'Convert a text pg_dump into a new computer-backed `.pgml` file, then keep autosave pointed at that file.',
       statusLabel: 'Available now',
       statusTone: 'live',
       title: 'Computer saved file'
@@ -550,7 +762,11 @@ const sourceCards = computed<SourceCardDefinition[]>(() => {
           placeholder: true
         }
       ],
-      sqlDumpDescription: 'Import a SQL dump through the hosted workflow from this card once that ingestion path is implemented.',
+      sqlDumpAction: {
+        id: 'open-pg-dump-import',
+        value: 'hosted-database'
+      },
+      sqlDumpDescription: 'Convert a text pg_dump from this lane now, then open it in browser storage while hosted persistence stays in progress.',
       statusLabel: 'Placeholder',
       statusTone: 'placeholder',
       title: 'Hosted database'
@@ -582,6 +798,7 @@ onBeforeRouteLeave((to) => {
         :description="card.description"
         :inventory="card.inventory"
         :operations="card.operations"
+        :sql-dump-action="card.sqlDumpAction"
         :sql-dump-description="card.sqlDumpDescription"
         :status-label="card.statusLabel"
         :status-tone="card.statusTone"
@@ -620,6 +837,23 @@ onBeforeRouteLeave((to) => {
     </section>
 
     <ClientOnly>
+      <AppPgDumpImportModal
+        :open="pgDumpImportDialogOpen"
+        :title="pgDumpImportDialogCopy.title"
+        :description="pgDumpImportDialogCopy.description"
+        :confirm-label="pgDumpImportDialogCopy.confirmLabel"
+        :input-description="pgDumpImportDialogCopy.inputDescription"
+        :model-value="pgDumpImportText"
+        :selected-file-name="pgDumpImportSelectedFileName"
+        :error-message="pgDumpImportError"
+        :is-submitting="isSubmittingPgDumpImport"
+        @update:open="handlePgDumpImportDialogOpenChange"
+        @update:model-value="setPgDumpImportText"
+        @select-file="setPgDumpImportFile"
+        @clear-file="clearPgDumpImportFile"
+        @submit="submitPgDumpImport"
+      />
+
       <StudioModalFrame
         v-model:open="computerFileAccessDialogOpen"
         :title="computerFileAccessDialogCopy.title"

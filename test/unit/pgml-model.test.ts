@@ -1,6 +1,12 @@
 import { describe, expect, it } from 'vitest'
 
-import { getPgmlSourceScrollTop, getPgmlSourceSelectionRange, parsePgml, pgmlExample } from '../../app/utils/pgml'
+import {
+  getOrderedGroupTables,
+  getPgmlSourceScrollTop,
+  getPgmlSourceSelectionRange,
+  parsePgml,
+  pgmlExample
+} from '../../app/utils/pgml'
 
 describe('PGML model parsing', () => {
   it('parses the bundled example into grouped tables, refs, and custom types', () => {
@@ -86,6 +92,29 @@ describe('PGML model parsing', () => {
     expect(registerTrigger?.docs?.summary).toContain('Registers a Common_Entity id')
   })
 
+  it('parses reference delete and update actions from inline modifiers', () => {
+    const source = `Table public.users {
+  id uuid [pk]
+}
+
+Table public.orders {
+  id uuid [pk]
+  customer_id uuid [ref: > public.users.id, delete: restrict, update: cascade]
+}`
+    const model = parsePgml(source)
+
+    expect(model.references).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        fromColumn: 'customer_id',
+        fromTable: 'public.orders',
+        onDelete: 'restrict',
+        onUpdate: 'cascade',
+        toColumn: 'id',
+        toTable: 'public.users'
+      })
+    ]))
+  })
+
   it('tracks source ranges for navigable schema objects', () => {
     const source = `TableGroup Core {
   orders
@@ -121,6 +150,32 @@ Enum order_state {
     expect(index?.sourceRange).toEqual({ startLine: 9, endLine: 9 })
     expect(routine?.sourceRange).toEqual({ startLine: 12, endLine: 17 })
     expect(customType?.sourceRange).toEqual({ startLine: 19, endLine: 22 })
+  })
+
+  it('resolves grouped tables in TableGroup source order before falling back to table declaration order', () => {
+    const source = `TableGroup Core {
+  public.roles
+  public.users
+}
+
+Table public.users in Core {
+  id uuid [pk]
+}
+
+Table public.tenants in Core {
+  id uuid [pk]
+}
+
+Table public.roles in Core {
+  id uuid [pk]
+}`
+    const model = parsePgml(source)
+
+    expect(getOrderedGroupTables(model, 'Core').map(table => table.fullName)).toEqual([
+      'public.roles',
+      'public.users',
+      'public.tenants'
+    ])
   })
 
   it('builds editor selection offsets from source ranges', () => {

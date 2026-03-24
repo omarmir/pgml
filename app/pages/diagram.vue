@@ -57,10 +57,12 @@ import {
 } from '~/utils/pgml-table-editor'
 import {
   getStudioChoiceButtonClass,
+  studioPersistentSelectMenuProps,
   getStudioSelectMenuSearchInputProps,
   getStudioToggleChipClass,
   joinStudioClasses,
   studioButtonClasses,
+  studioColorInputClass,
   studioCompactBodyCopyClass,
   studioCompactFieldKickerClass,
   studioEmptyStateClass,
@@ -97,6 +99,10 @@ type ReferenceTargetItem = {
   label: string
   value: string
 }
+
+type ReferenceActionField = 'referenceDeleteAction' | 'referenceUpdateAction'
+
+const defaultReferenceActionSelectValue = '__pgml_default_reference_action__'
 
 const beginnerFriendlyColumnTypePresets: Record<string, Omit<ReferenceTargetItem, 'value'>> = {
   bigint: {
@@ -186,6 +192,7 @@ const { getColumnDefaultPlaceholder, getColumnDefaultSuggestions } = usePgmlColu
 const toast = useToast()
 const {
   editorRef,
+  focusEditorDiagnostic,
   focusEditorSourceRange
 } = usePgmlSourceEditor()
 const studioSessionStore = useStudioSessionStore()
@@ -305,6 +312,7 @@ const {
   isSavingToComputerFile,
   loadRecentComputerFileById,
   openComputerFileFromPicker,
+  passiveComputerFileWritesSupported,
   recentComputerFiles,
   refreshRecentComputerFiles,
   saveSchemaToComputerFile,
@@ -453,8 +461,12 @@ const schemaActionDescriptionText = computed(() => {
 
   if (currentPersistenceSource.value === 'file') {
     return canEmbedLayout.value
-      ? 'Save the current PGML back to the selected `.pgml` file on your computer and optionally embed the current canvas layout.'
-      : 'The current PGML has a parse error, so only the raw text can be written back to the selected file right now.'
+      ? passiveComputerFileWritesSupported.value
+        ? 'Save the current PGML back to the selected `.pgml` file on your computer and optionally embed the current canvas layout.'
+        : 'Mobile Chrome requires explicit saves for `.pgml` files, so use Save to write the current PGML back to the selected file and optionally embed the current canvas layout.'
+      : passiveComputerFileWritesSupported.value
+        ? 'The current PGML has a parse error, so only the raw text can be written back to the selected file right now.'
+        : 'Mobile Chrome requires explicit saves for `.pgml` files, and the current PGML has a parse error, so only the raw text can be written back to the selected file right now.'
   }
 
   return schemaActionDescription.value
@@ -744,6 +756,38 @@ const referenceRelationSymbolItems: ReferenceTargetItem[] = referenceRelationIte
   value: item.value,
   description: item.label
 }))
+const referenceActionItems: ReferenceTargetItem[] = [
+  {
+    label: 'Default behavior',
+    value: defaultReferenceActionSelectValue,
+    description: 'Do not write an explicit clause. PostgreSQL keeps its default action.'
+  },
+  {
+    label: 'No action',
+    value: 'no action',
+    description: 'Keep the reference valid at statement end without adding a cascading change.'
+  },
+  {
+    label: 'Restrict',
+    value: 'restrict',
+    description: 'Reject the change immediately when dependent rows still exist.'
+  },
+  {
+    label: 'Cascade',
+    value: 'cascade',
+    description: 'Propagate the delete or update to dependent rows.'
+  },
+  {
+    label: 'Set null',
+    value: 'set null',
+    description: 'Set the referencing column to null.'
+  },
+  {
+    label: 'Set default',
+    value: 'set default',
+    description: 'Set the referencing column to its default value.'
+  }
+]
 const tableTargetItems = computed<ReferenceTargetItem[]>(() => {
   return parsedModel.value.tables
     .map(table => ({
@@ -782,6 +826,16 @@ const getReferenceColumnItems = (tableFullName: string): ReferenceTargetItem[] =
     description: column.type
   })) || []
 }
+const getReferenceActionSelectValue = (value: string) => {
+  return value.length > 0 ? value : defaultReferenceActionSelectValue
+}
+const normalizeReferenceActionSelectValue = (value: unknown) => {
+  if (typeof value !== 'string') {
+    return ''
+  }
+
+  return value === defaultReferenceActionSelectValue ? '' : value
+}
 
 const openTableEditor = (tableId: string) => {
   if (hasBlockingSourceErrors.value) {
@@ -818,7 +872,7 @@ const openGroupEditor = (groupName: string) => {
     return
   }
 
-  groupEditorDraft.value = cloneEditableGroupDraft(createEditableGroupDraft(group))
+  groupEditorDraft.value = cloneEditableGroupDraft(createEditableGroupDraft(group, parsedModel.value))
   groupEditorOpen.value = true
 }
 
@@ -832,13 +886,21 @@ const openGroupCreator = () => {
 }
 
 const closeTableEditor = () => {
-  tableEditorDraft.value = null
   tableEditorOpen.value = false
 }
 
 const closeGroupEditor = () => {
-  groupEditorDraft.value = null
   groupEditorOpen.value = false
+}
+const handleTableEditorAfterLeave = () => {
+  if (!tableEditorOpen.value) {
+    tableEditorDraft.value = null
+  }
+}
+const handleGroupEditorAfterLeave = () => {
+  if (!groupEditorOpen.value) {
+    groupEditorDraft.value = null
+  }
 }
 
 const addTableDraftColumn = () => {
@@ -855,10 +917,12 @@ const addTableDraftColumn = () => {
     notNull: false,
     primaryKey: false,
     referenceColumn: '',
+    referenceDeleteAction: '',
     referenceEnabled: false,
     referenceRelation: '>',
     referenceSchema: 'public',
     referenceTable: '',
+    referenceUpdateAction: '',
     type: 'text',
     unique: false
   })
@@ -904,6 +968,33 @@ const updateGroupDraftTableNames = (value: unknown) => {
     : []
 }
 
+const getGroupEditorColorPickerValue = (value: string) => {
+  const normalizedValue = value.trim()
+  const expandedHexMatch = normalizedValue.match(/^#([\da-f]{6})$/i)
+  const shortHexMatch = normalizedValue.match(/^#([\da-f]{3})$/i)
+
+  if (expandedHexMatch) {
+    return normalizedValue
+  }
+
+  if (shortHexMatch) {
+    const shortHexDigits = shortHexMatch[1] || ''
+    const [red = '0', green = '0', blue = '0'] = shortHexDigits.split('')
+
+    return `#${red}${red}${green}${green}${blue}${blue}`.toLowerCase()
+  }
+
+  return '#14b8a6'
+}
+
+const updateGroupDraftColor = (value: string) => {
+  if (!groupEditorDraft.value) {
+    return
+  }
+
+  groupEditorDraft.value.color = value
+}
+
 const updateTableDraftReferenceTarget = (columnId: string, value: string) => {
   if (!tableEditorDraft.value) {
     return
@@ -940,6 +1031,23 @@ const updateTableDraftReferenceColumn = (columnId: string, value: string) => {
   }
 
   draftColumn.referenceColumn = value
+}
+const updateTableDraftReferenceAction = (
+  columnId: string,
+  field: ReferenceActionField,
+  value: unknown
+) => {
+  if (!tableEditorDraft.value) {
+    return
+  }
+
+  const draftColumn = tableEditorDraft.value.columns.find(column => column.id === columnId)
+
+  if (!draftColumn) {
+    return
+  }
+
+  draftColumn[field] = normalizeReferenceActionSelectValue(value)
 }
 
 const saveTableEditor = () => {
@@ -998,22 +1106,29 @@ watchEffect(() => {
 watchEffect(() => {
   const isWaitingToSave = activeHasPendingChanges.value && !activeIsSaving.value
   const hasSavedInSession = activeHasSavedInSession.value && activeIsSaved.value && !isWaitingToSave
+  const showsManualMobileChromeSaveState = currentPersistenceSource.value === 'file'
+    && !passiveComputerFileWritesSupported.value
+    && activeHasPendingChanges.value
   const showSchemaStatus = activeSaveError.value !== null
     || isWaitingToSave
     || activeIsSaving.value
     || hasSavedInSession
   const persistenceLabel = currentPersistenceSource.value === 'file' ? 'file' : 'local storage'
-  const detail = activeSaveError.value
-    ? activeSaveError.value
-    : activeIsSaving.value
-      ? `Saving to ${persistenceLabel}...`
-      : isWaitingToSave
-        ? `Waiting to save to ${persistenceLabel}...`
-        : hasSavedInSession && activeSchemaUpdatedAt.value
-          ? `Saved to ${persistenceLabel} at ${activeSavedAtFormatter.value(activeSchemaUpdatedAt.value)}`
-          : hasSavedInSession
-            ? `Saved to ${persistenceLabel}`
-            : ''
+  let detail = ''
+
+  if (activeSaveError.value) {
+    detail = activeSaveError.value
+  } else if (activeIsSaving.value) {
+    detail = `Saving to ${persistenceLabel}...`
+  } else if (showsManualMobileChromeSaveState) {
+    detail = 'Changes are pending. Use Save to write them to the selected file on mobile Chrome.'
+  } else if (isWaitingToSave) {
+    detail = `Waiting to save to ${persistenceLabel}...`
+  } else if (hasSavedInSession && activeSchemaUpdatedAt.value) {
+    detail = `Saved to ${persistenceLabel} at ${activeSavedAtFormatter.value(activeSchemaUpdatedAt.value)}`
+  } else if (hasSavedInSession) {
+    detail = `Saved to ${persistenceLabel}`
+  }
 
   setStudioSchemaStatus({
     detail,
@@ -1067,6 +1182,7 @@ onBeforeUnmount(() => {
         <StudioEditorSurface
           v-model="source"
           :editor-ref-setter="assignEditorRef"
+          :focus-diagnostic="focusEditorDiagnostic"
           :source-diagnostics="sourceDiagnostics"
           :source-error-count="sourceErrorDiagnostics.length"
           :source-warning-count="sourceWarningDiagnostics.length"
@@ -1088,6 +1204,7 @@ onBeforeUnmount(() => {
         <StudioEditorSurface
           v-model="source"
           :editor-ref-setter="assignEditorRef"
+          :focus-diagnostic="focusEditorDiagnostic"
           :source-diagnostics="sourceDiagnostics"
           :source-error-count="sourceErrorDiagnostics.length"
           :source-warning-count="sourceWarningDiagnostics.length"
@@ -1165,7 +1282,7 @@ onBeforeUnmount(() => {
               size="sm"
               :disabled="!canEmbedLayout"
               label="Include current layout"
-              description="Embed node positions, colors, and grouped table columns into the PGML text."
+              description="Embed node positions, colors, grouped table columns, and masonry settings into the PGML text."
               :ui="studioSwitchUi"
             />
           </div>
@@ -1429,6 +1546,7 @@ onBeforeUnmount(() => {
         surface-id="table-editor"
         width-class="max-w-5xl"
         body-class="grid max-h-[min(74vh,52rem)] gap-5 overflow-y-auto px-4 py-4"
+        @after-leave="handleTableEditorAfterLeave"
       >
         <div
           v-if="tableEditorDraft"
@@ -1479,6 +1597,7 @@ onBeforeUnmount(() => {
                 aria-label="Table group"
                 :model-value="tableEditorDraft.groupName || 'Ungrouped'"
                 :items="groupSelectItems"
+                v-bind="studioPersistentSelectMenuProps"
                 :search-input="getStudioSelectMenuSearchInputProps('Search groups')"
                 :filter-fields="['label', 'description', 'value']"
                 value-key="value"
@@ -1569,6 +1688,7 @@ onBeforeUnmount(() => {
                         aria-label="Column type preset"
                         :model-value="column.type"
                         :items="tableTypeItems"
+                        v-bind="studioPersistentSelectMenuProps"
                         :search-input="getStudioSelectMenuSearchInputProps('Search column types')"
                         :filter-fields="['label', 'description', 'value']"
                         value-key="value"
@@ -1672,7 +1792,7 @@ onBeforeUnmount(() => {
 
                 <div
                   v-if="column.referenceEnabled"
-                  class="grid gap-3 lg:grid-cols-[minmax(0,0.34fr)_minmax(0,0.4fr)_minmax(0,0.26fr)]"
+                  class="grid gap-3 lg:grid-cols-2"
                 >
                   <label class="grid gap-1">
                     <span :class="studioCompactFieldKickerClass">Relationship direction</span>
@@ -1710,6 +1830,7 @@ onBeforeUnmount(() => {
                       aria-label="Reference target table"
                       :model-value="`${column.referenceSchema}.${column.referenceTable}`"
                       :items="tableTargetItems"
+                      v-bind="studioPersistentSelectMenuProps"
                       :search-input="getStudioSelectMenuSearchInputProps('Search tables')"
                       :filter-fields="['label', 'description', 'value']"
                       value-key="value"
@@ -1730,6 +1851,7 @@ onBeforeUnmount(() => {
                       aria-label="Reference target column"
                       :items="getReferenceColumnItems(`${column.referenceSchema}.${column.referenceTable}`)"
                       :model-value="column.referenceColumn"
+                      v-bind="studioPersistentSelectMenuProps"
                       :search-input="getStudioSelectMenuSearchInputProps('Search columns')"
                       :filter-fields="['label', 'description', 'value']"
                       value-key="value"
@@ -1741,6 +1863,40 @@ onBeforeUnmount(() => {
                       size="sm"
                       :ui="studioInputMenuUi"
                       @update:model-value="updateTableDraftReferenceColumn(column.id, String($event || ''))"
+                    />
+                  </label>
+
+                  <label class="grid gap-1">
+                    <span :class="studioCompactFieldKickerClass">On delete</span>
+                    <USelect
+                      :model-value="getReferenceActionSelectValue(column.referenceDeleteAction)"
+                      aria-label="Reference on delete action"
+                      :items="referenceActionItems"
+                      value-key="value"
+                      label-key="label"
+                      description-key="description"
+                      color="neutral"
+                      variant="outline"
+                      size="sm"
+                      :ui="studioSelectUi"
+                      @update:model-value="updateTableDraftReferenceAction(column.id, 'referenceDeleteAction', $event)"
+                    />
+                  </label>
+
+                  <label class="grid gap-1">
+                    <span :class="studioCompactFieldKickerClass">On update</span>
+                    <USelect
+                      :model-value="getReferenceActionSelectValue(column.referenceUpdateAction)"
+                      aria-label="Reference on update action"
+                      :items="referenceActionItems"
+                      value-key="value"
+                      label-key="label"
+                      description-key="description"
+                      color="neutral"
+                      variant="outline"
+                      size="sm"
+                      :ui="studioSelectUi"
+                      @update:model-value="updateTableDraftReferenceAction(column.id, 'referenceUpdateAction', $event)"
                     />
                   </label>
                 </div>
@@ -1775,6 +1931,7 @@ onBeforeUnmount(() => {
         :description="groupEditorDescription"
         surface-id="group-editor"
         body-class="grid max-h-[min(60vh,32rem)] gap-5 overflow-y-auto px-4 py-4"
+        @after-leave="handleGroupEditorAfterLeave"
       >
         <div
           v-if="groupEditorDraft"
@@ -1793,26 +1950,44 @@ onBeforeUnmount(() => {
           </div>
 
           <div class="grid gap-3 lg:grid-cols-[minmax(0,0.9fr)_minmax(0,1.1fr)]">
-            <label class="grid gap-1">
-              <span :class="studioFieldKickerClass">Group name</span>
-              <UInput
-                v-model="groupEditorDraft.name"
-                aria-label="Group name"
-                data-group-editor-name="true"
-                color="neutral"
-                variant="outline"
-                size="sm"
-                :ui="studioFieldUi"
-              />
-            </label>
+            <div class="grid gap-3">
+              <label class="grid gap-1">
+                <span :class="studioFieldKickerClass">Group name</span>
+                <UInput
+                  v-model="groupEditorDraft.name"
+                  aria-label="Group name"
+                  data-group-editor-name="true"
+                  color="neutral"
+                  variant="outline"
+                  size="sm"
+                  :ui="studioFieldUi"
+                />
+              </label>
 
-            <div class="grid gap-1">
+              <label class="grid gap-1">
+                <span :class="studioFieldKickerClass">Group color</span>
+                <input
+                  :value="getGroupEditorColorPickerValue(groupEditorDraft.color)"
+                  aria-label="Group color"
+                  data-group-editor-color="true"
+                  type="color"
+                  :class="studioColorInputClass"
+                  @input="updateGroupDraftColor(($event.target as HTMLInputElement).value)"
+                >
+                <p :class="studioCompactBodyCopyClass">
+                  Choose the same persisted accent used by the diagram inspector.
+                </p>
+              </label>
+            </div>
+
+            <div class="grid content-start gap-1 self-start">
               <span :class="studioFieldKickerClass">Tables in this group</span>
               <USelectMenu
                 aria-label="Group tables"
                 :items="groupTableItems"
                 :model-value="groupEditorDraft.tableNames"
                 :multiple="true"
+                v-bind="studioPersistentSelectMenuProps"
                 :search-input="getStudioSelectMenuSearchInputProps('Search tables')"
                 :filter-fields="['label', 'description', 'value']"
                 value-key="value"

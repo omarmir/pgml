@@ -1,5 +1,15 @@
 import { nanoid } from 'nanoid'
-import { parsePgml, type PgmlColumn, type PgmlGroup, type PgmlSchemaModel, type PgmlSourceRange, type PgmlTable } from './pgml'
+import {
+  buildPgmlWithNodeProperties,
+  parsePgml,
+  type PgmlColumn,
+  type PgmlGroup,
+  type PgmlNodeProperties,
+  type PgmlSchemaModel,
+  type PgmlSourceRange,
+  type PgmlTable
+} from './pgml'
+import { hasStoredPgmlTableWidthScale } from './pgml-node-properties'
 
 export type PgmlEditableColumnDraft = {
   id: string
@@ -10,10 +20,12 @@ export type PgmlEditableColumnDraft = {
   notNull: boolean
   primaryKey: boolean
   referenceColumn: string
+  referenceDeleteAction: string
   referenceEnabled: boolean
   referenceRelation: '>' | '<' | '-'
   referenceSchema: string
   referenceTable: string
+  referenceUpdateAction: string
   type: string
   unique: boolean
 }
@@ -31,6 +43,7 @@ export type PgmlEditableTableDraft = {
 }
 
 export type PgmlEditableGroupDraft = {
+  color: string
   mode: 'create' | 'edit'
   name: string
   note: string
@@ -46,6 +59,7 @@ type SourceEdit = {
 
 const trimEditorValue = (value: string) => value.trim()
 const escapeRegExp = (value: string) => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+const colorValuePattern = /^#(?:[\da-f]{3}|[\da-f]{6})$/i
 const normalizeGroupName = (value: string | null | undefined) => {
   const normalized = trimEditorValue(value || '')
 
@@ -76,6 +90,7 @@ const normalizeGroupTableNames = (tableNames: string[]) => {
 const getNormalizedSelectedGroupTableNames = (tableNames: string[]) => {
   return Array.from(new Set(normalizeGroupTableNames(tableNames)))
 }
+const getStoredGroupId = (groupName: string) => `group:${groupName}`
 const serializeColumnReference = (column: PgmlEditableColumnDraft) => {
   if (
     !column.referenceEnabled
@@ -89,11 +104,20 @@ const serializeColumnReference = (column: PgmlEditableColumnDraft) => {
 
   return `ref: ${column.referenceRelation} ${referenceSchema}.${trimEditorValue(column.referenceTable)}.${trimEditorValue(column.referenceColumn)}`
 }
+const serializeReferenceActionModifier = (keyword: 'delete' | 'update', value: string) => {
+  const normalizedValue = trimEditorValue(value)
+
+  if (normalizedValue.length === 0) {
+    return null
+  }
+
+  return `${keyword}: ${normalizedValue.toLowerCase()}`
+}
 const extractDefaultModifier = (modifiers: string[]) => {
   return modifiers.find(modifier => modifier.startsWith('default:'))?.replace(/^default:\s*/, '') || ''
 }
-const extractColumnExtraModifiers = (modifiers: string[]) => {
-  return modifiers.filter((modifier) => {
+const extractColumnExtraModifiers = (column: PgmlColumn) => {
+  return column.modifiers.filter((modifier) => {
     const normalizedModifier = modifier.toLowerCase()
 
     return (
@@ -104,6 +128,8 @@ const extractColumnExtraModifiers = (modifiers: string[]) => {
       && !normalizedModifier.startsWith('default:')
       && !normalizedModifier.startsWith('note:')
       && !normalizedModifier.startsWith('ref:')
+      && (!column.reference || !normalizedModifier.startsWith('delete:'))
+      && (!column.reference || !normalizedModifier.startsWith('update:'))
     )
   })
 }
@@ -113,7 +139,7 @@ const toEditableColumnDraft = (column: PgmlColumn): PgmlEditableColumnDraft => {
   return {
     id: nanoid(),
     defaultValue: extractDefaultModifier(column.modifiers),
-    extraModifiers: extractColumnExtraModifiers(column.modifiers),
+    extraModifiers: extractColumnExtraModifiers(column),
     name: column.name,
     note: column.note || '',
     notNull: column.modifiers.some(modifier => modifier.toLowerCase() === 'not null'),
@@ -123,12 +149,14 @@ const toEditableColumnDraft = (column: PgmlColumn): PgmlEditableColumnDraft => {
       return normalizedModifier === 'pk' || normalizedModifier === 'primary key'
     }),
     referenceColumn: column.reference?.toColumn || '',
+    referenceDeleteAction: column.reference?.onDelete || '',
     referenceEnabled: Boolean(column.reference),
     referenceRelation: column.reference?.relation || '>',
     referenceSchema: referenceTableParts.length >= 2 ? referenceTableParts[0] || 'public' : 'public',
     referenceTable: referenceTableParts.length >= 2
       ? referenceTableParts[1] || ''
       : (referenceTableParts[0] || ''),
+    referenceUpdateAction: column.reference?.onUpdate || '',
     type: column.type,
     unique: column.modifiers.some(modifier => modifier.toLowerCase() === 'unique')
   }
@@ -160,6 +188,17 @@ const serializeColumn = (column: PgmlEditableColumnDraft) => {
 
   if (referenceModifier) {
     modifiers.push(referenceModifier)
+
+    const deleteModifier = serializeReferenceActionModifier('delete', column.referenceDeleteAction)
+    const updateModifier = serializeReferenceActionModifier('update', column.referenceUpdateAction)
+
+    if (deleteModifier) {
+      modifiers.push(deleteModifier)
+    }
+
+    if (updateModifier) {
+      modifiers.push(updateModifier)
+    }
   }
 
   modifiers.push(...column.extraModifiers.filter(modifier => trimEditorValue(modifier).length > 0))
@@ -445,10 +484,12 @@ export const createEditableTableDraftForGroup = (groupName: string | null = null
         notNull: true,
         primaryKey: true,
         referenceColumn: '',
+        referenceDeleteAction: '',
         referenceEnabled: false,
         referenceRelation: '>',
         referenceSchema: 'public',
         referenceTable: '',
+        referenceUpdateAction: '',
         type: 'uuid',
         unique: false
       }
@@ -464,8 +505,12 @@ export const createEditableTableDraftForGroup = (groupName: string | null = null
   }
 }
 
-export const createEditableGroupDraft = (group: PgmlGroup): PgmlEditableGroupDraft => {
+export const createEditableGroupDraft = (
+  group: PgmlGroup,
+  model: PgmlSchemaModel | null = null
+): PgmlEditableGroupDraft => {
   return {
+    color: model?.nodeProperties[getStoredGroupId(group.name)]?.color || '',
     mode: 'edit',
     name: group.name,
     note: group.note || '',
@@ -476,6 +521,7 @@ export const createEditableGroupDraft = (group: PgmlGroup): PgmlEditableGroupDra
 
 export const createEditableGroupDraftForCreate = (): PgmlEditableGroupDraft => {
   return {
+    color: '',
     mode: 'create',
     name: '',
     note: '',
@@ -503,6 +549,7 @@ export const cloneEditableTableDraft = (draft: PgmlEditableTableDraft): PgmlEdit
 
 export const cloneEditableGroupDraft = (draft: PgmlEditableGroupDraft): PgmlEditableGroupDraft => {
   return {
+    color: draft.color,
     mode: draft.mode,
     name: draft.name,
     note: draft.note,
@@ -553,9 +600,14 @@ export const getEditableTableDraftErrors = (draft: PgmlEditableTableDraft) => {
 
 export const getEditableGroupDraftErrors = (draft: PgmlEditableGroupDraft) => {
   const errors: string[] = []
+  const normalizedColor = trimEditorValue(draft.color)
 
   if (trimEditorValue(draft.name).length === 0) {
     errors.push('Group name is required.')
+  }
+
+  if (normalizedColor.length > 0 && !colorValuePattern.test(normalizedColor)) {
+    errors.push('Group color must use a 3- or 6-digit hex value.')
   }
 
   return errors
@@ -610,6 +662,7 @@ export const applyEditableGroupDraftToSource = (
   draft: PgmlEditableGroupDraft
 ) => {
   const normalizedSource = source.replaceAll('\r\n', '\n')
+  const normalizedColor = trimEditorValue(draft.color)
   const currentGroup = draft.originalName
     ? model.groups.find(group => group.name === draft.originalName) || null
     : null
@@ -651,13 +704,49 @@ export const applyEditableGroupDraftToSource = (
 
     return workingSource
   }
+  const applyGroupColorProperties = (nextSource: string, groupName: string) => {
+    const nextModel = parsePgml(nextSource)
+    const nextNodeProperties = { ...nextModel.nodeProperties }
+    const groupId = getStoredGroupId(groupName)
+    const nextProperties: PgmlNodeProperties = {
+      ...(nextNodeProperties[groupId] || {})
+    }
+    const hasPersistableProperties = [
+      typeof nextProperties.x === 'number',
+      typeof nextProperties.y === 'number',
+      typeof nextProperties.collapsed === 'boolean',
+      nextProperties.visible === false,
+      typeof nextProperties.tableColumns === 'number',
+      hasStoredPgmlTableWidthScale(nextProperties.tableWidthScale),
+      nextProperties.masonry === true
+    ].some(Boolean)
+
+    if (normalizedColor.length > 0) {
+      nextProperties.color = normalizedColor
+      nextNodeProperties[groupId] = nextProperties
+
+      return buildPgmlWithNodeProperties(nextSource, nextNodeProperties)
+    }
+
+    if (hasPersistableProperties) {
+      const { color: _removedColor, ...remainingProperties } = nextProperties
+
+      nextNodeProperties[groupId] = remainingProperties
+
+      return buildPgmlWithNodeProperties(nextSource, nextNodeProperties)
+    }
+
+    const { [groupId]: _removedGroup, ...remainingNodeProperties } = nextNodeProperties
+
+    return buildPgmlWithNodeProperties(nextSource, remainingNodeProperties)
+  }
 
   if (draft.mode === 'create') {
     const insertLine = getCreateGroupInsertLine(model)
 
-    return applySelectedTableMemberships(applySourceEdits(normalizedSource, [
+    return applyGroupColorProperties(applySelectedTableMemberships(applySourceEdits(normalizedSource, [
       buildCreateEmptyGroupInsertEdit(normalizedSource, draft, insertLine)
-    ]))
+    ])), trimEditorValue(draft.name))
   }
 
   if (!currentGroup?.sourceRange) {
@@ -698,11 +787,11 @@ export const applyEditableGroupDraftToSource = (
   const nextSource = applySourceEdits(normalizedSource, edits)
 
   if (currentGroup.name === nextName) {
-    return applySelectedTableMemberships(nextSource)
+    return applyGroupColorProperties(applySelectedTableMemberships(nextSource), nextName)
   }
 
-  return applySelectedTableMemberships(nextSource.replace(
+  return applyGroupColorProperties(applySelectedTableMemberships(nextSource.replace(
     new RegExp(`Properties\\s+"group:${escapeRegExp(currentGroup.name)}"`, 'g'),
     `Properties "group:${nextName}"`
-  ))
+  )), nextName)
 }

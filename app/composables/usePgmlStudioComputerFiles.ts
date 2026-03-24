@@ -6,6 +6,7 @@ import {
   listRecentComputerPgmlFiles,
   loadRecentComputerPgmlFile,
   openComputerPgmlFile,
+  supportsPassiveRecentComputerFileWrites,
   writeRecentComputerPgmlFile,
   type PgmlRecentComputerFile,
   type PgmlRecentComputerFileWriteResult
@@ -53,6 +54,7 @@ export const usePgmlStudioComputerFiles = ({
   const computerFileSaveError: Ref<string | null> = ref(null)
   const lastPersistedSnapshot: Ref<string | null> = ref(null)
   const autosaveEnabled = enabled ?? computed(() => true)
+  const passiveComputerFileWritesSupported = computed(() => supportsPassiveRecentComputerFileWrites())
   const operations: ComputerFileOperations = {
     listRecentComputerFiles: fileOperations?.listRecentComputerFiles ?? listRecentComputerPgmlFiles,
     loadRecentComputerFile: fileOperations?.loadRecentComputerFile ?? loadRecentComputerPgmlFile,
@@ -206,7 +208,11 @@ export const usePgmlStudioComputerFiles = ({
   }
 
   watchDebounced(source, async () => {
-    if (!autosaveEnabled.value || !currentComputerFileId.value) {
+    if (
+      !autosaveEnabled.value
+      || !passiveComputerFileWritesSupported.value
+      || !currentComputerFileId.value
+    ) {
       return
     }
 
@@ -238,6 +244,7 @@ export const usePgmlStudioComputerFiles = ({
     hasSelectedComputerFile,
     isSavedToComputerFile,
     isSavingToComputerFile,
+    passiveComputerFileWritesSupported,
     loadRecentComputerFileById,
     openComputerFileFromPicker,
     recentComputerFiles,

@@ -1,3 +1,8 @@
+import {
+  hasStoredPgmlTableWidthScale,
+  normalizePgmlTableWidthScale
+} from './pgml-node-properties'
+
 export type PgmlColumn = {
   name: string
   type: string
@@ -44,6 +49,8 @@ export type PgmlReference = {
   toTable: string
   toColumn: string
   relation: '>' | '<' | '-'
+  onDelete: string | null
+  onUpdate: string | null
 }
 
 export type PgmlGroup = {
@@ -60,8 +67,10 @@ export type PgmlNodeProperties = {
   width?: number
   height?: number
   tableColumns?: number | null
+  tableWidthScale?: number | null
   collapsed?: boolean
   visible?: boolean
+  masonry?: boolean
 }
 
 export type PgmlMetadataEntry = {
@@ -220,6 +229,18 @@ const readMatch = (value: string | undefined) => value || ''
 const trimMultiline = (value: string) => value.replace(/^\n+|\n+$/g, '')
 const normalizeEffectKey = (value: string) => cleanName(value).toLowerCase().replaceAll(/[^\w]+/g, '_')
 const normalizeSource = (value: string) => value.replaceAll('\n', ' ').replace(/\s+/g, ' ').trim()
+const lower = (value: string) => value.toLowerCase()
+const getModifierValue = (modifiers: string[], key: string) => {
+  const modifier = modifiers.find((entry) => {
+    return entry.toLowerCase().startsWith(`${key}:`)
+  })
+
+  if (!modifier) {
+    return null
+  }
+
+  return modifier.slice(modifier.indexOf(':') + 1).trim().toLowerCase()
+}
 
 const parseBracketParts = (value: string) => {
   return value
@@ -240,6 +261,346 @@ const parseListValue = (value: string) => {
   }
 
   return [cleanText(trimmed)]
+}
+
+const resolveGroupTableReferenceKey = (value: string) => lower(cleanName(value))
+
+const buildGroupTableReferenceLookup = (tables: PgmlTable[]) => {
+  const bareNameMatches = tables.reduce<Record<string, string[]>>((entries, table) => {
+    const bareName = lower(table.name)
+
+    if (!entries[bareName]) {
+      entries[bareName] = []
+    }
+
+    entries[bareName]?.push(table.fullName)
+    return entries
+  }, {})
+  const referenceLookup = new Map<string, string>()
+
+  tables.forEach((table) => {
+    referenceLookup.set(lower(table.fullName), table.fullName)
+
+    if (table.schema === 'public') {
+      referenceLookup.set(lower(table.name), table.fullName)
+    }
+  })
+
+  Object.entries(bareNameMatches).forEach(([bareName, fullNames]) => {
+    if (fullNames.length === 1) {
+      referenceLookup.set(bareName, fullNames[0] || '')
+    }
+  })
+
+  return referenceLookup
+}
+
+const cleanForSearch = (value: string) => lower(value).replaceAll(/[^\w.]+/g, ' ')
+const sanitizeReferenceValue = (value: string) => {
+  return value
+    .trim()
+    .replaceAll('"', '')
+    .replaceAll('\'', '')
+    .replace(/[(),;]/g, '')
+}
+const uniqueValues = <Value>(values: Value[]) => Array.from(new Set(values))
+const resolveTableIdentifier = (
+  tables: PgmlTable[],
+  referenceLookup: Map<string, string>,
+  value: string
+) => {
+  const normalized = sanitizeReferenceValue(value).toLowerCase()
+
+  if (!normalized) {
+    return null
+  }
+
+  const directMatch = referenceLookup.get(normalized)
+
+  if (directMatch) {
+    return directMatch
+  }
+
+  const byName = tables.find(table => lower(table.name) === normalized)
+
+  return byName?.fullName || null
+}
+const resolveTableIdsFromValue = (
+  tables: PgmlTable[],
+  referenceLookup: Map<string, string>,
+  value: string,
+  defaultTableId: string | null = null
+) => {
+  const normalized = sanitizeReferenceValue(value)
+
+  if (!normalized) {
+    return []
+  }
+
+  const parts = normalized.split('.')
+
+  if (
+    parts.length === 2
+    && defaultTableId
+    && (lower(parts[0] || '') === 'new' || lower(parts[0] || '') === 'old')
+  ) {
+    return [defaultTableId]
+  }
+
+  if (parts.length === 3) {
+    const tableId = resolveTableIdentifier(tables, referenceLookup, `${parts[0]}.${parts[1]}`)
+
+    return tableId ? [tableId] : []
+  }
+
+  if (parts.length === 2) {
+    const fullTableMatch = resolveTableIdentifier(tables, referenceLookup, `${parts[0]}.${parts[1]}`)
+
+    if (fullTableMatch) {
+      return [fullTableMatch]
+    }
+
+    const matchingTable = tables.find((table) => {
+      return lower(table.name) === lower(parts[0] || '')
+    })
+
+    if (matchingTable && matchingTable.columns.some(column => lower(column.name) === lower(parts[1] || ''))) {
+      return [matchingTable.fullName]
+    }
+  }
+
+  const directTable = resolveTableIdentifier(tables, referenceLookup, normalized)
+
+  if (directTable) {
+    return [directTable]
+  }
+
+  if (defaultTableId) {
+    const defaultTable = tables.find(table => table.fullName === defaultTableId)
+
+    if (defaultTable?.columns.some(column => lower(column.name) === lower(normalized))) {
+      return [defaultTableId]
+    }
+  }
+
+  return []
+}
+const getTableIdsFromValues = (
+  tables: PgmlTable[],
+  referenceLookup: Map<string, string>,
+  values: string[],
+  defaultTableId: string | null = null
+) => {
+  return uniqueValues(values.flatMap(value => resolveTableIdsFromValue(tables, referenceLookup, value, defaultTableId)))
+}
+const inferSourceTableIds = (
+  tables: PgmlTable[],
+  referenceLookup: Map<string, string>,
+  source: string,
+  defaultTableId: string | null = null
+) => {
+  const values: string[] = []
+
+  Array.from(source.matchAll(/\b(?:insert\s+into|update|delete\s+from|from|join|on|owned\s+by)\s+([a-zA-Z_"][\w."]*)/gi)).forEach((match) => {
+    const identifier = match[1] || ''
+
+    if (identifier.length > 0) {
+      values.push(identifier)
+    }
+  })
+
+  Array.from(source.matchAll(/\b(?:NEW|OLD)\.([a-zA-Z_]\w*)/g)).forEach((match) => {
+    const columnName = match[1] || ''
+
+    if (columnName.length > 0) {
+      values.push(`NEW.${columnName}`)
+    }
+  })
+
+  return getTableIdsFromValues(tables, referenceLookup, values, defaultTableId)
+}
+const inferRoutineTableIds = (tables: PgmlTable[], routine: PgmlRoutine) => {
+  const haystack = cleanForSearch(`${routine.signature} ${routine.details.join(' ')}`)
+  const tableIds: string[] = []
+
+  for (const table of tables) {
+    const fullName = cleanForSearch(table.fullName)
+    const bareName = cleanForSearch(table.name)
+    const singularName = bareName.endsWith('s') ? bareName.slice(0, -1) : bareName
+
+    if (
+      haystack.includes(fullName)
+      || haystack.includes(bareName)
+      || (singularName.length > 2 && haystack.includes(singularName))
+    ) {
+      tableIds.push(table.fullName)
+    }
+  }
+
+  return uniqueValues(tableIds)
+}
+const getRoutinePrimaryTableIds = (
+  tables: PgmlTable[],
+  referenceLookup: Map<string, string>,
+  routine: PgmlRoutine
+) => {
+  const candidateGroups = routine.affects
+    ? [routine.affects.ownedBy, routine.affects.sets, routine.affects.writes]
+    : []
+
+  for (const values of candidateGroups) {
+    const tableIds = getTableIdsFromValues(tables, referenceLookup, values)
+
+    if (tableIds.length) {
+      return tableIds
+    }
+  }
+
+  const affectValues = routine.affects
+    ? [
+        ...routine.affects.writes,
+        ...routine.affects.sets,
+        ...routine.affects.dependsOn,
+        ...routine.affects.reads,
+        ...routine.affects.uses,
+        ...routine.affects.ownedBy
+      ]
+    : []
+  const sourceTableIds = routine.source
+    ? inferSourceTableIds(tables, referenceLookup, routine.source)
+    : []
+
+  return uniqueValues([
+    ...getTableIdsFromValues(tables, referenceLookup, affectValues),
+    ...sourceTableIds,
+    ...inferRoutineTableIds(tables, routine)
+  ])
+}
+const getMetadataValue = (metadata: PgmlMetadataEntry[], key: string) => {
+  return metadata.find(entry => normalizeEffectKey(entry.key) === normalizeEffectKey(key))?.value || null
+}
+const getRoutineNameSearchKeys = (value: string) => {
+  return uniqueValues([
+    cleanForSearch(value),
+    cleanForSearch(value.split('.').at(-1) || value)
+  ]).filter(entry => entry.length > 0)
+}
+const buildTriggerTableIdsByRoutineName = (
+  model: PgmlSchemaModel,
+  referenceLookup: Map<string, string>
+) => {
+  const mapping = new Map<string, string[]>()
+
+  model.triggers.forEach((trigger) => {
+    const routineName = getMetadataValue(trigger.metadata, 'function')
+
+    if (!routineName) {
+      return
+    }
+
+    const tableId = resolveTableIdentifier(model.tables, referenceLookup, trigger.tableName)
+
+    if (!tableId) {
+      return
+    }
+
+    getRoutineNameSearchKeys(routineName).forEach((key) => {
+      mapping.set(key, uniqueValues([...(mapping.get(key) || []), tableId]))
+    })
+  })
+
+  return mapping
+}
+const getSequenceOwnedTableIds = (
+  tables: PgmlTable[],
+  referenceLookup: Map<string, string>,
+  sequence: PgmlSequence
+) => {
+  const metadataOwnedBy = getMetadataValue(sequence.metadata, 'owned_by')
+  const explicitOwnedBy = sequence.affects?.ownedBy || []
+  const values = metadataOwnedBy
+    ? [metadataOwnedBy, ...explicitOwnedBy]
+    : explicitOwnedBy
+
+  return getTableIdsFromValues(tables, referenceLookup, values)
+}
+const getPersistableStandaloneObjectPropertyTargetIds = (model: PgmlSchemaModel) => {
+  const referenceLookup = buildGroupTableReferenceLookup(model.tables)
+  const triggerTableIdsByRoutineName = buildTriggerTableIdsByRoutineName(model, referenceLookup)
+  const getStandaloneRoutineIds = (routines: PgmlRoutine[], prefix: 'function' | 'procedure') => {
+    return routines
+      .filter((routine) => {
+        const triggerTableIds = uniqueValues(getRoutineNameSearchKeys(routine.name).flatMap((key) => {
+          return triggerTableIdsByRoutineName.get(key) || []
+        }))
+        const tableIds = triggerTableIds.length
+          ? triggerTableIds
+          : getRoutinePrimaryTableIds(model.tables, referenceLookup, routine)
+
+        return tableIds.length === 0
+      })
+      .map(routine => `${prefix}:${routine.name}`)
+  }
+  const standaloneTriggerIds = model.triggers
+    .filter((trigger) => {
+      return resolveTableIdentifier(model.tables, referenceLookup, trigger.tableName) === null
+    })
+    .map(trigger => `trigger:${trigger.name}`)
+  const standaloneSequenceIds = model.sequences
+    .filter((sequence) => {
+      return getSequenceOwnedTableIds(model.tables, referenceLookup, sequence).length === 0
+    })
+    .map(sequence => `sequence:${sequence.name}`)
+
+  return [
+    ...model.customTypes.map(customType => `custom-type:${customType.kind}:${customType.name}`),
+    ...getStandaloneRoutineIds(model.functions, 'function'),
+    ...getStandaloneRoutineIds(model.procedures, 'procedure'),
+    ...standaloneTriggerIds,
+    ...standaloneSequenceIds
+  ]
+}
+
+export const getOrderedGroupTables = (model: PgmlSchemaModel, groupName: string) => {
+  const group = model.groups.find(entry => entry.name === groupName) || null
+  const groupedTables = model.tables.filter(table => table.groupName === groupName)
+
+  if (!group) {
+    return groupedTables
+  }
+
+  const referenceLookup = buildGroupTableReferenceLookup(groupedTables)
+  const tablesById = new Map(groupedTables.map(table => [table.fullName, table] as const))
+  const orderedTables: PgmlTable[] = []
+  const seenTableIds = new Set<string>()
+  const pushTable = (tableId: string) => {
+    if (seenTableIds.has(tableId)) {
+      return
+    }
+
+    const table = tablesById.get(tableId)
+
+    if (!table) {
+      return
+    }
+
+    seenTableIds.add(tableId)
+    orderedTables.push(table)
+  }
+
+  group.tableNames.forEach((tableName) => {
+    const resolvedTableId = referenceLookup.get(resolveGroupTableReferenceKey(tableName))
+
+    if (resolvedTableId) {
+      pushTable(resolvedTableId)
+    }
+  })
+
+  groupedTables.forEach((table) => {
+    pushTable(table.fullName)
+  })
+
+  return orderedTables
 }
 
 const parseSqlArgumentList = (value: string) => {
@@ -1078,6 +1439,8 @@ const parseTable = (block: NamedBlock) => {
     const modifiers = columnOptions ? parseBracketParts(columnOptions) : []
     const refPart = modifiers.find(part => part.startsWith('ref:'))
     const notePart = modifiers.find(part => part.startsWith('note:'))
+    const onDelete = getModifierValue(modifiers, 'delete')
+    const onUpdate = getModifierValue(modifiers, 'update')
     let reference: PgmlReference | null = null
 
     if (refPart) {
@@ -1091,6 +1454,8 @@ const parseTable = (block: NamedBlock) => {
         reference = {
           fromTable: `${nameTarget.schema}.${nameTarget.table}`,
           fromColumn: cleanName(columnName),
+          onDelete,
+          onUpdate,
           toTable: `${target.schema}.${target.table}`,
           toColumn: target.column,
           relation
@@ -1343,6 +1708,8 @@ const parseTopLevelReference = (line: string) => {
   return {
     fromTable: `${fromTarget.schema}.${fromTarget.table}`,
     fromColumn: readMatch(fromTarget.column),
+    onDelete: null,
+    onUpdate: null,
     toTable: `${toTarget.schema}.${toTarget.table}`,
     toColumn: readMatch(toTarget.column),
     relation
@@ -1403,6 +1770,18 @@ const parseNodePropertiesBlock = (block: NamedBlock): { id: string, properties: 
       continue
     }
 
+    if (key === 'masonry') {
+      if (entry.value.trim() === 'true') {
+        entries.masonry = true
+      }
+
+      if (entry.value.trim() === 'false') {
+        entries.masonry = false
+      }
+
+      continue
+    }
+
     if (key === 'color') {
       if (/^#(?:[\da-f]{3}|[\da-f]{6})$/i.test(entry.value.trim())) {
         entries.color = entry.value.trim()
@@ -1439,15 +1818,27 @@ const parseNodePropertiesBlock = (block: NamedBlock): { id: string, properties: 
 
     if (key === 'table_columns' || key === 'tablecolumns' || key === 'columns') {
       entries.tableColumns = numericValue
+      continue
+    }
+
+    if (key === 'table_width_scale' || key === 'tablewidthscale' || key === 'table_width' || key === 'tablewidth') {
+      entries.tableWidthScale = numericValue
     }
   }
 
   const x = entries.x
   const y = entries.y
   if (
-    (x === undefined || y === undefined)
+    x === undefined
+    && y === undefined
+    && typeof entries.color !== 'string'
     && entries.visible === undefined
     && entries.collapsed === undefined
+    && entries.masonry === undefined
+    && !Number.isFinite(entries.width)
+    && !Number.isFinite(entries.height)
+    && !Number.isFinite(entries.tableColumns)
+    && !Number.isFinite(entries.tableWidthScale)
   ) {
     return null
   }
@@ -1474,6 +1865,10 @@ const parseNodePropertiesBlock = (block: NamedBlock): { id: string, properties: 
     properties.visible = entries.visible
   }
 
+  if (typeof entries.masonry === 'boolean') {
+    properties.masonry = entries.masonry
+  }
+
   if (Number.isFinite(entries.width)) {
     properties.width = entries.width
   }
@@ -1484,6 +1879,10 @@ const parseNodePropertiesBlock = (block: NamedBlock): { id: string, properties: 
 
   if (Number.isFinite(entries.tableColumns)) {
     properties.tableColumns = Math.max(1, Math.round(entries.tableColumns || 1))
+  }
+
+  if (hasStoredPgmlTableWidthScale(entries.tableWidthScale)) {
+    properties.tableWidthScale = normalizePgmlTableWidthScale(entries.tableWidthScale)
   }
 
   return {
@@ -1535,7 +1934,16 @@ export const buildPgmlWithNodeProperties = (
   nodeProperties: Record<string, PgmlNodeProperties>
 ) => {
   const strippedSource = stripPgmlPropertiesBlocks(source)
+  const parsedModel = parsePgml(strippedSource)
+  const persistablePropertyTargetIds = new Set<string>([
+    ...parsedModel.tables.map(table => table.fullName),
+    ...parsedModel.groups.map(group => `group:${group.name}`),
+    ...getPersistableStandaloneObjectPropertyTargetIds(parsedModel)
+  ])
   const propertyBlocks = Object.entries(nodeProperties)
+    .filter(([id]) => {
+      return persistablePropertyTargetIds.has(id)
+    })
     .filter(([, properties]) => {
       return [
         typeof properties.x === 'number',
@@ -1543,7 +1951,9 @@ export const buildPgmlWithNodeProperties = (
         typeof properties.color === 'string' && properties.color.length > 0,
         typeof properties.collapsed === 'boolean',
         properties.visible === false,
-        typeof properties.tableColumns === 'number'
+        typeof properties.tableColumns === 'number',
+        hasStoredPgmlTableWidthScale(properties.tableWidthScale),
+        properties.masonry === true
       ].some(Boolean)
     })
     .sort(([leftId], [rightId]) => leftId.localeCompare(rightId))
@@ -1570,8 +1980,16 @@ export const buildPgmlWithNodeProperties = (
         lines.push('  visible: false')
       }
 
+      if (properties.masonry === true) {
+        lines.push('  masonry: true')
+      }
+
       if (typeof properties.tableColumns === 'number') {
         lines.push(`  table_columns: ${Math.max(1, Math.round(properties.tableColumns))}`)
+      }
+
+      if (hasStoredPgmlTableWidthScale(properties.tableWidthScale)) {
+        lines.push(`  table_width_scale: ${normalizePgmlTableWidthScale(properties.tableWidthScale)}`)
       }
 
       lines.push('}')

@@ -132,6 +132,8 @@ const collectUnknownColumnModifiers = (table: PgmlTable, column: PgmlColumn) => 
       || modifier.startsWith('default:')
       || modifier.startsWith('note:')
       || modifier.startsWith('ref:')
+      || modifier.startsWith('delete:')
+      || modifier.startsWith('update:')
     )
 
     if (!isKnownModifier) {
@@ -257,6 +259,13 @@ const buildCreateTableStatement = (table: PgmlTable, warnings: Set<string>) => {
   }
 
   table.constraints.forEach((constraint) => {
+    const normalizedExpression = constraint.expression.trim()
+
+    if (/^(?:primary key|unique|foreign key|check)\b/i.test(normalizedExpression)) {
+      lines.push(`  CONSTRAINT ${quoteSqlIdentifier(constraint.name)} ${normalizedExpression}`)
+      return
+    }
+
     lines.push(`  CONSTRAINT ${quoteSqlIdentifier(constraint.name)} CHECK (${constraint.expression})`)
   })
 
@@ -268,6 +277,8 @@ const resolveReferenceConstraintParts = (reference: PgmlReference, warnings: Set
     return {
       fromColumn: reference.fromColumn,
       fromTable: reference.fromTable,
+      onDelete: reference.onDelete,
+      onUpdate: reference.onUpdate,
       toColumn: reference.toColumn,
       toTable: reference.toTable
     }
@@ -277,6 +288,8 @@ const resolveReferenceConstraintParts = (reference: PgmlReference, warnings: Set
     return {
       fromColumn: reference.toColumn,
       fromTable: reference.toTable,
+      onDelete: reference.onDelete,
+      onUpdate: reference.onUpdate,
       toColumn: reference.fromColumn,
       toTable: reference.fromTable
     }
@@ -287,9 +300,19 @@ const resolveReferenceConstraintParts = (reference: PgmlReference, warnings: Set
   return {
     fromColumn: reference.fromColumn,
     fromTable: reference.fromTable,
+    onDelete: reference.onDelete,
+    onUpdate: reference.onUpdate,
     toColumn: reference.toColumn,
     toTable: reference.toTable
   }
+}
+
+const buildReferenceActionClause = (keyword: 'DELETE' | 'UPDATE', action: string | null) => {
+  if (!action || action.trim().length === 0) {
+    return ''
+  }
+
+  return ` ON ${keyword} ${action.trim().toUpperCase()}`
 }
 
 const buildReferenceStatements = (references: PgmlReference[], warnings: Set<string>) => {
@@ -301,7 +324,9 @@ const buildReferenceStatements = (references: PgmlReference[], warnings: Set<str
       normalizeNameLookupKey(normalized.fromTable),
       normalizeNameLookupKey(normalized.fromColumn),
       normalizeNameLookupKey(normalized.toTable),
-      normalizeNameLookupKey(normalized.toColumn)
+      normalizeNameLookupKey(normalized.toColumn),
+      normalizeNameLookupKey(normalized.onDelete || ''),
+      normalizeNameLookupKey(normalized.onUpdate || '')
     ].join('::')
 
     if (seen.has(key)) {
@@ -310,7 +335,7 @@ const buildReferenceStatements = (references: PgmlReference[], warnings: Set<str
 
     seen.add(key)
     statements.push(
-      `ALTER TABLE ${formatQualifiedSqlName(normalized.fromTable)} ADD FOREIGN KEY (${quoteSqlIdentifier(normalized.fromColumn)}) REFERENCES ${formatQualifiedSqlName(normalized.toTable)} (${quoteSqlIdentifier(normalized.toColumn)});`
+      `ALTER TABLE ${formatQualifiedSqlName(normalized.fromTable)} ADD FOREIGN KEY (${quoteSqlIdentifier(normalized.fromColumn)}) REFERENCES ${formatQualifiedSqlName(normalized.toTable)} (${quoteSqlIdentifier(normalized.toColumn)})${buildReferenceActionClause('DELETE', normalized.onDelete)}${buildReferenceActionClause('UPDATE', normalized.onUpdate)};`
     )
     return statements
   }, [])

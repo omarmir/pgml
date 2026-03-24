@@ -34,7 +34,7 @@ Table public.users {
 
 Table billing.invoices {
   id bigint [pk, default: nextval('invoice_number_seq')]
-  user_id uuid [not null, ref: > public.users.id]
+  user_id uuid [not null, ref: > public.users.id, delete: restrict, update: cascade]
   total money_amount
 }
 
@@ -92,7 +92,7 @@ describe('PGML export generation', () => {
     expect(bundle.sql.ddl.content).not.toContain('BEGIN;')
     expect(bundle.sql.ddl.content).toContain('CREATE TYPE "public"."order_status" AS ENUM (\'draft\', \'submitted\');')
     expect(bundle.sql.ddl.content).toContain('CREATE DOMAIN "public"."email_address" AS text CHECK (VALUE <> \'\');')
-    expect(bundle.sql.ddl.content).toContain('ALTER TABLE "billing"."invoices" ADD FOREIGN KEY ("user_id") REFERENCES "public"."users" ("id");')
+    expect(bundle.sql.ddl.content).toContain('ALTER TABLE "billing"."invoices" ADD FOREIGN KEY ("user_id") REFERENCES "public"."users" ("id") ON DELETE RESTRICT ON UPDATE CASCADE;')
     expect(bundle.sql.ddl.content).toContain('CREATE OR REPLACE FUNCTION public.refresh_invoice_totals()')
 
     expect(bundle.kysely.migration.fileName).toBe('billing-suite.migration.ts')
@@ -105,5 +105,25 @@ describe('PGML export generation', () => {
     expect(bundle.kysely.interfaces.content).toContain('export interface MoneyAmount')
     expect(bundle.kysely.interfaces.content).toContain(`'billing.invoices': BillingInvoicesTable`)
     expect(bundle.kysely.interfaces.content).toContain('id: Generated<string>')
+  })
+
+  it('exports preserved non-check table constraints without rewriting them as CHECK clauses', () => {
+    const source = `Table public.parent_entities {
+  tenant_id uuid [pk]
+  entity_type text [pk]
+}
+
+Table public.audit_log {
+  tenant_id uuid [not null]
+  entity_type text [not null]
+  Constraint audit_log_parent_fkey: foreign key (tenant_id, entity_type) references public.parent_entities (tenant_id, entity_type) on delete restrict
+}`
+    const bundle = buildPgmlExportBundle(parsePgml(source), {
+      baseName: 'Constraint test',
+      kyselyTypeStyle: 'pragmatic'
+    })
+
+    expect(bundle.sql.ddl.content).toContain('CONSTRAINT "audit_log_parent_fkey" foreign key (tenant_id, entity_type) references public.parent_entities (tenant_id, entity_type) on delete restrict')
+    expect(bundle.sql.ddl.content).not.toContain('CONSTRAINT "audit_log_parent_fkey" CHECK (foreign key')
   })
 })

@@ -1,5 +1,6 @@
 import type { Ref } from 'vue'
 import type { PgmlSourceRange } from '~/utils/pgml'
+import type { PgmlLanguageDiagnostic } from '~/utils/pgml-language'
 
 export type PgmlSourceEditorHandle = {
   focusOffset: (from: number, to?: number) => void
@@ -20,8 +21,17 @@ export const usePgmlSourceEditor = () => {
     editorRef.value.focusSourceRange(sourceRange)
   }
 
+  const focusEditorDiagnostic = (diagnostic: Pick<PgmlLanguageDiagnostic, 'from' | 'to'>) => {
+    if (!editorRef.value) {
+      return
+    }
+
+    editorRef.value.focusOffset(diagnostic.from, diagnostic.to)
+  }
+
   return {
     editorRef,
+    focusEditorDiagnostic,
     focusEditorSourceRange
   }
 }

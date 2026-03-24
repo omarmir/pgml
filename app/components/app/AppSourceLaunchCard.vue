@@ -37,11 +37,17 @@ type SourceLaunchCardOperation = {
   }
 }
 
+type SourceLaunchCardAction = {
+  id: string
+  value: string
+}
+
 const {
   cardId,
   description,
   inventory,
   operations,
+  sqlDumpAction,
   sqlDumpDescription,
   statusLabel,
   statusTone = 'placeholder',
@@ -51,6 +57,7 @@ const {
   description: string
   inventory: string
   operations: SourceLaunchCardOperation[]
+  sqlDumpAction?: SourceLaunchCardAction
   sqlDumpDescription: string
   statusLabel: string
   statusTone?: 'live' | 'placeholder'
@@ -79,6 +86,9 @@ const nestedItemLinkClass = getStudioChoiceButtonClass({
 })
 const nestedItemStaticClass = 'border border-dashed border-[color:var(--studio-shell-border)] bg-[color:var(--studio-control-bg)] px-3 py-2'
 const nestedItemRowClass = 'flex items-start gap-2'
+const sqlDumpActionClass = getStudioChoiceButtonClass({
+  extraClass: 'group mt-3 flex w-full items-start justify-between gap-3 px-3 py-3 text-left'
+})
 const itemActionButtonClass = joinStudioClasses(
   studioButtonClasses.iconGhost,
   'self-center'
@@ -308,6 +318,26 @@ const emitItemAction = (item: SourceLaunchCardItem) => {
       <p class="mt-2 text-[0.82rem] leading-6 text-[color:var(--studio-shell-muted)]">
         {{ sqlDumpDescription }}
       </p>
+
+      <button
+        v-if="sqlDumpAction"
+        type="button"
+        :class="sqlDumpActionClass"
+        @click="emitLaunchAction(sqlDumpAction)"
+      >
+        <div class="min-w-0">
+          <p class="text-sm font-semibold text-[color:var(--studio-shell-text)]">
+            Import a pg_dump
+          </p>
+          <p :class="studioCompactBodyCopyClass">
+            Paste text or upload a dump file, then convert it into PGML from this lane.
+          </p>
+        </div>
+        <UIcon
+          name="i-lucide-arrow-up-right"
+          class="mt-0.5 h-4 w-4 shrink-0 text-[color:var(--studio-shell-label)] transition-transform duration-150 group-hover:translate-x-0.5"
+        />
+      </button>
     </div>
   </section>
 </template>

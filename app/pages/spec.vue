@@ -48,7 +48,7 @@ const dbmlComparison = [
     title: 'Stays close to DBML',
     points: [
       'Table blocks keep the familiar DBML shape.',
-      'Inline column attributes like pk, unique, not null, and ref stay compact.',
+      'Inline column attributes like pk, unique, not null, ref, delete, and update stay compact.',
       'TableGroup keeps the one-table-per-line pattern for domain grouping without redefining PostgreSQL schemas, and group members stay schema-qualified.',
       'The source remains block-based and easy to diff.'
     ]
@@ -67,11 +67,11 @@ const dbmlComparison = [
 const documentationExamples = [
   {
     title: 'Tables and references',
-    description: 'Start with DBML-like table blocks. Keep columns first, then table-level indexes and constraints.',
+    description: 'Start with DBML-like table blocks. Keep columns first, then table-level indexes and constraints. Reference actions like `delete:` and `update:` stay next to the `ref:` they modify.',
     code: `Table public.orders {
   id uuid [pk]
   tenant_id uuid [not null, ref: > public.tenants.id]
-  customer_id uuid [ref: > public.users.id]
+  customer_id uuid [ref: > public.users.id, delete: restrict]
   total_cents integer [not null]
   status text [not null]
 
@@ -128,6 +128,7 @@ Trigger trg_register_fundingopportunity on public.funding_opportunity_profile {
   x: 540
   y: 120
   color: #f59e0b
+  masonry: true
   table_columns: 1
 }
 
@@ -149,7 +150,7 @@ const heroQuickStartCode = `TableGroup Commerce {
 Table public.orders {
   id uuid [pk]
   tenant_id uuid [not null, ref: > public.tenants.id]
-  customer_id uuid [ref: > public.users.id]
+  customer_id uuid [ref: > public.users.id, delete: restrict]
   total_cents integer [not null]
 }
 

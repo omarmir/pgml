@@ -9,6 +9,7 @@ export type PgmlLanguageDiagnostic = {
   from: number
   to: number
   line: number
+  lines?: number[]
 }
 
 export type PgmlLanguageCompletionKind = 'keyword' | 'property' | 'symbol' | 'type' | 'value'
@@ -137,6 +138,9 @@ export type PgmlDocumentAnalysis = {
   tables: PgmlTableSymbol[]
   groups: PgmlGroupSymbol[]
   customTypes: PgmlCustomTypeSymbol[]
+  functions: PgmlNamedRange[]
+  procedures: PgmlNamedRange[]
+  triggers: PgmlNamedRange[]
   sequences: PgmlNamedRange[]
   references: PgmlReferenceSymbol[]
   propertyTargets: PgmlPropertyTarget[]
@@ -212,7 +216,9 @@ const propertyKeywordTemplates = [
   { label: 'color', detail: 'Set node accent color.', apply: 'color: #' },
   { label: 'collapsed', detail: 'Set collapsed state.', apply: 'collapsed: false' },
   { label: 'visible', detail: 'Set visibility state.', apply: 'visible: false' },
-  { label: 'table_columns', detail: 'Set group table column count.', apply: 'table_columns: 2' }
+  { label: 'masonry', detail: 'Pack grouped tables to reduce whitespace.', apply: 'masonry: true' },
+  { label: 'table_columns', detail: 'Set group table column count.', apply: 'table_columns: 2' },
+  { label: 'table_width_scale', detail: 'Scale grouped table widths.', apply: 'table_width_scale: 1.5' }
 ] as const
 
 const modifierKeywordTemplates = [
@@ -221,12 +227,14 @@ const modifierKeywordTemplates = [
   { label: 'not null', detail: 'Prevent null values.', apply: 'not null' },
   { label: 'default:', detail: 'Set a default expression.', apply: 'default: ' },
   { label: 'note:', detail: 'Add a note to the column.', apply: 'note: ' },
-  { label: 'ref:', detail: 'Add a relationship modifier.', apply: 'ref: > ' }
+  { label: 'ref:', detail: 'Add a relationship modifier.', apply: 'ref: > ' },
+  { label: 'delete:', detail: 'Set the ON DELETE action for a reference.', apply: 'delete: cascade' },
+  { label: 'update:', detail: 'Set the ON UPDATE action for a reference.', apply: 'update: cascade' }
 ] as const
 
-const propertyKeySet = new Set(['x', 'y', 'width', 'height', 'color', 'collapsed', 'visible', 'table_columns', 'tablecolumns', 'columns'])
-const booleanPropertyKeys = new Set(['collapsed', 'visible'])
-const numericPropertyKeys = new Set(['x', 'y', 'width', 'height', 'table_columns', 'tablecolumns', 'columns'])
+const propertyKeySet = new Set(['x', 'y', 'width', 'height', 'color', 'collapsed', 'visible', 'masonry', 'table_columns', 'tablecolumns', 'columns', 'table_width_scale', 'tablewidthscale', 'table_width', 'tablewidth'])
+const booleanPropertyKeys = new Set(['collapsed', 'visible', 'masonry'])
+const numericPropertyKeys = new Set(['x', 'y', 'width', 'height', 'table_columns', 'tablecolumns', 'columns', 'table_width_scale', 'tablewidthscale', 'table_width', 'tablewidth'])
 const validColorPattern = /^#(?:[\da-f]{3}|[\da-f]{6})$/i
 let analysisCache: PgmlAnalysisCache | null = null
 
@@ -234,6 +242,12 @@ const normalizeLineEndings = (source: string) => source.replaceAll('\r\n', '\n')
 const cleanName = (value: string) => value.replaceAll('"', '').trim()
 const cleanText = (value: string) => value.trim().replace(/^"(.*)"$/, '$1').replace(/^'(.*)'$/, '$1')
 const lower = (value: string) => value.toLowerCase()
+const getDuplicateLineNumbers = <T extends { line: number }>(values: T[]) => {
+  return Array.from(new Set(values.map(value => value.line))).sort((left, right) => left - right)
+}
+const formatDuplicateLineSummary = (lines: number[]) => {
+  return `Lines ${lines.join(', ')}.`
+}
 
 const parseTableName = (value: string) => {
   const cleanedValue = cleanName(value)
@@ -863,6 +877,43 @@ const collectCustomTypeBody = (
   })
 }
 
+const collectRoutineSymbol = (
+  block: PgmlRawBlock,
+  keyword: 'Function' | 'Procedure',
+  routines: PgmlNamedRange[]
+) => {
+  const headerMatch = block.header.match(new RegExp(`^${keyword}\\s+(.+)$`))
+
+  if (!headerMatch) {
+    return
+  }
+
+  const signature = cleanName(headerMatch[1] || '')
+  const name = cleanName(signature.split('(')[0] || '')
+
+  if (name.length === 0) {
+    return
+  }
+
+  routines.push(createNamedRange(name, block.headerLine, headerMatch[1] || name))
+}
+
+const collectTriggerSymbol = (block: PgmlRawBlock, triggers: PgmlNamedRange[]) => {
+  const headerMatch = block.header.match(/^Trigger\s+([^\s]+)(?:\s+on\s+([^\s]+))?$/)
+
+  if (!headerMatch) {
+    return
+  }
+
+  const name = cleanName(headerMatch[1] || '')
+
+  if (name.length === 0) {
+    return
+  }
+
+  triggers.push(createNamedRange(name, block.headerLine, headerMatch[1] || name))
+}
+
 const collectTopLevelReference = (
   line: PgmlLineInfo,
   diagnostics: PgmlLanguageDiagnostic[],
@@ -1158,6 +1209,9 @@ const createPropertyTargets = (
   groups: PgmlGroupSymbol[],
   tables: PgmlTableSymbol[],
   customTypes: PgmlCustomTypeSymbol[],
+  functions: PgmlNamedRange[],
+  procedures: PgmlNamedRange[],
+  triggers: PgmlNamedRange[],
   sequences: PgmlNamedRange[]
 ) => {
   const propertyTargets: Set<string> = new Set()
@@ -1174,6 +1228,18 @@ const createPropertyTargets = (
     propertyTargets.add(`custom-type:${customType.kind}:${customType.name}`)
   })
 
+  functions.forEach((pgFunction) => {
+    propertyTargets.add(`function:${pgFunction.name}`)
+  })
+
+  procedures.forEach((procedure) => {
+    propertyTargets.add(`procedure:${procedure.name}`)
+  })
+
+  triggers.forEach((trigger) => {
+    propertyTargets.add(`trigger:${trigger.name}`)
+  })
+
   sequences.forEach((sequence) => {
     propertyTargets.add(`sequence:${sequence.name}`)
   })
@@ -1182,64 +1248,76 @@ const createPropertyTargets = (
 }
 
 const runSemanticDiagnostics = (analysis: PgmlDocumentAnalysis) => {
-  const { diagnostics, tables, groups, customTypes, sequences, references, propertyTargets } = analysis
+  const { diagnostics, tables, groups, customTypes, functions, procedures, triggers, sequences, references, propertyTargets } = analysis
   const tableMap = new Map<string, PgmlTableSymbol>()
   const groupNames = new Set(groups.map(group => group.name))
-  const validPropertyTargets = createPropertyTargets(groups, tables, customTypes, sequences)
+  const validPropertyTargets = createPropertyTargets(groups, tables, customTypes, functions, procedures, triggers, sequences)
 
   tables.forEach((table) => {
     tableMap.set(lower(table.fullName), table)
   })
 
   detectDuplicates(tables, table => lower(table.fullName)).forEach((entry) => {
+    const duplicateLines = getDuplicateLineNumbers(entry.values)
+
     entry.values.slice(1).forEach((table) => {
       diagnostics.push({
         code: 'pgml/table-duplicate',
         severity: 'error',
-        message: `Duplicate table definition for \`${table.fullName}\`.`,
+        message: `Duplicate table definition for \`${table.fullName}\`. ${formatDuplicateLineSummary(duplicateLines)}`,
         from: table.from,
         to: table.to,
-        line: table.line
+        line: table.line,
+        lines: duplicateLines
       })
     })
   })
 
   detectDuplicates(groups, group => lower(group.name)).forEach((entry) => {
+    const duplicateLines = getDuplicateLineNumbers(entry.values)
+
     entry.values.slice(1).forEach((group) => {
       diagnostics.push({
         code: 'pgml/group-duplicate',
         severity: 'error',
-        message: `Duplicate group definition for \`${group.name}\`.`,
+        message: `Duplicate group definition for \`${group.name}\`. ${formatDuplicateLineSummary(duplicateLines)}`,
         from: group.from,
         to: group.to,
-        line: group.line
+        line: group.line,
+        lines: duplicateLines
       })
     })
   })
 
   detectDuplicates(customTypes, customType => `${lower(customType.kind)}:${lower(customType.name)}`).forEach((entry) => {
+    const duplicateLines = getDuplicateLineNumbers(entry.values)
+
     entry.values.slice(1).forEach((customType) => {
       diagnostics.push({
         code: 'pgml/custom-type-duplicate',
-        severity: 'error',
-        message: `Duplicate ${customType.kind.toLowerCase()} definition for \`${customType.name}\`.`,
+        severity: 'warning',
+        message: `Duplicate ${customType.kind.toLowerCase()} definition for \`${customType.name}\`. ${formatDuplicateLineSummary(duplicateLines)}`,
         from: customType.from,
         to: customType.to,
-        line: customType.line
+        line: customType.line,
+        lines: duplicateLines
       })
     })
   })
 
   tables.forEach((table) => {
     detectDuplicates(table.columns, column => lower(column.name)).forEach((entry) => {
+      const duplicateLines = getDuplicateLineNumbers(entry.values)
+
       entry.values.slice(1).forEach((column) => {
         diagnostics.push({
           code: 'pgml/column-duplicate',
           severity: 'error',
-          message: `Duplicate column \`${column.name}\` in table \`${table.fullName}\`.`,
+          message: `Duplicate column \`${column.name}\` in table \`${table.fullName}\`. ${formatDuplicateLineSummary(duplicateLines)}`,
           from: column.from,
           to: column.to,
-          line: column.line
+          line: column.line,
+          lines: duplicateLines
         })
       })
     })
@@ -1371,14 +1449,17 @@ const runSemanticDiagnostics = (analysis: PgmlDocumentAnalysis) => {
     references,
     reference => `${lower(reference.fromTable)}.${lower(reference.fromColumn)}:${reference.relation}:${lower(reference.toTable)}.${lower(reference.toColumn)}`
   ).forEach((entry) => {
+    const duplicateLines = getDuplicateLineNumbers(entry.values)
+
     entry.values.slice(1).forEach((reference) => {
       diagnostics.push({
         code: 'pgml/ref-duplicate',
         severity: 'warning',
-        message: 'Duplicate relationship declaration.',
+        message: `Duplicate relationship declaration. ${formatDuplicateLineSummary(duplicateLines)}`,
         from: reference.from,
         to: reference.to,
-        line: reference.line
+        line: reference.line,
+        lines: duplicateLines
       })
     })
   })
@@ -1496,6 +1577,9 @@ export const analyzePgmlDocument = (source: string) => {
   const tables: PgmlTableSymbol[] = []
   const groups: PgmlGroupSymbol[] = []
   const customTypes: PgmlCustomTypeSymbol[] = []
+  const functions: PgmlNamedRange[] = []
+  const procedures: PgmlNamedRange[] = []
+  const triggers: PgmlNamedRange[] = []
   const sequences: PgmlNamedRange[] = []
   const references: PgmlReferenceSymbol[] = []
   const propertyTargets: PgmlPropertyTarget[] = []
@@ -1549,6 +1633,16 @@ export const analyzePgmlDocument = (source: string) => {
     if (block.kind === 'Function' || block.kind === 'Procedure' || block.kind === 'Trigger') {
       collectExecutableBody(block, diagnostics, contexts)
 
+      if (block.kind === 'Function') {
+        collectRoutineSymbol(block, 'Function', functions)
+        return
+      }
+
+      if (block.kind === 'Procedure') {
+        collectRoutineSymbol(block, 'Procedure', procedures)
+        return
+      }
+
       if (block.kind === 'Trigger') {
         const triggerMatch = block.header.match(/^Trigger\s+([^\s]+)(?:\s+on\s+([^\s]+))?$/)
 
@@ -1560,6 +1654,8 @@ export const analyzePgmlDocument = (source: string) => {
             'Trigger headers must use `Trigger name on schema.table {` or `Trigger name {`.',
             block.headerLine
           )
+        } else {
+          collectTriggerSymbol(block, triggers)
         }
       }
 
@@ -1601,6 +1697,9 @@ export const analyzePgmlDocument = (source: string) => {
     tables,
     groups,
     customTypes,
+    functions,
+    procedures,
+    triggers,
     sequences,
     references,
     propertyTargets
@@ -1749,6 +1848,18 @@ const getPropertyTargetCompletions = (analysis: PgmlDocumentAnalysis, fragment: 
     values.push(`custom-type:${customType.kind}:${customType.name}`)
   })
 
+  analysis.functions.forEach((pgFunction) => {
+    values.push(`function:${pgFunction.name}`)
+  })
+
+  analysis.procedures.forEach((procedure) => {
+    values.push(`procedure:${procedure.name}`)
+  })
+
+  analysis.triggers.forEach((trigger) => {
+    values.push(`trigger:${trigger.name}`)
+  })
+
   analysis.sequences.forEach((sequence) => {
     values.push(`sequence:${sequence.name}`)
   })
@@ -1815,7 +1926,7 @@ const getCompletionItemsForLine = (analysis: PgmlDocumentAnalysis, offset: numbe
       return getPropertyTargetCompletions(analysis, fragment, from, to)
     }
 
-    if (/^\s*(collapsed|visible):\s*[A-Za-z]*$/i.test(beforeCursor)) {
+    if (/^\s*(collapsed|visible|masonry):\s*[A-Za-z]*$/i.test(beforeCursor)) {
       return buildSymbolCompletionItems(['true', 'false'], 'Boolean value', 'value', fragment, from, to)
     }
 

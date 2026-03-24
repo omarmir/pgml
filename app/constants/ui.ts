@@ -19,15 +19,15 @@ type StudioModalSurfaceStyle = Readonly<{
 type UiClassMap = Readonly<Record<string, string>>
 
 const studioSelectMenuContentUi: UiClassMap = Object.freeze({
-  content: 'rounded-none border border-[color:var(--studio-shell-border)] bg-[color:var(--studio-control-bg)] p-1 shadow-[var(--studio-floating-shadow)] backdrop-blur-sm',
+  content: 'z-[70] rounded-none border border-[color:var(--studio-shell-border)] bg-[color:var(--studio-control-bg)] p-1 shadow-[var(--studio-floating-shadow)] backdrop-blur-sm',
   item: 'studio-select-item rounded-none before:rounded-none text-[color:var(--studio-shell-text)]',
   itemDescription: 'whitespace-normal break-words text-[color:var(--studio-shell-muted)]',
   itemLabel: 'truncate',
   itemLeadingIcon: 'text-[color:var(--studio-shell-muted)]',
   itemTrailingIcon: 'text-[color:var(--studio-shell-label)]',
-  placeholder: 'text-[color:var(--studio-shell-muted)]',
+  placeholder: 'min-w-0 whitespace-normal break-words text-left text-[color:var(--studio-shell-muted)]',
   trailingIcon: 'text-[color:var(--studio-shell-muted)]',
-  value: 'text-[color:var(--studio-shell-text)]',
+  value: 'min-w-0 whitespace-normal break-words text-left text-[color:var(--studio-shell-text)]',
   viewport: 'scroll-py-1 overflow-y-auto'
 })
 
@@ -53,7 +53,7 @@ export const studioFieldUi = Object.freeze({
 // Select and input menus share the same trigger/content surface on purpose.
 const studioSelectTriggerUi: UiClassMap = Object.freeze({
   ...studioSelectMenuContentUi,
-  base: `studio-select-trigger ${studioFieldBaseClass}`
+  base: `studio-select-trigger w-full min-w-0 ${studioFieldBaseClass}`
 })
 
 export const studioInputMenuUi = studioSelectTriggerUi
@@ -66,8 +66,8 @@ export const studioModalSurfaceStyle: StudioModalSurfaceStyle = Object.freeze({
 })
 
 export const studioModalUi: UiClassMap = Object.freeze({
-  overlay: 'bg-black/60 backdrop-blur-[2px]',
-  content: 'overflow-visible border-none bg-transparent p-0 shadow-none ring-0'
+  overlay: 'z-40 bg-black/60 backdrop-blur-[2px]',
+  content: 'z-[60] overflow-visible border-none bg-transparent p-0 shadow-none ring-0'
 })
 
 export const studioSelectUi = studioSelectTriggerUi

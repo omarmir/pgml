@@ -317,6 +317,16 @@ test('table groups keep their required width after changing the table column cou
   }).toBe(settledWidth)
 })
 
+test('group inspector allows as many columns as there are visible tables in the group', async ({ goto, page }) => {
+  await goto('/diagram')
+
+  const coreGroup = page.locator('[data-node-anchor="group:Core"]')
+
+  await coreGroup.dispatchEvent('click')
+  await expect(page.locator('[data-group-column-count-slider="true"]')).toBeVisible()
+  await expect(page.locator('[data-group-column-count-slider="true"]')).toHaveAttribute('max', '3')
+})
+
 test('table groups keep independent table heights and balanced horizontal padding', async ({ goto, page }) => {
   await goto('/diagram')
 
@@ -378,6 +388,217 @@ test('table groups keep independent table heights and balanced horizontal paddin
   expect(layout).not.toBeNull()
   expect(Math.abs((layout?.leftGap || 0) - (layout?.rightGap || 0))).toBeLessThanOrEqual(2)
   expect(layout?.usersHeight || 0).toBeGreaterThan(layout?.tenantsHeight || 0)
+})
+
+test('masonry keeps grouped tables in the same order as the TableGroup block', async ({ goto, page }) => {
+  await goto('/diagram')
+
+  const editor = getPgmlEditor(page)
+
+  await setPgmlEditorValue(editor, `TableGroup Core {
+  public.roles
+  public.users
+  public.tenants
+}
+
+Table public.users in Core {
+  id uuid [pk]
+  tenant_id uuid
+  email text
+  display_name text
+  created_at timestamptz
+}
+
+Table public.tenants in Core {
+  id uuid [pk]
+  name text
+}
+
+Table public.roles in Core {
+  id uuid [pk]
+  label text
+}
+
+Properties "group:Core" {
+  x: 180
+  y: 120
+  masonry: true
+  table_columns: 2
+}`)
+
+  const groupNode = page.locator('[data-node-anchor="group:Core"]')
+
+  await expect(groupNode).toBeVisible()
+
+  await expect.poll(async () => {
+    return groupNode.evaluate((element) => {
+      return Array.from(element.querySelectorAll('[data-group-content="group:Core"] [data-table-anchor]'))
+        .filter((entry): entry is HTMLElement => entry instanceof HTMLElement)
+        .map(table => ({
+          id: table.getAttribute('data-table-anchor') || '',
+          left: table.offsetLeft,
+          top: table.offsetTop
+        }))
+    })
+  }).toEqual([
+    expect.objectContaining({
+      id: 'public.roles',
+      left: 0,
+      top: 0
+    }),
+    expect.objectContaining({
+      id: 'public.users',
+      left: 248,
+      top: 0
+    }),
+    expect.objectContaining({
+      id: 'public.tenants',
+      left: 0
+    })
+  ])
+
+  const layout = await groupNode.evaluate((element) => {
+    return Array.from(element.querySelectorAll('[data-group-content="group:Core"] [data-table-anchor]'))
+      .filter((entry): entry is HTMLElement => entry instanceof HTMLElement)
+      .map(table => ({
+        id: table.getAttribute('data-table-anchor') || '',
+        left: table.offsetLeft,
+        top: table.offsetTop
+      }))
+  })
+
+  expect(layout[2]?.top || 0).toBeGreaterThan(layout[0]?.top || 0)
+})
+
+test('masonry can reduce the effective group column count when a later table is much taller', async ({ goto, page }) => {
+  await goto('/diagram')
+
+  const editor = getPgmlEditor(page)
+
+  await setPgmlEditorValue(editor, `TableGroup Core {
+  public.address
+  public.agency
+  public.contact
+  public.other
+  public.team
+  public.profile
+}
+
+Table public.address in Core {
+  id uuid [pk]
+  label text
+}
+
+Table public.agency in Core {
+  id uuid [pk]
+  label text
+}
+
+Table public.contact in Core {
+  id uuid [pk]
+  label text
+}
+
+Table public.other in Core {
+  id uuid [pk]
+  label text
+}
+
+Table public.team in Core {
+  id uuid [pk]
+  label text
+}
+
+Table public.profile in Core {
+  id uuid [pk]
+  legal_name text
+  legal_name_fr text
+  description text
+  description_fr text
+  status text
+  province text
+  municipality text
+  region text
+  classification text
+}
+
+Properties "group:Core" {
+  x: 180
+  y: 120
+  masonry: true
+  table_columns: 4
+}`)
+
+  const groupNode = page.locator('[data-node-anchor="group:Core"]')
+
+  await expect(groupNode).toBeVisible()
+
+  await expect.poll(async () => {
+    return groupNode.evaluate((element) => {
+      const content = element.querySelector('[data-group-content="group:Core"]')
+      const tables = Array.from(element.querySelectorAll('[data-group-content="group:Core"] [data-table-anchor]'))
+        .filter((entry): entry is HTMLElement => entry instanceof HTMLElement)
+        .map(table => ({
+          id: table.getAttribute('data-table-anchor') || '',
+          left: table.offsetLeft,
+          top: table.offsetTop
+        }))
+
+      if (!(content instanceof HTMLElement)) {
+        return null
+      }
+
+      return {
+        contentWidth: content.offsetWidth,
+        tables
+      }
+    })
+  }).toEqual({
+    contentWidth: 728,
+    tables: [
+      expect.objectContaining({
+        id: 'public.address',
+        left: 0,
+        top: 0
+      }),
+      expect.objectContaining({
+        id: 'public.agency',
+        left: 248,
+        top: 0
+      }),
+      expect.objectContaining({
+        id: 'public.contact',
+        left: 496,
+        top: 0
+      }),
+      expect.objectContaining({
+        id: 'public.other',
+        left: 0
+      }),
+      expect.objectContaining({
+        id: 'public.team',
+        left: 248
+      }),
+      expect.objectContaining({
+        id: 'public.profile',
+        left: 496
+      })
+    ]
+  })
+
+  const layout = await groupNode.evaluate((element) => {
+    return Array.from(element.querySelectorAll('[data-group-content="group:Core"] [data-table-anchor]'))
+      .filter((entry): entry is HTMLElement => entry instanceof HTMLElement)
+      .map(table => ({
+        id: table.getAttribute('data-table-anchor') || '',
+        left: table.offsetLeft,
+        top: table.offsetTop
+      }))
+  })
+
+  expect(layout[3]?.top || 0).toBeGreaterThan(layout[0]?.top || 0)
+  expect(layout[4]?.top || 0).toBeGreaterThan(layout[1]?.top || 0)
+  expect(layout[5]?.top || 0).toBeGreaterThan(layout[2]?.top || 0)
 })
 
 test('connection lines hit grouped table borders, render above the owning group, and avoid the group header band', async ({ goto, page }) => {

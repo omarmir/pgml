@@ -161,6 +161,27 @@ Table public.orders {
   await expect.poll(async () => readPgmlEditorValue(editor)).toContain(`Table public.audit_log {`)
 })
 
+test('group editor top-aligns the table selector with the first field row', async ({ goto, page }) => {
+  await goto('/diagram')
+
+  await page.locator('[data-diagram-create-group="true"]').click()
+
+  const groupNameInput = page.locator('[data-group-editor-name="true"]')
+  const groupTablesSelect = page.getByLabel('Group tables', { exact: true })
+
+  await expect(groupNameInput).toBeVisible()
+  await expect(groupTablesSelect).toBeVisible()
+
+  const groupNameBox = await groupNameInput.boundingBox()
+  const groupTablesBox = await groupTablesSelect.boundingBox()
+
+  if (!groupNameBox || !groupTablesBox) {
+    throw new Error('Expected group editor controls to be measurable.')
+  }
+
+  expect(Math.abs(groupNameBox.y - groupTablesBox.y)).toBeLessThanOrEqual(6)
+})
+
 test('ungrouped tables render as floating nodes instead of an Ungrouped lane', async ({ goto, page }) => {
   await goto('/diagram')
 
@@ -242,6 +263,83 @@ test('table edit modal autocompletes default values from the column type', async
   await expect(page.getByText(/^true$/)).toBeVisible()
 })
 
+test('table edit modal keeps its content mounted until close animation finishes', async ({ goto, page }) => {
+  await goto('/diagram')
+
+  await page.locator('[data-table-edit-button="public.users"]').click()
+  await expect(page.locator('[data-table-editor-name="true"]')).toBeVisible()
+
+  await page.evaluate(() => {
+    const monitor = {
+      sawSurfaceWithoutField: false
+    }
+    const update = () => {
+      const surface = document.querySelector('[data-studio-modal-surface="table-editor"]')
+      const field = document.querySelector('[data-table-editor-name="true"]')
+
+      if (surface && !field) {
+        monitor.sawSurfaceWithoutField = true
+      }
+    }
+    const observer = new MutationObserver(update)
+
+    update()
+    observer.observe(document.body, {
+      attributes: true,
+      childList: true,
+      subtree: true
+    })
+
+    ;(window as Window & {
+      __tableEditorCloseMonitor?: {
+        observer: MutationObserver
+        sawSurfaceWithoutField: boolean
+        update: () => void
+      }
+    }).__tableEditorCloseMonitor = {
+      observer,
+      sawSurfaceWithoutField: monitor.sawSurfaceWithoutField,
+      update: () => {
+        update()
+        ;(window as Window & {
+          __tableEditorCloseMonitor?: {
+            observer: MutationObserver
+            sawSurfaceWithoutField: boolean
+            update: () => void
+          }
+        }).__tableEditorCloseMonitor!.sawSurfaceWithoutField = monitor.sawSurfaceWithoutField
+      }
+    }
+  })
+
+  const tableEditorSurface = page.locator('[data-studio-modal-surface="table-editor"]')
+
+  await tableEditorSurface.getByRole('button', { name: 'Cancel', exact: true }).click()
+  await expect(tableEditorSurface).toHaveCount(0)
+
+  const sawSurfaceWithoutField = await page.evaluate(() => {
+    const tableEditorWindow = window as Window & {
+      __tableEditorCloseMonitor?: {
+        observer: MutationObserver
+        sawSurfaceWithoutField: boolean
+        update: () => void
+      }
+    }
+    const monitor = tableEditorWindow.__tableEditorCloseMonitor
+
+    if (!monitor) {
+      throw new Error('Expected table editor close monitor to exist.')
+    }
+
+    monitor.update()
+    monitor.observer.disconnect()
+
+    return monitor.sawSurfaceWithoutField
+  })
+
+  expect(sawSurfaceWithoutField).toBe(false)
+})
+
 test('table edit modal explains relationship direction and uses searchable reference selectors', async ({ goto, page }) => {
   await goto('/diagram')
 
@@ -276,6 +374,55 @@ test('table edit modal explains relationship direction and uses searchable refer
   await page.locator('[data-table-editor-save="true"]').dispatchEvent('click')
 
   await expect.poll(async () => readPgmlEditorValue(editor)).toMatch(/role_id uuid \[not null, ref: < public\.roles\.key\]/)
+})
+
+test('table edit modal keeps default reference actions selectable', async ({ goto, page }) => {
+  await goto('/diagram')
+
+  const editor = getPgmlEditor(page)
+  const pageErrors: string[] = []
+
+  page.on('pageerror', (error) => {
+    pageErrors.push(error.message)
+  })
+
+  await setPgmlEditorValue(editor, `Table public.users {
+  id uuid [pk]
+}
+
+Table public.orders {
+  id uuid [pk]
+  customer_id uuid [ref: > public.users.id]
+}`)
+  await expect(page.locator('[data-pgml-diagnostics="true"]')).toHaveCount(0)
+
+  await page.locator('[data-table-edit-button="public.orders"]').click()
+
+  const customerIdColumn = page.locator('[data-table-editor-column]').filter({ hasText: 'customer_id' })
+  const onDelete = customerIdColumn.getByLabel('Reference on delete action', { exact: true })
+  const onUpdate = customerIdColumn.getByLabel('Reference on update action', { exact: true })
+
+  await expect(onDelete).toContainText('Default behavior')
+  await expect(onUpdate).toContainText('Default behavior')
+  expect(pageErrors).toEqual([])
+
+  await onDelete.click()
+  await page.locator('[role="option"]').filter({ hasText: 'Cascade' }).click()
+  await expect(onDelete).toContainText('Cascade')
+
+  await onDelete.click()
+  await page.locator('[role="option"]').filter({ hasText: 'Default behavior' }).click()
+  await expect(onDelete).toContainText('Default behavior')
+
+  await onUpdate.click()
+  await page.locator('[role="option"]').filter({ hasText: 'Restrict' }).click()
+  await expect(onUpdate).toContainText('Restrict')
+
+  await page.locator('[data-table-editor-save="true"]').dispatchEvent('click')
+
+  await expect.poll(async () => readPgmlEditorValue(editor)).toContain('customer_id uuid [ref: > public.users.id, update: restrict]')
+  await expect.poll(async () => readPgmlEditorValue(editor)).not.toContain('delete:')
+  expect(pageErrors).toEqual([])
 })
 
 test('table schema badges stay consistent across groups for the same schema', async ({ goto, page }) => {
@@ -369,6 +516,51 @@ test('code editor shows PGML diagnostics and autocomplete suggestions', async ({
   await expect(page.locator('.cm-tooltip-autocomplete')).toContainText('Table')
 })
 
+test('clicking a diagnostic line focuses and scrolls the editor to that source location', async ({ goto, page }) => {
+  await goto('/diagram')
+
+  const editor = getPgmlEditor(page)
+  const repeatedTables = Array.from({
+    length: 32
+  }, (_, index) => {
+    return `Table public.placeholder_${index} {\n  id uuid [pk]\n}`
+  }).join('\n\n')
+
+  await setPgmlEditorValue(editor, `${repeatedTables}
+
+Table public.users {
+  id uuid [pk]
+  id uuid
+}`)
+  await setPgmlEditorSelection(editor, 0, 0)
+  await setPgmlEditorScrollTop(editor, 0)
+
+  await expect(page.locator('[data-pgml-diagnostics="true"]')).toContainText('Duplicate column')
+  await page.locator('[data-pgml-diagnostic-line="true"]').first().click()
+
+  await expect.poll(async () => {
+    const state = await readPgmlEditorState(editor)
+
+    return {
+      anchor: state.anchor,
+      head: state.head,
+      scrollTop: state.scrollTop,
+      selectedText: state.value.slice(state.anchor, state.head)
+    }
+  }).toEqual({
+    anchor: expect.any(Number),
+    head: expect.any(Number),
+    scrollTop: expect.any(Number),
+    selectedText: 'id'
+  })
+
+  const state = await readPgmlEditorState(editor)
+
+  expect(state.anchor).toBeGreaterThan(0)
+  expect(state.head).toBeGreaterThan(state.anchor)
+  expect(state.scrollTop).toBeGreaterThan(0)
+})
+
 test('canvas snaps dragged nodes to the grid and zooms around the mouse position', async ({ goto, page }) => {
   await goto('/diagram')
 
@@ -446,6 +638,239 @@ test('canvas snaps dragged nodes to the grid and zooms around the mouse position
   expect(Math.abs(projectedPoint.y - zoomPoint.y)).toBeLessThan(8)
 })
 
+test('dragging a grouped table owner settles near the drop point and keeps reference endpoints attached', async ({ goto, page }) => {
+  await goto('/diagram')
+
+  const editor = getPgmlEditor(page)
+
+  await setPgmlEditorValue(editor, `TableGroup Core {
+  public.users
+}
+
+Table public.users in Core {
+  id uuid [pk]
+  tenant_id uuid [ref: > public.tenants.id]
+}
+
+Table public.tenants {
+  id uuid [pk]
+}`)
+
+  const groupHeader = page.locator('[data-node-header="group:Core"]')
+  const connection = page.locator('[data-connection-key="ref:public.users:tenant_id:public.tenants:id"]').first()
+
+  await expect(groupHeader).toBeVisible()
+  await expect(connection).toBeVisible()
+
+  const getConnectionAttachment = () => {
+    return page.evaluate(() => {
+      const plane = document.querySelector('[data-diagram-plane="true"]')
+      const fromTable = document.querySelector('[data-diagram-plane="true"] [data-table-anchor="public.users"]')
+      const toTable = document.querySelector('[data-diagram-plane="true"] [data-table-anchor="public.tenants"]')
+      const path = document.querySelector('[data-connection-key="ref:public.users:tenant_id:public.tenants:id"]')
+
+      if (
+        !(plane instanceof HTMLElement)
+        || !(fromTable instanceof HTMLElement)
+        || !(toTable instanceof HTMLElement)
+        || !(path instanceof SVGPathElement)
+      ) {
+        return null
+      }
+
+      const planeBounds = plane.getBoundingClientRect()
+      const scale = planeBounds.width / Math.max(plane.offsetWidth, 1)
+      const projectBounds = (element: HTMLElement) => {
+        const bounds = element.getBoundingClientRect()
+
+        return {
+          label: element.getAttribute('data-table-anchor'),
+          left: (bounds.left - planeBounds.left) / scale,
+          top: (bounds.top - planeBounds.top) / scale,
+          right: (bounds.right - planeBounds.left) / scale,
+          bottom: (bounds.bottom - planeBounds.top) / scale
+        }
+      }
+      const hosts = [projectBounds(fromTable), projectBounds(toTable)]
+      const points = Array.from((path.getAttribute('d') || '').matchAll(/[ML]\s*(-?\d+(?:\.\d+)?)\s+(-?\d+(?:\.\d+)?)/g)).map((match) => {
+        return {
+          x: Number.parseFloat(match[1] || '0'),
+          y: Number.parseFloat(match[2] || '0')
+        }
+      })
+
+      const resolveHost = (point: { x: number, y: number }) => {
+        return hosts.find((bounds) => {
+          return point.x >= bounds.left - 1
+            && point.x <= bounds.right + 1
+            && point.y >= bounds.top - 1
+            && point.y <= bounds.bottom + 1
+            && (
+              Math.abs(point.x - bounds.left) < 1
+              || Math.abs(point.x - bounds.right) < 1
+              || Math.abs(point.y - bounds.top) < 1
+              || Math.abs(point.y - bounds.bottom) < 1
+            )
+        })?.label || null
+      }
+
+      const start = points[0]
+      const end = points.at(-1)
+
+      if (!start || !end) {
+        return null
+      }
+
+      return {
+        from: resolveHost(start),
+        to: resolveHost(end)
+      }
+    })
+  }
+
+  const headerBox = await groupHeader.boundingBox()
+
+  if (!headerBox) {
+    throw new Error('Core group header is not measurable.')
+  }
+
+  const dragStart = {
+    x: headerBox.x + headerBox.width / 2,
+    y: headerBox.y + 16
+  }
+  const dropPoint = {
+    x: dragStart.x + 126,
+    y: dragStart.y + 78
+  }
+
+  await page.mouse.move(dragStart.x, dragStart.y)
+  await page.mouse.down()
+  await page.mouse.move(dropPoint.x, dropPoint.y, { steps: 10 })
+
+  await expect.poll(getConnectionAttachment).toEqual({
+    from: 'public.users',
+    to: 'public.tenants'
+  })
+
+  await page.mouse.up()
+
+  const droppedBox = await groupHeader.boundingBox()
+
+  if (!droppedBox) {
+    throw new Error('Core group header is not measurable immediately after drop.')
+  }
+
+  expect(Math.abs((droppedBox.x + droppedBox.width / 2) - dropPoint.x)).toBeLessThanOrEqual(10)
+  expect(Math.abs((droppedBox.y + 16) - dropPoint.y)).toBeLessThanOrEqual(10)
+
+  await expect.poll(async () => {
+    const settledBox = await groupHeader.boundingBox()
+
+    if (!settledBox) {
+      return Number.POSITIVE_INFINITY
+    }
+
+    return Math.abs((settledBox.x + settledBox.width / 2) - dropPoint.x)
+  }).toBeLessThanOrEqual(10)
+
+  await expect.poll(async () => {
+    const settledBox = await groupHeader.boundingBox()
+
+    if (!settledBox) {
+      return Number.POSITIVE_INFINITY
+    }
+
+    return Math.abs((settledBox.y + 16) - dropPoint.y)
+  }).toBeLessThanOrEqual(10)
+
+  await expect.poll(getConnectionAttachment).toEqual({
+    from: 'public.users',
+    to: 'public.tenants'
+  })
+})
+
+test('column modifier badges start below the field name to preserve label space', async ({ goto, page }) => {
+  await goto('/diagram')
+
+  const editor = getPgmlEditor(page)
+
+  await setPgmlEditorValue(editor, `Table public.related_records {
+  id bigint [pk]
+}
+
+Table public.audit_entries {
+  exceptionally_long_field_name_that_should_stay_visible bigint [not null, ref: > public.related_records.id]
+}`)
+
+  const targetRow = page.locator('[data-table-anchor="public.audit_entries"] [data-table-row-anchor="public.audit_entries.exceptionally_long_field_name_that_should_stay_visible"]')
+
+  await expect(targetRow).toBeVisible()
+
+  const layout = await targetRow.evaluate((element) => {
+    const row = element as HTMLElement
+    const title = row.querySelector('[data-table-row-title]')
+    const subtitle = row.querySelector('[data-table-row-subtitle]')
+    const badges = Array.from(row.querySelectorAll('[data-table-row-badge]'))
+
+    if (!(title instanceof HTMLElement) || !(subtitle instanceof HTMLElement) || badges.length === 0) {
+      return null
+    }
+
+    const firstBadge = badges[0]
+    const lastBadge = badges.at(-1)
+
+    if (!(firstBadge instanceof HTMLElement) || !(lastBadge instanceof HTMLElement)) {
+      return null
+    }
+
+    const rowRect = row.getBoundingClientRect()
+    const titleRect = title.getBoundingClientRect()
+    const subtitleRect = subtitle.getBoundingClientRect()
+    const firstBadgeRect = firstBadge.getBoundingClientRect()
+    const lastBadgeRect = lastBadge.getBoundingClientRect()
+
+    return {
+      badgeTop: firstBadgeRect.top - rowRect.top,
+      lastBadgeTop: lastBadgeRect.top - rowRect.top,
+      titleBottom: titleRect.bottom - rowRect.top,
+      titleWidth: titleRect.width,
+      subtitleWidth: subtitleRect.width
+    }
+  })
+
+  if (!layout) {
+    throw new Error('Expected the rendered column row to expose title, subtitle, and modifier badge measurements.')
+  }
+
+  expect(layout.badgeTop).toBeGreaterThanOrEqual(layout.titleBottom - 1)
+  expect(Math.abs(layout.badgeTop - layout.lastBadgeTop)).toBeLessThanOrEqual(1)
+  expect(layout.titleWidth).toBeGreaterThan(layout.subtitleWidth)
+})
+
+test('relationship lines can be hidden and restored from the bottom toolbar', async ({ goto, page }) => {
+  await goto('/diagram')
+
+  const relationshipLinesToggle = page.locator('[data-relationship-lines-toggle="true"]')
+  const connectionPaths = page.locator('[data-connection-layer="true"] path')
+
+  await expect(relationshipLinesToggle).toHaveAttribute('aria-pressed', 'true')
+  await expect(connectionPaths.first()).toBeVisible()
+
+  const initialPathCount = await connectionPaths.count()
+
+  expect(initialPathCount).toBeGreaterThan(0)
+
+  await relationshipLinesToggle.click()
+
+  await expect(relationshipLinesToggle).toHaveAttribute('aria-pressed', 'false')
+  await expect.poll(async () => page.locator('[data-connection-layer="true"] path').count()).toBe(0)
+
+  await relationshipLinesToggle.click()
+
+  await expect(relationshipLinesToggle).toHaveAttribute('aria-pressed', 'true')
+  await expect.poll(async () => page.locator('[data-connection-layer="true"] path').count()).toBe(initialPathCount)
+})
+
 test('connection routing stays stable when zoom changes', async ({ goto, page }) => {
   await goto('/diagram')
 
@@ -503,6 +928,36 @@ test('canvas interactions keep the PGML editor source in sync', async ({ goto, p
   })
 
   await expect.poll(async () => readPgmlEditorValue(editor)).toMatch(/Properties "group:Core" \{[\s\S]*table_columns: 2/)
+
+  const groupedTables = [
+    page.locator('[data-node-anchor="group:Core"] [data-table-anchor="public.tenants"]'),
+    page.locator('[data-node-anchor="group:Core"] [data-table-anchor="public.users"]')
+  ]
+  const getGroupedTableWidths = async () => {
+    return Promise.all(groupedTables.map((table) => {
+      return table.evaluate(element => Math.round(element.getBoundingClientRect().width))
+    }))
+  }
+  const [tenantsWidthBefore, usersWidthBefore] = await getGroupedTableWidths()
+
+  await page.getByLabel('Table width scale', { exact: true }).click()
+  await page.getByRole('option', { name: '1.5x' }).click()
+
+  await expect.poll(async () => readPgmlEditorValue(editor)).toMatch(/Properties "group:Core" \{[\s\S]*table_width_scale: 1.5/)
+  await expect.poll(async () => (await getGroupedTableWidths())[0]).toBeGreaterThan(tenantsWidthBefore)
+  await expect.poll(async () => (await getGroupedTableWidths())[1]).toBeGreaterThan(usersWidthBefore)
+
+  const [tenantsWidthAfter, usersWidthAfter] = await getGroupedTableWidths()
+
+  expect(tenantsWidthAfter).toBe(usersWidthAfter)
+
+  const masonrySwitch = page.getByRole('switch', { name: 'Masonry' })
+
+  await masonrySwitch.click()
+  await expect.poll(async () => readPgmlEditorValue(editor)).toMatch(/Properties "group:Core" \{[\s\S]*masonry: true/)
+
+  await masonrySwitch.click()
+  await expect.poll(async () => readPgmlEditorValue(editor)).not.toContain('masonry: true')
 
   const coreHeader = page.locator('[data-node-header="group:Core"]')
   const headerBox = await coreHeader.boundingBox()
@@ -637,6 +1092,53 @@ test('side panel can switch tabs, hide entities, and restore them from saved pro
   await expect.poll(async () => readPgmlEditorValue(editor)).not.toContain('Properties "public.users" {\n  visible: false')
 })
 
+test('entity panel clicks select groups, tables, and fields while raising the active host group', async ({ goto, page }) => {
+  await goto('/diagram')
+
+  const isNodeAtTopOfStack = async (nodeId: string) => {
+    return page.evaluate((targetNodeId) => {
+      const target = document.querySelector(`[data-node-anchor="${targetNodeId}"]`)
+
+      if (!(target instanceof HTMLElement)) {
+        return false
+      }
+
+      const getNodeZIndex = (element: HTMLElement) => {
+        const zIndex = Number.parseInt(getComputedStyle(element).zIndex || '0', 10)
+
+        return Number.isFinite(zIndex) ? zIndex : 0
+      }
+
+      const targetZIndex = getNodeZIndex(target)
+      const maxZIndex = Array.from(document.querySelectorAll('[data-node-anchor]')).reduce((max, entry) => {
+        if (!(entry instanceof HTMLElement)) {
+          return max
+        }
+
+        return Math.max(max, getNodeZIndex(entry))
+      }, 0)
+
+      return targetZIndex > 0 && targetZIndex === maxZIndex
+    }, nodeId)
+  }
+
+  await page.locator('[data-diagram-panel-tab="entities"]').click()
+
+  await page.locator('[data-browser-entity-row="group:Core"] button').first().click()
+  await expect(page.locator('[data-node-anchor="group:Core"]')).toHaveAttribute('data-selection-active', 'true')
+  await expect.poll(async () => isNodeAtTopOfStack('group:Core')).toBe(true)
+
+  await page.locator('[data-browser-entity-row="public.orders"] button').first().click()
+  await expect(page.locator('[data-node-anchor="group:Commerce"] [data-table-anchor="public.orders"]')).toHaveAttribute('data-selection-active', 'true')
+  await expect(page.locator('[data-node-anchor="group:Core"]')).not.toHaveAttribute('data-selection-active', 'true')
+  await expect.poll(async () => isNodeAtTopOfStack('group:Commerce')).toBe(true)
+
+  await page.locator('[data-browser-entity-row="public.users.email"] button').first().click()
+  await expect(page.locator('[data-column-anchor="public.users.email"]')).toHaveAttribute('data-selection-active', 'true')
+  await expect(page.locator('[data-node-anchor="group:Commerce"] [data-table-anchor="public.orders"]')).not.toHaveAttribute('data-selection-active', 'true')
+  await expect.poll(async () => isNodeAtTopOfStack('group:Core')).toBe(true)
+})
+
 test('scrolling inside the diagram panel scrolls the panel instead of the canvas', async ({ goto, page }) => {
   await goto('/diagram')
 
@@ -743,11 +1245,40 @@ test('dragging a group or custom type preserves the current zoom and pan', async
     y: viewportBox.y + viewportBox.height * 0.35
   }
 
+  const viewportStateBeforeZoom = await plane.evaluate((element) => {
+    const planeElement = element as HTMLElement
+
+    return {
+      panX: planeElement.style.getPropertyValue('--pgml-plane-pan-x'),
+      panY: planeElement.style.getPropertyValue('--pgml-plane-pan-y'),
+      scale: planeElement.style.getPropertyValue('--pgml-plane-scale')
+    }
+  })
+
   await page.mouse.move(zoomPoint.x, zoomPoint.y)
   await page.mouse.wheel(0, -180)
 
-  const zoomedTransform = await plane.evaluate((element) => {
-    return (element as HTMLElement).style.transform
+  await expect.poll(async () => {
+    return plane.evaluate((element) => {
+      const planeElement = element as HTMLElement
+
+      return {
+        panX: planeElement.style.getPropertyValue('--pgml-plane-pan-x'),
+        panY: planeElement.style.getPropertyValue('--pgml-plane-pan-y'),
+        scale: planeElement.style.getPropertyValue('--pgml-plane-scale')
+      }
+    })
+  }).not.toEqual(viewportStateBeforeZoom)
+
+  const connectionPathCount = await page.locator('[data-connection-layer="true"] path').count()
+  const zoomedViewportState = await plane.evaluate((element) => {
+    const planeElement = element as HTMLElement
+
+    return {
+      panX: planeElement.style.getPropertyValue('--pgml-plane-pan-x'),
+      panY: planeElement.style.getPropertyValue('--pgml-plane-pan-y'),
+      scale: planeElement.style.getPropertyValue('--pgml-plane-scale')
+    }
   })
 
   const dragNodeBy = async (nodeId: string, deltaX: number, deltaY: number) => {
@@ -761,6 +1292,7 @@ test('dragging a group or custom type preserves the current zoom and pan', async
     await page.mouse.move(headerBox.x + headerBox.width / 2, headerBox.y + 16)
     await page.mouse.down()
     await page.mouse.move(headerBox.x + headerBox.width / 2 + deltaX, headerBox.y + 16 + deltaY, { steps: 8 })
+    await expect.poll(async () => page.locator('[data-connection-layer="true"] path').count()).toBe(connectionPathCount)
     await page.mouse.up()
   }
 
@@ -768,17 +1300,33 @@ test('dragging a group or custom type preserves the current zoom and pan', async
 
   await expect.poll(async () => {
     return plane.evaluate((element) => {
-      return (element as HTMLElement).style.transform
+      const planeElement = element as HTMLElement
+
+      return {
+        panX: planeElement.style.getPropertyValue('--pgml-plane-pan-x'),
+        panY: planeElement.style.getPropertyValue('--pgml-plane-pan-y'),
+        scale: planeElement.style.getPropertyValue('--pgml-plane-scale')
+      }
     })
-  }).toBe(zoomedTransform)
+  }).toEqual(zoomedViewportState)
+
+  await expect.poll(async () => page.locator('[data-connection-layer="true"] path').count()).toBe(connectionPathCount)
 
   await dragNodeBy('custom-type:Domain:email_address', 48, 42)
 
   await expect.poll(async () => {
     return plane.evaluate((element) => {
-      return (element as HTMLElement).style.transform
+      const planeElement = element as HTMLElement
+
+      return {
+        panX: planeElement.style.getPropertyValue('--pgml-plane-pan-x'),
+        panY: planeElement.style.getPropertyValue('--pgml-plane-pan-y'),
+        scale: planeElement.style.getPropertyValue('--pgml-plane-scale')
+      }
     })
-  }).toBe(zoomedTransform)
+  }).toEqual(zoomedViewportState)
+
+  await expect.poll(async () => page.locator('[data-connection-layer="true"] path').count()).toBe(connectionPathCount)
 })
 
 test('editing PGML preserves the current canvas viewport', async ({ goto, page }) => {
@@ -808,11 +1356,39 @@ test('editing PGML preserves the current canvas viewport', async ({ goto, page }
     y: viewportBox.y + viewportBox.height * 0.36
   }
 
+  const viewportStateBeforeZoom = await plane.evaluate((element) => {
+    const planeElement = element as HTMLElement
+
+    return {
+      panX: planeElement.style.getPropertyValue('--pgml-plane-pan-x'),
+      panY: planeElement.style.getPropertyValue('--pgml-plane-pan-y'),
+      scale: planeElement.style.getPropertyValue('--pgml-plane-scale')
+    }
+  })
+
   await page.mouse.move(zoomPoint.x, zoomPoint.y)
   await page.mouse.wheel(0, -180)
 
-  const viewportTransformBeforeEdit = await plane.evaluate((element) => {
-    return (element as HTMLElement).style.transform
+  await expect.poll(async () => {
+    return plane.evaluate((element) => {
+      const planeElement = element as HTMLElement
+
+      return {
+        panX: planeElement.style.getPropertyValue('--pgml-plane-pan-x'),
+        panY: planeElement.style.getPropertyValue('--pgml-plane-pan-y'),
+        scale: planeElement.style.getPropertyValue('--pgml-plane-scale')
+      }
+    })
+  }).not.toEqual(viewportStateBeforeZoom)
+
+  const viewportStateBeforeEdit = await plane.evaluate((element) => {
+    const planeElement = element as HTMLElement
+
+    return {
+      panX: planeElement.style.getPropertyValue('--pgml-plane-pan-x'),
+      panY: planeElement.style.getPropertyValue('--pgml-plane-pan-y'),
+      scale: planeElement.style.getPropertyValue('--pgml-plane-scale')
+    }
   })
 
   const source = await readPgmlEditorValue(editor)
@@ -823,7 +1399,13 @@ test('editing PGML preserves the current canvas viewport', async ({ goto, page }
 
   await expect.poll(async () => {
     return plane.evaluate((element) => {
-      return (element as HTMLElement).style.transform
+      const planeElement = element as HTMLElement
+
+      return {
+        panX: planeElement.style.getPropertyValue('--pgml-plane-pan-x'),
+        panY: planeElement.style.getPropertyValue('--pgml-plane-pan-y'),
+        scale: planeElement.style.getPropertyValue('--pgml-plane-scale')
+      }
     })
-  }).toBe(viewportTransformBeforeEdit)
+  }).toEqual(viewportStateBeforeEdit)
 })

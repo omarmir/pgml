@@ -29,7 +29,7 @@ PGML is intentionally close to DBML, then opinionated where Postgres needs more 
 ### Stays close to DBML
 
 - Table blocks keep the familiar DBML shape.
-- Inline column attributes such as `pk`, `unique`, `not null`, and `ref` stay compact.
+- Inline column attributes such as `pk`, `unique`, `not null`, `ref`, `delete`, and `update` stay compact.
 - `TableGroup` keeps the one-table-per-line grouping pattern for source organization and diagram layout.
 - The source remains block-based and easy to diff.
 
@@ -52,7 +52,7 @@ TableGroup Commerce {
 Table public.orders {
   id uuid [pk]
   tenant_id uuid [not null, ref: > public.tenants.id]
-  customer_id uuid [ref: > public.users.id]
+  customer_id uuid [ref: > public.users.id, delete: restrict]
   total_cents integer [not null]
 }
 
@@ -80,7 +80,7 @@ Start with DBML-like table blocks. Keep columns first, then table-level indexes 
 Table public.orders {
   id uuid [pk]
   tenant_id uuid [not null, ref: > public.tenants.id]
-  customer_id uuid [ref: > public.users.id]
+  customer_id uuid [ref: > public.users.id, delete: restrict]
   total_cents integer [not null]
   status text [not null]
 
@@ -88,6 +88,8 @@ Table public.orders {
   Constraint chk_total: total_cents >= 0
 }
 ```
+
+`delete:` and `update:` can sit beside `ref:` to preserve foreign-key actions directly in PGML, for example `customer_id uuid [ref: > public.users.id, delete: restrict, update: cascade]`.
 
 ### Table groups
 
@@ -146,6 +148,7 @@ Properties "group:Commerce" {
   x: 540
   y: 120
   color: #f59e0b
+  masonry: true
   table_columns: 1
 }
 
