@@ -44,6 +44,11 @@ import {
   pickDiagramAnchorSlot
 } from '~/utils/diagram-routing'
 import {
+  buildDiagramSpatialGridIndex,
+  queryDiagramSpatialGridIndex,
+  type DiagramSpatialBounds
+} from '~/utils/diagram-spatial-index'
+import {
   getDiagramPinchViewportTransform,
   getDiagramTouchGesture,
   type DiagramTouchGesture,
@@ -177,6 +182,8 @@ type ConnectionEndpointLocator = {
   value: string
 }
 
+type DiagramViewportBounds = DiagramSpatialBounds
+
 type CanvasSelection = {
   kind: 'node'
   id: string
@@ -306,6 +313,7 @@ const nodeStates: Ref<Record<string, CanvasNodeState>> = ref({})
 const connectionLines: Ref<ConnectionLine[]> = ref([])
 const activeNodeDrag: Ref<DiagramConnectionPreviewDragState | null> = ref(null)
 const dragPreviewPaths: Ref<Record<string, string>> = ref({})
+const fullNodeRenderLockCount: Ref<number> = ref(0)
 const isDesktopSidePanelOpen: Ref<boolean> = ref(true)
 const activePanelTab: Ref<DiagramPanelTab> = ref('inspector')
 const touchPanSession: Ref<TouchPanSession | null> = ref(null)
@@ -376,6 +384,8 @@ const groupTableGap = 16
 const groupHorizontalPadding = 20
 const groupHeaderHeight = 56
 const diagramLineViewportOverscan = 240
+const diagramNodeViewportOverscan = 360
+const diagramSpatialGridCellSize = 360
 const groupVerticalPadding = 18
 const groupColumnRowHeight = 31
 const objectColumnX = 1060
@@ -430,6 +440,7 @@ let suppressLayoutObserverUntil = 0
 let previousViewportResetKey: number | null = null
 
 const canvasNodes = computed(() => Object.values(nodeStates.value))
+const isForcingFullNodeRendering = computed(() => fullNodeRenderLockCount.value > 0)
 const isMobileCanvasShell = computed(() => mobileActiveView !== null)
 const isMobilePanelView = computed(() => mobileActiveView === 'panel')
 const isDiagramPanelVisible = computed(() => {
@@ -584,12 +595,7 @@ const getNodeDragStyle = (nodeId: string): CSSProperties | undefined => {
 }
 const doesLineBoundsIntersectViewport = (
   bounds: ConnectionLine['bounds'],
-  viewportBounds: {
-    minX: number
-    minY: number
-    maxX: number
-    maxY: number
-  }
+  viewportBounds: DiagramViewportBounds
 ) => {
   return (
     bounds.maxX >= viewportBounds.minX
@@ -598,12 +604,12 @@ const doesLineBoundsIntersectViewport = (
     && bounds.minY <= viewportBounds.maxY
   )
 }
-const renderedLineViewportBounds = computed(() => {
+const getRenderedViewportBounds = (overscanInPixels: number): DiagramViewportBounds | null => {
   if (viewportSize.value.width <= 0 || viewportSize.value.height <= 0) {
     return null
   }
 
-  const overscan = diagramLineViewportOverscan / Math.max(scale.value, 0.01)
+  const overscan = overscanInPixels / Math.max(scale.value, 0.01)
 
   return {
     minX: (-pan.value.x) / scale.value - overscan,
@@ -611,6 +617,66 @@ const renderedLineViewportBounds = computed(() => {
     maxX: (viewportSize.value.width - pan.value.x) / scale.value + overscan,
     maxY: (viewportSize.value.height - pan.value.y) / scale.value + overscan
   }
+}
+const renderedLineViewportBounds = computed(() => {
+  return getRenderedViewportBounds(diagramLineViewportOverscan)
+})
+const renderedNodeViewportBounds = computed(() => {
+  return getRenderedViewportBounds(diagramNodeViewportOverscan)
+})
+const nodeSpatialIndex = computed(() => {
+  return buildDiagramSpatialGridIndex(canvasNodes.value.map((node) => {
+    return {
+      id: node.id,
+      maxX: node.x + node.width,
+      maxY: node.y + node.height,
+      minX: node.x,
+      minY: node.y
+    }
+  }), diagramSpatialGridCellSize)
+})
+const fullyRenderedNodeIds = computed(() => {
+  if (isForcingFullNodeRendering.value || !renderedNodeViewportBounds.value) {
+    return new Set(canvasNodes.value.map(node => node.id))
+  }
+
+  const renderedNodeIds = new Set(queryDiagramSpatialGridIndex(
+    nodeSpatialIndex.value,
+    renderedNodeViewportBounds.value
+  ).map(entry => entry.id))
+
+  ;[
+    selectedStackTargetId.value,
+    selectedNodeId.value,
+    activeNodeDrag.value?.nodeId || null
+  ].forEach((nodeId) => {
+    if (nodeId) {
+      renderedNodeIds.add(nodeId)
+    }
+  })
+
+  return renderedNodeIds
+})
+const isNodeFullyRendered = (nodeId: string) => fullyRenderedNodeIds.value.has(nodeId)
+const connectionLinesByKey = computed(() => {
+  return visibleConnectionLines.value.reduce<Record<string, ConnectionLine>>((entries, line) => {
+    entries[line.key] = line
+    return entries
+  }, {})
+})
+const connectionLineOrderByKey = computed(() => {
+  return visibleConnectionLines.value.reduce<Record<string, number>>((entries, line, index) => {
+    entries[line.key] = index
+    return entries
+  }, {})
+})
+const connectionSpatialIndex = computed(() => {
+  return buildDiagramSpatialGridIndex(visibleConnectionLines.value.map((line) => {
+    return {
+      id: line.key,
+      ...line.bounds
+    }
+  }), diagramSpatialGridCellSize)
 })
 const visibleConnectionLines = computed(() => {
   return showRelationshipLines.value ? connectionLines.value : []
@@ -623,16 +689,25 @@ const renderedConnectionLines = computed(() => {
     return visibleConnectionLines.value
   }
 
-  return visibleConnectionLines.value.filter((line) => {
-    if (
-      activeDragNodeId
-      && (line.fromOwnerNodeId === activeDragNodeId || line.toOwnerNodeId === activeDragNodeId)
-    ) {
-      return true
-    }
+  const renderedLineKeys = new Set(queryDiagramSpatialGridIndex(
+    connectionSpatialIndex.value,
+    viewportBounds
+  ).map(entry => entry.id))
 
-    return doesLineBoundsIntersectViewport(line.bounds, viewportBounds)
-  })
+  if (activeDragNodeId) {
+    visibleConnectionLines.value.forEach((line) => {
+      if (line.fromOwnerNodeId === activeDragNodeId || line.toOwnerNodeId === activeDragNodeId) {
+        renderedLineKeys.add(line.key)
+      }
+    })
+  }
+
+  return Array.from(renderedLineKeys)
+    .map(key => connectionLinesByKey.value[key])
+    .filter((line): line is ConnectionLine => Boolean(line))
+    .sort((left, right) => {
+      return (connectionLineOrderByKey.value[left.key] || 0) - (connectionLineOrderByKey.value[right.key] || 0)
+    })
 })
 const connectionLineLayers = computed(() => {
   return buildDiagramConnectionPreviewLayers(
@@ -1024,14 +1099,37 @@ const waitForAnimationFrame = () => {
   })
 }
 
-const waitForCanvasRender = async () => {
-  flushViewportTransformSync()
-  await nextTick()
-  updateConnections()
+const beginForcedFullNodeRendering = async () => {
+  fullNodeRenderLockCount.value += 1
   await nextTick()
   await waitForAnimationFrame()
 
-  updateConnections()
+  return async () => {
+    fullNodeRenderLockCount.value = Math.max(0, fullNodeRenderLockCount.value - 1)
+    await nextTick()
+  }
+}
+
+const withForcedFullNodeRendering = async <T>(task: () => Promise<T> | T) => {
+  const release = await beginForcedFullNodeRendering()
+
+  try {
+    return await task()
+  } finally {
+    await release()
+  }
+}
+
+const waitForCanvasRender = async () => {
+  await withForcedFullNodeRendering(async () => {
+    flushViewportTransformSync()
+    await nextTick()
+    updateConnections()
+    await nextTick()
+    await waitForAnimationFrame()
+
+    updateConnections()
+  })
 }
 
 const escapeXml = (value: string) => {
@@ -1218,47 +1316,50 @@ const buildSvgTextPaintStyle = (value: string, fallback: string) => {
 }
 
 const buildExportSvgString = async (padding = exportPadding) => {
-  await waitForCanvasRender()
+  const releaseFullNodeRendering = await beginForcedFullNodeRendering()
 
-  if (!(planeRef.value instanceof HTMLDivElement) || !(viewportRef.value instanceof HTMLDivElement)) {
-    throw new Error('Canvas is not ready for export.')
-  }
+  try {
+    await waitForCanvasRender()
 
-  const bounds = getCanvasBounds()
+    if (!(planeRef.value instanceof HTMLDivElement) || !(viewportRef.value instanceof HTMLDivElement)) {
+      throw new Error('Canvas is not ready for export.')
+    }
 
-  if (!bounds) {
-    throw new Error('Nothing is available to export.')
-  }
+    const bounds = getCanvasBounds()
 
-  const exportWidth = Math.ceil(bounds.width + padding * 2)
-  const exportHeight = Math.ceil(bounds.height + padding * 2)
-  const offsetX = padding - bounds.minX
-  const offsetY = padding - bounds.minY
-  const monoFont = 'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, Liberation Mono, Courier New, monospace'
-  const sansFont = 'ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif'
-  const backgroundColor = readStudioToken('--studio-canvas-bg', '#0b141a')
-  const dotColor = readStudioToken('--studio-canvas-dot', 'rgba(148, 163, 184, 0.24)')
-  const shellText = readStudioToken('--studio-shell-text', '#e2e8f0')
-  const shellMuted = readStudioToken('--studio-shell-muted', '#94a3b8')
-  const railColor = readStudioToken('--studio-rail', 'rgba(148, 163, 184, 0.25)')
-  const dividerColor = readStudioToken('--studio-divider', 'rgba(148, 163, 184, 0.16)')
-  const tableSurface = readStudioToken('--studio-table-surface', '#101c24')
-  const rowSurface = readStudioToken('--studio-row-surface', '#0d1820')
-  const getExportElementId = (value: string) => value.replaceAll(/[^\w-]+/g, '-')
-  const defs: string[] = [
-    '<pattern id="pgml-grid" width="18" height="18" patternUnits="userSpaceOnUse">',
-    `<circle cx="9" cy="9" r="1" ${buildSvgPaintAttributes('fill', dotColor, '#94a3b8')} />`,
-    '</pattern>'
-  ]
-  const sceneParts: string[] = [
-    `<rect x="0" y="0" width="${exportWidth}" height="${exportHeight}" ${buildSvgPaintAttributes('fill', backgroundColor, '#0b141a')} />`,
-    `<rect x="0" y="0" width="${exportWidth}" height="${exportHeight}" fill="url(#pgml-grid)" />`
-  ]
-  const backgroundParts: string[] = []
-  const connectionParts: string[] = []
-  const foregroundParts: string[] = []
+    if (!bounds) {
+      throw new Error('Nothing is available to export.')
+    }
 
-  canvasNodes.value.forEach((node) => {
+    const exportWidth = Math.ceil(bounds.width + padding * 2)
+    const exportHeight = Math.ceil(bounds.height + padding * 2)
+    const offsetX = padding - bounds.minX
+    const offsetY = padding - bounds.minY
+    const monoFont = 'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, Liberation Mono, Courier New, monospace'
+    const sansFont = 'ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif'
+    const backgroundColor = readStudioToken('--studio-canvas-bg', '#0b141a')
+    const dotColor = readStudioToken('--studio-canvas-dot', 'rgba(148, 163, 184, 0.24)')
+    const shellText = readStudioToken('--studio-shell-text', '#e2e8f0')
+    const shellMuted = readStudioToken('--studio-shell-muted', '#94a3b8')
+    const railColor = readStudioToken('--studio-rail', 'rgba(148, 163, 184, 0.25)')
+    const dividerColor = readStudioToken('--studio-divider', 'rgba(148, 163, 184, 0.16)')
+    const tableSurface = readStudioToken('--studio-table-surface', '#101c24')
+    const rowSurface = readStudioToken('--studio-row-surface', '#0d1820')
+    const getExportElementId = (value: string) => value.replaceAll(/[^\w-]+/g, '-')
+    const defs: string[] = [
+      '<pattern id="pgml-grid" width="18" height="18" patternUnits="userSpaceOnUse">',
+      `<circle cx="9" cy="9" r="1" ${buildSvgPaintAttributes('fill', dotColor, '#94a3b8')} />`,
+      '</pattern>'
+    ]
+    const sceneParts: string[] = [
+      `<rect x="0" y="0" width="${exportWidth}" height="${exportHeight}" ${buildSvgPaintAttributes('fill', backgroundColor, '#0b141a')} />`,
+      `<rect x="0" y="0" width="${exportWidth}" height="${exportHeight}" fill="url(#pgml-grid)" />`
+    ]
+    const backgroundParts: string[] = []
+    const connectionParts: string[] = []
+    const foregroundParts: string[] = []
+
+    canvasNodes.value.forEach((node) => {
     const nodeElement = planeRef.value?.querySelector(`[data-node-anchor="${node.id}"]`)
     const nodeSurfaceElement = node.kind === 'group'
       ? planeRef.value?.querySelector(`[data-group-surface="${node.id}"]`)
@@ -1707,27 +1808,30 @@ const buildExportSvgString = async (padding = exportPadding) => {
     }
   })
 
-  visibleConnectionLines.value.forEach((line) => {
-    connectionParts.push(
-      `<path d="${escapeXml(translatePathData(line.path, offsetX, offsetY))}" fill="none" ${buildSvgPaintAttributes('stroke', line.color, line.color)} stroke-width="2" stroke-dasharray="${line.dashed ? '10 7' : '0'}" stroke-linecap="square" stroke-linejoin="miter" opacity="0.9" />`
-    )
-  })
+    visibleConnectionLines.value.forEach((line) => {
+      connectionParts.push(
+        `<path d="${escapeXml(translatePathData(line.path, offsetX, offsetY))}" fill="none" ${buildSvgPaintAttributes('stroke', line.color, line.color)} stroke-width="2" stroke-dasharray="${line.dashed ? '10 7' : '0'}" stroke-linecap="square" stroke-linejoin="miter" opacity="0.9" />`
+      )
+    })
 
-  return {
-    width: exportWidth,
-    height: exportHeight,
-    svg: [
-      '<?xml version="1.0" encoding="UTF-8"?>',
-      `<svg xmlns="http://www.w3.org/2000/svg" width="${exportWidth}" height="${exportHeight}" viewBox="0 0 ${exportWidth} ${exportHeight}">`,
-      '<defs>',
-      ...defs,
-      '</defs>',
-      ...sceneParts,
-      ...backgroundParts,
-      ...connectionParts,
-      ...foregroundParts,
-      '</svg>'
-    ].join('')
+    return {
+      width: exportWidth,
+      height: exportHeight,
+      svg: [
+        '<?xml version="1.0" encoding="UTF-8"?>',
+        `<svg xmlns="http://www.w3.org/2000/svg" width="${exportWidth}" height="${exportHeight}" viewBox="0 0 ${exportWidth} ${exportHeight}">`,
+        '<defs>',
+        ...defs,
+        '</defs>',
+        ...sceneParts,
+        ...backgroundParts,
+        ...connectionParts,
+        ...foregroundParts,
+        '</svg>'
+      ].join('')
+    }
+  } finally {
+    await releaseFullNodeRendering()
   }
 }
 
@@ -2133,14 +2237,16 @@ const scheduleNodeUpdateFollowUp = (remeasure: boolean) => {
 
   hasPendingNodeUpdateSync = true
 
-  nextTick(() => {
+  nextTick(async () => {
     hasPendingNodeUpdateSync = false
     const shouldRemeasure = pendingNodeUpdateNeedsRemeasure
 
     pendingNodeUpdateNeedsRemeasure = false
 
     if (shouldRemeasure) {
-      syncMeasuredNodeSizes()
+      await withForcedFullNodeRendering(async () => {
+        syncMeasuredNodeSizes()
+      })
     }
 
     scheduleConnectionRefresh()
@@ -7288,31 +7394,33 @@ watch(
 watch(
   () => model,
   async () => {
-    const shouldFitViewport = previousViewportResetKey !== null && viewportResetKey !== previousViewportResetKey
+    await withForcedFullNodeRendering(async () => {
+      const shouldFitViewport = previousViewportResetKey !== null && viewportResetKey !== previousViewportResetKey
 
-    syncNodeStates()
-    await syncLayoutObserverTargets()
-    await refreshMeasuredGroupTableHeights()
-    if (syncMeasuredNodeSizes()) {
+      syncNodeStates()
       await syncLayoutObserverTargets()
-    }
-    if (!hasEmbeddedLayout.value) {
-      reflowAutoLayout()
-    }
-    await syncLayoutObserverTargets()
-    if (syncMeasuredNodeSizes()) {
-      await syncLayoutObserverTargets()
+      await refreshMeasuredGroupTableHeights()
+      if (syncMeasuredNodeSizes()) {
+        await syncLayoutObserverTargets()
+      }
       if (!hasEmbeddedLayout.value) {
         reflowAutoLayout()
       }
       await syncLayoutObserverTargets()
-    }
-    if (shouldFitViewport) {
-      fitView()
-    }
-    await syncLayoutObserverTargets()
-    updateConnections()
-    previousViewportResetKey = viewportResetKey
+      if (syncMeasuredNodeSizes()) {
+        await syncLayoutObserverTargets()
+        if (!hasEmbeddedLayout.value) {
+          reflowAutoLayout()
+        }
+        await syncLayoutObserverTargets()
+      }
+      if (shouldFitViewport) {
+        fitView()
+      }
+      await syncLayoutObserverTargets()
+      updateConnections()
+      previousViewportResetKey = viewportResetKey
+    })
   },
   { deep: true, immediate: true }
 )
@@ -7353,23 +7461,25 @@ onMounted(() => {
   syncViewportSize()
 
   nextTick(async () => {
-    await syncLayoutObserverTargets()
-    await refreshMeasuredGroupTableHeights()
-    if (syncMeasuredNodeSizes()) {
-      reflowAutoLayout()
+    await withForcedFullNodeRendering(async () => {
+      await syncLayoutObserverTargets()
+      await refreshMeasuredGroupTableHeights()
+      if (syncMeasuredNodeSizes()) {
+        reflowAutoLayout()
+        updateConnections()
+      }
       updateConnections()
-    }
-    updateConnections()
-    await waitForAnimationFrame()
-    await syncLayoutObserverTargets()
-    if (syncMeasuredNodeSizes()) {
-      reflowAutoLayout()
+      await waitForAnimationFrame()
+      await syncLayoutObserverTargets()
+      if (syncMeasuredNodeSizes()) {
+        reflowAutoLayout()
+        updateConnections()
+      }
+      fitView()
+      await nextTick()
+      await waitForAnimationFrame()
       updateConnections()
-    }
-    fitView()
-    await nextTick()
-    await waitForAnimationFrame()
-    updateConnections()
+    })
   })
 })
 
@@ -7426,6 +7536,7 @@ defineExpose<{
         :key="node.id"
         :class="[
           'absolute select-none',
+          !isNodeFullyRendered(node.id) ? 'pointer-events-none invisible' : '',
           node.kind === 'group' ? 'overflow-hidden rounded-[2px]' : 'overflow-hidden rounded-none border',
           node.kind === 'table' || node.kind === 'object'
             ? 'hover:ring-1 hover:ring-[color:var(--studio-ring)]'
@@ -7452,254 +7563,312 @@ defineExpose<{
         @click.stop="node.kind === 'table' ? handleTableClick(node.id) : handleNodeClick(node)"
         @dblclick.stop="node.kind === 'table' ? handleTableDoubleClick(node.id) : handleNodeDoubleClick(node)"
       >
-        <div
-          v-if="node.kind === 'group'"
-          :data-group-surface="node.id"
-          :class="[
-            'pointer-events-none absolute inset-0 rounded-[2px] border',
-            selectedNodeId === node.id ? 'ring-1 ring-[color:var(--studio-ring)]' : ''
-          ]"
-          :style="{
-            zIndex: getGroupBackgroundLayerZIndex(node.id),
-            borderColor: getNodeBorderColor(node),
-            background: getNodeBackground(node)
-          }"
-        />
-
-        <div
-          :data-node-header="node.id"
-          :class="[
-            'relative flex cursor-move items-start justify-between gap-2 px-2.5 py-2',
-            node.kind === 'group' || !node.collapsed ? 'border-b border-[color:var(--studio-divider)]' : ''
-          ]"
-          :style="node.kind === 'group' ? { zIndex: getNodeForegroundLayerZIndex(node.id) } : undefined"
-          @pointerdown="startDragNode($event, node.id)"
-        >
-          <div class="min-w-0">
-            <span
-              :data-node-accent="node.id"
-              class="mb-1 inline-flex font-mono text-[0.62rem] uppercase tracking-[0.08em]"
-              :style="{ color: getNodeAccentColor(node) }"
-            >
-              {{ node.kind === 'group' ? 'Table Group' : (node.kind === 'table' ? 'Table' : node.objectKind) }}
-            </span>
-            <h3 class="truncate text-[0.88rem] font-semibold leading-5 tracking-[-0.02em] text-[color:var(--studio-shell-text)]">
-              {{ node.title }}
-            </h3>
-            <span
-              v-if="node.kind === 'table'"
-              data-table-schema-badge
-              class="mt-1 inline-flex min-h-[1rem] items-center border px-1.5 py-0.5 font-mono text-[0.52rem] uppercase leading-[1.15] tracking-[0.05em]"
-              :style="getSchemaBadgeStyle(getTableSchemaName(node.id))"
-            >
-              {{ getTableSchemaName(node.id) }}
-            </span>
-            <p
-              v-if="node.subtitle && node.kind !== 'table'"
-              class="truncate text-[0.68rem] text-[color:var(--studio-shell-muted)]"
-            >
-              {{ node.subtitle }}
-            </p>
-          </div>
-
-          <div class="flex shrink-0 items-start gap-1">
-            <span class="inline-flex h-5 items-center border border-[color:var(--studio-rail)] px-1.5 font-mono text-[0.62rem] uppercase tracking-[0.06em] text-[color:var(--studio-shell-muted)]">
-              {{ node.kind === 'group' ? `${node.tableCount || node.tableIds.length} tables` : (node.kind === 'table' ? `${getTableRows(node.id).length} rows` : `${node.tableIds.length} impact`) }}
-            </span>
-            <UButton
-              v-if="node.kind === 'group'"
-              icon="i-lucide-table-2"
-              :data-group-add-table="node.title"
-              color="neutral"
-              variant="ghost"
-              size="xs"
-              class="h-5 rounded-none border border-[color:var(--studio-rail)] px-1 text-[color:var(--studio-shell-muted)] hover:bg-[color:var(--studio-surface-hover)] hover:text-[color:var(--studio-shell-text)]"
-              :aria-label="`Add table to ${node.title}`"
-              :title="`Add table to ${node.title}`"
-              @pointerdown.stop
-              @click.stop="handleCreateTable(node.title)"
-            />
-            <UButton
-              v-if="node.kind === 'group'"
-              icon="i-lucide-pencil-line"
-              :data-group-edit-button="node.title"
-              color="neutral"
-              variant="ghost"
-              size="xs"
-              class="h-5 w-5 rounded-none border border-[color:var(--studio-rail)] px-0 text-[color:var(--studio-shell-muted)] hover:bg-[color:var(--studio-surface-hover)] hover:text-[color:var(--studio-shell-text)]"
-              aria-label="Edit group"
-              title="Edit group"
-              @pointerdown.stop
-              @click.stop="handleEditGroup(node.title)"
-            />
-            <UButton
-              v-if="isCollapsibleNode(node)"
-              :icon="node.collapsed ? 'i-lucide-plus' : 'i-lucide-minus'"
-              color="neutral"
-              variant="ghost"
-              size="xs"
-              class="h-5 w-5 rounded-none border border-[color:var(--studio-rail)] px-0 text-[color:var(--studio-shell-muted)] hover:bg-[color:var(--studio-surface-hover)] hover:text-[color:var(--studio-shell-text)]"
-              :aria-label="node.collapsed ? `Expand ${node.title}` : `Collapse ${node.title}`"
-              :title="node.collapsed ? `Expand ${node.title}` : `Collapse ${node.title}`"
-              @pointerdown.stop
-              @click.stop="toggleNodeCollapsed(node.id)"
-            />
-            <UButton
-              v-if="node.kind === 'table'"
-              icon="i-lucide-pencil-line"
-              :data-table-edit-button="node.id"
-              color="neutral"
-              variant="ghost"
-              size="xs"
-              class="h-5 w-5 rounded-none border border-[color:var(--studio-rail)] px-0 text-[color:var(--studio-shell-muted)] hover:bg-[color:var(--studio-surface-hover)] hover:text-[color:var(--studio-shell-text)]"
-              aria-label="Edit table"
-              title="Edit table"
-              @pointerdown.stop
-              @click.stop="handleEditTable(node.id)"
-            />
-          </div>
-        </div>
-
-        <div
-          v-if="node.kind === 'group'"
-          class="relative px-5 pb-2.5 pt-2"
-          :style="{ zIndex: getNodeForegroundLayerZIndex(node.id) }"
-        >
+        <template v-if="isNodeFullyRendered(node.id)">
           <div
-            :data-group-content="node.id"
-            class="grid items-start justify-start overflow-visible"
-            :style="getGroupContentStyle(node)"
+            v-if="node.kind === 'group'"
+            :data-group-surface="node.id"
+            :class="[
+              'pointer-events-none absolute inset-0 rounded-[2px] border',
+              selectedNodeId === node.id ? 'ring-1 ring-[color:var(--studio-ring)]' : ''
+            ]"
+            :style="{
+              zIndex: getGroupBackgroundLayerZIndex(node.id),
+              borderColor: getNodeBorderColor(node),
+              background: getNodeBackground(node)
+            }"
+          />
+
+          <div
+            :data-node-header="node.id"
+            :class="[
+              'relative flex cursor-move items-start justify-between gap-2 px-2.5 py-2',
+              node.kind === 'group' || !node.collapsed ? 'border-b border-[color:var(--studio-divider)]' : ''
+            ]"
+            :style="node.kind === 'group' ? { zIndex: getNodeForegroundLayerZIndex(node.id) } : undefined"
+            @pointerdown="startDragNode($event, node.id)"
           >
-            <article
-              v-for="table in getRenderedGroupTables(node.title)"
-              :key="table.fullName"
-              :class="[
-                'relative min-w-0 self-start overflow-hidden rounded-[2px] border border-[color:var(--studio-shell-border)] bg-[color:var(--studio-table-surface)] hover:ring-1 hover:ring-[color:var(--studio-ring)]',
-                isTableSelectionActive(table.fullName) ? 'pgml-selection-glow pgml-selection-glow-subtle' : ''
-              ]"
-              :style="[
-                getGroupTableLayoutStyle(node, table.fullName),
-                getSelectionGlowStyle(tableGroupColorByTableId[table.fullName] || '#38bdf8')
-              ]"
-              :data-table-anchor="table.fullName"
-              :data-selection-active="isTableSelectionActive(table.fullName) ? 'true' : undefined"
-              @click.stop="handleTableClick(table.fullName)"
-              @dblclick.stop="handleTableDoubleClick(table.fullName)"
+            <div class="min-w-0">
+              <span
+                :data-node-accent="node.id"
+                class="mb-1 inline-flex font-mono text-[0.62rem] uppercase tracking-[0.08em]"
+                :style="{ color: getNodeAccentColor(node) }"
+              >
+                {{ node.kind === 'group' ? 'Table Group' : (node.kind === 'table' ? 'Table' : node.objectKind) }}
+              </span>
+              <h3 class="truncate text-[0.88rem] font-semibold leading-5 tracking-[-0.02em] text-[color:var(--studio-shell-text)]">
+                {{ node.title }}
+              </h3>
+              <span
+                v-if="node.kind === 'table'"
+                data-table-schema-badge
+                class="mt-1 inline-flex min-h-[1rem] items-center border px-1.5 py-0.5 font-mono text-[0.52rem] uppercase leading-[1.15] tracking-[0.05em]"
+                :style="getSchemaBadgeStyle(getTableSchemaName(node.id))"
+              >
+                {{ getTableSchemaName(node.id) }}
+              </span>
+              <p
+                v-if="node.subtitle && node.kind !== 'table'"
+                class="truncate text-[0.68rem] text-[color:var(--studio-shell-muted)]"
+              >
+                {{ node.subtitle }}
+              </p>
+            </div>
+
+            <div class="flex shrink-0 items-start gap-1">
+              <span class="inline-flex h-5 items-center border border-[color:var(--studio-rail)] px-1.5 font-mono text-[0.62rem] uppercase tracking-[0.06em] text-[color:var(--studio-shell-muted)]">
+                {{ node.kind === 'group' ? `${node.tableCount || node.tableIds.length} tables` : (node.kind === 'table' ? `${getTableRows(node.id).length} rows` : `${node.tableIds.length} impact`) }}
+              </span>
+              <UButton
+                v-if="node.kind === 'group'"
+                icon="i-lucide-table-2"
+                :data-group-add-table="node.title"
+                color="neutral"
+                variant="ghost"
+                size="xs"
+                class="h-5 rounded-none border border-[color:var(--studio-rail)] px-1 text-[color:var(--studio-shell-muted)] hover:bg-[color:var(--studio-surface-hover)] hover:text-[color:var(--studio-shell-text)]"
+                :aria-label="`Add table to ${node.title}`"
+                :title="`Add table to ${node.title}`"
+                @pointerdown.stop
+                @click.stop="handleCreateTable(node.title)"
+              />
+              <UButton
+                v-if="node.kind === 'group'"
+                icon="i-lucide-pencil-line"
+                :data-group-edit-button="node.title"
+                color="neutral"
+                variant="ghost"
+                size="xs"
+                class="h-5 w-5 rounded-none border border-[color:var(--studio-rail)] px-0 text-[color:var(--studio-shell-muted)] hover:bg-[color:var(--studio-surface-hover)] hover:text-[color:var(--studio-shell-text)]"
+                aria-label="Edit group"
+                title="Edit group"
+                @pointerdown.stop
+                @click.stop="handleEditGroup(node.title)"
+              />
+              <UButton
+                v-if="isCollapsibleNode(node)"
+                :icon="node.collapsed ? 'i-lucide-plus' : 'i-lucide-minus'"
+                color="neutral"
+                variant="ghost"
+                size="xs"
+                class="h-5 w-5 rounded-none border border-[color:var(--studio-rail)] px-0 text-[color:var(--studio-shell-muted)] hover:bg-[color:var(--studio-surface-hover)] hover:text-[color:var(--studio-shell-text)]"
+                :aria-label="node.collapsed ? `Expand ${node.title}` : `Collapse ${node.title}`"
+                :title="node.collapsed ? `Expand ${node.title}` : `Collapse ${node.title}`"
+                @pointerdown.stop
+                @click.stop="toggleNodeCollapsed(node.id)"
+              />
+              <UButton
+                v-if="node.kind === 'table'"
+                icon="i-lucide-pencil-line"
+                :data-table-edit-button="node.id"
+                color="neutral"
+                variant="ghost"
+                size="xs"
+                class="h-5 w-5 rounded-none border border-[color:var(--studio-rail)] px-0 text-[color:var(--studio-shell-muted)] hover:bg-[color:var(--studio-surface-hover)] hover:text-[color:var(--studio-shell-text)]"
+                aria-label="Edit table"
+                title="Edit table"
+                @pointerdown.stop
+                @click.stop="handleEditTable(node.id)"
+              />
+            </div>
+          </div>
+
+          <div
+            v-if="node.kind === 'group'"
+            class="relative px-5 pb-2.5 pt-2"
+            :style="{ zIndex: getNodeForegroundLayerZIndex(node.id) }"
+          >
+            <div
+              :data-group-content="node.id"
+              class="grid items-start justify-start overflow-visible"
+              :style="getGroupContentStyle(node)"
             >
-              <div class="flex items-start justify-between gap-2 border-b border-[color:var(--studio-divider)] px-2 py-1.5">
-                <div class="min-w-0">
-                  <h4 class="truncate text-[0.78rem] font-semibold leading-5 text-[color:var(--studio-shell-text)]">
-                    {{ table.name }}
-                  </h4>
-                  <span
-                    data-table-schema-badge
-                    class="mt-1 inline-flex min-h-[1rem] items-center border px-1.5 py-0.5 font-mono text-[0.5rem] uppercase leading-[1.15] tracking-[0.05em]"
-                    :style="getSchemaBadgeStyle(table.schema)"
-                  >
-                    {{ table.schema }}
-                  </span>
+              <article
+                v-for="table in getRenderedGroupTables(node.title)"
+                :key="table.fullName"
+                :class="[
+                  'relative min-w-0 self-start overflow-hidden rounded-[2px] border border-[color:var(--studio-shell-border)] bg-[color:var(--studio-table-surface)] hover:ring-1 hover:ring-[color:var(--studio-ring)]',
+                  isTableSelectionActive(table.fullName) ? 'pgml-selection-glow pgml-selection-glow-subtle' : ''
+                ]"
+                :style="[
+                  getGroupTableLayoutStyle(node, table.fullName),
+                  getSelectionGlowStyle(tableGroupColorByTableId[table.fullName] || '#38bdf8')
+                ]"
+                :data-table-anchor="table.fullName"
+                :data-selection-active="isTableSelectionActive(table.fullName) ? 'true' : undefined"
+                @click.stop="handleTableClick(table.fullName)"
+                @dblclick.stop="handleTableDoubleClick(table.fullName)"
+              >
+                <div class="flex items-start justify-between gap-2 border-b border-[color:var(--studio-divider)] px-2 py-1.5">
+                  <div class="min-w-0">
+                    <h4 class="truncate text-[0.78rem] font-semibold leading-5 text-[color:var(--studio-shell-text)]">
+                      {{ table.name }}
+                    </h4>
+                    <span
+                      data-table-schema-badge
+                      class="mt-1 inline-flex min-h-[1rem] items-center border px-1.5 py-0.5 font-mono text-[0.5rem] uppercase leading-[1.15] tracking-[0.05em]"
+                      :style="getSchemaBadgeStyle(table.schema)"
+                    >
+                      {{ table.schema }}
+                    </span>
+                  </div>
+
+                  <UButton
+                    icon="i-lucide-pencil-line"
+                    :data-table-edit-button="table.fullName"
+                    color="neutral"
+                    variant="ghost"
+                    size="xs"
+                    class="h-5 w-5 rounded-none border border-[color:var(--studio-rail)] px-0 text-[color:var(--studio-shell-muted)] hover:bg-[color:var(--studio-surface-hover)] hover:text-[color:var(--studio-shell-text)]"
+                    aria-label="Edit table"
+                    title="Edit table"
+                    @pointerdown.stop
+                    @click.stop="handleEditTable(table.fullName)"
+                  />
                 </div>
 
-                <UButton
-                  icon="i-lucide-pencil-line"
-                  :data-table-edit-button="table.fullName"
-                  color="neutral"
-                  variant="ghost"
-                  size="xs"
-                  class="h-5 w-5 rounded-none border border-[color:var(--studio-rail)] px-0 text-[color:var(--studio-shell-muted)] hover:bg-[color:var(--studio-surface-hover)] hover:text-[color:var(--studio-shell-text)]"
-                  aria-label="Edit table"
-                  title="Edit table"
-                  @pointerdown.stop
-                  @click.stop="handleEditTable(table.fullName)"
-                />
-              </div>
-
-              <div class="grid gap-px bg-[color:var(--studio-divider)]">
-                <PgmlDiagramTableRows
-                  :attachment-popover-content="attachmentPopoverContent"
-                  :attachment-popover-ui="attachmentPopoverUi"
-                  :get-attachment-flag-style="getAttachmentFlagStyle"
-                  :get-attachment-kind-badge-style="getAttachmentKindBadgeStyle"
-                  :get-attachment-row-style="getAttachmentRowStyle"
-                  :get-column-anchor-key="getColumnAnchorKey"
-                  :get-column-label-anchor-key="getColumnLabelAnchorKey"
-                  :get-relational-row-highlight-color="getRelationalRowHighlightColor"
-                  :get-selected-attachment-row-style="getSelectedAttachmentRowStyle"
-                  :get-selection-glow-style="getSelectionGlowStyle"
-                  :is-column-selection-active="isColumnSelectionActive"
-                  :is-attachment-selection-active="isAttachmentSelectionActive"
-                  :is-highlighted-relational-row="isHighlightedRelationalRow"
-                  :rows="getTableRows(table.fullName)"
-                  :table-id="table.fullName"
-                  @attachment-click="handleAttachmentClick"
-                  @attachment-double-click="handleAttachmentDoubleClick"
-                />
-              </div>
-            </article>
+                <div class="grid gap-px bg-[color:var(--studio-divider)]">
+                  <PgmlDiagramTableRows
+                    :attachment-popover-content="attachmentPopoverContent"
+                    :attachment-popover-ui="attachmentPopoverUi"
+                    :get-attachment-flag-style="getAttachmentFlagStyle"
+                    :get-attachment-kind-badge-style="getAttachmentKindBadgeStyle"
+                    :get-attachment-row-style="getAttachmentRowStyle"
+                    :get-column-anchor-key="getColumnAnchorKey"
+                    :get-column-label-anchor-key="getColumnLabelAnchorKey"
+                    :get-relational-row-highlight-color="getRelationalRowHighlightColor"
+                    :get-selected-attachment-row-style="getSelectedAttachmentRowStyle"
+                    :get-selection-glow-style="getSelectionGlowStyle"
+                    :is-column-selection-active="isColumnSelectionActive"
+                    :is-attachment-selection-active="isAttachmentSelectionActive"
+                    :is-highlighted-relational-row="isHighlightedRelationalRow"
+                    :rows="getTableRows(table.fullName)"
+                    :table-id="table.fullName"
+                    @attachment-click="handleAttachmentClick"
+                    @attachment-double-click="handleAttachmentDoubleClick"
+                  />
+                </div>
+              </article>
+            </div>
           </div>
-        </div>
 
-        <div
-          v-else-if="node.kind === 'table'"
-          class="grid gap-px bg-[color:var(--studio-divider)]"
-        >
-          <PgmlDiagramTableRows
-            :attachment-popover-content="attachmentPopoverContent"
-            :attachment-popover-ui="attachmentPopoverUi"
-            :get-attachment-flag-style="getAttachmentFlagStyle"
-            :get-attachment-kind-badge-style="getAttachmentKindBadgeStyle"
-            :get-attachment-row-style="getAttachmentRowStyle"
-            :get-column-anchor-key="getColumnAnchorKey"
-            :get-column-label-anchor-key="getColumnLabelAnchorKey"
-            :get-relational-row-highlight-color="getRelationalRowHighlightColor"
-            :get-selected-attachment-row-style="getSelectedAttachmentRowStyle"
-            :get-selection-glow-style="getSelectionGlowStyle"
-            :is-column-selection-active="isColumnSelectionActive"
-            :is-attachment-selection-active="isAttachmentSelectionActive"
-            :is-highlighted-relational-row="isHighlightedRelationalRow"
-            :rows="getTableRows(node.id)"
-            :table-id="node.id"
-            @attachment-click="handleAttachmentClick"
-            @attachment-double-click="handleAttachmentDoubleClick"
-          />
-        </div>
-
-        <div
-          v-else-if="!node.collapsed"
-          :data-node-body="node.id"
-          class="grid gap-1.5 px-2.5 pb-2.5 pt-2"
-        >
-          <p
-            v-for="detail in node.details"
-            :key="detail"
-            class="break-words whitespace-pre-wrap font-mono text-[0.64rem] leading-5 text-[color:var(--studio-shell-muted)] [overflow-wrap:anywhere]"
+          <div
+            v-else-if="node.kind === 'table'"
+            class="grid gap-px bg-[color:var(--studio-divider)]"
           >
-            {{ detail }}
-          </p>
-
-          <div class="flex flex-wrap gap-1">
-            <span
-              v-for="tableId in node.tableIds"
-              :key="tableId"
-              :data-impact-anchor="getImpactAnchorKey(node.id, tableId)"
-              class="inline-flex h-5 items-center border border-[color:var(--studio-rail)] px-1.5 font-mono text-[0.6rem] uppercase tracking-[0.05em] text-[color:var(--studio-shell-muted)]"
-            >
-              {{ tableId.split('.').at(-1) }}
-            </span>
+            <PgmlDiagramTableRows
+              :attachment-popover-content="attachmentPopoverContent"
+              :attachment-popover-ui="attachmentPopoverUi"
+              :get-attachment-flag-style="getAttachmentFlagStyle"
+              :get-attachment-kind-badge-style="getAttachmentKindBadgeStyle"
+              :get-attachment-row-style="getAttachmentRowStyle"
+              :get-column-anchor-key="getColumnAnchorKey"
+              :get-column-label-anchor-key="getColumnLabelAnchorKey"
+              :get-relational-row-highlight-color="getRelationalRowHighlightColor"
+              :get-selected-attachment-row-style="getSelectedAttachmentRowStyle"
+              :get-selection-glow-style="getSelectionGlowStyle"
+              :is-column-selection-active="isColumnSelectionActive"
+              :is-attachment-selection-active="isAttachmentSelectionActive"
+              :is-highlighted-relational-row="isHighlightedRelationalRow"
+              :rows="getTableRows(node.id)"
+              :table-id="node.id"
+              @attachment-click="handleAttachmentClick"
+              @attachment-double-click="handleAttachmentDoubleClick"
+            />
           </div>
-        </div>
 
-        <button
-          v-if="node.kind === 'object' && !node.collapsed"
-          class="absolute bottom-1.5 right-1.5 h-4 w-4 cursor-nwse-resize border-none bg-transparent"
-          :style="{
-            borderRight: `2px solid ${getNodeAccentColor(node)}`,
-            borderBottom: `2px solid ${getNodeAccentColor(node)}`
-          }"
-          aria-label="Resize node"
-          @pointerdown="startResizeNode($event, node.id)"
-          @click.stop
-        />
+          <div
+            v-else-if="!node.collapsed"
+            :data-node-body="node.id"
+            class="grid gap-1.5 px-2.5 pb-2.5 pt-2"
+          >
+            <p
+              v-for="detail in node.details"
+              :key="detail"
+              class="break-words whitespace-pre-wrap font-mono text-[0.64rem] leading-5 text-[color:var(--studio-shell-muted)] [overflow-wrap:anywhere]"
+            >
+              {{ detail }}
+            </p>
+
+            <div class="flex flex-wrap gap-1">
+              <span
+                v-for="tableId in node.tableIds"
+                :key="tableId"
+                :data-impact-anchor="getImpactAnchorKey(node.id, tableId)"
+                class="inline-flex h-5 items-center border border-[color:var(--studio-rail)] px-1.5 font-mono text-[0.6rem] uppercase tracking-[0.05em] text-[color:var(--studio-shell-muted)]"
+              >
+                {{ tableId.split('.').at(-1) }}
+              </span>
+            </div>
+          </div>
+
+          <button
+            v-if="node.kind === 'object' && !node.collapsed"
+            class="absolute bottom-1.5 right-1.5 h-4 w-4 cursor-nwse-resize border-none bg-transparent"
+            :style="{
+              borderRight: `2px solid ${getNodeAccentColor(node)}`,
+              borderBottom: `2px solid ${getNodeAccentColor(node)}`
+            }"
+            aria-label="Resize node"
+            @pointerdown="startResizeNode($event, node.id)"
+            @click.stop
+          />
+        </template>
+
+        <template v-else>
+          <div
+            :data-node-header="node.id"
+            class="relative"
+            :style="{
+              height: `${node.kind === 'group' ? groupHeaderHeight : 40}px`
+            }"
+            aria-hidden="true"
+          />
+
+          <div
+            v-if="node.kind === 'group'"
+            class="relative px-5 pb-2.5 pt-2"
+            :style="{ zIndex: getNodeForegroundLayerZIndex(node.id) }"
+            aria-hidden="true"
+          >
+            <div
+              :data-group-content="node.id"
+              class="grid items-start justify-start overflow-visible"
+              :style="getGroupContentStyle(node)"
+            >
+              <article
+                v-for="table in getRenderedGroupTables(node.title)"
+                :key="table.fullName"
+                :data-table-anchor="table.fullName"
+                class="relative min-w-0 self-start overflow-hidden"
+                :style="[
+                  getGroupTableLayoutStyle(node, table.fullName),
+                  { height: `${getGroupTableRenderHeight(table.fullName)}px` }
+                ]"
+              >
+                <div class="h-10" />
+                <div class="grid gap-px">
+                  <PgmlDiagramTableRowAnchors
+                    :get-column-anchor-key="getColumnAnchorKey"
+                    :get-column-label-anchor-key="getColumnLabelAnchorKey"
+                    :rows="getTableRows(table.fullName)"
+                    :table-id="table.fullName"
+                  />
+                </div>
+              </article>
+            </div>
+          </div>
+
+          <template v-else-if="node.kind === 'table'">
+            <div class="grid gap-px">
+              <PgmlDiagramTableRowAnchors
+                :get-column-anchor-key="getColumnAnchorKey"
+                :get-column-label-anchor-key="getColumnLabelAnchorKey"
+                :rows="getTableRows(node.id)"
+                :table-id="node.id"
+              />
+            </div>
+          </template>
+        </template>
       </div>
 
       <svg

@@ -1,0 +1,147 @@
+- generic [active] [ref=e1]:
+  - generic [ref=e3]:
+    - banner [ref=e4]:
+      - generic [ref=e5]:
+        - generic [ref=e6]:
+          - link "DB PGML" [ref=e7] [cursor=pointer]:
+            - /url: /
+            - generic [ref=e8]: DB
+            - generic [ref=e9]: PGML
+          - navigation "Primary" [ref=e10]:
+            - link "Home" [ref=e11] [cursor=pointer]:
+              - /url: /
+            - link "Spec" [ref=e12] [cursor=pointer]:
+              - /url: /spec
+        - generic:
+          - generic:
+            - paragraph: PGML
+            - paragraph: Postgres-first markup language
+        - button "Switch to light mode" [ref=e14]
+    - generic [ref=e16]:
+      - main [ref=e17]:
+        - generic [ref=e18]:
+          - generic [ref=e19]:
+            - generic [ref=e20]:
+              - generic [ref=e21]:
+                - generic [ref=e22]:
+                  - generic [ref=e23]: Available now
+                  - heading "Browser local storage" [level=2] [ref=e24]
+                  - paragraph [ref=e25]: Resume a schema saved in this browser, start a blank PGML document, or open the bundled example before entering the studio.
+                - generic [ref=e26]:
+                  - paragraph [ref=e27]: Inventory
+                  - paragraph [ref=e28]: 0 saved schemas
+              - generic [ref=e29]:
+                - generic [ref=e30]:
+                  - generic [ref=e32]:
+                    - paragraph [ref=e33]: Open existing
+                    - paragraph [ref=e34]: Open a schema already saved in this browser and continue editing it in the studio.
+                  - generic [ref=e38]:
+                    - paragraph [ref=e39]: No browser-saved schemas yet.
+                    - paragraph [ref=e40]: Start new or load the example to create the first browser-backed schema.
+                - link "Start new Open a blank PGML document and begin a schema directly in browser storage." [ref=e41] [cursor=pointer]:
+                  - /url: /diagram?launch=new&source=browser
+                  - generic [ref=e42]:
+                    - paragraph [ref=e43]: Start new
+                    - paragraph [ref=e44]: Open a blank PGML document and begin a schema directly in browser storage.
+                - link "Start from example Load the bundled PGML example so you can explore the studio from a known starting point." [ref=e46] [cursor=pointer]:
+                  - /url: /diagram?launch=example&source=browser
+                  - generic [ref=e47]:
+                    - paragraph [ref=e48]: Start from example
+                    - paragraph [ref=e49]: Load the bundled PGML example so you can explore the studio from a known starting point.
+              - generic [ref=e51]:
+                - generic [ref=e52]: SQL dump
+                - paragraph [ref=e53]: Convert a text pg_dump into a browser-backed PGML schema and open it directly in the studio.
+                - button "Import a pg_dump Paste text or upload a dump file, then convert it into PGML from this lane." [ref=e54]:
+                  - generic [ref=e55]:
+                    - paragraph [ref=e56]: Import a pg_dump
+                    - paragraph [ref=e57]: Paste text or upload a dump file, then convert it into PGML from this lane.
+            - generic [ref=e59]:
+              - generic [ref=e60]:
+                - generic [ref=e61]:
+                  - generic [ref=e62]: Available now
+                  - heading "Computer saved file" [level=2] [ref=e63]
+                  - paragraph [ref=e64]: "Use this lane for local `.pgml` files, whether that means reopening a recent file, starting blank, or saving the bundled example."
+                - generic [ref=e65]:
+                  - paragraph [ref=e66]: Inventory
+                  - paragraph [ref=e67]: 0 recent files
+              - generic [ref=e68]:
+                - generic [ref=e69]:
+                  - generic [ref=e71]:
+                    - paragraph [ref=e72]: Open existing
+                    - paragraph [ref=e73]: "Choose a `.pgml` file from your computer or reopen one from the recent list below."
+                  - generic [ref=e75]:
+                    - 'button "Choose a .pgml file from your computer Choose an existing `.pgml` file from your computer and add it to the recent list." [ref=e77]':
+                      - generic [ref=e78]:
+                        - paragraph [ref=e79]: Choose a .pgml file from your computer
+                        - paragraph [ref=e80]: "Choose an existing `.pgml` file from your computer and add it to the recent list."
+                    - generic [ref=e83]:
+                      - paragraph [ref=e84]: No recent computer files yet.
+                      - paragraph [ref=e85]: "Create a new file or choose an existing `.pgml` file to start a recent list."
+                - 'button "Start new Create a blank `.pgml` file first, then open it in the studio with that file as the active target." [ref=e86]':
+                  - generic [ref=e87]:
+                    - paragraph [ref=e88]: Start new
+                    - paragraph [ref=e89]: "Create a blank `.pgml` file first, then open it in the studio with that file as the active target."
+                - 'button "Start from example Save the bundled PGML example to a new `.pgml` file first, then continue editing that file in the studio." [ref=e91]':
+                  - generic [ref=e92]:
+                    - paragraph [ref=e93]: Start from example
+                    - paragraph [ref=e94]: "Save the bundled PGML example to a new `.pgml` file first, then continue editing that file in the studio."
+              - generic [ref=e96]:
+                - generic [ref=e97]: SQL dump
+                - paragraph [ref=e98]: "Convert a text pg_dump into a new computer-backed `.pgml` file, then keep autosave pointed at that file."
+                - button "Import a pg_dump Paste text or upload a dump file, then convert it into PGML from this lane." [ref=e99]:
+                  - generic [ref=e100]:
+                    - paragraph [ref=e101]: Import a pg_dump
+                    - paragraph [ref=e102]: Paste text or upload a dump file, then convert it into PGML from this lane.
+            - generic [ref=e104]:
+              - generic [ref=e105]:
+                - generic [ref=e106]:
+                  - generic [ref=e107]: Placeholder
+                  - heading "Hosted database" [level=2] [ref=e108]
+                  - paragraph [ref=e109]: Use this lane for hosted database sources, whether that means resuming an import, starting blank, or opening a hosted example.
+                - generic [ref=e110]:
+                  - paragraph [ref=e111]: Inventory
+                  - paragraph [ref=e112]: Placeholder
+              - generic [ref=e113]:
+                - generic [ref=e114]:
+                  - generic [ref=e116]:
+                    - paragraph [ref=e117]: Open existing
+                    - paragraph [ref=e118]: Saved hosted connections and imported schemas will appear here once the hosted workflow is implemented.
+                  - generic [ref=e122]:
+                    - paragraph [ref=e123]: Hosted database sources will be listed here.
+                    - paragraph [ref=e124]: Placeholder only.
+                - generic [ref=e127]:
+                  - paragraph [ref=e128]: Start new
+                  - paragraph [ref=e129]: Open a blank PGML document for a hosted workflow once database connection support is wired in.
+                - generic [ref=e133]:
+                  - paragraph [ref=e134]: Start from example
+                  - paragraph [ref=e135]: Load a bundled example for the hosted workflow once database connection support is wired in.
+              - generic [ref=e137]:
+                - generic [ref=e138]: SQL dump
+                - paragraph [ref=e139]: Convert a text pg_dump from this lane now, then open it in browser storage while hosted persistence stays in progress.
+                - button "Import a pg_dump Paste text or upload a dump file, then convert it into PGML from this lane." [ref=e140]:
+                  - generic [ref=e141]:
+                    - paragraph [ref=e142]: Import a pg_dump
+                    - paragraph [ref=e143]: Paste text or upload a dump file, then convert it into PGML from this lane.
+          - generic [ref=e146]:
+            - generic [ref=e147]:
+              - generic [ref=e148]: Spec guide
+              - heading "Need the language reference before you open the studio?" [level=2] [ref=e149]
+              - paragraph [ref=e150]: Jump straight to the PGML spec for examples, syntax details, and the current language surface area.
+            - link "Jump to spec" [ref=e152] [cursor=pointer]:
+              - /url: /spec
+              - generic [ref=e153]: Jump to spec
+      - contentinfo [ref=e154]: PGML extends DBML toward Postgres-native schema design and visual documentation.
+  - generic:
+    - img
+  - generic:
+    - img
+  - generic [ref=e155]:
+    - button "Toggle Nuxt DevTools" [ref=e156] [cursor=pointer]:
+      - img [ref=e157]
+    - generic "Page load time" [ref=e160]:
+      - generic [ref=e161]: "422"
+      - generic [ref=e162]: ms
+    - button "Toggle Component Inspector" [ref=e164] [cursor=pointer]:
+      - img [ref=e165]
+  - region "Notifications (F8)":
+    - list
