@@ -265,6 +265,7 @@ const touchPanSession: Ref<TouchPanSession | null> = ref(null)
 const touchPinchSession: Ref<TouchPinchSession | null> = ref(null)
 const viewportTransformBatcher = createAnimationFrameBatcher()
 const connectionRefreshBatcher = createAnimationFrameBatcher()
+const wheelZoomBatcher = createAnimationFrameBatcher()
 const entitySearchQuery: Ref<string> = ref('')
 const exportPreferences: Ref<PgmlExportPreferences> = ref({
   ...defaultPgmlExportPreferences
@@ -291,6 +292,11 @@ const {
 } = useTimeoutFn(resetViewportGpuAcceleration, 140, {
   immediate: false
 })
+let isApplyingPendingWheelZoom = false
+let pendingWheelZoomSteps = 0
+let pendingWheelZoomPivot: { x: number, y: number } | null = null
+let hasPendingNodeUpdateSync = false
+let pendingNodeUpdateNeedsRemeasure = false
 const exportTypeStyleItems = [
   {
     label: 'Pragmatic app types',
@@ -1924,6 +1930,29 @@ const syncMeasuredNodeSizes = () => {
   }
 
   return hasChanges
+}
+
+const scheduleNodeUpdateFollowUp = (remeasure: boolean) => {
+  pendingNodeUpdateNeedsRemeasure = pendingNodeUpdateNeedsRemeasure || remeasure
+
+  if (hasPendingNodeUpdateSync) {
+    return
+  }
+
+  hasPendingNodeUpdateSync = true
+
+  nextTick(() => {
+    hasPendingNodeUpdateSync = false
+    const shouldRemeasure = pendingNodeUpdateNeedsRemeasure
+
+    pendingNodeUpdateNeedsRemeasure = false
+
+    if (shouldRemeasure) {
+      syncMeasuredNodeSizes()
+    }
+
+    scheduleConnectionRefresh()
+  })
 }
 
 const getCanvasLayoutObserverTargets = () => {
@@ -4264,6 +4293,10 @@ const scheduleViewportTransformSync = () => {
   })
 }
 const flushViewportTransformSync = () => {
+  if (!isApplyingPendingWheelZoom) {
+    wheelZoomBatcher.flush()
+  }
+
   viewportTransformBatcher.flush()
 }
 const beginViewportGpuAcceleration = () => {
@@ -4300,11 +4333,11 @@ const canvasViewportStyle = {
 }
 const canvasPlaneStyle = computed<CSSProperties>(() => {
   const translate = isViewportGpuAccelerated.value
-    ? `translate3d(var(--pgml-plane-pan-x, ${pan.value.x}px), var(--pgml-plane-pan-y, ${pan.value.y}px), 0)`
-    : `translate(var(--pgml-plane-pan-x, ${pan.value.x}px), var(--pgml-plane-pan-y, ${pan.value.y}px))`
+    ? 'translate3d(var(--pgml-plane-pan-x, 0px), var(--pgml-plane-pan-y, 0px), 0)'
+    : 'translate(var(--pgml-plane-pan-x, 0px), var(--pgml-plane-pan-y, 0px))'
 
   return {
-    transform: `${translate} scale(var(--pgml-plane-scale, ${scale.value}))`,
+    transform: `${translate} scale(var(--pgml-plane-scale, 1))`,
     willChange: isViewportGpuAccelerated.value ? 'transform' : undefined
   }
 })
@@ -5968,6 +6001,29 @@ const suppressLayoutObserver = (durationMs = 180) => {
   suppressLayoutObserverUntil = Date.now() + durationMs
 }
 
+const flushPendingWheelZoom = () => {
+  if (pendingWheelZoomSteps === 0) {
+    return
+  }
+
+  const stepCount = pendingWheelZoomSteps
+  const pivot = pendingWheelZoomPivot
+
+  pendingWheelZoomSteps = 0
+  pendingWheelZoomPivot = null
+  isApplyingPendingWheelZoom = true
+  zoomToScale(scale.value + stepCount * zoomStep, pivot)
+  isApplyingPendingWheelZoom = false
+}
+
+const scheduleWheelZoom = (stepDirection: 1 | -1, pivot: { x: number, y: number } | null) => {
+  pendingWheelZoomSteps += stepDirection
+  pendingWheelZoomPivot = pivot
+  wheelZoomBatcher.schedule(() => {
+    flushPendingWheelZoom()
+  })
+}
+
 const zoomToScale = (nextScale: number, pivot: { x: number, y: number } | null = null) => {
   const normalizedScale = Number(clamp(nextScale, minCanvasScale, maxCanvasScale).toFixed(2))
 
@@ -5988,10 +6044,16 @@ const zoomToScale = (nextScale: number, pivot: { x: number, y: number } | null =
 }
 
 const zoomBy = (direction: 1 | -1, pivot: { x: number, y: number } | null = null) => {
+  if (!isApplyingPendingWheelZoom) {
+    wheelZoomBatcher.flush()
+  }
+
   zoomToScale(scale.value + direction * zoomStep, pivot)
 }
 
 const fitView = () => {
+  wheelZoomBatcher.flush()
+
   if (!viewportRef.value) {
     return
   }
@@ -6251,13 +6313,7 @@ const updateNode = (
     emitNodePropertiesChange()
   }
 
-  nextTick(() => {
-    if (remeasure) {
-      syncMeasuredNodeSizes()
-    }
-
-    scheduleConnectionRefresh()
-  })
+  scheduleNodeUpdateFollowUp(remeasure)
 }
 
 const toggleNodeCollapsed = (id: string) => {
@@ -6293,6 +6349,8 @@ const startPan = (event: PointerEvent) => {
     return
   }
 
+  flushViewportTransformSync()
+
   const origin = {
     x: event.clientX,
     y: event.clientY,
@@ -6317,6 +6375,8 @@ const handleTouchStart = (event: TouchEvent) => {
   if (isMobilePanelView.value || !canStartCanvasGesture(event.target)) {
     return
   }
+
+  flushViewportTransformSync()
 
   if (event.touches.length >= 2) {
     const gesture = getTouchGesture(event.touches)
@@ -6458,6 +6518,9 @@ const startDragNode = (event: PointerEvent, id: string) => {
     nodeY: node.y
   }
 
+  flushViewportTransformSync()
+  beginViewportGpuAcceleration()
+
   startPointerSession({
     frameThrottle: true,
     onMove: (moveEvent) => {
@@ -6469,7 +6532,10 @@ const startDragNode = (event: PointerEvent, id: string) => {
         emitNodeProperties: false
       })
     },
-    onEnd: emitNodePropertiesChange
+    onEnd: () => {
+      emitNodePropertiesChange()
+      scheduleViewportGpuAccelerationReset()
+    }
   })
 }
 
@@ -6499,6 +6565,9 @@ const startResizeNode = (event: PointerEvent, id: string) => {
     minHeight: node.minHeight || 96
   }
 
+  flushViewportTransformSync()
+  beginViewportGpuAcceleration()
+
   startPointerSession({
     frameThrottle: true,
     onMove: (moveEvent) => {
@@ -6510,7 +6579,10 @@ const startResizeNode = (event: PointerEvent, id: string) => {
         emitNodeProperties: false
       })
     },
-    onEnd: emitNodePropertiesChange
+    onEnd: () => {
+      emitNodePropertiesChange()
+      scheduleViewportGpuAccelerationReset()
+    }
   })
 }
 
@@ -6587,7 +6659,7 @@ const handleWheel = (event: WheelEvent) => {
   event.preventDefault()
   beginViewportGpuAcceleration()
   scheduleViewportGpuAccelerationReset()
-  zoomBy(event.deltaY > 0 ? -1 : 1, getViewportRelativePoint(event.clientX, event.clientY))
+  scheduleWheelZoom(event.deltaY > 0 ? -1 : 1, getViewportRelativePoint(event.clientX, event.clientY))
 }
 
 watch(
@@ -6708,6 +6780,7 @@ onBeforeUnmount(() => {
   stopExportCopyFeedbackReset()
   stopViewportGpuAccelerationReset()
   resetTouchInteraction()
+  wheelZoomBatcher.cancel()
   viewportTransformBatcher.cancel()
   connectionRefreshBatcher.cancel()
 })

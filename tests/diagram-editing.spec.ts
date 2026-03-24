@@ -943,11 +943,39 @@ test('dragging a group or custom type preserves the current zoom and pan', async
     y: viewportBox.y + viewportBox.height * 0.35
   }
 
+  const viewportStateBeforeZoom = await plane.evaluate((element) => {
+    const planeElement = element as HTMLElement
+
+    return {
+      panX: planeElement.style.getPropertyValue('--pgml-plane-pan-x'),
+      panY: planeElement.style.getPropertyValue('--pgml-plane-pan-y'),
+      scale: planeElement.style.getPropertyValue('--pgml-plane-scale')
+    }
+  })
+
   await page.mouse.move(zoomPoint.x, zoomPoint.y)
   await page.mouse.wheel(0, -180)
 
-  const zoomedTransform = await plane.evaluate((element) => {
-    return (element as HTMLElement).style.transform
+  await expect.poll(async () => {
+    return plane.evaluate((element) => {
+      const planeElement = element as HTMLElement
+
+      return {
+        panX: planeElement.style.getPropertyValue('--pgml-plane-pan-x'),
+        panY: planeElement.style.getPropertyValue('--pgml-plane-pan-y'),
+        scale: planeElement.style.getPropertyValue('--pgml-plane-scale')
+      }
+    })
+  }).not.toEqual(viewportStateBeforeZoom)
+
+  const zoomedViewportState = await plane.evaluate((element) => {
+    const planeElement = element as HTMLElement
+
+    return {
+      panX: planeElement.style.getPropertyValue('--pgml-plane-pan-x'),
+      panY: planeElement.style.getPropertyValue('--pgml-plane-pan-y'),
+      scale: planeElement.style.getPropertyValue('--pgml-plane-scale')
+    }
   })
 
   const dragNodeBy = async (nodeId: string, deltaX: number, deltaY: number) => {
@@ -968,17 +996,29 @@ test('dragging a group or custom type preserves the current zoom and pan', async
 
   await expect.poll(async () => {
     return plane.evaluate((element) => {
-      return (element as HTMLElement).style.transform
+      const planeElement = element as HTMLElement
+
+      return {
+        panX: planeElement.style.getPropertyValue('--pgml-plane-pan-x'),
+        panY: planeElement.style.getPropertyValue('--pgml-plane-pan-y'),
+        scale: planeElement.style.getPropertyValue('--pgml-plane-scale')
+      }
     })
-  }).toBe(zoomedTransform)
+  }).toEqual(zoomedViewportState)
 
   await dragNodeBy('custom-type:Domain:email_address', 48, 42)
 
   await expect.poll(async () => {
     return plane.evaluate((element) => {
-      return (element as HTMLElement).style.transform
+      const planeElement = element as HTMLElement
+
+      return {
+        panX: planeElement.style.getPropertyValue('--pgml-plane-pan-x'),
+        panY: planeElement.style.getPropertyValue('--pgml-plane-pan-y'),
+        scale: planeElement.style.getPropertyValue('--pgml-plane-scale')
+      }
     })
-  }).toBe(zoomedTransform)
+  }).toEqual(zoomedViewportState)
 })
 
 test('editing PGML preserves the current canvas viewport', async ({ goto, page }) => {
@@ -1008,11 +1048,39 @@ test('editing PGML preserves the current canvas viewport', async ({ goto, page }
     y: viewportBox.y + viewportBox.height * 0.36
   }
 
+  const viewportStateBeforeZoom = await plane.evaluate((element) => {
+    const planeElement = element as HTMLElement
+
+    return {
+      panX: planeElement.style.getPropertyValue('--pgml-plane-pan-x'),
+      panY: planeElement.style.getPropertyValue('--pgml-plane-pan-y'),
+      scale: planeElement.style.getPropertyValue('--pgml-plane-scale')
+    }
+  })
+
   await page.mouse.move(zoomPoint.x, zoomPoint.y)
   await page.mouse.wheel(0, -180)
 
-  const viewportTransformBeforeEdit = await plane.evaluate((element) => {
-    return (element as HTMLElement).style.transform
+  await expect.poll(async () => {
+    return plane.evaluate((element) => {
+      const planeElement = element as HTMLElement
+
+      return {
+        panX: planeElement.style.getPropertyValue('--pgml-plane-pan-x'),
+        panY: planeElement.style.getPropertyValue('--pgml-plane-pan-y'),
+        scale: planeElement.style.getPropertyValue('--pgml-plane-scale')
+      }
+    })
+  }).not.toEqual(viewportStateBeforeZoom)
+
+  const viewportStateBeforeEdit = await plane.evaluate((element) => {
+    const planeElement = element as HTMLElement
+
+    return {
+      panX: planeElement.style.getPropertyValue('--pgml-plane-pan-x'),
+      panY: planeElement.style.getPropertyValue('--pgml-plane-pan-y'),
+      scale: planeElement.style.getPropertyValue('--pgml-plane-scale')
+    }
   })
 
   const source = await readPgmlEditorValue(editor)
@@ -1023,7 +1091,13 @@ test('editing PGML preserves the current canvas viewport', async ({ goto, page }
 
   await expect.poll(async () => {
     return plane.evaluate((element) => {
-      return (element as HTMLElement).style.transform
+      const planeElement = element as HTMLElement
+
+      return {
+        panX: planeElement.style.getPropertyValue('--pgml-plane-pan-x'),
+        panY: planeElement.style.getPropertyValue('--pgml-plane-pan-y'),
+        scale: planeElement.style.getPropertyValue('--pgml-plane-scale')
+      }
     })
-  }).toBe(viewportTransformBeforeEdit)
+  }).toEqual(viewportStateBeforeEdit)
 })
