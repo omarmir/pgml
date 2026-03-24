@@ -206,7 +206,11 @@ type ConnectionGeometryRegistry = {
   endpointByLocatorKey: Map<string, ConnectionAnchorGeometry>
   geometryByElement: WeakMap<HTMLElement, ConnectionAnchorGeometry>
   geometryByIdentity: Map<string, ConnectionAnchorGeometry>
+  nodeById: Map<string, ConnectionAnchorGeometry>
+  rowByKey: Map<string, ConnectionAnchorGeometry>
+  tableById: Map<string, ConnectionAnchorGeometry>
   groupHeaderBands: DiagramRect[]
+  planeBounds: MeasuredElementBounds
 }
 
 type DiagramViewportBounds = DiagramSpatialBounds
@@ -4667,6 +4671,21 @@ const getRegisteredConnectionEndpointElement = (locators: ConnectionEndpointLoca
 
   return null
 }
+const getRegisteredConnectionGeometry = (locators: ConnectionEndpointLocator[]) => {
+  if (!connectionGeometryRegistry) {
+    return null
+  }
+
+  for (const locator of locators) {
+    const geometry = connectionGeometryRegistry.endpointByLocatorKey.get(getConnectionEndpointLocatorKey(locator))
+
+    if (geometry) {
+      return geometry
+    }
+  }
+
+  return null
+}
 const getConnectionEndpointElement = (locator: ConnectionEndpointLocator | null) => {
   if (!planeRef.value || !locator) {
     return null
@@ -4699,6 +4718,42 @@ const getConnectionOwnerNodeId = (element: HTMLElement) => {
 const getColumnAnchorKey = (tableId: string, columnName: string) => `${tableId}.${columnName}`.toLowerCase()
 const getColumnLabelAnchorKey = (tableId: string, columnName: string) => `${tableId}.${columnName}`.toLowerCase()
 const getImpactAnchorKey = (nodeId: string, tableId: string) => `${nodeId}:${tableId}`.toLowerCase()
+const getFieldAnchorGeometry = (tableId: string, columnName: string) => {
+  if (!(connectionGeometryRegistry || syncConnectionGeometryRegistry())) {
+    return null
+  }
+
+  return getRegisteredConnectionGeometry([
+    {
+      attribute: 'data-column-label-anchor',
+      value: getColumnLabelAnchorKey(tableId, columnName)
+    },
+    {
+      attribute: 'data-column-anchor',
+      value: getColumnAnchorKey(tableId, columnName)
+    },
+    {
+      attribute: 'data-table-anchor',
+      value: tableId
+    }
+  ])
+}
+const getImpactAnchorGeometry = (nodeId: string, tableId: string) => {
+  if (!(connectionGeometryRegistry || syncConnectionGeometryRegistry())) {
+    return null
+  }
+
+  return getRegisteredConnectionGeometry([
+    {
+      attribute: 'data-impact-anchor',
+      value: getImpactAnchorKey(nodeId, tableId)
+    },
+    {
+      attribute: 'data-node-anchor',
+      value: nodeId
+    }
+  ])
+}
 const getFieldAnchorElement = (tableId: string, columnName: string) => {
   if (!planeRef.value) {
     return null
@@ -5125,12 +5180,15 @@ const isHighlightedRelationalRow = (tableId: string, columnName: string) => {
   return getRelationalRowHighlightColor(tableId, columnName) !== null
 }
 
-const getAnchorSlotCount = (element: HTMLElement, side: AnchorSide) => {
+const getAnchorSlotCountForBounds = (
+  element: HTMLElement,
+  bounds: MeasuredElementBounds,
+  side: AnchorSide
+) => {
   if (element.hasAttribute('data-column-label-anchor')) {
     return isHorizontalDiagramSide(side) ? 2 : 3
   }
 
-  const bounds = element.getBoundingClientRect()
   const dimension = isHorizontalDiagramSide(side) ? bounds.height : bounds.width
   const divisor = element.hasAttribute('data-table-anchor')
     ? (isHorizontalDiagramSide(side) ? 72 : 144)
@@ -5139,14 +5197,17 @@ const getAnchorSlotCount = (element: HTMLElement, side: AnchorSide) => {
   return Math.max(2, Math.min(10, Math.ceil(dimension / divisor)))
 }
 
-const getAnchorPoint = (
-  element: HTMLElement,
+const getAnchorSlotCount = (element: HTMLElement, side: AnchorSide) => {
+  return getAnchorSlotCountForBounds(element, measureElementBounds(element), side)
+}
+
+const getAnchorPointFromBounds = (
+  bounds: MeasuredElementBounds,
   side: AnchorSide,
   slot: number,
   count: number,
   planeBounds: DOMRect
 ): AnchorPoint => {
-  const bounds = element.getBoundingClientRect()
   const ratio = count === 1 ? 0.5 : (slot + 1) / (count + 1)
   const xLeft = (bounds.left - planeBounds.left) / scale.value
   const xRight = (bounds.right - planeBounds.left) / scale.value
@@ -5194,8 +5255,28 @@ const getAnchorPoint = (
   }
 }
 
-const getExactAnchorPoint = (
+const getAnchorPoint = (
   element: HTMLElement,
+  side: AnchorSide,
+  slot: number,
+  count: number,
+  planeBounds: DOMRect
+): AnchorPoint => {
+  return getAnchorPointFromBounds(measureElementBounds(element), side, slot, count, planeBounds)
+}
+
+const getAnchorPointFromGeometry = (
+  geometry: ConnectionAnchorGeometry,
+  side: AnchorSide,
+  slot: number,
+  count: number,
+  planeBounds: MeasuredElementBounds
+) => {
+  return getAnchorPointFromBounds(geometry.bounds, side, slot, count, planeBounds as DOMRect)
+}
+
+const getExactAnchorPointFromBounds = (
+  bounds: MeasuredElementBounds,
   side: AnchorSide,
   ratio: number,
   planeBounds: DOMRect,
@@ -5207,7 +5288,6 @@ const getExactAnchorPoint = (
     count: 1
   }
 ): AnchorPoint => {
-  const bounds = element.getBoundingClientRect()
   const clampedRatio = clamp(ratio, 0, 1)
   const xLeft = (bounds.left - planeBounds.left) / scale.value
   const xRight = (bounds.right - planeBounds.left) / scale.value
@@ -5255,6 +5335,38 @@ const getExactAnchorPoint = (
   }
 }
 
+const getExactAnchorPoint = (
+  element: HTMLElement,
+  side: AnchorSide,
+  ratio: number,
+  planeBounds: DOMRect,
+  metadata: {
+    slot: number
+    count: number
+  } = {
+    slot: 0,
+    count: 1
+  }
+): AnchorPoint => {
+  return getExactAnchorPointFromBounds(measureElementBounds(element), side, ratio, planeBounds, metadata)
+}
+
+const getExactAnchorPointFromGeometry = (
+  geometry: ConnectionAnchorGeometry,
+  side: AnchorSide,
+  ratio: number,
+  planeBounds: MeasuredElementBounds,
+  metadata: {
+    slot: number
+    count: number
+  } = {
+    slot: 0,
+    count: 1
+  }
+) => {
+  return getExactAnchorPointFromBounds(geometry.bounds, side, ratio, planeBounds as DOMRect, metadata)
+}
+
 const reserveAnchorPoint = (
   element: HTMLElement,
   side: AnchorSide,
@@ -5288,6 +5400,41 @@ const reserveAnchorPoint = (
   usage.set(key, slots)
 
   return getAnchorPoint(element, side, bestSlot, count, planeBounds)
+}
+
+const reserveAnchorPointFromGeometry = (
+  geometry: ConnectionAnchorGeometry,
+  side: AnchorSide,
+  desiredRatio: number,
+  planeBounds: MeasuredElementBounds,
+  usage: Map<string, number[]>
+) => {
+  const count = getAnchorSlotCountForBounds(geometry.element, geometry.bounds, side)
+  const key = `${geometry.identity}:${side}`
+  const slots = usage.get(key) || Array.from({ length: count }, () => 0)
+
+  if (slots.length < count) {
+    slots.push(...Array.from({ length: count - slots.length }, () => 0))
+  }
+
+  let bestSlot = 0
+  let bestScore = Number.POSITIVE_INFINITY
+
+  for (let slot = 0; slot < count; slot += 1) {
+    const ratio = count === 1 ? 0.5 : (slot + 1) / (count + 1)
+    const slotUsage = slots[slot] || 0
+    const score = Math.abs(ratio - desiredRatio) + slotUsage * 0.35
+
+    if (score < bestScore) {
+      bestScore = score
+      bestSlot = slot
+    }
+  }
+
+  slots[bestSlot] = (slots[bestSlot] || 0) + 1
+  usage.set(key, slots)
+
+  return getAnchorPointFromGeometry(geometry, side, bestSlot, count, planeBounds)
 }
 
 const moveAnchorPoint = (point: AnchorPoint, distance: number) => {
@@ -5352,7 +5499,35 @@ const getOwningGroupElement = (element: HTMLElement) => {
   return group
 }
 
-const getHorizontalGroupLaneSide = (fromBounds: DOMRect, toBounds: DOMRect, groupBounds: DOMRect): 'left' | 'right' => {
+const getOwningTableGeometry = (geometry: ConnectionAnchorGeometry) => {
+  if (!connectionGeometryRegistry || !geometry.tableId) {
+    return null
+  }
+
+  return connectionGeometryRegistry.tableById.get(geometry.tableId) || null
+}
+
+const getOwningTableRowGeometry = (geometry: ConnectionAnchorGeometry) => {
+  if (!connectionGeometryRegistry || !geometry.rowKey) {
+    return null
+  }
+
+  return connectionGeometryRegistry.rowByKey.get(geometry.rowKey) || null
+}
+
+const getOwningGroupGeometry = (geometry: ConnectionAnchorGeometry) => {
+  if (!connectionGeometryRegistry || !geometry.groupNodeId) {
+    return null
+  }
+
+  return connectionGeometryRegistry.nodeById.get(geometry.groupNodeId) || null
+}
+
+const getHorizontalGroupLaneSide = (
+  fromBounds: MeasuredElementBounds,
+  toBounds: MeasuredElementBounds,
+  groupBounds: MeasuredElementBounds
+): 'left' | 'right' => {
   const sourceCenterX = fromBounds.left + fromBounds.width / 2
   const targetCenterX = toBounds.left + toBounds.width / 2
   const leftScore = (sourceCenterX - groupBounds.left) + (targetCenterX - groupBounds.left)
@@ -5366,6 +5541,17 @@ const getSharedGroupElement = (fromElement: HTMLElement, toElement: HTMLElement)
   const toGroup = getOwningGroupElement(toElement)
 
   if (!(fromGroup instanceof HTMLElement) || !(toGroup instanceof HTMLElement) || fromGroup !== toGroup) {
+    return null
+  }
+
+  return fromGroup
+}
+
+const getSharedGroupGeometry = (fromGeometry: ConnectionAnchorGeometry, toGeometry: ConnectionAnchorGeometry) => {
+  const fromGroup = getOwningGroupGeometry(fromGeometry)
+  const toGroup = getOwningGroupGeometry(toGeometry)
+
+  if (!fromGroup || !toGroup || fromGroup !== toGroup) {
     return null
   }
 
@@ -5409,7 +5595,7 @@ function replaceUsageMap<T>(target: Map<string, T>, source: Map<string, T>) {
 
 const getDesiredAnchorRatio = (
   side: AnchorSide,
-  elementBounds: DOMRect,
+  elementBounds: MeasuredElementBounds,
   targetCenterX: number,
   targetCenterY: number
 ) => {
@@ -5459,6 +5645,56 @@ const reserveFieldRowAnchorPoint = (
 
   return getExactAnchorPoint(
     tableElement,
+    side,
+    candidateRatios[bestSlot] ?? desiredRatio,
+    planeBounds,
+    {
+      slot: bestSlot,
+      count: candidateRatios.length
+    }
+  )
+}
+
+const reserveFieldRowAnchorPointFromGeometry = (
+  fieldGeometry: ConnectionAnchorGeometry,
+  tableGeometry: ConnectionAnchorGeometry,
+  side: 'left' | 'right',
+  targetCenterY: number,
+  planeBounds: MeasuredElementBounds,
+  usage: Map<string, number[]>
+) => {
+  const rowGeometry = getOwningTableRowGeometry(fieldGeometry)
+  const tableBounds = tableGeometry.bounds
+  const desiredRatio = clamp((targetCenterY - tableBounds.top) / Math.max(tableBounds.height, 1), 0, 1)
+
+  if (!rowGeometry) {
+    return getExactAnchorPointFromGeometry(tableGeometry, side, desiredRatio, planeBounds)
+  }
+
+  const fieldBounds = fieldGeometry.bounds
+  const rowBounds = rowGeometry.bounds
+  const anchorBandHeight = fieldBounds.height > 0 ? fieldBounds.height : rowBounds.height
+  const candidateRatios = getFieldRowAnchorRatios(
+    fieldBounds.top,
+    anchorBandHeight,
+    tableBounds.top,
+    tableBounds.height
+  )
+  const rowKey = rowGeometry.rowKey || fieldGeometry.identity
+  const usageKey = `field-row:${rowKey}:${side}`
+  const slotUsage = usage.get(usageKey) || Array.from({ length: candidateRatios.length }, () => 0)
+
+  if (slotUsage.length < candidateRatios.length) {
+    slotUsage.push(...Array.from({ length: candidateRatios.length - slotUsage.length }, () => 0))
+  }
+
+  const bestSlot = pickDiagramAnchorSlot(candidateRatios, desiredRatio, slotUsage)
+
+  slotUsage[bestSlot] = (slotUsage[bestSlot] || 0) + 1
+  usage.set(usageKey, slotUsage)
+
+  return getExactAnchorPointFromGeometry(
+    tableGeometry,
     side,
     candidateRatios[bestSlot] ?? desiredRatio,
     planeBounds,
@@ -5720,6 +5956,9 @@ const syncConnectionGeometryRegistry = () => {
   const endpointByLocatorKey = new Map<string, ConnectionAnchorGeometry>()
   const geometryByElement = new WeakMap<HTMLElement, ConnectionAnchorGeometry>()
   const geometryByIdentity = new Map<string, ConnectionAnchorGeometry>()
+  const nodeById = new Map<string, ConnectionAnchorGeometry>()
+  const rowByKey = new Map<string, ConnectionAnchorGeometry>()
+  const tableById = new Map<string, ConnectionAnchorGeometry>()
   const groupHeaderBands: DiagramRect[] = []
   const seenElements = new Set<HTMLElement>()
   const registerElement = (element: HTMLElement) => {
@@ -5758,6 +5997,20 @@ const syncConnectionGeometryRegistry = () => {
 
     if (locator) {
       endpointByLocatorKey.set(getConnectionEndpointLocatorKey(locator), geometry)
+    }
+
+    const nodeId = element.getAttribute('data-node-anchor')
+
+    if (nodeId) {
+      nodeById.set(nodeId, geometry)
+    }
+
+    if (rowKey) {
+      rowByKey.set(rowKey, geometry)
+    }
+
+    if (tableId) {
+      tableById.set(tableId, geometry)
     }
   }
 
@@ -5801,7 +6054,11 @@ const syncConnectionGeometryRegistry = () => {
     endpointByLocatorKey,
     geometryByElement,
     geometryByIdentity,
-    groupHeaderBands
+    groupHeaderBands,
+    nodeById,
+    rowByKey,
+    tableById,
+    planeBounds: measureElementBounds(planeElement)
   }
 
   return connectionGeometryRegistry
@@ -6393,6 +6650,390 @@ const decideAnchorSides = (fromElement: HTMLElement, toElement: HTMLElement): { 
     : { from: 'top', to: 'bottom' }
 }
 
+const isFieldEndpointGeometry = (geometry: ConnectionAnchorGeometry) => {
+  return geometry.locator?.attribute === 'data-column-label-anchor' || geometry.locator?.attribute === 'data-column-anchor'
+}
+
+const reserveRouteLegAnchorFromGeometry = (
+  geometry: ConnectionAnchorGeometry,
+  otherGeometry: ConnectionAnchorGeometry,
+  fallbackSide: AnchorSide,
+  planeBounds: MeasuredElementBounds,
+  usage: Map<string, number[]>,
+  forcedSide: AnchorSide | null = null
+) => {
+  const elementBounds = geometry.bounds
+  const otherBounds = otherGeometry.bounds
+  const targetCenterX = otherBounds.left + otherBounds.width / 2
+  const targetCenterY = otherBounds.top + otherBounds.height / 2
+  const tableGeometry = isFieldEndpointGeometry(geometry) ? getOwningTableGeometry(geometry) : null
+  const anchorHost = tableGeometry || geometry
+  const anchorBounds = anchorHost.bounds
+  const groupGeometry = getOwningGroupGeometry(anchorHost)
+  const groupBounds = groupGeometry?.bounds
+  let side: AnchorSide = forcedSide || fallbackSide
+
+  if (tableGeometry && !forcedSide) {
+    side = targetCenterX >= anchorBounds.left + anchorBounds.width / 2 ? 'right' : 'left'
+  } else if (groupBounds && !forcedSide) {
+    side = getHeaderSafeGroupLaneSide(
+      {
+        x: anchorBounds.left + anchorBounds.width / 2,
+        y: anchorBounds.top + anchorBounds.height / 2
+      },
+      {
+        x: targetCenterX,
+        y: targetCenterY
+      },
+      {
+        left: groupBounds.left,
+        right: groupBounds.right,
+        top: groupBounds.top,
+        bottom: groupBounds.bottom
+      }
+    )
+  }
+
+  const ratio = tableGeometry
+    ? clamp(
+        ((elementBounds.top + elementBounds.height / 2) - anchorBounds.top) / Math.max(anchorBounds.height, 1),
+        0.16,
+        0.84
+      )
+    : getDesiredAnchorRatio(side, anchorBounds, targetCenterX, targetCenterY)
+
+  return {
+    anchor: tableGeometry && isHorizontalDiagramSide(side)
+      ? reserveFieldRowAnchorPointFromGeometry(geometry, tableGeometry, side, targetCenterY, planeBounds, usage)
+      : tableGeometry
+        ? getExactAnchorPointFromGeometry(anchorHost, side, ratio, planeBounds)
+        : reserveAnchorPointFromGeometry(anchorHost, side, ratio, planeBounds, usage),
+    side,
+    groupGeometry,
+    hostCenterX: ((anchorBounds.left - planeBounds.left) / scale.value) + (anchorBounds.width / (2 * scale.value))
+  }
+}
+
+const finalizeRouteLegFromGeometry = (
+  pendingLeg: {
+    anchor: AnchorPoint
+    side: AnchorSide
+    groupGeometry: ConnectionAnchorGeometry | null
+    hostCenterX: number
+  },
+  planeBounds: MeasuredElementBounds,
+  usage: Map<string, number[]>,
+  routeOffset: number
+): RouteLeg => {
+  const exit = moveAnchorPoint(pendingLeg.anchor, routeOffset)
+
+  if (!pendingLeg.groupGeometry) {
+    return {
+      anchor: pendingLeg.anchor,
+      exit,
+      outer: exit,
+      side: pendingLeg.side,
+      outerSide: pendingLeg.side,
+      grouped: false,
+      hostCenterX: pendingLeg.hostCenterX
+    }
+  }
+
+  const groupBounds = pendingLeg.groupGeometry.bounds
+  const laneOffset = reserveLaneOffset(
+    `group-lane:${pendingLeg.groupGeometry.element.getAttribute('data-node-anchor')}:${pendingLeg.side}`,
+    usage,
+    groupLaneOuterBaseOffset,
+    groupLaneOuterGap
+  )
+  const groupLeft = (groupBounds.left - planeBounds.left) / scale.value
+  const groupRight = (groupBounds.right - planeBounds.left) / scale.value
+  const groupBottom = (groupBounds.bottom - planeBounds.top) / scale.value
+  const outer = pendingLeg.side === 'left'
+    ? { x: groupLeft - laneOffset, y: exit.y }
+    : pendingLeg.side === 'right'
+      ? { x: groupRight + laneOffset, y: exit.y }
+      : { x: exit.x, y: groupBottom + laneOffset }
+
+  return {
+    anchor: pendingLeg.anchor,
+    exit,
+    outer,
+    side: pendingLeg.side,
+    outerSide: pendingLeg.side,
+    grouped: true,
+    hostCenterX: pendingLeg.hostCenterX
+  }
+}
+
+const buildSharedGroupPathPointsFromGeometry = (
+  fromGeometry: ConnectionAnchorGeometry,
+  toGeometry: ConnectionAnchorGeometry,
+  groupGeometry: ConnectionAnchorGeometry,
+  planeBounds: MeasuredElementBounds,
+  usage: Map<string, number[]>,
+  verticalUsage: VerticalSegmentUsage,
+  headerBands: DiagramRect[]
+) => {
+  const fromBounds = fromGeometry.bounds
+  const toBounds = toGeometry.bounds
+  const groupBounds = groupGeometry.bounds
+  const sourceCenterX = fromBounds.left + fromBounds.width / 2
+  const sourceCenterY = fromBounds.top + fromBounds.height / 2
+  const targetCenterX = toBounds.left + toBounds.width / 2
+  const targetCenterY = toBounds.top + toBounds.height / 2
+  const laneSide = isFieldEndpointGeometry(fromGeometry) || isFieldEndpointGeometry(toGeometry)
+    ? getHorizontalGroupLaneSide(fromBounds, toBounds, groupBounds)
+    : getHeaderSafeGroupLaneSide(
+        { x: sourceCenterX, y: sourceCenterY },
+        { x: targetCenterX, y: targetCenterY },
+        {
+          left: groupBounds.left,
+          right: groupBounds.right,
+          top: groupBounds.top,
+          bottom: groupBounds.bottom
+        }
+      )
+  const fromTableGeometry = isFieldEndpointGeometry(fromGeometry) ? getOwningTableGeometry(fromGeometry) : null
+  const toTableGeometry = isFieldEndpointGeometry(toGeometry) ? getOwningTableGeometry(toGeometry) : null
+  const fromAnchorHost = fromTableGeometry || fromGeometry
+  const toAnchorHost = toTableGeometry || toGeometry
+  const fromAnchorBounds = fromAnchorHost.bounds
+  const toAnchorBounds = toAnchorHost.bounds
+  const fromRatio = fromTableGeometry
+    ? clamp(
+        ((fromBounds.top + fromBounds.height / 2) - fromAnchorBounds.top) / Math.max(fromAnchorBounds.height, 1),
+        0.16,
+        0.84
+      )
+    : getDesiredAnchorRatio(laneSide, fromAnchorBounds, targetCenterX, targetCenterY)
+  const toRatio = toTableGeometry
+    ? clamp(
+        ((toBounds.top + toBounds.height / 2) - toAnchorBounds.top) / Math.max(toAnchorBounds.height, 1),
+        0.16,
+        0.84
+      )
+    : getDesiredAnchorRatio(laneSide, toAnchorBounds, sourceCenterX, sourceCenterY)
+  const fromAnchor = fromTableGeometry
+    ? isHorizontalDiagramSide(laneSide)
+      ? reserveFieldRowAnchorPointFromGeometry(fromGeometry, fromTableGeometry, laneSide, targetCenterY, planeBounds, usage)
+      : getExactAnchorPointFromGeometry(fromAnchorHost, laneSide, fromRatio, planeBounds)
+    : reserveAnchorPointFromGeometry(fromAnchorHost, laneSide, fromRatio, planeBounds, usage)
+  const toAnchor = toTableGeometry
+    ? isHorizontalDiagramSide(laneSide)
+      ? reserveFieldRowAnchorPointFromGeometry(toGeometry, toTableGeometry, laneSide, sourceCenterY, planeBounds, usage)
+      : getExactAnchorPointFromGeometry(toAnchorHost, laneSide, toRatio, planeBounds)
+    : reserveAnchorPointFromGeometry(toAnchorHost, laneSide, toRatio, planeBounds, usage)
+  const laneOffset = reserveLaneOffset(
+    `group-lane:${groupGeometry.element.getAttribute('data-node-anchor')}:${laneSide}`,
+    usage,
+    groupLaneInnerBaseOffset,
+    groupLaneInnerGap
+  )
+  const points: LayoutPoint[] = []
+  const groupLeft = (groupBounds.left - planeBounds.left) / scale.value
+  const groupRight = (groupBounds.right - planeBounds.left) / scale.value
+  const groupBottom = (groupBounds.bottom - planeBounds.top) / scale.value
+
+  appendRoutePoint(points, { x: fromAnchor.x, y: fromAnchor.y })
+
+  if (laneSide === 'left' || laneSide === 'right') {
+    const preferredLaneX = laneSide === 'left'
+      ? Math.min(fromAnchor.x, toAnchor.x) - laneOffset
+      : Math.max(fromAnchor.x, toAnchor.x) + laneOffset
+    const laneX = laneSide === 'left'
+      ? Math.max(groupLeft + groupLaneInnerBorderClearance, preferredLaneX)
+      : Math.min(groupRight - groupLaneInnerBorderClearance, preferredLaneX)
+
+    appendRoutePoint(points, { x: laneX, y: fromAnchor.y })
+    appendRoutePoint(points, { x: laneX, y: toAnchor.y })
+    appendRoutePoint(points, { x: toAnchor.x, y: toAnchor.y })
+
+    return offsetOverlappingVerticalSegments(points, verticalUsage, headerBands)
+  }
+
+  const laneY = Math.min(groupBottom - groupLaneInnerBorderClearance, Math.max(fromAnchor.y, toAnchor.y) + laneOffset)
+
+  appendRoutePoint(points, { x: fromAnchor.x, y: laneY })
+  appendRoutePoint(points, { x: toAnchor.x, y: laneY })
+  appendRoutePoint(points, { x: toAnchor.x, y: toAnchor.y })
+
+  return offsetOverlappingVerticalSegments(points, verticalUsage, headerBands)
+}
+
+const decideAnchorSidesFromGeometry = (
+  fromGeometry: ConnectionAnchorGeometry,
+  toGeometry: ConnectionAnchorGeometry
+): { from: AnchorSide, to: AnchorSide } => {
+  const fromBounds = fromGeometry.bounds
+  const toBounds = toGeometry.bounds
+  const fromCenterX = fromBounds.left + fromBounds.width / 2
+  const fromCenterY = fromBounds.top + fromBounds.height / 2
+  const toCenterX = toBounds.left + toBounds.width / 2
+  const toCenterY = toBounds.top + toBounds.height / 2
+  const deltaX = toCenterX - fromCenterX
+  const deltaY = toCenterY - fromCenterY
+
+  if (Math.abs(deltaX) >= Math.abs(deltaY) * 0.75) {
+    return deltaX >= 0
+      ? { from: 'right', to: 'left' }
+      : { from: 'left', to: 'right' }
+  }
+
+  return deltaY >= 0
+    ? { from: 'bottom', to: 'top' }
+    : { from: 'top', to: 'bottom' }
+}
+
+const buildPathBetweenFromGeometry = (
+  fromGeometry: ConnectionAnchorGeometry,
+  toGeometry: ConnectionAnchorGeometry,
+  color: string,
+  dashed: boolean,
+  usage: Map<string, number[]>,
+  verticalUsage: VerticalSegmentUsage,
+  headerBands: DiagramRect[]
+) => {
+  const planeBounds = connectionGeometryRegistry?.planeBounds
+
+  if (!planeBounds) {
+    return null
+  }
+
+  const sharedGroupGeometry = !dashed ? getSharedGroupGeometry(fromGeometry, toGeometry) : null
+
+  if (sharedGroupGeometry) {
+    const sharedGroupPoints = buildSharedGroupPathPointsFromGeometry(
+      fromGeometry,
+      toGeometry,
+      sharedGroupGeometry,
+      planeBounds,
+      usage,
+      verticalUsage,
+      headerBands
+    )
+
+    return {
+      path: buildPathFromPoints(sharedGroupPoints),
+      points: sharedGroupPoints,
+      color,
+      dashed
+    }
+  }
+
+  const defaultSides = decideAnchorSidesFromGeometry(fromGeometry, toGeometry)
+  const buildCandidate = (forcedSides: Partial<{ from: AnchorSide, to: AnchorSide }> = {}) => {
+    const localUsage = cloneUsageMap(usage)
+    const localVerticalUsage = cloneVerticalSegmentUsage(verticalUsage)
+    const sides = {
+      from: forcedSides.from || defaultSides.from,
+      to: forcedSides.to || defaultSides.to
+    }
+    const fromPendingLeg = reserveRouteLegAnchorFromGeometry(
+      fromGeometry,
+      toGeometry,
+      sides.from,
+      planeBounds,
+      localUsage,
+      forcedSides.from || null
+    )
+    const toPendingLeg = reserveRouteLegAnchorFromGeometry(
+      toGeometry,
+      fromGeometry,
+      sides.to,
+      planeBounds,
+      localUsage,
+      forcedSides.to || null
+    )
+    const routeOffset = getRouteOffset(fromPendingLeg.anchor, toPendingLeg.anchor)
+    const fromLeg = finalizeRouteLegFromGeometry(fromPendingLeg, planeBounds, localUsage, routeOffset)
+    const toLeg = finalizeRouteLegFromGeometry(toPendingLeg, planeBounds, localUsage, routeOffset)
+    const points = buildPathPointsFromLegs(fromLeg, toLeg, localVerticalUsage, headerBands)
+
+    return {
+      localUsage,
+      localVerticalUsage,
+      fromLeg,
+      toLeg,
+      points,
+      forcedSides
+    }
+  }
+
+  const describeCandidate = (candidate: ReturnType<typeof buildCandidate>) => {
+    const fromInwardSide = getHorizontalAnchorInwardSide(candidate.points, candidate.fromLeg, 'from')
+    const toInwardSide = getHorizontalAnchorInwardSide(candidate.points, candidate.toLeg, 'to')
+    const fromBacktrackSide = getHorizontalSideBacktrack(candidate.points, candidate.fromLeg, 'from')
+    const toBacktrackSide = getHorizontalSideBacktrack(candidate.points, candidate.toLeg, 'to')
+
+    return {
+      candidate,
+      inwardCount: Number(Boolean(fromInwardSide)) + Number(Boolean(toInwardSide)),
+      backtrackCount: Number(Boolean(fromBacktrackSide)) + Number(Boolean(toBacktrackSide)),
+      bendCount: countPathBends(candidate.points),
+      pathLength: getPathLength(candidate.points),
+      forcedCount: Number(Boolean(candidate.forcedSides.from)) + Number(Boolean(candidate.forcedSides.to))
+    }
+  }
+
+  const initialCandidate = buildCandidate()
+  const candidates = [initialCandidate]
+  const forcedFromSide = getOppositeHorizontalSide(initialCandidate.fromLeg.side)
+  const forcedToSide = getOppositeHorizontalSide(initialCandidate.toLeg.side)
+  const seenCandidateKeys = new Set<string>(['default'])
+
+  for (const fromSide of [null, forcedFromSide] as Array<'left' | 'right' | null>) {
+    for (const toSide of [null, forcedToSide] as Array<'left' | 'right' | null>) {
+      if (!fromSide && !toSide) {
+        continue
+      }
+
+      const key = `${fromSide || 'default'}:${toSide || 'default'}`
+
+      if (seenCandidateKeys.has(key)) {
+        continue
+      }
+
+      seenCandidateKeys.add(key)
+      candidates.push(buildCandidate({
+        ...(fromSide ? { from: fromSide } : {}),
+        ...(toSide ? { to: toSide } : {})
+      }))
+    }
+  }
+
+  const scoredCandidates = candidates.map(describeCandidate)
+  const chosenCandidate = scoredCandidates.sort((left, right) => {
+    if (left.inwardCount !== right.inwardCount) {
+      return left.inwardCount - right.inwardCount
+    }
+
+    if (left.backtrackCount !== right.backtrackCount) {
+      return left.backtrackCount - right.backtrackCount
+    }
+
+    if (left.bendCount !== right.bendCount) {
+      return left.bendCount - right.bendCount
+    }
+
+    if (Math.abs(left.pathLength - right.pathLength) > 0.5) {
+      return left.pathLength - right.pathLength
+    }
+
+    return left.forcedCount - right.forcedCount
+  })[0]?.candidate || initialCandidate
+
+  replaceUsageMap(usage, chosenCandidate.localUsage)
+  replaceUsageMap(verticalUsage, chosenCandidate.localVerticalUsage)
+
+  return {
+    path: buildPathFromPoints(chosenCandidate.points),
+    points: chosenCandidate.points,
+    color,
+    dashed
+  }
+}
+
 const buildPathBetween = (
   fromElement: HTMLElement,
   toElement: HTMLElement,
@@ -6543,8 +7184,8 @@ const updateConnections = () => {
     dashPattern: string
     animated: boolean
     selectedForeground: boolean
-    fromElement: HTMLElement
-    toElement: HTMLElement
+    fromGeometry: ConnectionAnchorGeometry
+    toGeometry: ConnectionAnchorGeometry
   }> = []
   const usage = new Map<string, number[]>()
   const verticalUsage: VerticalSegmentUsage = new Map()
@@ -6557,10 +7198,10 @@ const updateConnections = () => {
     : null
 
   for (const reference of model.references) {
-    const fromElement = getFieldAnchorElement(reference.fromTable, reference.fromColumn)
-    const toElement = getFieldAnchorElement(reference.toTable, reference.toColumn)
+    const fromGeometry = getFieldAnchorGeometry(reference.fromTable, reference.fromColumn)
+    const toGeometry = getFieldAnchorGeometry(reference.toTable, reference.toColumn)
 
-    if (!(fromElement instanceof HTMLElement) || !(toElement instanceof HTMLElement)) {
+    if (!fromGeometry || !toGeometry) {
       continue
     }
 
@@ -6575,8 +7216,8 @@ const updateConnections = () => {
       dashPattern: isSelectedOutgoingReference ? '10 7' : '0',
       animated: isSelectedOutgoingReference,
       selectedForeground: isSelectedOutgoingReference,
-      fromElement,
-      toElement
+      fromGeometry,
+      toGeometry
     })
   }
 
@@ -6589,12 +7230,12 @@ const updateConnections = () => {
         }))
 
     for (const impactTarget of impactTargets) {
-      const fromElement = getImpactAnchorElement(node.id, impactTarget.tableId)
-      const toElement = impactTarget.columnName
-        ? getFieldAnchorElement(impactTarget.tableId, impactTarget.columnName)
-        : planeRef.value.querySelector(`[data-table-anchor="${impactTarget.tableId}"]`)
+      const fromGeometry = getImpactAnchorGeometry(node.id, impactTarget.tableId)
+      const toGeometry = impactTarget.columnName
+        ? getFieldAnchorGeometry(impactTarget.tableId, impactTarget.columnName)
+        : geometryRegistry?.tableById.get(impactTarget.tableId) || null
 
-      if (!(fromElement instanceof HTMLElement) || !(toElement instanceof HTMLElement)) {
+      if (!fromGeometry || !toGeometry) {
         continue
       }
 
@@ -6607,17 +7248,17 @@ const updateConnections = () => {
         dashPattern: node.objectKind === 'Custom Type' && !isSelectedNodeImpact ? '2 5' : '10 7',
         animated: isSelectedNodeImpact,
         selectedForeground: false,
-        fromElement,
-        toElement
+        fromGeometry,
+        toGeometry
       })
     }
   }
 
   const lines = descriptors
     .map((descriptor) => {
-      const result = buildPathBetween(
-        descriptor.fromElement,
-        descriptor.toElement,
+      const result = buildPathBetweenFromGeometry(
+        descriptor.fromGeometry,
+        descriptor.toGeometry,
         descriptor.color,
         descriptor.dashed,
         usage,
@@ -6629,10 +7270,10 @@ const updateConnections = () => {
         return null
       }
 
-      const fromOwnerNodeId = getConnectionOwnerNodeId(descriptor.fromElement)
-      const toOwnerNodeId = getConnectionOwnerNodeId(descriptor.toElement)
-      const fromEndpoint = getConnectionEndpointLocator(descriptor.fromElement)
-      const toEndpoint = getConnectionEndpointLocator(descriptor.toElement)
+      const fromOwnerNodeId = descriptor.fromGeometry.ownerNodeId
+      const toOwnerNodeId = descriptor.toGeometry.ownerNodeId
+      const fromEndpoint = descriptor.fromGeometry.locator
+      const toEndpoint = descriptor.toGeometry.locator
 
       return {
         key: descriptor.key,
