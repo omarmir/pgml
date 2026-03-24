@@ -182,6 +182,33 @@ type ConnectionEndpointLocator = {
   value: string
 }
 
+type MeasuredElementBounds = {
+  left: number
+  right: number
+  top: number
+  bottom: number
+  width: number
+  height: number
+}
+
+type ConnectionAnchorGeometry = {
+  element: HTMLElement
+  locator: ConnectionEndpointLocator | null
+  identity: string
+  ownerNodeId: string | null
+  groupNodeId: string | null
+  rowKey: string | null
+  tableId: string | null
+  bounds: MeasuredElementBounds
+}
+
+type ConnectionGeometryRegistry = {
+  endpointByLocatorKey: Map<string, ConnectionAnchorGeometry>
+  geometryByElement: WeakMap<HTMLElement, ConnectionAnchorGeometry>
+  geometryByIdentity: Map<string, ConnectionAnchorGeometry>
+  groupHeaderBands: DiagramRect[]
+}
+
 type DiagramViewportBounds = DiagramSpatialBounds
 
 type CanvasSelection = {
@@ -356,6 +383,7 @@ let pendingWheelZoomSteps = 0
 let pendingWheelZoomPivot: { x: number, y: number } | null = null
 let hasPendingNodeUpdateSync = false
 let pendingNodeUpdateNeedsRemeasure = false
+let connectionGeometryRegistry: ConnectionGeometryRegistry | null = null
 const exportTypeStyleItems = [
   {
     label: 'Pragmatic app types',
@@ -4610,14 +4638,55 @@ const getConnectionEndpointLocator = (element: HTMLElement): ConnectionEndpointL
 
   return null
 }
+const getConnectionEndpointLocatorKey = (locator: ConnectionEndpointLocator) => {
+  return `${locator.attribute}:${locator.value}`
+}
+const getConnectionGeometryForElement = (element: HTMLElement) => {
+  if (!connectionGeometryRegistry) {
+    return null
+  }
+
+  return (
+    connectionGeometryRegistry.geometryByElement.get(element)
+    || connectionGeometryRegistry.geometryByIdentity.get(getElementIdentity(element))
+    || null
+  )
+}
+const getRegisteredConnectionEndpointElement = (locators: ConnectionEndpointLocator[]) => {
+  if (!connectionGeometryRegistry) {
+    return null
+  }
+
+  for (const locator of locators) {
+    const geometry = connectionGeometryRegistry.endpointByLocatorKey.get(getConnectionEndpointLocatorKey(locator))
+
+    if (geometry?.element.isConnected) {
+      return geometry.element
+    }
+  }
+
+  return null
+}
 const getConnectionEndpointElement = (locator: ConnectionEndpointLocator | null) => {
   if (!planeRef.value || !locator) {
     return null
   }
 
+  const registeredElement = getRegisteredConnectionEndpointElement([locator])
+
+  if (registeredElement) {
+    return registeredElement
+  }
+
   return planeRef.value.querySelector(`[${locator.attribute}="${locator.value}"]`)
 }
 const getConnectionOwnerNodeId = (element: HTMLElement) => {
+  const cachedOwnerNodeId = getConnectionGeometryForElement(element)?.ownerNodeId
+
+  if (cachedOwnerNodeId) {
+    return cachedOwnerNodeId
+  }
+
   const owner = element.closest('[data-node-anchor]')
 
   if (!(owner instanceof HTMLElement)) {
@@ -4635,6 +4704,25 @@ const getFieldAnchorElement = (tableId: string, columnName: string) => {
     return null
   }
 
+  const registeredElement = getRegisteredConnectionEndpointElement([
+    {
+      attribute: 'data-column-label-anchor',
+      value: getColumnLabelAnchorKey(tableId, columnName)
+    },
+    {
+      attribute: 'data-column-anchor',
+      value: getColumnAnchorKey(tableId, columnName)
+    },
+    {
+      attribute: 'data-table-anchor',
+      value: tableId
+    }
+  ])
+
+  if (registeredElement) {
+    return registeredElement
+  }
+
   return (
     planeRef.value.querySelector(`[data-column-label-anchor="${getColumnLabelAnchorKey(tableId, columnName)}"]`)
     || planeRef.value.querySelector(`[data-column-anchor="${getColumnAnchorKey(tableId, columnName)}"]`)
@@ -4644,6 +4732,21 @@ const getFieldAnchorElement = (tableId: string, columnName: string) => {
 const getImpactAnchorElement = (nodeId: string, tableId: string) => {
   if (!planeRef.value) {
     return null
+  }
+
+  const registeredElement = getRegisteredConnectionEndpointElement([
+    {
+      attribute: 'data-impact-anchor',
+      value: getImpactAnchorKey(nodeId, tableId)
+    },
+    {
+      attribute: 'data-node-anchor',
+      value: nodeId
+    }
+  ])
+
+  if (registeredElement) {
+    return registeredElement
   }
 
   return (
@@ -5594,7 +5697,121 @@ const getElementOffsetWithinAncestor = (element: HTMLElement, ancestor: HTMLElem
   return { x, y }
 }
 
+const measureElementBounds = (element: HTMLElement): MeasuredElementBounds => {
+  const bounds = element.getBoundingClientRect()
+
+  return {
+    left: bounds.left,
+    right: bounds.right,
+    top: bounds.top,
+    bottom: bounds.bottom,
+    width: bounds.width,
+    height: bounds.height
+  }
+}
+
+const syncConnectionGeometryRegistry = () => {
+  if (!(planeRef.value instanceof HTMLElement)) {
+    connectionGeometryRegistry = null
+    return null
+  }
+
+  const planeElement = planeRef.value
+  const endpointByLocatorKey = new Map<string, ConnectionAnchorGeometry>()
+  const geometryByElement = new WeakMap<HTMLElement, ConnectionAnchorGeometry>()
+  const geometryByIdentity = new Map<string, ConnectionAnchorGeometry>()
+  const groupHeaderBands: DiagramRect[] = []
+  const seenElements = new Set<HTMLElement>()
+  const registerElement = (element: HTMLElement) => {
+    if (seenElements.has(element)) {
+      return
+    }
+
+    seenElements.add(element)
+
+    const locator = getConnectionEndpointLocator(element)
+    const identity = getElementIdentity(element)
+    const ownerNodeId = element.closest('[data-node-anchor]')?.getAttribute('data-node-anchor') || null
+    const groupNodeId = element.closest('[data-node-anchor^="group:"]')?.getAttribute('data-node-anchor') || null
+    const rowKey = element.getAttribute('data-table-row-anchor')
+      || element.closest('[data-table-row-anchor]')?.getAttribute('data-table-row-anchor')
+      || null
+    const tableId = element.getAttribute('data-table-anchor')
+      || element.closest('[data-table-anchor]')?.getAttribute('data-table-anchor')
+      || null
+    const geometry: ConnectionAnchorGeometry = {
+      element,
+      locator,
+      identity,
+      ownerNodeId,
+      groupNodeId,
+      rowKey,
+      tableId,
+      bounds: measureElementBounds(element)
+    }
+
+    geometryByElement.set(element, geometry)
+
+    if (identity) {
+      geometryByIdentity.set(identity, geometry)
+    }
+
+    if (locator) {
+      endpointByLocatorKey.set(getConnectionEndpointLocatorKey(locator), geometry)
+    }
+  }
+
+  planeElement.querySelectorAll(
+    '[data-impact-anchor], [data-column-label-anchor], [data-column-anchor], [data-table-anchor], [data-node-anchor], [data-table-row-anchor]'
+  ).forEach((element) => {
+    if (element instanceof HTMLElement) {
+      registerElement(element)
+    }
+  })
+
+  Array.from(planeElement.querySelectorAll('[data-node-anchor^="group:"]')).forEach((element) => {
+    if (!(element instanceof HTMLElement)) {
+      return
+    }
+
+    const groupId = element.getAttribute('data-node-anchor')
+
+    if (!groupId) {
+      return
+    }
+
+    const contentElement = planeElement.querySelector(`[data-group-content="${groupId}"]`)
+
+    if (!(contentElement instanceof HTMLElement)) {
+      return
+    }
+
+    const groupOffset = getElementOffsetWithinAncestor(element, planeElement)
+    const contentOffset = getElementOffsetWithinAncestor(contentElement, planeElement)
+
+    groupHeaderBands.push({
+      left: groupOffset.x,
+      right: groupOffset.x + element.offsetWidth,
+      top: groupOffset.y,
+      bottom: contentOffset.y
+    })
+  })
+
+  connectionGeometryRegistry = {
+    endpointByLocatorKey,
+    geometryByElement,
+    geometryByIdentity,
+    groupHeaderBands
+  }
+
+  return connectionGeometryRegistry
+}
+
 const collectGroupHeaderBands = () => {
+  if (connectionGeometryRegistry) {
+    return connectionGeometryRegistry.groupHeaderBands
+  }
+
   if (!(planeRef.value instanceof HTMLElement)) {
     return []
   }
@@ -6314,9 +6531,11 @@ const updateConnections = () => {
   flushViewportTransformSync()
 
   if (!planeRef.value) {
+    connectionGeometryRegistry = null
     return
   }
 
+  const geometryRegistry = syncConnectionGeometryRegistry()
   const descriptors: Array<{
     key: string
     color: string
@@ -6331,7 +6550,7 @@ const updateConnections = () => {
   const verticalUsage: VerticalSegmentUsage = new Map()
   const nodeOrders = nodeLayerOrderById.value
   const tableColors = tableGroupColorByTableId.value
-  const groupHeaderBands = collectGroupHeaderBands()
+  const groupHeaderBands = geometryRegistry?.groupHeaderBands || collectGroupHeaderBands()
   const selectedTableId = selectedTable.value?.fullName || null
   const selectedTableColor = selectedTableId
     ? (tableColors[selectedTableId] || '#79e3ea')
@@ -7482,6 +7701,7 @@ onBeforeUnmount(() => {
   wheelZoomBatcher.cancel()
   viewportTransformBatcher.cancel()
   connectionRefreshBatcher.cancel()
+  connectionGeometryRegistry = null
 })
 
 defineExpose<{
