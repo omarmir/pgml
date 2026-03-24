@@ -146,6 +146,7 @@ Properties "group:Commerce" {
   x: 540
   y: 120
   color: #f59e0b
+  masonry: true
   table_columns: 1
 }
 

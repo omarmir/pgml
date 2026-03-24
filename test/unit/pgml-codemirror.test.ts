@@ -99,6 +99,7 @@ Domain email_address {
   it('keeps full hex property colors as a single token', () => {
     const source = `Properties "group:Commerce" {
   color: #f59e0b
+  masonry: true
   table_columns: 1
 }`
 
@@ -112,6 +113,10 @@ Domain email_address {
       expect.objectContaining({
         value: '#f59e0b',
         type: 'atom'
+      }),
+      expect.objectContaining({
+        value: 'masonry',
+        type: 'propertyName'
       }),
       expect.objectContaining({
         value: 'table_columns',

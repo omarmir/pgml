@@ -128,6 +128,7 @@ Trigger trg_register_fundingopportunity on public.funding_opportunity_profile {
   x: 540
   y: 120
   color: #f59e0b
+  masonry: true
   table_columns: 1
 }
 

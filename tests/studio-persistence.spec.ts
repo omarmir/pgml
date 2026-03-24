@@ -24,6 +24,7 @@ test('studio saves, reloads, and downloads PGML with embedded layout', async ({ 
   await page.locator('[data-node-anchor="group:Core"]').dispatchEvent('click')
   await expect(page.locator('input[type="color"]')).toBeVisible()
   await page.locator('input[type="color"]').fill('#14b8a6')
+  await page.getByRole('switch', { name: 'Masonry' }).click()
   await page.getByRole('button', { name: 'Expand email_address' }).click()
   await expect(page.locator('[data-node-body="custom-type:Domain:email_address"]')).toBeVisible()
 
@@ -57,6 +58,7 @@ test('studio saves, reloads, and downloads PGML with embedded layout', async ({ 
   expect(savedSchemas[0]?.name).toBe('Roundtrip layout')
   expect(savedSchemas[0]?.text).toContain('Properties "group:Core" {')
   expect(savedSchemas[0]?.text).toContain('color: #14b8a6')
+  expect(savedSchemas[0]?.text).toContain('masonry: true')
   expect(savedSchemas[0]?.text).toContain('Properties "custom-type:Domain:email_address" {')
   expect(savedSchemas[0]?.text).toContain('x:')
   expect(savedSchemas[0]?.text).toContain('y:')
@@ -76,6 +78,7 @@ test('studio saves, reloads, and downloads PGML with embedded layout', async ({ 
   await page.getByRole('button', { name: 'Load' }).click()
 
   await expect.poll(async () => readPgmlEditorValue(editor)).toMatch(/Properties "group:Core" \{/)
+  await expect.poll(async () => readPgmlEditorValue(editor)).toMatch(/Properties "group:Core" \{[\s\S]*masonry: true/)
   await expect(page.locator('[data-node-body="custom-type:Domain:email_address"]')).toBeVisible()
 
   await schemaMenuButton.click()
@@ -90,6 +93,7 @@ test('studio saves, reloads, and downloads PGML with embedded layout', async ({ 
 
   expect(download.suggestedFilename()).toBe('roundtrip-layout.pgml')
   expect(readFileSync(downloadPath!, 'utf8')).toContain('Properties "group:Core" {')
+  expect(readFileSync(downloadPath!, 'utf8')).toContain('masonry: true')
 })
 
 test('entity visibility persists when a saved schema is reloaded', async ({ goto, page }) => {

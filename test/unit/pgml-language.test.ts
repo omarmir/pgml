@@ -17,6 +17,7 @@ Properties "public.users" {
   x: 120
   y: 84
   collapsed: false
+  masonry: true
 }`
 
     const analysis = analyzePgmlDocument(source)
@@ -53,6 +54,7 @@ Properties "public.users" {
 Properties "group:Missing" {
   color: blue
   collapsed: maybe
+  masonry: maybe
 }`
 
     const diagnostics = analyzePgmlDocument(source).diagnostics

@@ -62,6 +62,7 @@ export type PgmlNodeProperties = {
   tableColumns?: number | null
   collapsed?: boolean
   visible?: boolean
+  masonry?: boolean
 }
 
 export type PgmlMetadataEntry = {
@@ -220,6 +221,7 @@ const readMatch = (value: string | undefined) => value || ''
 const trimMultiline = (value: string) => value.replace(/^\n+|\n+$/g, '')
 const normalizeEffectKey = (value: string) => cleanName(value).toLowerCase().replaceAll(/[^\w]+/g, '_')
 const normalizeSource = (value: string) => value.replaceAll('\n', ' ').replace(/\s+/g, ' ').trim()
+const lower = (value: string) => value.toLowerCase()
 
 const parseBracketParts = (value: string) => {
   return value
@@ -240,6 +242,80 @@ const parseListValue = (value: string) => {
   }
 
   return [cleanText(trimmed)]
+}
+
+const resolveGroupTableReferenceKey = (value: string) => lower(cleanName(value))
+
+const buildGroupTableReferenceLookup = (tables: PgmlTable[]) => {
+  const bareNameMatches = tables.reduce<Record<string, string[]>>((entries, table) => {
+    const bareName = lower(table.name)
+
+    if (!entries[bareName]) {
+      entries[bareName] = []
+    }
+
+    entries[bareName]?.push(table.fullName)
+    return entries
+  }, {})
+  const referenceLookup = new Map<string, string>()
+
+  tables.forEach((table) => {
+    referenceLookup.set(lower(table.fullName), table.fullName)
+
+    if (table.schema === 'public') {
+      referenceLookup.set(lower(table.name), table.fullName)
+    }
+  })
+
+  Object.entries(bareNameMatches).forEach(([bareName, fullNames]) => {
+    if (fullNames.length === 1) {
+      referenceLookup.set(bareName, fullNames[0] || '')
+    }
+  })
+
+  return referenceLookup
+}
+
+export const getOrderedGroupTables = (model: PgmlSchemaModel, groupName: string) => {
+  const group = model.groups.find(entry => entry.name === groupName) || null
+  const groupedTables = model.tables.filter(table => table.groupName === groupName)
+
+  if (!group) {
+    return groupedTables
+  }
+
+  const referenceLookup = buildGroupTableReferenceLookup(groupedTables)
+  const tablesById = new Map(groupedTables.map(table => [table.fullName, table] as const))
+  const orderedTables: PgmlTable[] = []
+  const seenTableIds = new Set<string>()
+  const pushTable = (tableId: string) => {
+    if (seenTableIds.has(tableId)) {
+      return
+    }
+
+    const table = tablesById.get(tableId)
+
+    if (!table) {
+      return
+    }
+
+    seenTableIds.add(tableId)
+    orderedTables.push(table)
+  }
+
+  group.tableNames.forEach((tableName) => {
+    const resolvedTableId = referenceLookup.get(resolveGroupTableReferenceKey(tableName))
+
+    if (resolvedTableId) {
+      pushTable(resolvedTableId)
+    }
+  })
+
+  groupedTables.forEach((table) => {
+    pushTable(table.fullName)
+  })
+
+  return orderedTables
 }
 
 const parseSqlArgumentList = (value: string) => {
@@ -1403,6 +1479,18 @@ const parseNodePropertiesBlock = (block: NamedBlock): { id: string, properties: 
       continue
     }
 
+    if (key === 'masonry') {
+      if (entry.value.trim() === 'true') {
+        entries.masonry = true
+      }
+
+      if (entry.value.trim() === 'false') {
+        entries.masonry = false
+      }
+
+      continue
+    }
+
     if (key === 'color') {
       if (/^#(?:[\da-f]{3}|[\da-f]{6})$/i.test(entry.value.trim())) {
         entries.color = entry.value.trim()
@@ -1445,9 +1533,15 @@ const parseNodePropertiesBlock = (block: NamedBlock): { id: string, properties: 
   const x = entries.x
   const y = entries.y
   if (
-    (x === undefined || y === undefined)
+    x === undefined
+    && y === undefined
+    && typeof entries.color !== 'string'
     && entries.visible === undefined
     && entries.collapsed === undefined
+    && entries.masonry === undefined
+    && !Number.isFinite(entries.width)
+    && !Number.isFinite(entries.height)
+    && !Number.isFinite(entries.tableColumns)
   ) {
     return null
   }
@@ -1472,6 +1566,10 @@ const parseNodePropertiesBlock = (block: NamedBlock): { id: string, properties: 
 
   if (typeof entries.visible === 'boolean') {
     properties.visible = entries.visible
+  }
+
+  if (typeof entries.masonry === 'boolean') {
+    properties.masonry = entries.masonry
   }
 
   if (Number.isFinite(entries.width)) {
@@ -1553,7 +1651,8 @@ export const buildPgmlWithNodeProperties = (
         typeof properties.color === 'string' && properties.color.length > 0,
         typeof properties.collapsed === 'boolean',
         properties.visible === false,
-        typeof properties.tableColumns === 'number'
+        typeof properties.tableColumns === 'number',
+        properties.masonry === true
       ].some(Boolean)
     })
     .sort(([leftId], [rightId]) => leftId.localeCompare(rightId))
@@ -1578,6 +1677,10 @@ export const buildPgmlWithNodeProperties = (
 
       if (properties.visible === false) {
         lines.push('  visible: false')
+      }
+
+      if (properties.masonry === true) {
+        lines.push('  masonry: true')
       }
 
       if (typeof properties.tableColumns === 'number') {

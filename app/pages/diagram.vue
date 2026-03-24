@@ -1180,7 +1180,7 @@ onBeforeUnmount(() => {
               size="sm"
               :disabled="!canEmbedLayout"
               label="Include current layout"
-              description="Embed node positions, colors, and grouped table columns into the PGML text."
+              description="Embed node positions, colors, grouped table columns, and masonry settings into the PGML text."
               :ui="studioSwitchUi"
             />
           </div>

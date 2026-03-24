@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { useClipboard, useResizeObserver, useTimeoutFn } from '@vueuse/core'
-import { studioSelectUi } from '~/constants/ui'
+import type { CSSProperties } from 'vue'
+import { studioSelectUi, studioSwitchUi } from '~/constants/ui'
 import type {
   PgmlCustomType,
   PgmlNodeProperties,
@@ -9,6 +10,7 @@ import type {
   PgmlSequence,
   PgmlSourceRange
 } from '~/utils/pgml'
+import { getOrderedGroupTables } from '~/utils/pgml'
 import { getRasterExportPlan } from '~/utils/diagram-export'
 import {
   buildPgmlExportBundle,
@@ -48,8 +50,10 @@ import type {
   TableAttachment,
   TableAttachmentFlag,
   TableAttachmentKind,
+  TableGroupMasonryLayout,
   TableRow
 } from '~/utils/pgml-diagram-canvas'
+import { buildTableGroupMasonryLayout } from '~/utils/pgml-diagram-canvas'
 import {
   getStudioChoiceButtonClass,
   getStudioStateButtonClass,
@@ -112,6 +116,7 @@ type CanvasNodeState = {
   kind: CanvasNodeKind
   objectKind?: ObjectKind
   collapsed: boolean
+  masonry?: boolean
   title: string
   subtitle: string
   details: string[]
@@ -375,6 +380,13 @@ const isAttachmentEffectivelyVisible = (tableId: string, attachmentId: string) =
 const visibleTables = computed(() => {
   return model.tables.filter(table => isTableEffectivelyVisible(table))
 })
+const orderedTablesByGroup = computed(() => {
+  return model.groups.reduce<Record<string, PgmlSchemaModel['tables']>>((entries, group) => {
+    entries[group.name] = getOrderedGroupTables(model, group.name)
+    return entries
+  }, {})
+})
+const getGroupTables = (groupName: string) => orderedTablesByGroup.value[groupName] || []
 const tableGroupColorByTableId = computed(() => {
   return model.tables.reduce<Record<string, string>>((colors, table) => {
     const groupName = getTableGroupName(table)
@@ -645,24 +657,12 @@ const selectedObjectImpactRowKeys = computed(() => {
   }))
 })
 const isCollapsibleNode = (node: CanvasNodeState) => node.kind === 'object'
+const measuredGroupTableHeights: Ref<Record<string, number>> = ref({})
 const tablesByGroup = computed(() => {
-  const groups: Record<string, PgmlSchemaModel['tables']> = {}
-
-  for (const table of visibleTables.value) {
-    const groupName = getTableGroupName(table)
-
-    if (!groupName) {
-      continue
-    }
-
-    if (!groups[groupName]) {
-      groups[groupName] = []
-    }
-
-    groups[groupName]?.push(table)
-  }
-
-  return groups
+  return model.groups.reduce<Record<string, PgmlSchemaModel['tables']>>((entries, group) => {
+    entries[group.name] = getGroupTables(group.name).filter(table => isTableEffectivelyVisible(table))
+    return entries
+  }, {})
 })
 const tableGroupById = computed(() => {
   const groups: Record<string, string | null> = {}
@@ -679,14 +679,108 @@ const estimateTableHeight = (rowCount: number) => {
   return 40 + rowCount * groupColumnRowHeight
 }
 
-const getGroupMinimumSize = (groupName: string, columnCount: number) => {
-  const tables = tablesByGroup.value[groupName] || []
-  const safeColumnCount = Math.max(1, Math.min(columnCount, Math.max(tables.length, 1)))
+const getGroupSafeColumnCount = (columnCount: number, tableCount: number) => {
+  return Math.max(1, Math.min(Math.round(columnCount), Math.max(tableCount, 1)))
+}
+
+const getRenderedGroupTables = (groupName: string) => {
+  return tablesByGroup.value[groupName] || []
+}
+
+const getGroupTableRenderHeight = (tableId: string) => {
+  return measuredGroupTableHeights.value[tableId] || estimateTableHeight(getTableRows(tableId).length)
+}
+
+const getGroupNodeColumnCount = (groupName: string) => {
+  const groupId = getStoredGroupId(groupName)
+  const tableCount = getRenderedGroupTables(groupName).length
+  const columnCount = nodeStates.value[groupId]?.columnCount
+    ?? model.nodeProperties[groupId]?.tableColumns
+    ?? 1
+
+  return getGroupSafeColumnCount(columnCount, tableCount)
+}
+
+const groupTableLayouts = computed<Record<string, TableGroupMasonryLayout>>(() => {
+  return model.groups.reduce<Record<string, TableGroupMasonryLayout>>((entries, group) => {
+    entries[group.name] = buildTableGroupMasonryLayout(
+      getRenderedGroupTables(group.name).map(table => ({
+        id: table.fullName,
+        height: getGroupTableRenderHeight(table.fullName)
+      })),
+      getGroupNodeColumnCount(group.name),
+      groupTableWidth,
+      groupTableGap
+    )
+    return entries
+  }, {})
+})
+
+const getGroupTableLayout = (groupName: string) => {
+  return groupTableLayouts.value[groupName]
+    || buildTableGroupMasonryLayout([], 1, groupTableWidth, groupTableGap)
+}
+
+const getGroupContentStyle = (node: CanvasNodeState): CSSProperties => {
+  if (node.kind !== 'group' || !node.masonry) {
+    return {
+      gap: `${groupTableGap}px`,
+      gridTemplateColumns: `repeat(${node.columnCount || 1}, ${groupTableWidth}px)`
+    }
+  }
+
+  const layout = getGroupTableLayout(node.title)
+
+  return {
+    height: `${layout.contentHeight}px`,
+    position: 'relative',
+    width: `${layout.contentWidth}px`
+  }
+}
+
+const getGroupTableLayoutStyle = (node: CanvasNodeState, tableId: string): CSSProperties => {
+  if (node.kind !== 'group' || !node.masonry) {
+    return {
+      width: `${groupTableWidth}px`
+    }
+  }
+
+  const placement = getGroupTableLayout(node.title).placements[tableId]
+
+  return {
+    left: `${placement?.x || 0}px`,
+    position: 'absolute',
+    top: `${placement?.y || 0}px`,
+    width: `${groupTableWidth}px`
+  }
+}
+
+const getGroupMinimumSize = (groupName: string, columnCount: number, masonry = false) => {
+  const tables = getRenderedGroupTables(groupName)
+  const safeColumnCount = getGroupSafeColumnCount(columnCount, tables.length)
+
+  if (masonry) {
+    const layout = buildTableGroupMasonryLayout(
+      tables.map(table => ({
+        id: table.fullName,
+        height: getGroupTableRenderHeight(table.fullName)
+      })),
+      safeColumnCount,
+      groupTableWidth,
+      groupTableGap
+    )
+
+    return {
+      minWidth: groupHorizontalPadding * 2 + layout.contentWidth,
+      minHeight: groupHeaderHeight + groupVerticalPadding + layout.contentHeight
+    }
+  }
+
   const rowHeights: number[] = []
 
   tables.forEach((table, index) => {
     const rowIndex = Math.floor(index / safeColumnCount)
-    const tableHeight = estimateTableHeight(getTableRows(table.fullName).length)
+    const tableHeight = getGroupTableRenderHeight(table.fullName)
     rowHeights[rowIndex] = Math.max(rowHeights[rowIndex] || 0, tableHeight)
   })
 
@@ -1075,7 +1169,7 @@ const buildExportSvgString = async (padding = exportPadding) => {
     )
 
     if (node.kind === 'group') {
-      const tables = model.tables.filter(table => node.tableIds.includes(table.fullName))
+      const tables = getRenderedGroupTables(node.title)
 
       tables.forEach((table) => {
         const tableElement = planeRef.value?.querySelector(`[data-table-anchor="${table.fullName}"]`)
@@ -1656,7 +1750,8 @@ const measureGroupMinimumSize = (groupId: string) => {
   const groupState = nodeStates.value[groupId]
   const baselineSize = getGroupMinimumSize(
     groupId.replace(/^group:/, ''),
-    groupState?.columnCount || 1
+    groupState?.columnCount || 1,
+    groupState?.masonry ?? false
   )
   const wrapperStyles = contentWrapper ? window.getComputedStyle(contentWrapper) : null
   const paddingRight = wrapperStyles ? Number.parseFloat(wrapperStyles.paddingRight) : 0
@@ -1817,24 +1912,76 @@ const syncMeasuredNodeSizes = () => {
 
 const getCanvasLayoutObserverTargets = () => {
   const targets: HTMLElement[] = []
+  const seenTargets = new Set<HTMLElement>()
+  const pushTarget = (element: HTMLElement | null) => {
+    if (!element || seenTargets.has(element)) {
+      return
+    }
+
+    seenTargets.add(element)
+    targets.push(element)
+  }
 
   if (viewportRef.value) {
-    targets.push(viewportRef.value)
+    pushTarget(viewportRef.value)
   }
 
   if (!planeRef.value) {
     return targets
   }
 
-  targets.push(planeRef.value)
+  pushTarget(planeRef.value)
 
   planeRef.value.querySelectorAll('[data-node-anchor]').forEach((element) => {
     if (element instanceof HTMLElement) {
-      targets.push(element)
+      pushTarget(element)
+    }
+  })
+
+  planeRef.value.querySelectorAll('[data-table-anchor]').forEach((element) => {
+    if (element instanceof HTMLElement) {
+      pushTarget(element)
     }
   })
 
   return targets
+}
+
+const syncMeasuredGroupTableHeights = () => {
+  if (!(planeRef.value instanceof HTMLElement)) {
+    if (Object.keys(measuredGroupTableHeights.value).length === 0) {
+      return false
+    }
+
+    measuredGroupTableHeights.value = {}
+    return true
+  }
+
+  const nextHeights: Record<string, number> = {}
+  const groupedTableElements = Array.from(planeRef.value.querySelectorAll('[data-group-content] [data-table-anchor]'))
+    .filter((element): element is HTMLElement => element instanceof HTMLElement)
+
+  groupedTableElements.forEach((element) => {
+    const tableId = element.getAttribute('data-table-anchor')
+
+    if (!tableId) {
+      return
+    }
+
+    nextHeights[tableId] = Math.ceil(element.offsetHeight)
+  })
+
+  const currentEntries = Object.entries(measuredGroupTableHeights.value)
+  const nextEntries = Object.entries(nextHeights)
+  const hasChanges = currentEntries.length !== nextEntries.length
+    || nextEntries.some(([tableId, height]) => measuredGroupTableHeights.value[tableId] !== height)
+
+  if (!hasChanges) {
+    return false
+  }
+
+  measuredGroupTableHeights.value = nextHeights
+  return true
 }
 
 const layoutObserverTargets: Ref<HTMLElement[]> = ref([])
@@ -1843,8 +1990,28 @@ const syncLayoutObserverTargets = async () => {
   layoutObserverTargets.value = getCanvasLayoutObserverTargets()
 }
 
+const refreshMeasuredGroupTableHeights = async () => {
+  if (!syncMeasuredGroupTableHeights()) {
+    return
+  }
+
+  await nextTick()
+  await syncLayoutObserverTargets()
+}
+
 const handleCanvasLayoutResize = () => {
   if (Date.now() < suppressLayoutObserverUntil) {
+    return
+  }
+
+  if (syncMeasuredGroupTableHeights()) {
+    nextTick(() => {
+      if (syncMeasuredNodeSizes() && !hasEmbeddedLayout.value) {
+        reflowAutoLayout()
+      }
+
+      updateConnections()
+    })
     return
   }
 
@@ -2890,7 +3057,7 @@ const ungroupedBrowserItems = computed(() => {
 })
 const groupedBrowserItems = computed(() => {
   return browserGroupNames.value.map((groupName) => {
-    const tables = model.tables.filter(table => getTableGroupName(table) === groupName)
+    const tables = getGroupTables(groupName)
     const tableItems = tables.map(table => buildBrowserTableItem(table))
 
     const group = model.groups.find(entry => entry.name === groupName)
@@ -3858,39 +4025,29 @@ const buildObjectNodes = (groupStates: Record<string, CanvasNodeState>) => {
 
 const syncNodeStates = () => {
   const nextStates: Record<string, CanvasNodeState> = {}
-  const tableGroups = new Map<string, typeof model.tables>()
   const orderedNames = [...diagramGroupNames.value]
   const groupNodes: CanvasNodeState[] = []
   const floatingTableNodes: CanvasNodeState[] = []
 
-  orderedNames.forEach((groupName) => {
-    tableGroups.set(groupName, [])
-  })
-
-  for (const table of visibleTables.value) {
-    const groupName = getTableGroupName(table)
-
-    if (!groupName) {
-      continue
-    }
-
-    tableGroups.get(groupName)?.push(table)
-  }
-
   orderedNames.forEach((groupName, index) => {
-    const tables = tableGroups.get(groupName) || []
+    const tables = getRenderedGroupTables(groupName)
     const groupId = getStoredGroupId(groupName)
     const existing = nodeStates.value[`group:${groupName}`]
     const storedLayout = model.nodeProperties[groupId]
     const color = storedLayout?.color || existing?.color || palette[index % palette.length] || '#8b5cf6'
-    const columnCount = storedLayout?.tableColumns ?? existing?.columnCount ?? 1
+    const columnCount = getGroupSafeColumnCount(
+      storedLayout?.tableColumns ?? existing?.columnCount ?? 1,
+      tables.length
+    )
+    const masonry = storedLayout?.masonry ?? existing?.masonry ?? false
     const note = model.groups.find(group => group.name === groupName)?.note || null
-    const minimumSize = getGroupMinimumSize(groupName, columnCount)
+    const minimumSize = getGroupMinimumSize(groupName, columnCount, masonry)
 
     groupNodes.push({
       id: groupId,
       kind: 'group',
       collapsed: false,
+      masonry,
       title: groupName,
       subtitle: note || '',
       details: tables.map(table => table.fullName),
@@ -5820,6 +5977,10 @@ const normalizeStoredNodeProperties = (properties: PgmlNodeProperties) => {
     normalized.visible = false
   }
 
+  if (properties.masonry === true) {
+    normalized.masonry = true
+  }
+
   if (typeof properties.tableColumns === 'number') {
     normalized.tableColumns = Math.max(1, Math.round(properties.tableColumns))
   }
@@ -5834,6 +5995,7 @@ const hasStoredNodeProperties = (properties: PgmlNodeProperties) => {
     || typeof properties.color === 'string'
     || typeof properties.collapsed === 'boolean'
     || properties.visible === false
+    || properties.masonry === true
     || typeof properties.tableColumns === 'number'
   )
 }
@@ -5859,6 +6021,12 @@ const getNodeLayoutProperties = () => {
       nextProperties.x = Math.round(node.x)
       nextProperties.y = Math.round(node.y)
       nextProperties.tableColumns = Math.max(1, Math.round(node.columnCount || 1))
+
+      if (node.masonry) {
+        nextProperties.masonry = true
+      } else {
+        delete nextProperties.masonry
+      }
     }
 
     if (node.kind === 'table' || node.kind === 'object') {
@@ -5974,9 +6142,10 @@ const updateNode = (
   if (current.kind === 'group') {
     const minimumSize = getGroupMinimumSize(
       current.id.replace('group:', ''),
-      nextNode.columnCount || 1
+      nextNode.columnCount || 1,
+      nextNode.masonry ?? false
     )
-    const resetGroupSize = typeof partial.columnCount === 'number'
+    const resetGroupSize = typeof partial.columnCount === 'number' || typeof partial.masonry === 'boolean'
     const nextGroupWidth = resetGroupSize
       ? minimumSize.minWidth
       : Math.max(nextNode.width, minimumSize.minWidth)
@@ -6383,6 +6552,7 @@ watch(
 
     syncNodeStates()
     await syncLayoutObserverTargets()
+    await refreshMeasuredGroupTableHeights()
     if (syncMeasuredNodeSizes()) {
       await syncLayoutObserverTargets()
     }
@@ -6428,6 +6598,7 @@ watch(
 onMounted(() => {
   nextTick(async () => {
     await syncLayoutObserverTargets()
+    await refreshMeasuredGroupTableHeights()
     if (syncMeasuredNodeSizes()) {
       reflowAutoLayout()
       updateConnections()
@@ -6636,20 +6807,17 @@ defineExpose<{
           <div
             :data-group-content="node.id"
             class="grid items-start justify-start overflow-visible"
-            :style="{
-              gridTemplateColumns: `repeat(${node.columnCount || 1}, ${groupTableWidth}px)`,
-              gap: `${groupTableGap}px`
-            }"
+            :style="getGroupContentStyle(node)"
           >
             <article
-              v-for="table in model.tables.filter((table) => node.tableIds.includes(table.fullName))"
+              v-for="table in getRenderedGroupTables(node.title)"
               :key="table.fullName"
               :class="[
                 'relative min-w-0 self-start overflow-hidden rounded-[2px] border border-[color:var(--studio-shell-border)] bg-[color:var(--studio-table-surface)] transition-transform duration-150 hover:-translate-y-0.5 hover:ring-1 hover:ring-[color:var(--studio-ring)]',
                 isTableSelectionActive(table.fullName) ? 'pgml-selection-glow pgml-selection-glow-subtle' : ''
               ]"
               :style="[
-                { width: `${groupTableWidth}px` },
+                getGroupTableLayoutStyle(node, table.fullName),
                 getSelectionGlowStyle(tableGroupColorByTableId[table.fullName] || '#38bdf8')
               ]"
               :data-table-anchor="table.fullName"
@@ -7017,6 +7185,22 @@ defineExpose<{
             >
           </label>
 
+          <div
+            v-if="selectedNode.kind === 'group'"
+            class="grid gap-1"
+          >
+            <USwitch
+              :model-value="selectedNode.masonry ?? false"
+              data-group-masonry-switch="true"
+              color="neutral"
+              size="sm"
+              label="Masonry"
+              description="Keep the chosen column count, but pack tables vertically to reduce whitespace."
+              :ui="studioSwitchUi"
+              @update:model-value="updateNode(selectedNode.id, { masonry: Boolean($event) })"
+            />
+          </div>
+
           <label
             v-if="selectedNode.kind === 'group'"
             class="grid gap-1"
@@ -7027,7 +7211,7 @@ defineExpose<{
               data-group-column-count-slider="true"
               type="range"
               min="1"
-              :max="Math.min(4, selectedNode.tableCount || 4)"
+              :max="Math.max(1, selectedNode.tableCount || 1)"
               class="w-full"
               @input="updateNode(selectedNode.id, { columnCount: Number(($event.target as HTMLInputElement).value) })"
             >

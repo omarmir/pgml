@@ -30,6 +30,7 @@ Properties "group:Core" {
   color: #14b8a6
   x: 144
   y: 96
+  masonry: true
   table_columns: 2
 }`
 
@@ -39,6 +40,7 @@ Properties "group:Core" {
       color: '#14b8a6',
       x: 144,
       y: 96,
+      masonry: true,
       tableColumns: 2
     })
   })
@@ -150,6 +152,7 @@ Properties "group:Core" {
         color: '#14b8a6',
         x: 240,
         y: 180,
+        masonry: true,
         tableColumns: 2
       },
       'custom-type:Domain:email_address': {
@@ -172,6 +175,7 @@ Properties "group:Core" {
     expect(built).not.toContain('Properties "group:Core" {\n  x: 12')
     expect(built).toContain('Properties "group:Core" {')
     expect(built).toContain('color: #14b8a6')
+    expect(built).toContain('masonry: true')
     expect(built).not.toContain('width:')
     expect(built).not.toContain('height:')
     expect(built).toContain('table_columns: 2')
@@ -188,6 +192,7 @@ Properties "group:Core" {
 
     expect(reparsed.nodeProperties['group:Core']?.x).toBe(240)
     expect(reparsed.nodeProperties['group:Core']?.color).toBe('#14b8a6')
+    expect(reparsed.nodeProperties['group:Core']?.masonry).toBe(true)
     expect(reparsed.nodeProperties['group:Core']?.tableColumns).toBe(2)
     expect(reparsed.nodeProperties['group:Core']?.width).toBeUndefined()
     expect(reparsed.nodeProperties['custom-type:Domain:email_address']?.collapsed).toBe(false)

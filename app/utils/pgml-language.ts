@@ -212,6 +212,7 @@ const propertyKeywordTemplates = [
   { label: 'color', detail: 'Set node accent color.', apply: 'color: #' },
   { label: 'collapsed', detail: 'Set collapsed state.', apply: 'collapsed: false' },
   { label: 'visible', detail: 'Set visibility state.', apply: 'visible: false' },
+  { label: 'masonry', detail: 'Pack grouped tables to reduce whitespace.', apply: 'masonry: true' },
   { label: 'table_columns', detail: 'Set group table column count.', apply: 'table_columns: 2' }
 ] as const
 
@@ -224,8 +225,8 @@ const modifierKeywordTemplates = [
   { label: 'ref:', detail: 'Add a relationship modifier.', apply: 'ref: > ' }
 ] as const
 
-const propertyKeySet = new Set(['x', 'y', 'width', 'height', 'color', 'collapsed', 'visible', 'table_columns', 'tablecolumns', 'columns'])
-const booleanPropertyKeys = new Set(['collapsed', 'visible'])
+const propertyKeySet = new Set(['x', 'y', 'width', 'height', 'color', 'collapsed', 'visible', 'masonry', 'table_columns', 'tablecolumns', 'columns'])
+const booleanPropertyKeys = new Set(['collapsed', 'visible', 'masonry'])
 const numericPropertyKeys = new Set(['x', 'y', 'width', 'height', 'table_columns', 'tablecolumns', 'columns'])
 const validColorPattern = /^#(?:[\da-f]{3}|[\da-f]{6})$/i
 let analysisCache: PgmlAnalysisCache | null = null
@@ -1815,7 +1816,7 @@ const getCompletionItemsForLine = (analysis: PgmlDocumentAnalysis, offset: numbe
       return getPropertyTargetCompletions(analysis, fragment, from, to)
     }
 
-    if (/^\s*(collapsed|visible):\s*[A-Za-z]*$/i.test(beforeCursor)) {
+    if (/^\s*(collapsed|visible|masonry):\s*[A-Za-z]*$/i.test(beforeCursor)) {
       return buildSymbolCompletionItems(['true', 'false'], 'Boolean value', 'value', fragment, from, to)
     }
 

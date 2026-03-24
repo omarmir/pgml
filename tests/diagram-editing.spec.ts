@@ -549,6 +549,14 @@ test('canvas interactions keep the PGML editor source in sync', async ({ goto, p
 
   await expect.poll(async () => readPgmlEditorValue(editor)).toMatch(/Properties "group:Core" \{[\s\S]*table_columns: 2/)
 
+  const masonrySwitch = page.getByRole('switch', { name: 'Masonry' })
+
+  await masonrySwitch.click()
+  await expect.poll(async () => readPgmlEditorValue(editor)).toMatch(/Properties "group:Core" \{[\s\S]*masonry: true/)
+
+  await masonrySwitch.click()
+  await expect.poll(async () => readPgmlEditorValue(editor)).not.toContain('masonry: true')
+
   const coreHeader = page.locator('[data-node-header="group:Core"]')
   const headerBox = await coreHeader.boundingBox()
 
