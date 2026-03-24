@@ -709,9 +709,9 @@ const renderedConnectionLines = computed(() => {
       return (connectionLineOrderByKey.value[left.key] || 0) - (connectionLineOrderByKey.value[right.key] || 0)
     })
 })
-const connectionLineLayers = computed(() => {
+const connectionCanvasLayers = computed(() => {
   return buildDiagramConnectionPreviewLayers(
-    renderedConnectionLines.value,
+    visibleConnectionLines.value,
     activeNodeDrag.value
   )
 })
@@ -4937,14 +4937,6 @@ const getSelectionGlowStyle = (color: string) => {
     '--pgml-selection-shadow-far': `color-mix(in srgb, ${color} 24%, transparent)`
   }
 }
-const getReferenceRaceStyle = (color: string) => {
-  return {
-    '--pgml-reference-race-color': color,
-    '--pgml-reference-race-soft': `color-mix(in srgb, ${color} 32%, transparent)`,
-    '--pgml-reference-race-strong': `color-mix(in srgb, ${color} 68%, transparent)`,
-    '--pgml-reference-race-solid': `color-mix(in srgb, ${color} 88%, white 12%)`
-  }
-}
 const getNodeBorderColor = (node: CanvasNodeState) => {
   return node.kind === 'group'
     ? `color-mix(in srgb, ${node.color} 38%, var(--studio-node-border-neutral) 62%)`
@@ -7440,7 +7432,7 @@ watch(
     () => activeNodeDrag.value?.nodeId || null,
     () => activeNodeDrag.value?.deltaX || 0,
     () => activeNodeDrag.value?.deltaY || 0,
-    () => renderedConnectionLines.value.map(line => line.key).join('|')
+    () => activeNodeDrag.value ? renderedConnectionLines.value.map(line => line.key).join('|') : ''
   ],
   () => {
     syncDragConnectionPreviewPaths()
@@ -7871,71 +7863,13 @@ defineExpose<{
         </template>
       </div>
 
-      <svg
-        v-for="layer in connectionLineLayers"
-        :key="layer.zIndex"
-        data-connection-layer="true"
-        class="pointer-events-none absolute inset-0 h-full w-full overflow-visible"
-        :style="{ zIndex: layer.zIndex }"
-        viewBox="0 0 2600 1800"
-        preserveAspectRatio="none"
-      >
-        <path
-          v-for="line in layer.staticLines"
-          :key="line.key"
-          :class="line.animated ? 'pgml-reference-race-path' : undefined"
-          :d="line.path"
-          fill="none"
-          :stroke="line.color"
-          stroke-width="2"
-          :stroke-dasharray="line.dashPattern"
-          :style="line.animated ? getReferenceRaceStyle(line.color) : undefined"
-          :data-connection-key="line.key"
-          :data-connection-highlighted="line.animated ? 'true' : undefined"
-          stroke-linecap="square"
-          stroke-linejoin="miter"
-          opacity="0.9"
-        />
-        <path
-          v-for="line in layer.bridgedLines"
-          :key="`${line.key}:bridge-preview`"
-          :class="line.animated ? 'pgml-reference-race-path' : undefined"
-          :d="getConnectionDragPreviewPath(line)"
-          fill="none"
-          :stroke="line.color"
-          stroke-width="2"
-          :stroke-dasharray="line.dashPattern"
-          :style="line.animated ? getReferenceRaceStyle(line.color) : undefined"
-          :data-connection-key="line.key"
-          :data-connection-highlighted="line.animated ? 'true' : undefined"
-          stroke-linecap="square"
-          stroke-linejoin="miter"
-          opacity="0.9"
-        />
-        <g
-          v-if="activeNodeDrag && layer.translatedLines.length > 0"
-          data-connection-drag-preview="true"
-          :data-connection-drag-node="activeNodeDrag.nodeId"
-          :transform="`translate(${activeNodeDrag.deltaX} ${activeNodeDrag.deltaY})`"
-        >
-          <path
-            v-for="line in layer.translatedLines"
-            :key="`${line.key}:drag-preview`"
-            :class="line.animated ? 'pgml-reference-race-path' : undefined"
-            :d="line.path"
-            fill="none"
-            :stroke="line.color"
-            stroke-width="2"
-            :stroke-dasharray="line.dashPattern"
-            :style="line.animated ? getReferenceRaceStyle(line.color) : undefined"
-            :data-connection-key="line.key"
-            :data-connection-highlighted="line.animated ? 'true' : undefined"
-            stroke-linecap="square"
-            stroke-linejoin="miter"
-            opacity="0.9"
-          />
-        </g>
-      </svg>
+      <PgmlDiagramConnectionCanvas
+        :active-drag="activeNodeDrag"
+        :height="1800"
+        :layers="connectionCanvasLayers"
+        :preview-paths="dragPreviewPaths"
+        :width="2600"
+      />
     </div>
 
     <div
@@ -8725,20 +8659,6 @@ defineExpose<{
 </template>
 
 <style scoped>
-.pgml-reference-race-path {
-  stroke: var(--pgml-reference-race-solid);
-  stroke-width: 2px !important;
-  opacity: 1 !important;
-  stroke-dasharray: 14 10;
-  stroke-dashoffset: 0;
-  stroke-linecap: round;
-  animation: pgml-reference-race-line 0.58s linear infinite;
-  filter:
-    drop-shadow(0 0 6px var(--pgml-reference-race-soft))
-    drop-shadow(0 0 16px var(--pgml-reference-race-strong))
-    drop-shadow(0 0 28px var(--pgml-reference-race-strong));
-}
-
 .pgml-browser-search-match-row {
   box-shadow:
     inset 2px 0 0 color-mix(in srgb, var(--pgml-browser-match-color) 82%, transparent),
@@ -8756,12 +8676,6 @@ defineExpose<{
 @media (prefers-reduced-motion: reduce) {
   .pgml-browser-search-match-text {
     animation: none;
-  }
-}
-
-@keyframes pgml-reference-race-line {
-  to {
-    stroke-dashoffset: 24;
   }
 }
 
