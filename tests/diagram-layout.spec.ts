@@ -470,6 +470,137 @@ Properties "group:Core" {
   expect(layout[2]?.top || 0).toBeGreaterThan(layout[0]?.top || 0)
 })
 
+test('masonry can reduce the effective group column count when a later table is much taller', async ({ goto, page }) => {
+  await goto('/diagram')
+
+  const editor = getPgmlEditor(page)
+
+  await setPgmlEditorValue(editor, `TableGroup Core {
+  public.address
+  public.agency
+  public.contact
+  public.other
+  public.team
+  public.profile
+}
+
+Table public.address in Core {
+  id uuid [pk]
+  label text
+}
+
+Table public.agency in Core {
+  id uuid [pk]
+  label text
+}
+
+Table public.contact in Core {
+  id uuid [pk]
+  label text
+}
+
+Table public.other in Core {
+  id uuid [pk]
+  label text
+}
+
+Table public.team in Core {
+  id uuid [pk]
+  label text
+}
+
+Table public.profile in Core {
+  id uuid [pk]
+  legal_name text
+  legal_name_fr text
+  description text
+  description_fr text
+  status text
+  province text
+  municipality text
+  region text
+  classification text
+}
+
+Properties "group:Core" {
+  x: 180
+  y: 120
+  masonry: true
+  table_columns: 4
+}`)
+
+  const groupNode = page.locator('[data-node-anchor="group:Core"]')
+
+  await expect(groupNode).toBeVisible()
+
+  await expect.poll(async () => {
+    return groupNode.evaluate((element) => {
+      const content = element.querySelector('[data-group-content="group:Core"]')
+      const tables = Array.from(element.querySelectorAll('[data-group-content="group:Core"] [data-table-anchor]'))
+        .filter((entry): entry is HTMLElement => entry instanceof HTMLElement)
+        .map(table => ({
+          id: table.getAttribute('data-table-anchor') || '',
+          left: table.offsetLeft,
+          top: table.offsetTop
+        }))
+
+      if (!(content instanceof HTMLElement)) {
+        return null
+      }
+
+      return {
+        contentWidth: content.offsetWidth,
+        tables
+      }
+    })
+  }).toEqual({
+    contentWidth: 728,
+    tables: [
+      expect.objectContaining({
+        id: 'public.address',
+        left: 0,
+        top: 0
+      }),
+      expect.objectContaining({
+        id: 'public.agency',
+        left: 248,
+        top: 0
+      }),
+      expect.objectContaining({
+        id: 'public.contact',
+        left: 496,
+        top: 0
+      }),
+      expect.objectContaining({
+        id: 'public.other',
+        left: 0
+      }),
+      expect.objectContaining({
+        id: 'public.team',
+        left: 248
+      }),
+      expect.objectContaining({
+        id: 'public.profile',
+        left: 496
+      })
+    ]
+  })
+
+  const layout = await groupNode.evaluate((element) => {
+    return Array.from(element.querySelectorAll('[data-group-content="group:Core"] [data-table-anchor]'))
+      .filter((entry): entry is HTMLElement => entry instanceof HTMLElement)
+      .map(table => ({
+        id: table.getAttribute('data-table-anchor') || '',
+        left: table.offsetLeft,
+        top: table.offsetTop
+      }))
+  })
+
+  expect(layout[3]?.top || 0).toBeGreaterThan(layout[0]?.top || 0)
+  expect(layout[4]?.top || 0).toBeGreaterThan(layout[1]?.top || 0)
+  expect(layout[5]?.top || 0).toBeGreaterThan(layout[2]?.top || 0)
+})
+
 test('connection lines hit grouped table borders, render above the owning group, and avoid the group header band', async ({ goto, page }) => {
   await goto('/diagram')
 

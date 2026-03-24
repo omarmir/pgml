@@ -3,7 +3,7 @@ import { describe, expect, it } from 'vitest'
 import { buildTableGroupMasonryLayout } from '../../app/utils/pgml-diagram-canvas'
 
 describe('PGML diagram canvas utilities', () => {
-  it('packs tables in source order into the currently shortest masonry column', () => {
+  it('keeps the requested masonry column count when it produces the most compact layout', () => {
     const layout = buildTableGroupMasonryLayout([
       {
         id: 'public.roles',
@@ -43,6 +43,83 @@ describe('PGML diagram canvas utilities', () => {
       height: 90,
       id: 'public.tenants',
       x: 0,
+      y: 96
+    })
+  })
+
+  it('can reduce the effective masonry column count to compact a group with a late tall table', () => {
+    const layout = buildTableGroupMasonryLayout([
+      {
+        id: 'public.address',
+        height: 80
+      },
+      {
+        id: 'public.agency',
+        height: 80
+      },
+      {
+        id: 'public.contact',
+        height: 80
+      },
+      {
+        id: 'public.other',
+        height: 80
+      },
+      {
+        id: 'public.team',
+        height: 80
+      },
+      {
+        id: 'public.profile',
+        height: 320
+      }
+    ], 4, 232, 16)
+
+    expect(layout).toMatchObject({
+      columnCount: 3,
+      contentHeight: 416,
+      contentWidth: 728
+    })
+    expect(layout.placements['public.address']).toEqual({
+      columnIndex: 0,
+      height: 80,
+      id: 'public.address',
+      x: 0,
+      y: 0
+    })
+    expect(layout.placements['public.agency']).toEqual({
+      columnIndex: 1,
+      height: 80,
+      id: 'public.agency',
+      x: 248,
+      y: 0
+    })
+    expect(layout.placements['public.contact']).toEqual({
+      columnIndex: 2,
+      height: 80,
+      id: 'public.contact',
+      x: 496,
+      y: 0
+    })
+    expect(layout.placements['public.other']).toEqual({
+      columnIndex: 0,
+      height: 80,
+      id: 'public.other',
+      x: 0,
+      y: 96
+    })
+    expect(layout.placements['public.team']).toEqual({
+      columnIndex: 1,
+      height: 80,
+      id: 'public.team',
+      x: 248,
+      y: 96
+    })
+    expect(layout.placements['public.profile']).toEqual({
+      columnIndex: 2,
+      height: 320,
+      id: 'public.profile',
+      x: 496,
       y: 96
     })
   })
