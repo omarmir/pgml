@@ -29,6 +29,7 @@ const {
 }>()
 
 const emit = defineEmits<{
+  'after-leave': []
   'close': []
   'update:open': [value: boolean]
 }>()
@@ -48,6 +49,7 @@ const handleOpenChange = (nextValue: boolean) => {
     :title="title"
     :description="description"
     :ui="studioModalUi"
+    @after:leave="emit('after-leave')"
     @update:open="handleOpenChange"
   >
     <template #content>

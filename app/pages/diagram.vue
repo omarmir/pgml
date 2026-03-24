@@ -100,6 +100,10 @@ type ReferenceTargetItem = {
   value: string
 }
 
+type ReferenceActionField = 'referenceDeleteAction' | 'referenceUpdateAction'
+
+const defaultReferenceActionSelectValue = '__pgml_default_reference_action__'
+
 const beginnerFriendlyColumnTypePresets: Record<string, Omit<ReferenceTargetItem, 'value'>> = {
   bigint: {
     label: 'Large whole number',
@@ -755,7 +759,7 @@ const referenceRelationSymbolItems: ReferenceTargetItem[] = referenceRelationIte
 const referenceActionItems: ReferenceTargetItem[] = [
   {
     label: 'Default behavior',
-    value: '',
+    value: defaultReferenceActionSelectValue,
     description: 'Do not write an explicit clause. PostgreSQL keeps its default action.'
   },
   {
@@ -822,6 +826,16 @@ const getReferenceColumnItems = (tableFullName: string): ReferenceTargetItem[] =
     description: column.type
   })) || []
 }
+const getReferenceActionSelectValue = (value: string) => {
+  return value.length > 0 ? value : defaultReferenceActionSelectValue
+}
+const normalizeReferenceActionSelectValue = (value: unknown) => {
+  if (typeof value !== 'string') {
+    return ''
+  }
+
+  return value === defaultReferenceActionSelectValue ? '' : value
+}
 
 const openTableEditor = (tableId: string) => {
   if (hasBlockingSourceErrors.value) {
@@ -872,13 +886,21 @@ const openGroupCreator = () => {
 }
 
 const closeTableEditor = () => {
-  tableEditorDraft.value = null
   tableEditorOpen.value = false
 }
 
 const closeGroupEditor = () => {
-  groupEditorDraft.value = null
   groupEditorOpen.value = false
+}
+const handleTableEditorAfterLeave = () => {
+  if (!tableEditorOpen.value) {
+    tableEditorDraft.value = null
+  }
+}
+const handleGroupEditorAfterLeave = () => {
+  if (!groupEditorOpen.value) {
+    groupEditorDraft.value = null
+  }
 }
 
 const addTableDraftColumn = () => {
@@ -1009,6 +1031,23 @@ const updateTableDraftReferenceColumn = (columnId: string, value: string) => {
   }
 
   draftColumn.referenceColumn = value
+}
+const updateTableDraftReferenceAction = (
+  columnId: string,
+  field: ReferenceActionField,
+  value: unknown
+) => {
+  if (!tableEditorDraft.value) {
+    return
+  }
+
+  const draftColumn = tableEditorDraft.value.columns.find(column => column.id === columnId)
+
+  if (!draftColumn) {
+    return
+  }
+
+  draftColumn[field] = normalizeReferenceActionSelectValue(value)
 }
 
 const saveTableEditor = () => {
@@ -1507,6 +1546,7 @@ onBeforeUnmount(() => {
         surface-id="table-editor"
         width-class="max-w-5xl"
         body-class="grid max-h-[min(74vh,52rem)] gap-5 overflow-y-auto px-4 py-4"
+        @after-leave="handleTableEditorAfterLeave"
       >
         <div
           v-if="tableEditorDraft"
@@ -1829,7 +1869,7 @@ onBeforeUnmount(() => {
                   <label class="grid gap-1">
                     <span :class="studioCompactFieldKickerClass">On delete</span>
                     <USelect
-                      v-model="column.referenceDeleteAction"
+                      :model-value="getReferenceActionSelectValue(column.referenceDeleteAction)"
                       aria-label="Reference on delete action"
                       :items="referenceActionItems"
                       value-key="value"
@@ -1839,13 +1879,14 @@ onBeforeUnmount(() => {
                       variant="outline"
                       size="sm"
                       :ui="studioSelectUi"
+                      @update:model-value="updateTableDraftReferenceAction(column.id, 'referenceDeleteAction', $event)"
                     />
                   </label>
 
                   <label class="grid gap-1">
                     <span :class="studioCompactFieldKickerClass">On update</span>
                     <USelect
-                      v-model="column.referenceUpdateAction"
+                      :model-value="getReferenceActionSelectValue(column.referenceUpdateAction)"
                       aria-label="Reference on update action"
                       :items="referenceActionItems"
                       value-key="value"
@@ -1855,6 +1896,7 @@ onBeforeUnmount(() => {
                       variant="outline"
                       size="sm"
                       :ui="studioSelectUi"
+                      @update:model-value="updateTableDraftReferenceAction(column.id, 'referenceUpdateAction', $event)"
                     />
                   </label>
                 </div>
@@ -1889,6 +1931,7 @@ onBeforeUnmount(() => {
         :description="groupEditorDescription"
         surface-id="group-editor"
         body-class="grid max-h-[min(60vh,32rem)] gap-5 overflow-y-auto px-4 py-4"
+        @after-leave="handleGroupEditorAfterLeave"
       >
         <div
           v-if="groupEditorDraft"
@@ -1937,7 +1980,7 @@ onBeforeUnmount(() => {
               </label>
             </div>
 
-            <div class="grid gap-1">
+            <div class="grid content-start gap-1 self-start">
               <span :class="studioFieldKickerClass">Tables in this group</span>
               <USelectMenu
                 aria-label="Group tables"

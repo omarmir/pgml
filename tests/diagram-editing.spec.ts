@@ -161,6 +161,27 @@ Table public.orders {
   await expect.poll(async () => readPgmlEditorValue(editor)).toContain(`Table public.audit_log {`)
 })
 
+test('group editor top-aligns the table selector with the first field row', async ({ goto, page }) => {
+  await goto('/diagram')
+
+  await page.locator('[data-diagram-create-group="true"]').click()
+
+  const groupNameInput = page.locator('[data-group-editor-name="true"]')
+  const groupTablesSelect = page.getByLabel('Group tables', { exact: true })
+
+  await expect(groupNameInput).toBeVisible()
+  await expect(groupTablesSelect).toBeVisible()
+
+  const groupNameBox = await groupNameInput.boundingBox()
+  const groupTablesBox = await groupTablesSelect.boundingBox()
+
+  if (!groupNameBox || !groupTablesBox) {
+    throw new Error('Expected group editor controls to be measurable.')
+  }
+
+  expect(Math.abs(groupNameBox.y - groupTablesBox.y)).toBeLessThanOrEqual(6)
+})
+
 test('ungrouped tables render as floating nodes instead of an Ungrouped lane', async ({ goto, page }) => {
   await goto('/diagram')
 
@@ -242,6 +263,83 @@ test('table edit modal autocompletes default values from the column type', async
   await expect(page.getByText(/^true$/)).toBeVisible()
 })
 
+test('table edit modal keeps its content mounted until close animation finishes', async ({ goto, page }) => {
+  await goto('/diagram')
+
+  await page.locator('[data-table-edit-button="public.users"]').click()
+  await expect(page.locator('[data-table-editor-name="true"]')).toBeVisible()
+
+  await page.evaluate(() => {
+    const monitor = {
+      sawSurfaceWithoutField: false
+    }
+    const update = () => {
+      const surface = document.querySelector('[data-studio-modal-surface="table-editor"]')
+      const field = document.querySelector('[data-table-editor-name="true"]')
+
+      if (surface && !field) {
+        monitor.sawSurfaceWithoutField = true
+      }
+    }
+    const observer = new MutationObserver(update)
+
+    update()
+    observer.observe(document.body, {
+      attributes: true,
+      childList: true,
+      subtree: true
+    })
+
+    ;(window as Window & {
+      __tableEditorCloseMonitor?: {
+        observer: MutationObserver
+        sawSurfaceWithoutField: boolean
+        update: () => void
+      }
+    }).__tableEditorCloseMonitor = {
+      observer,
+      sawSurfaceWithoutField: monitor.sawSurfaceWithoutField,
+      update: () => {
+        update()
+        ;(window as Window & {
+          __tableEditorCloseMonitor?: {
+            observer: MutationObserver
+            sawSurfaceWithoutField: boolean
+            update: () => void
+          }
+        }).__tableEditorCloseMonitor!.sawSurfaceWithoutField = monitor.sawSurfaceWithoutField
+      }
+    }
+  })
+
+  const tableEditorSurface = page.locator('[data-studio-modal-surface="table-editor"]')
+
+  await tableEditorSurface.getByRole('button', { name: 'Cancel', exact: true }).click()
+  await expect(tableEditorSurface).toHaveCount(0)
+
+  const sawSurfaceWithoutField = await page.evaluate(() => {
+    const tableEditorWindow = window as Window & {
+      __tableEditorCloseMonitor?: {
+        observer: MutationObserver
+        sawSurfaceWithoutField: boolean
+        update: () => void
+      }
+    }
+    const monitor = tableEditorWindow.__tableEditorCloseMonitor
+
+    if (!monitor) {
+      throw new Error('Expected table editor close monitor to exist.')
+    }
+
+    monitor.update()
+    monitor.observer.disconnect()
+
+    return monitor.sawSurfaceWithoutField
+  })
+
+  expect(sawSurfaceWithoutField).toBe(false)
+})
+
 test('table edit modal explains relationship direction and uses searchable reference selectors', async ({ goto, page }) => {
   await goto('/diagram')
 
@@ -276,6 +374,55 @@ test('table edit modal explains relationship direction and uses searchable refer
   await page.locator('[data-table-editor-save="true"]').dispatchEvent('click')
 
   await expect.poll(async () => readPgmlEditorValue(editor)).toMatch(/role_id uuid \[not null, ref: < public\.roles\.key\]/)
+})
+
+test('table edit modal keeps default reference actions selectable', async ({ goto, page }) => {
+  await goto('/diagram')
+
+  const editor = getPgmlEditor(page)
+  const pageErrors: string[] = []
+
+  page.on('pageerror', (error) => {
+    pageErrors.push(error.message)
+  })
+
+  await setPgmlEditorValue(editor, `Table public.users {
+  id uuid [pk]
+}
+
+Table public.orders {
+  id uuid [pk]
+  customer_id uuid [ref: > public.users.id]
+}`)
+  await expect(page.locator('[data-pgml-diagnostics="true"]')).toHaveCount(0)
+
+  await page.locator('[data-table-edit-button="public.orders"]').click()
+
+  const customerIdColumn = page.locator('[data-table-editor-column]').filter({ hasText: 'customer_id' })
+  const onDelete = customerIdColumn.getByLabel('Reference on delete action', { exact: true })
+  const onUpdate = customerIdColumn.getByLabel('Reference on update action', { exact: true })
+
+  await expect(onDelete).toContainText('Default behavior')
+  await expect(onUpdate).toContainText('Default behavior')
+  expect(pageErrors).toEqual([])
+
+  await onDelete.click()
+  await page.locator('[role="option"]').filter({ hasText: 'Cascade' }).click()
+  await expect(onDelete).toContainText('Cascade')
+
+  await onDelete.click()
+  await page.locator('[role="option"]').filter({ hasText: 'Default behavior' }).click()
+  await expect(onDelete).toContainText('Default behavior')
+
+  await onUpdate.click()
+  await page.locator('[role="option"]').filter({ hasText: 'Restrict' }).click()
+  await expect(onUpdate).toContainText('Restrict')
+
+  await page.locator('[data-table-editor-save="true"]').dispatchEvent('click')
+
+  await expect.poll(async () => readPgmlEditorValue(editor)).toContain('customer_id uuid [ref: > public.users.id, update: restrict]')
+  await expect.poll(async () => readPgmlEditorValue(editor)).not.toContain('delete:')
+  expect(pageErrors).toEqual([])
 })
 
 test('table schema badges stay consistent across groups for the same schema', async ({ goto, page }) => {
