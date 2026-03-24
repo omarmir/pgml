@@ -253,6 +253,7 @@ const pan: Ref<{ x: number, y: number }> = ref({
   x: 30,
   y: 36
 })
+const isViewportGpuAccelerated: Ref<boolean> = ref(false)
 const snapToGrid: Ref<boolean> = ref(true)
 const selectedNodeId: Ref<string | null> = ref(null)
 const selectedCanvasSelection: Ref<CanvasSelection | null> = ref(null)
@@ -279,6 +280,15 @@ const resetExportCopyFeedback = () => {
   }
 }
 const { start: scheduleExportCopyFeedbackReset, stop: stopExportCopyFeedbackReset } = useTimeoutFn(resetExportCopyFeedback, 1800, {
+  immediate: false
+})
+const resetViewportGpuAcceleration = () => {
+  isViewportGpuAccelerated.value = false
+}
+const {
+  start: scheduleViewportGpuAccelerationReset,
+  stop: stopViewportGpuAccelerationReset
+} = useTimeoutFn(resetViewportGpuAcceleration, 140, {
   immediate: false
 })
 const exportTypeStyleItems = [
@@ -4256,6 +4266,14 @@ const scheduleViewportTransformSync = () => {
 const flushViewportTransformSync = () => {
   viewportTransformBatcher.flush()
 }
+const beginViewportGpuAcceleration = () => {
+  stopViewportGpuAccelerationReset()
+  isViewportGpuAccelerated.value = true
+}
+const endViewportGpuAcceleration = () => {
+  stopViewportGpuAccelerationReset()
+  isViewportGpuAccelerated.value = false
+}
 const setViewportPan = (nextPan: { x: number, y: number }) => {
   pan.value = nextPan
   scheduleViewportTransformSync()
@@ -4280,9 +4298,16 @@ const canvasViewportStyle = {
   backgroundImage: 'radial-gradient(circle at center, var(--studio-canvas-dot) 1px, transparent 1px)',
   backgroundSize: '18px 18px'
 }
-const canvasPlaneStyle: CSSProperties = {
-  transform: `translate(var(--pgml-plane-pan-x, ${pan.value.x}px), var(--pgml-plane-pan-y, ${pan.value.y}px)) scale(var(--pgml-plane-scale, ${scale.value}))`
-}
+const canvasPlaneStyle = computed<CSSProperties>(() => {
+  const translate = isViewportGpuAccelerated.value
+    ? `translate3d(var(--pgml-plane-pan-x, ${pan.value.x}px), var(--pgml-plane-pan-y, ${pan.value.y}px), 0)`
+    : `translate(var(--pgml-plane-pan-x, ${pan.value.x}px), var(--pgml-plane-pan-y, ${pan.value.y}px))`
+
+  return {
+    transform: `${translate} scale(var(--pgml-plane-scale, ${scale.value}))`,
+    willChange: isViewportGpuAccelerated.value ? 'transform' : undefined
+  }
+})
 const floatingPanelStyle = {
   borderColor: 'var(--studio-control-border)',
   backgroundColor: 'var(--studio-control-bg)',
@@ -5932,6 +5957,7 @@ const getTrackedTouch = (touches: TouchList) => {
 const resetTouchInteraction = () => {
   touchPanSession.value = null
   touchPinchSession.value = null
+  endViewportGpuAcceleration()
 }
 
 const suppressLayoutObserver = (durationMs = 180) => {
@@ -6273,11 +6299,13 @@ const startPan = (event: PointerEvent) => {
   startPointerSession({
     frameThrottle: true,
     onMove: (moveEvent) => {
+      beginViewportGpuAcceleration()
       setViewportPan({
         x: origin.panX + moveEvent.clientX - origin.x,
         y: origin.panY + moveEvent.clientY - origin.y
       })
-    }
+    },
+    onEnd: endViewportGpuAcceleration
   })
 }
 
@@ -6294,6 +6322,7 @@ const handleTouchStart = (event: TouchEvent) => {
     }
 
     event.preventDefault()
+    beginViewportGpuAcceleration()
     startTouchPinchSession(gesture)
     return
   }
@@ -6328,6 +6357,7 @@ const handleTouchMove = (event: TouchEvent) => {
     }
 
     event.preventDefault()
+    beginViewportGpuAcceleration()
     const transform = getDiagramPinchViewportTransform({
       currentCenter: gesture.center,
       currentDistance: gesture.distance,
@@ -6351,6 +6381,7 @@ const handleTouchMove = (event: TouchEvent) => {
   }
 
   event.preventDefault()
+  beginViewportGpuAcceleration()
   setViewportPan({
     x: touchPanSession.value.panX + touch.clientX - touchPanSession.value.clientX,
     y: touchPanSession.value.panY + touch.clientY - touchPanSession.value.clientY
@@ -6550,6 +6581,8 @@ const handleEditGroup = (groupName: string) => {
 
 const handleWheel = (event: WheelEvent) => {
   event.preventDefault()
+  beginViewportGpuAcceleration()
+  scheduleViewportGpuAccelerationReset()
   zoomBy(event.deltaY > 0 ? -1 : 1, getViewportRelativePoint(event.clientX, event.clientY))
 }
 
@@ -6669,6 +6702,7 @@ onMounted(() => {
 
 onBeforeUnmount(() => {
   stopExportCopyFeedbackReset()
+  stopViewportGpuAccelerationReset()
   resetTouchInteraction()
   viewportTransformBatcher.cancel()
   connectionRefreshBatcher.cancel()
