@@ -70,6 +70,7 @@ type WorkerConnectionGeometry = {
   nodeAnchorId: string | null
   ownerNodeId: string | null
   rowKey: string | null
+  tableBounds: WorkerMeasuredBounds | null
   tableId: string | null
 }
 
@@ -784,6 +785,22 @@ const buildConnectionLines = (input: WorkerRouteRequest) => {
 
       if (geometry.tableId && geometry.locator?.attribute === 'data-table-anchor') {
         maps.tableById.set(geometry.tableId, geometry)
+        continue
+      }
+
+      if (geometry.tableId && geometry.tableBounds) {
+        maps.tableById.set(geometry.tableId, {
+          ...geometry,
+          bounds: geometry.tableBounds,
+          identity: `table:${geometry.tableId}`,
+          isColumnAnchor: false,
+          isColumnLabelAnchor: false,
+          locator: {
+            attribute: 'data-table-anchor',
+            value: geometry.tableId
+          },
+          rowKey: null
+        })
       }
     }
 

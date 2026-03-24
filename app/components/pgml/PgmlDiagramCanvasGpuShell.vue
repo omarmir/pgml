@@ -1,0 +1,2886 @@
+<script setup lang="ts">
+import type { Ref } from 'vue'
+import { computed, onBeforeUnmount, ref, watch } from 'vue'
+import { studioSelectUi, studioSwitchUi } from '~/constants/ui'
+import PgmlDiagramGpuScene from '~/components/pgml/PgmlDiagramGpuScene.vue'
+import { buildTableGroupMasonryLayout, type TableAttachment, type TableAttachmentFlag, type TableAttachmentKind } from '~/utils/pgml-diagram-canvas'
+import {
+  defaultPgmlTableWidthScale,
+  normalizePgmlTableWidthScale,
+  pgmlTableWidthScaleValues
+} from '~/utils/pgml-node-properties'
+import {
+  diagramDividerColor,
+  diagramGroupHeaderHeight,
+  diagramGroupHorizontalPadding,
+  diagramGroupTableGap,
+  diagramGroupTableWidth,
+  diagramGroupVerticalPadding,
+  diagramObjectCollapsedHeight,
+  diagramLabelTextColor,
+  diagramMutedTextColor,
+  diagramObjectHeaderHeight,
+  diagramObjectMinHeight,
+  diagramPalette,
+  diagramPanelSurfaceColor,
+  diagramRailColor,
+  diagramRowSurfaceColor,
+  diagramSurfaceColor,
+  diagramTableHeaderHeight,
+  diagramTableRowHeight,
+  diagramTableSurfaceColor,
+  diagramTextColor,
+  getDiagramSchemaBadgeColor,
+  getStoredGroupId,
+  normalizeDiagramNodeLayoutProperties,
+  estimateDiagramTableHeight,
+  type DiagramGpuConnectionLine,
+  type DiagramGpuGroupNode,
+  type DiagramGpuImpactTarget,
+  type DiagramGpuNodeLayoutState,
+  type DiagramGpuObjectNode,
+  type DiagramGpuRow,
+  type DiagramGpuSelection,
+  type DiagramGpuTableCard,
+  type DiagramGpuWorldBounds
+} from '~/utils/diagram-gpu-scene'
+import type {
+  PgmlAffects,
+  PgmlColumn,
+  PgmlConstraint,
+  PgmlCustomType,
+  PgmlIndex,
+  PgmlNodeProperties,
+  PgmlReference,
+  PgmlRoutine,
+  PgmlSchemaModel,
+  PgmlSequence,
+  PgmlTable,
+  PgmlSourceRange,
+  PgmlTrigger
+} from '~/utils/pgml'
+import { getOrderedGroupTables } from '~/utils/pgml'
+import {
+  defaultStudioMobilePanelTab,
+  type DiagramPanelTab,
+  type StudioMobileCanvasView
+} from '~/utils/studio-workspace'
+import {
+  getStudioStateButtonClass,
+  getStudioTabButtonClass,
+  joinStudioClasses,
+  studioButtonClasses,
+  studioColorInputClass,
+  studioCompactInputClass,
+  studioToolbarButtonClass
+} from '~/utils/uiStyles'
+
+type DiagramCanvasExposed = {
+  getScale: () => number
+  resetView: () => void
+  zoomBy: (direction: 1 | -1) => void
+}
+
+type MeasuredBounds = {
+  bottom: number
+  height: number
+  left: number
+  right: number
+  top: number
+  width: number
+}
+
+type ConnectionEndpointLocator = {
+  attribute: string
+  value: string
+} | null
+
+type RoutingWorkerGeometryInput = {
+  bounds: MeasuredBounds
+  groupNodeId: string | null
+  identity: string
+  isColumnAnchor: boolean
+  isColumnLabelAnchor: boolean
+  locator: ConnectionEndpointLocator
+  nodeAnchorId: string | null
+  ownerNodeId: string | null
+  rowKey: string | null
+  tableBounds: MeasuredBounds | null
+  tableId: string | null
+}
+
+type RoutingWorkerDescriptorInput = {
+  animated: boolean
+  color: string
+  dashPattern: string
+  dashed: boolean
+  fromGeometry: RoutingWorkerGeometryInput
+  key: string
+  selectedForeground: boolean
+  toGeometry: RoutingWorkerGeometryInput
+}
+
+type RoutingWorkerResponse = {
+  lines: DiagramGpuConnectionLine[]
+  requestId: number
+}
+
+type TableRowRecord = {
+  key: string
+  row: DiagramGpuRow
+}
+
+type TableAttachmentState = {
+  attachedObjectIds: Set<string>
+  attachmentsByTableId: Record<string, TableAttachment[]>
+}
+
+const {
+  exportBaseName = 'pgml-schema',
+  exportPreferenceKey = 'name:pgml-schema',
+  hasBlockingSourceErrors = false,
+  mobileActiveView = null,
+  mobilePanelTab = null,
+  model,
+  viewportResetKey = 0
+} = defineProps<{
+  exportBaseName?: string
+  exportPreferenceKey?: string
+  hasBlockingSourceErrors?: boolean
+  mobileActiveView?: StudioMobileCanvasView | null
+  mobilePanelTab?: DiagramPanelTab | null
+  model: PgmlSchemaModel
+  viewportResetKey?: number
+}>()
+
+const emit = defineEmits<{
+  createGroup: []
+  createTable: [groupName: string | null]
+  editGroup: [groupName: string]
+  editTable: [tableId: string]
+  focusSource: [sourceRange: PgmlSourceRange]
+  nodePropertiesChange: [properties: Record<string, PgmlNodeProperties>]
+  panelTabChange: [tab: DiagramPanelTab]
+}>()
+
+const sceneRef: Ref<DiagramCanvasExposed | null> = ref(null)
+const selectedSelection: Ref<DiagramGpuSelection | null> = ref(null)
+const activePanelTab: Ref<DiagramPanelTab> = ref('inspector')
+const isDesktopSidePanelOpen: Ref<boolean> = ref(true)
+const showRelationshipLines: Ref<boolean> = ref(true)
+const snapToGrid: Ref<boolean> = ref(true)
+const currentScale: Ref<number> = ref(1)
+const connectionLines: Ref<DiagramGpuConnectionLine[]> = ref([])
+const groupLayoutStates: Ref<Record<string, DiagramGpuGroupNode>> = ref({})
+const floatingTableStates: Ref<Record<string, DiagramGpuNodeLayoutState>> = ref({})
+const objectLayoutStates: Ref<Record<string, DiagramGpuObjectNode>> = ref({})
+
+let routingWorker: Worker | null = null
+let routingWorkerRequestId = 0
+let latestConnectionRequestId = 0
+const pendingRoutingRequests = new Map<number, {
+  reject: (reason?: unknown) => void
+  resolve: (lines: DiagramGpuConnectionLine[]) => void
+}>()
+
+const panelToggleButtonClass = joinStudioClasses(studioButtonClasses.secondary, studioToolbarButtonClass)
+const sidePanelActionButtonClass = joinStudioClasses(studioButtonClasses.secondary, studioToolbarButtonClass)
+const sidePanelCloseButtonClass = joinStudioClasses(studioButtonClasses.iconGhost, 'h-7 w-7 justify-center px-0')
+const tableWidthScaleItems = pgmlTableWidthScaleValues.map((value) => {
+  return {
+    label: `${value}x`,
+    value
+  }
+})
+const attachmentKindOrder: Record<TableAttachmentKind, number> = {
+  Constraint: 1,
+  Function: 3,
+  Index: 0,
+  Procedure: 4,
+  Sequence: 5,
+  Trigger: 2
+}
+const attachmentKindColors: Record<TableAttachmentKind, string> = {
+  Constraint: '#fb7185',
+  Function: '#c084fc',
+  Index: '#38bdf8',
+  Procedure: '#f97316',
+  Sequence: '#eab308',
+  Trigger: '#22c55e'
+}
+const objectKindColors: Record<string, string> = {
+  'Custom Type': '#14b8a6',
+  Function: '#c084fc',
+  Procedure: '#f97316',
+  Sequence: '#eab308',
+  Trigger: '#22c55e'
+}
+
+const objectColumnGapX = 300
+const objectRowGapY = 188
+
+const downloadBlob = (blob: Blob, fileName: string) => {
+  const objectUrl = URL.createObjectURL(blob)
+  const anchor = document.createElement('a')
+
+  anchor.href = objectUrl
+  anchor.download = fileName
+  anchor.click()
+  URL.revokeObjectURL(objectUrl)
+}
+
+const isMobileCanvasShell = computed(() => mobileActiveView !== null)
+const isMobilePanelView = computed(() => mobileActiveView === 'panel')
+const isDiagramPanelVisible = computed(() => {
+  if (isMobileCanvasShell.value) {
+    return isMobilePanelView.value
+  }
+
+  return isDesktopSidePanelOpen.value
+})
+const shouldShowDiagramPanelToggle = computed(() => !isMobileCanvasShell.value)
+const shouldShowZoomToolbar = computed(() => !isMobilePanelView.value)
+
+const normalizeReferenceValue = (value: string) => {
+  return value.replaceAll('"', '').trim().toLowerCase()
+}
+
+const getMetadataValue = (metadata: Array<{ key: string, value: string }>, key: string) => {
+  const normalizedKey = key.trim().toLowerCase()
+
+  return metadata.find(entry => entry.key.trim().toLowerCase() === normalizedKey)?.value || null
+}
+
+const uniqueValues = <T,>(values: T[]) => {
+  return Array.from(new Set(values))
+}
+
+const cleanForSearch = (value: string) => value.toLowerCase().replaceAll(/[^\w.]+/g, ' ')
+
+const sanitizeReferenceValue = (value: string) => {
+  return value
+    .trim()
+    .replaceAll('"', '')
+    .replaceAll('\'', '')
+    .replace(/[(),;]/g, '')
+}
+
+const buildTableReferenceLookup = (tables: PgmlTable[]) => {
+  const bareNameMatches = tables.reduce<Record<string, string[]>>((entries, table) => {
+    const bareName = table.name.toLowerCase()
+
+    if (!entries[bareName]) {
+      entries[bareName] = []
+    }
+
+    entries[bareName]?.push(table.fullName)
+    return entries
+  }, {})
+  const referenceLookup = new Map<string, string>()
+
+  tables.forEach((table) => {
+    referenceLookup.set(table.fullName.toLowerCase(), table.fullName)
+
+    if (table.schema === 'public') {
+      referenceLookup.set(table.name.toLowerCase(), table.fullName)
+    }
+  })
+
+  Object.entries(bareNameMatches).forEach(([bareName, fullNames]) => {
+    if (fullNames.length === 1) {
+      referenceLookup.set(bareName, fullNames[0] || '')
+    }
+  })
+
+  return referenceLookup
+}
+
+const tableReferenceLookup = computed(() => buildTableReferenceLookup(model.tables))
+
+const resolveTableIdentifier = (value: string) => {
+  const normalizedValue = sanitizeReferenceValue(value).toLowerCase()
+
+  if (!normalizedValue) {
+    return null
+  }
+
+  const directMatch = tableReferenceLookup.value.get(normalizedValue)
+
+  if (directMatch) {
+    return directMatch
+  }
+
+  return model.tables.find(table => table.name.toLowerCase() === normalizedValue)?.fullName || null
+}
+
+const resolveTableIdsFromValue = (
+  value: string,
+  defaultTableId: string | null = null
+) => {
+  const normalizedValue = sanitizeReferenceValue(value)
+
+  if (!normalizedValue) {
+    return []
+  }
+
+  const parts = normalizedValue.split('.')
+
+  if (
+    parts.length === 2
+    && defaultTableId
+    && ['new', 'old'].includes((parts[0] || '').toLowerCase())
+  ) {
+    return [defaultTableId]
+  }
+
+  if (parts.length === 3) {
+    const tableId = resolveTableIdentifier(`${parts[0]}.${parts[1]}`)
+
+    return tableId ? [tableId] : []
+  }
+
+  if (parts.length === 2) {
+    const fullTableMatch = resolveTableIdentifier(`${parts[0]}.${parts[1]}`)
+
+    if (fullTableMatch) {
+      return [fullTableMatch]
+    }
+
+    const matchingTable = model.tables.find((table) => {
+      return table.name.toLowerCase() === (parts[0] || '').toLowerCase()
+    })
+
+    if (matchingTable && matchingTable.columns.some(column => column.name.toLowerCase() === (parts[1] || '').toLowerCase())) {
+      return [matchingTable.fullName]
+    }
+  }
+
+  const directTable = resolveTableIdentifier(normalizedValue)
+
+  if (directTable) {
+    return [directTable]
+  }
+
+  if (defaultTableId) {
+    const defaultTable = model.tables.find(table => table.fullName === defaultTableId)
+
+    if (defaultTable?.columns.some(column => column.name.toLowerCase() === normalizedValue.toLowerCase())) {
+      return [defaultTableId]
+    }
+  }
+
+  return []
+}
+
+const getTableIdsFromValues = (values: string[], defaultTableId: string | null = null) => {
+  return uniqueValues(values.flatMap(value => resolveTableIdsFromValue(value, defaultTableId)))
+}
+
+const inferSourceTableIds = (source: string, defaultTableId: string | null = null) => {
+  const values: string[] = []
+
+  Array.from(source.matchAll(/\b(?:insert\s+into|update|delete\s+from|from|join|on|owned\s+by)\s+([a-zA-Z_"][\w."]*)/gi)).forEach((match) => {
+    const identifier = match[1] || ''
+
+    if (identifier.length > 0) {
+      values.push(identifier)
+    }
+  })
+
+  Array.from(source.matchAll(/\b(?:NEW|OLD)\.([a-zA-Z_]\w*)/g)).forEach((match) => {
+    const columnName = match[1] || ''
+
+    if (columnName.length > 0) {
+      values.push(`NEW.${columnName}`)
+    }
+  })
+
+  return getTableIdsFromValues(values, defaultTableId)
+}
+
+const getUniqueImpactTargets = (targets: DiagramGpuImpactTarget[]) => {
+  const seen = new Set<string>()
+
+  return targets.filter((target) => {
+    const key = `${target.tableId}:${target.columnName || '*'}`
+
+    if (seen.has(key)) {
+      return false
+    }
+
+    seen.add(key)
+    return true
+  })
+}
+
+const inferColumnsFromText = (
+  tableId: string,
+  value: string
+) => {
+  const table = model.tables.find(entry => entry.fullName === tableId)
+
+  if (!table) {
+    return []
+  }
+
+  const haystack = cleanForSearch(value)
+
+  return table.columns
+    .filter((column) => {
+      const variants = uniqueValues([
+        cleanForSearch(column.name),
+        cleanForSearch(`${table.name}.${column.name}`),
+        cleanForSearch(`${table.fullName}.${column.name}`)
+      ])
+
+      return variants.some(variant => variant.length > 0 && haystack.includes(variant))
+    })
+    .map(column => column.name)
+}
+
+const getImpactTargetsFromValues = (
+  values: string[],
+  defaultTableId: string | null = null
+) => {
+  return getUniqueImpactTargets(values.flatMap((value) => {
+    const tableIds = resolveTableIdsFromValue(value, defaultTableId)
+    const normalizedValue = sanitizeReferenceValue(value)
+    const parts = normalizedValue.split('.')
+    const inferredColumnName = parts.length > 0 ? parts.at(-1) || null : null
+
+    return tableIds.flatMap((tableId) => {
+      const table = model.tables.find(entry => entry.fullName === tableId)
+      const matchedColumn = inferredColumnName && table?.columns.some(column => column.name.toLowerCase() === inferredColumnName.toLowerCase())
+        ? table.columns.find(column => column.name.toLowerCase() === inferredColumnName.toLowerCase())?.name || null
+        : null
+
+      return [{
+        columnName: matchedColumn,
+        tableId
+      } satisfies DiagramGpuImpactTarget]
+    })
+  }))
+}
+
+const getRoutineNameSearchKeys = (value: string) => {
+  return uniqueValues([
+    cleanForSearch(value),
+    cleanForSearch(value.split('.').at(-1) || value)
+  ]).filter(entry => entry.length > 0)
+}
+
+const inferRoutineTargets = (routine: PgmlRoutine) => {
+  const affectValues = routine.affects
+    ? [
+        ...routine.affects.writes,
+        ...routine.affects.sets,
+        ...routine.affects.dependsOn,
+        ...routine.affects.reads,
+        ...routine.affects.uses,
+        ...routine.affects.ownedBy
+      ]
+    : []
+  const sourceTableIds = routine.source
+    ? inferSourceTableIds(routine.source)
+    : []
+  const tableIds = uniqueValues([
+    ...getTableIdsFromValues(affectValues),
+    ...sourceTableIds,
+    ...getRoutineTableIds(routine)
+  ])
+
+  return tableIds.length > 0
+    ? tableIds.map((tableId) => {
+        const detailColumns = inferColumnsFromText(tableId, `${routine.signature} ${routine.details.join(' ')} ${routine.source || ''}`)
+
+        if (detailColumns.length > 0) {
+          return detailColumns.map((columnName) => ({
+            columnName,
+            tableId
+          }))
+        }
+
+        return [{
+          columnName: null,
+          tableId
+        }]
+      }).flat()
+    : []
+}
+
+const inferTriggerTargets = (tableId: string, trigger: PgmlTrigger) => {
+  const explicitTargets = trigger.affects
+    ? getImpactTargetsFromValues([
+        ...trigger.affects.writes,
+        ...trigger.affects.sets,
+        ...trigger.affects.dependsOn,
+        ...trigger.affects.reads,
+        ...trigger.affects.uses,
+        ...trigger.affects.ownedBy
+      ], tableId)
+    : []
+  const sourceTargets = trigger.source
+    ? getImpactTargetsFromValues(inferSourceTableIds(trigger.source, tableId), tableId)
+    : []
+  const matchedColumns = inferColumnsFromText(tableId, `${trigger.details.join(' ')} ${trigger.source || ''}`)
+
+  if (matchedColumns.length === 0) {
+    return getUniqueImpactTargets([
+      ...explicitTargets,
+      ...sourceTargets,
+      {
+        columnName: null,
+        tableId
+      }
+    ])
+  }
+
+  return getUniqueImpactTargets([
+    ...explicitTargets,
+    ...sourceTargets,
+    ...matchedColumns.map((columnName) => ({
+      columnName,
+      tableId
+    }))
+  ])
+}
+
+const inferIndexTargets = (index: PgmlIndex) => {
+  const tableId = resolveTableIdentifier(index.tableName)
+
+  if (!tableId) {
+    return []
+  }
+
+  const explicitTargets = index.columns.map((columnName) => ({
+    columnName,
+    tableId
+  }))
+
+  return explicitTargets.length > 0
+    ? getUniqueImpactTargets(explicitTargets)
+    : [{
+        columnName: null,
+        tableId
+      }]
+}
+
+const inferConstraintTargets = (constraint: PgmlConstraint) => {
+  const tableId = resolveTableIdentifier(constraint.tableName)
+
+  if (!tableId) {
+    return []
+  }
+
+  const matchedColumns = inferColumnsFromText(tableId, constraint.expression)
+
+  if (matchedColumns.length === 0) {
+    return [{
+      columnName: null,
+      tableId
+    }]
+  }
+
+  return getUniqueImpactTargets(matchedColumns.map((columnName) => ({
+    columnName,
+    tableId
+  })))
+}
+
+const inferSequenceTargets = (sequence: PgmlSequence) => {
+  const explicitTargets = sequence.affects
+    ? getImpactTargetsFromValues([
+        ...sequence.affects.ownedBy,
+        ...sequence.affects.writes,
+        ...sequence.affects.dependsOn
+      ])
+    : []
+  const sourceTargets = sequence.source
+    ? getImpactTargetsFromValues(inferSourceTableIds(sequence.source))
+    : []
+  const modifierTargets = model.tables.flatMap((table) => {
+    return table.columns
+      .filter((column) => {
+        return column.modifiers.some(modifier => modifier.includes(sequence.name))
+      })
+      .map((column) => {
+        return {
+          columnName: column.name,
+          tableId: table.fullName
+        }
+      })
+  })
+
+  return getUniqueImpactTargets([...explicitTargets, ...sourceTargets, ...modifierTargets])
+}
+
+const inferCustomTypeTargets = (customType: PgmlCustomType) => {
+  const targets = model.tables.flatMap((table) => {
+    return table.columns
+      .filter(column => column.type.includes(customType.name))
+      .map((column) => {
+        return {
+          columnName: column.name,
+          tableId: table.fullName
+        }
+      })
+  })
+
+  return getUniqueImpactTargets(targets)
+}
+
+const groupSourceRangeById = computed(() => {
+  return model.groups.reduce<Record<string, PgmlSourceRange | undefined>>((entries, group) => {
+    entries[getStoredGroupId(group.name)] = group.sourceRange
+    return entries
+  }, {})
+})
+
+const tableGroupById = computed(() => {
+  return model.tables.reduce<Record<string, string | null>>((entries, table) => {
+    entries[table.fullName] = table.groupName || null
+    return entries
+  }, {})
+})
+
+const isEntityDirectlyVisible = (id: string) => model.nodeProperties[id]?.visible !== false
+
+const resolveTableIds = (values: string[]) => {
+  const nextIds: string[] = []
+
+  values.forEach((value) => {
+    const normalizedValue = normalizeReferenceValue(value)
+
+    model.tables.forEach((table) => {
+      const aliases = uniqueValues([
+        normalizeReferenceValue(table.fullName),
+        normalizeReferenceValue(table.name),
+        normalizeReferenceValue(`${table.schema}.${table.name}`)
+      ])
+
+      if (aliases.includes(normalizedValue) || aliases.some(alias => normalizedValue.endsWith(alias))) {
+        nextIds.push(table.fullName)
+      }
+    })
+  })
+
+  return uniqueValues(nextIds)
+}
+
+const getRoutineTableIds = (routine: PgmlRoutine) => {
+  const affects = routine.affects
+
+  if (!affects) {
+    return []
+  }
+
+  return resolveTableIds([
+    ...affects.calls,
+    ...affects.dependsOn,
+    ...affects.ownedBy,
+    ...affects.reads,
+    ...affects.sets,
+    ...affects.uses,
+    ...affects.writes
+  ])
+}
+
+const triggerTableIdsByRoutineName = computed(() => {
+  const mapping = new Map<string, string[]>()
+
+  model.triggers.forEach((trigger) => {
+    const routineName = getMetadataValue(trigger.metadata, 'function')
+
+    if (!routineName) {
+      return
+    }
+
+    const normalizedValue = normalizeReferenceValue(routineName.split('.').at(-1) || routineName)
+    const nextIds = mapping.get(normalizedValue) || []
+    nextIds.push(...resolveTableIds([trigger.tableName]))
+    mapping.set(normalizedValue, uniqueValues(nextIds))
+  })
+
+  return mapping
+})
+
+const getSequenceOwnedTableIds = (sequence: PgmlSequence) => {
+  const explicitOwnedBy = sequence.affects?.ownedBy || []
+  const metadataOwnedBy = getMetadataValue(sequence.metadata, 'owned_by')
+
+  return resolveTableIds(metadataOwnedBy ? [metadataOwnedBy, ...explicitOwnedBy] : explicitOwnedBy)
+}
+
+const buildIndexSubtitle = (index: { columns: string[], type: string }) => {
+  const parts = [index.type.toUpperCase()]
+
+  if (index.columns.length > 0) {
+    parts.push(index.columns.join(', '))
+  }
+
+  return parts.join(' · ')
+}
+
+const buildTriggerSubtitle = (trigger: PgmlTrigger) => {
+  const timing = getMetadataValue(trigger.metadata, 'timing')
+  const events = (getMetadataValue(trigger.metadata, 'events') || '')
+    .replace(/^\[(.*)\]$/, '$1')
+    .split(',')
+    .map(entry => entry.trim())
+    .filter(entry => entry.length > 0)
+  const level = getMetadataValue(trigger.metadata, 'level')
+  const parts: string[] = []
+
+  if (timing) {
+    parts.push(timing.toUpperCase())
+  }
+
+  if (events.length > 0) {
+    parts.push(events.map(eventName => eventName.toUpperCase()).join(' / '))
+  }
+
+  if (level) {
+    parts.push(level.toUpperCase())
+  }
+
+  return parts.join(' · ') || `On ${trigger.tableName}`
+}
+
+const buildSequenceSubtitle = (sequence: PgmlSequence) => {
+  const ownedBy = getMetadataValue(sequence.metadata, 'owned_by')
+
+  if (ownedBy) {
+    return `Owned by ${ownedBy}`
+  }
+
+  return 'Sequence'
+}
+
+const tableAttachmentState = computed<TableAttachmentState>(() => {
+  const attachmentsByTableId: Record<string, TableAttachment[]> = {}
+  const attachedObjectIds = new Set<string>()
+  const addAttachment = (attachment: TableAttachment) => {
+    if (!attachmentsByTableId[attachment.tableId]) {
+      attachmentsByTableId[attachment.tableId] = []
+    }
+
+    attachmentsByTableId[attachment.tableId]?.push(attachment)
+    attachedObjectIds.add(attachment.id)
+  }
+
+  model.tables.forEach((table) => {
+    table.indexes.forEach((index) => {
+      resolveTableIds([index.tableName]).forEach((tableId) => {
+        addAttachment({
+          color: attachmentKindColors.Index,
+          details: [
+            `Type: ${index.type.toUpperCase()}`,
+            `Columns: ${index.columns.join(', ')}`
+          ],
+          flags: [],
+          id: `index:${index.name}`,
+          kind: 'Index',
+          sourceRange: index.sourceRange,
+          subtitle: buildIndexSubtitle(index),
+          tableId,
+          title: index.name
+        })
+      })
+    })
+
+    table.constraints.forEach((constraint) => {
+      resolveTableIds([constraint.tableName]).forEach((tableId) => {
+        addAttachment({
+          color: attachmentKindColors.Constraint,
+          details: [constraint.expression],
+          flags: [],
+          id: `constraint:${constraint.name}`,
+          kind: 'Constraint',
+          sourceRange: constraint.sourceRange,
+          subtitle: constraint.expression,
+          tableId,
+          title: constraint.name
+        })
+      })
+    })
+  })
+
+  model.triggers.forEach((trigger) => {
+    resolveTableIds([trigger.tableName]).forEach((tableId) => {
+      addAttachment({
+        color: attachmentKindColors.Trigger,
+        details: trigger.details,
+        flags: [],
+        id: `trigger:${trigger.name}`,
+        kind: 'Trigger',
+        sourceRange: trigger.sourceRange,
+        subtitle: buildTriggerSubtitle(trigger),
+        tableId,
+        title: trigger.name
+      })
+    })
+  })
+
+  model.functions.forEach((routine) => {
+    const triggerTableIds = triggerTableIdsByRoutineName.value.get(normalizeReferenceValue(routine.name)) || []
+    const tableIds = triggerTableIds.length > 0 ? triggerTableIds : getRoutineTableIds(routine)
+
+    tableIds.forEach((tableId) => {
+      addAttachment({
+        color: attachmentKindColors.Function,
+        details: routine.details,
+        flags: triggerTableIds.length > 0
+          ? [{ color: '#38bdf8', key: 'trigger', label: 'TRIGGER' }]
+          : [],
+        id: `function:${routine.name}`,
+        kind: 'Function',
+        sourceRange: routine.sourceRange,
+        subtitle: routine.signature,
+        tableId,
+        title: routine.name
+      })
+    })
+  })
+
+  model.procedures.forEach((procedure) => {
+    const triggerTableIds = triggerTableIdsByRoutineName.value.get(normalizeReferenceValue(procedure.name)) || []
+    const tableIds = triggerTableIds.length > 0 ? triggerTableIds : getRoutineTableIds(procedure)
+
+    tableIds.forEach((tableId) => {
+      addAttachment({
+        color: attachmentKindColors.Procedure,
+        details: procedure.details,
+        flags: triggerTableIds.length > 0
+          ? [{ color: '#38bdf8', key: 'trigger', label: 'TRIGGER' }]
+          : [],
+        id: `procedure:${procedure.name}`,
+        kind: 'Procedure',
+        sourceRange: procedure.sourceRange,
+        subtitle: procedure.signature,
+        tableId,
+        title: procedure.name
+      })
+    })
+  })
+
+  model.sequences.forEach((sequence) => {
+    getSequenceOwnedTableIds(sequence).forEach((tableId) => {
+      addAttachment({
+        color: attachmentKindColors.Sequence,
+        details: sequence.details,
+        flags: [],
+        id: `sequence:${sequence.name}`,
+        kind: 'Sequence',
+        sourceRange: sequence.sourceRange,
+        subtitle: buildSequenceSubtitle(sequence),
+        tableId,
+        title: sequence.name
+      })
+    })
+  })
+
+  Object.values(attachmentsByTableId).forEach((attachments) => {
+    attachments.sort((left, right) => {
+      const orderDelta = attachmentKindOrder[left.kind] - attachmentKindOrder[right.kind]
+
+      if (orderDelta !== 0) {
+        return orderDelta
+      }
+
+      return left.title.localeCompare(right.title)
+    })
+  })
+
+  return {
+    attachedObjectIds,
+    attachmentsByTableId
+  }
+})
+
+const getAttachmentRowBadges = (flags: TableAttachmentFlag[]) => {
+  return flags.map((flag) => {
+    return {
+      color: flag.color,
+      label: flag.label
+    }
+  })
+}
+
+const getColumnRowBadges = (column: PgmlColumn) => {
+  const modifierBadges = column.modifiers.slice(0, 2).map((modifier, index) => {
+    return {
+      color: index === 0 ? '#5eead4' : '#94a3b8',
+      label: modifier.length > 14 ? `${modifier.slice(0, 13)}…` : modifier
+    }
+  })
+  const referenceBadge = column.reference
+    ? [{
+        color: '#64748b',
+        label: `REF: ${column.reference.relation} ${column.reference.toTable}.${column.reference.toColumn}`.toUpperCase()
+      }]
+    : []
+
+  return [...modifierBadges, ...referenceBadge].slice(0, 2)
+}
+
+const tableRowsByTableId = computed(() => {
+  return model.tables.reduce<Record<string, DiagramGpuRow[]>>((entries, table) => {
+    const columnRows = table.columns.map((column) => {
+      const rowKey = getColumnAnchorKey(table.fullName, column.name)
+      const relationalHighlightColor = selectedTableRelationalRowKeys.value.has(rowKey)
+        ? (tableColorById.value[selectedTableId.value || ''] || '#79e3ea')
+        : null
+      const objectImpactHighlightColor = selectedObjectImpactRowKeys.value.has(rowKey)
+        ? (selectedSelection.value?.kind === 'object'
+            ? (objectLayoutStates.value[selectedSelection.value.id]?.color || '#14b8a6')
+            : '#14b8a6')
+        : null
+
+      return {
+        badges: getColumnRowBadges(column),
+        columnName: column.name,
+        highlightColor: relationalHighlightColor || objectImpactHighlightColor,
+        key: `${table.fullName}.${column.name}`,
+        kind: 'column' as const,
+        subtitle: column.type,
+        tableId: table.fullName,
+        title: column.name
+      }
+    })
+    const attachmentRows = (tableAttachmentState.value.attachmentsByTableId[table.fullName] || [])
+      .filter(attachment => isEntityDirectlyVisible(attachment.id))
+      .map((attachment) => {
+        return {
+          accentColor: attachment.color,
+          attachmentId: attachment.id,
+          badges: getAttachmentRowBadges(attachment.flags),
+          kindLabel: attachment.kind,
+          key: attachment.id,
+          kind: 'attachment' as const,
+          sourceRange: attachment.sourceRange,
+          subtitle: attachment.subtitle,
+          tableId: table.fullName,
+          title: attachment.title
+        }
+      })
+
+    entries[table.fullName] = [...columnRows, ...attachmentRows]
+    return entries
+  }, {})
+})
+
+const getTableRows = (tableId: string) => tableRowsByTableId.value[tableId] || []
+
+const isGroupVisible = (groupName: string) => isEntityDirectlyVisible(getStoredGroupId(groupName))
+const isTableVisible = (table: PgmlSchemaModel['tables'][number]) => {
+  const directVisible = isEntityDirectlyVisible(table.fullName)
+
+  if (!directVisible) {
+    return false
+  }
+
+  return table.groupName ? isGroupVisible(table.groupName) : true
+}
+
+const orderedTablesByGroup = computed(() => {
+  return model.groups.reduce<Record<string, PgmlSchemaModel['tables']>>((entries, group) => {
+    entries[group.name] = getOrderedGroupTables(model, group.name).filter(table => isTableVisible(table))
+    return entries
+  }, {})
+})
+
+const groupedTableIds = computed(() => {
+  return new Set(model.tables.filter(table => table.groupName).map(table => table.fullName))
+})
+
+const visibleStandaloneTables = computed(() => {
+  return model.tables.filter(table => !table.groupName && isTableVisible(table))
+})
+
+const computeGroupLayout = (
+  groupName: string,
+  tables: PgmlSchemaModel['tables'],
+  columnCount: number,
+  masonry: boolean,
+  tableWidthScale: number
+) => {
+  const safeTableWidth = Math.round(diagramGroupTableWidth * tableWidthScale)
+
+  if (masonry) {
+    const layout = buildTableGroupMasonryLayout(
+      tables.map((table) => {
+        return {
+          height: estimateDiagramTableHeight(getTableRows(table.fullName).length),
+          id: table.fullName
+        }
+      }),
+      Math.max(1, Math.min(columnCount, Math.max(tables.length, 1))),
+      safeTableWidth,
+      diagramGroupTableGap
+    )
+
+    return {
+      contentHeight: layout.contentHeight,
+      contentWidth: layout.contentWidth,
+      placements: layout.placements
+    }
+  }
+
+  const placements: Record<string, { x: number, y: number }> = {}
+  const safeColumnCount = Math.max(1, Math.min(columnCount, Math.max(tables.length, 1)))
+  const rowHeights: number[] = []
+
+  tables.forEach((table, index) => {
+    const columnIndex = index % safeColumnCount
+    const rowIndex = Math.floor(index / safeColumnCount)
+    const rowY = rowHeights.slice(0, rowIndex).reduce((sum, height) => sum + height, 0) + rowIndex * diagramGroupTableGap
+    const height = estimateDiagramTableHeight(getTableRows(table.fullName).length)
+    rowHeights[rowIndex] = Math.max(rowHeights[rowIndex] || 0, height)
+    placements[table.fullName] = {
+      x: columnIndex * (safeTableWidth + diagramGroupTableGap),
+      y: rowY
+    }
+  })
+
+  const contentHeight = rowHeights.reduce((sum, height) => sum + height, 0) + Math.max(0, rowHeights.length - 1) * diagramGroupTableGap
+  const contentWidth = safeColumnCount * safeTableWidth + Math.max(0, safeColumnCount - 1) * diagramGroupTableGap
+
+  return {
+    contentHeight,
+    contentWidth,
+    placements
+  }
+}
+
+const syncLayoutStates = () => {
+  const nextGroupStates: Record<string, DiagramGpuGroupNode> = {}
+  const nextTableStates: Record<string, DiagramGpuNodeLayoutState> = {}
+  const nextObjectStates: Record<string, DiagramGpuObjectNode> = {}
+
+  model.groups.forEach((group, index) => {
+    if (!isGroupVisible(group.name)) {
+      return
+    }
+
+    const groupId = getStoredGroupId(group.name)
+    const previousState = groupLayoutStates.value[groupId]
+    const storedLayout = model.nodeProperties[groupId]
+    const tables = orderedTablesByGroup.value[group.name] || []
+    const columnCount = Math.max(1, Math.min(
+      Math.round(storedLayout?.tableColumns ?? previousState?.columnCount ?? 1),
+      Math.max(tables.length, 1)
+    ))
+    const masonry = storedLayout?.masonry ?? previousState?.masonry ?? false
+    const tableWidthScale = normalizePgmlTableWidthScale(
+      storedLayout?.tableWidthScale ?? previousState?.tableWidthScale ?? defaultPgmlTableWidthScale
+    )
+    const layout = computeGroupLayout(group.name, tables, columnCount, masonry, tableWidthScale)
+    const width = Math.max(diagramGroupHorizontalPadding * 2 + layout.contentWidth, diagramGroupTableWidth + diagramGroupHorizontalPadding * 2)
+    const height = Math.max(diagramGroupHeaderHeight + diagramGroupVerticalPadding + layout.contentHeight, diagramGroupHeaderHeight + 48)
+
+    nextGroupStates[groupId] = {
+      color: storedLayout?.color || previousState?.color || diagramPalette[index % diagramPalette.length] || '#8b5cf6',
+      columnCount,
+      height,
+      id: groupId,
+      masonry,
+      minHeight: height,
+      minWidth: width,
+      note: group.note,
+      tableCount: tables.length,
+      tableIds: tables.map(table => table.fullName),
+      tableWidthScale,
+      title: group.name,
+      width,
+      x: storedLayout?.x ?? previousState?.x ?? 120 + index * 420,
+      y: storedLayout?.y ?? previousState?.y ?? 90 + (index % 2) * 120
+    }
+  })
+
+  visibleStandaloneTables.value.forEach((table, index) => {
+    const previousState = floatingTableStates.value[table.fullName]
+    const storedLayout = model.nodeProperties[table.fullName]
+    const height = estimateDiagramTableHeight(getTableRows(table.fullName).length)
+
+    nextTableStates[table.fullName] = {
+      color: storedLayout?.color || previousState?.color || '#38bdf8',
+      height,
+      id: table.fullName,
+      kind: 'table',
+      minHeight: height,
+      minWidth: diagramGroupTableWidth,
+      title: table.name,
+      visible: true,
+      width: Math.max(diagramGroupTableWidth, storedLayout?.width ?? previousState?.width ?? diagramGroupTableWidth),
+      x: storedLayout?.x ?? previousState?.x ?? 120 + (index % 3) * 300,
+      y: storedLayout?.y ?? previousState?.y ?? 560 + Math.floor(index / 3) * 220
+    }
+  })
+
+  const anchorBaseX = Math.max(
+    ...[
+      920,
+      ...Object.values(nextGroupStates).map(group => group.x + group.width + 72),
+      ...Object.values(nextTableStates).map(table => table.x + table.width + 72)
+    ]
+  )
+
+  const objectItems: Array<{
+    collapsedHeight?: number
+    color: string
+    details: string[]
+    expandedHeight: number
+    id: string
+    impactTargets: DiagramGpuImpactTarget[]
+    kindLabel: string
+    sourceRange?: PgmlSourceRange
+    subtitle: string
+    tableIds: string[]
+    title: string
+    width: number
+  }> = [
+    ...model.functions
+      .filter(entry => isEntityDirectlyVisible(`function:${entry.name}`) && !tableAttachmentState.value.attachedObjectIds.has(`function:${entry.name}`))
+      .map((entry) => {
+        const impactTargets = inferRoutineTargets(entry)
+
+      return {
+        color: objectKindColors.Function,
+        details: entry.details,
+        expandedHeight: 176,
+        id: `function:${entry.name}`,
+        impactTargets,
+        kindLabel: 'Function',
+        sourceRange: entry.sourceRange,
+        subtitle: entry.signature,
+        tableIds: uniqueValues(impactTargets.map(target => target.tableId)),
+        title: entry.name,
+        width: 336
+      }
+    }),
+    ...model.procedures
+      .filter(entry => isEntityDirectlyVisible(`procedure:${entry.name}`) && !tableAttachmentState.value.attachedObjectIds.has(`procedure:${entry.name}`))
+      .map((entry) => {
+        const impactTargets = inferRoutineTargets(entry)
+
+      return {
+        color: objectKindColors.Procedure,
+        details: entry.details,
+        expandedHeight: 156,
+        id: `procedure:${entry.name}`,
+        impactTargets,
+        kindLabel: 'Procedure',
+        sourceRange: entry.sourceRange,
+        subtitle: entry.signature,
+        tableIds: uniqueValues(impactTargets.map(target => target.tableId)),
+        title: entry.name,
+        width: 320
+      }
+    }),
+    ...model.triggers
+      .filter(entry => isEntityDirectlyVisible(`trigger:${entry.name}`) && !tableAttachmentState.value.attachedObjectIds.has(`trigger:${entry.name}`))
+      .map((entry) => {
+        const tableId = resolveTableIdentifier(entry.tableName)
+        const impactTargets = tableId ? inferTriggerTargets(tableId, entry) : []
+
+      return {
+        color: objectKindColors.Trigger,
+        details: entry.details,
+        expandedHeight: 168,
+        id: `trigger:${entry.name}`,
+        impactTargets,
+        kindLabel: 'Trigger',
+        sourceRange: entry.sourceRange,
+        subtitle: buildTriggerSubtitle(entry),
+        tableIds: uniqueValues(impactTargets.map(target => target.tableId)),
+        title: entry.name,
+        width: 332
+      }
+    }),
+    ...model.sequences
+      .filter(entry => isEntityDirectlyVisible(`sequence:${entry.name}`) && !tableAttachmentState.value.attachedObjectIds.has(`sequence:${entry.name}`))
+      .map((entry) => {
+        const impactTargets = inferSequenceTargets(entry)
+
+      return {
+        color: objectKindColors.Sequence,
+        details: entry.details,
+        expandedHeight: 156,
+        id: `sequence:${entry.name}`,
+        impactTargets,
+        kindLabel: 'Sequence',
+        sourceRange: entry.sourceRange,
+        subtitle: buildSequenceSubtitle(entry),
+        tableIds: uniqueValues(impactTargets.map(target => target.tableId)),
+        title: entry.name,
+        width: 308
+      }
+    }),
+    ...model.customTypes.filter((entry) => isEntityDirectlyVisible(`custom-type:${entry.kind}:${entry.name}`)).map((entry: PgmlCustomType) => {
+      const impactTargets = inferCustomTypeTargets(entry)
+
+      return {
+        color: objectKindColors['Custom Type'],
+        details: entry.details,
+        expandedHeight: 114,
+        id: `custom-type:${entry.kind}:${entry.name}`,
+        impactTargets,
+        kindLabel: 'Custom Type',
+        sourceRange: entry.sourceRange,
+        subtitle: entry.kind,
+        tableIds: uniqueValues(impactTargets.map(target => target.tableId)),
+        title: entry.name,
+        width: 258
+      }
+    })
+  ]
+
+  objectItems.forEach((item, index) => {
+    const previousState = objectLayoutStates.value[item.id]
+    const storedLayout = model.nodeProperties[item.id]
+    const collapsed = storedLayout?.collapsed ?? previousState?.collapsed ?? true
+    const expandedHeight = Math.max(item.expandedHeight, previousState?.expandedHeight ?? item.expandedHeight)
+
+    nextObjectStates[item.id] = {
+      collapsed,
+      color: storedLayout?.color || previousState?.color || item.color,
+      details: item.details,
+      expandedHeight,
+      height: collapsed ? previousState?.height ?? diagramObjectCollapsedHeight : expandedHeight,
+      id: item.id,
+      impactTargets: item.impactTargets,
+      kindLabel: item.kindLabel,
+      minHeight: collapsed ? diagramObjectCollapsedHeight : expandedHeight,
+      minWidth: item.width,
+      sourceRange: item.sourceRange,
+      subtitle: item.subtitle,
+      tableIds: item.tableIds,
+      title: item.title,
+      width: Math.max(item.width, storedLayout?.width ?? previousState?.width ?? item.width),
+      x: storedLayout?.x ?? previousState?.x ?? anchorBaseX + (index % 2) * objectColumnGapX,
+      y: storedLayout?.y ?? previousState?.y ?? 96 + Math.floor(index / 2) * objectRowGapY
+    }
+  })
+
+  groupLayoutStates.value = nextGroupStates
+  floatingTableStates.value = nextTableStates
+  objectLayoutStates.value = nextObjectStates
+}
+
+const tableCards = computed<DiagramGpuTableCard[]>(() => {
+  const groupedCards = Object.values(groupLayoutStates.value).flatMap((group) => {
+    const groupName = group.title
+    const tables = orderedTablesByGroup.value[groupName] || []
+    const layout = computeGroupLayout(groupName, tables, group.columnCount, group.masonry, group.tableWidthScale)
+    const cardWidth = Math.round(diagramGroupTableWidth * group.tableWidthScale)
+
+    return tables.map((table) => {
+      const placement = layout.placements[table.fullName]
+      const rows = getTableRows(table.fullName)
+      const height = estimateDiagramTableHeight(rows.length)
+
+      return {
+        color: group.color,
+        groupId: group.id,
+        headerHeight: diagramTableHeaderHeight,
+        height,
+        id: table.fullName,
+        minHeight: height,
+        rows,
+        schema: table.schema,
+        sourceRange: table.sourceRange,
+        title: table.name,
+        width: cardWidth,
+        x: group.x + diagramGroupHorizontalPadding + (placement?.x || 0),
+        y: group.y + diagramGroupHeaderHeight + diagramGroupVerticalPadding + (placement?.y || 0)
+      }
+    })
+  })
+  const standaloneCards = visibleStandaloneTables.value.map((table) => {
+    const state = floatingTableStates.value[table.fullName]
+    const rows = getTableRows(table.fullName)
+    const height = estimateDiagramTableHeight(rows.length)
+
+    return {
+      color: state?.color || '#38bdf8',
+      groupId: null,
+      headerHeight: diagramTableHeaderHeight,
+      height,
+      id: table.fullName,
+      minHeight: height,
+      rows,
+      schema: table.schema,
+      sourceRange: table.sourceRange,
+      title: table.name,
+      width: Math.max(diagramGroupTableWidth, state?.width || diagramGroupTableWidth),
+      x: state?.x || 0,
+      y: state?.y || 0
+    }
+  })
+
+  return [...groupedCards, ...standaloneCards]
+})
+
+const groupNodes = computed(() => Object.values(groupLayoutStates.value))
+const objectNodes = computed(() => Object.values(objectLayoutStates.value))
+
+const worldBounds = computed<DiagramGpuWorldBounds>(() => {
+  const entries = [
+    ...groupNodes.value.map(group => ({
+      maxX: group.x + group.width,
+      maxY: group.y + group.height,
+      minX: group.x,
+      minY: group.y
+    })),
+    ...tableCards.value.map(card => ({
+      maxX: card.x + card.width,
+      maxY: card.y + card.height,
+      minX: card.x,
+      minY: card.y
+    })),
+    ...objectNodes.value.map(node => ({
+      maxX: node.x + node.width,
+      maxY: node.y + node.height,
+      minX: node.x,
+      minY: node.y
+    }))
+  ]
+
+  if (entries.length === 0) {
+    return {
+      maxX: 1200,
+      maxY: 800,
+      minX: 0,
+      minY: 0
+    }
+  }
+
+  return {
+    maxX: Math.max(...entries.map(entry => entry.maxX)),
+    maxY: Math.max(...entries.map(entry => entry.maxY)),
+    minX: Math.min(...entries.map(entry => entry.minX)),
+    minY: Math.min(...entries.map(entry => entry.minY))
+  }
+})
+
+const viewportWorldBounds = computed<DiagramGpuWorldBounds>(() => {
+  const entries = [
+    ...groupNodes.value.map(group => ({
+      maxX: group.x + group.width,
+      maxY: group.y + group.height,
+      minX: group.x,
+      minY: group.y
+    })),
+    ...tableCards.value.map(card => ({
+      maxX: card.x + card.width,
+      maxY: card.y + card.height,
+      minX: card.x,
+      minY: card.y
+    }))
+  ]
+
+  if (entries.length === 0) {
+    return worldBounds.value
+  }
+
+  return {
+    maxX: Math.max(...entries.map(entry => entry.maxX)),
+    maxY: Math.max(...entries.map(entry => entry.maxY)),
+    minX: Math.min(...entries.map(entry => entry.minX)),
+    minY: Math.min(...entries.map(entry => entry.minY))
+  }
+})
+
+const getColumnAnchorKey = (tableId: string, columnName: string) => `${tableId}.${columnName}`
+
+const tableColorById = computed(() => {
+  return tableCards.value.reduce<Record<string, string>>((entries, card) => {
+    entries[card.id] = card.color
+    return entries
+  }, {})
+})
+
+const selectedTableId = computed(() => {
+  if (!selectedSelection.value) {
+    return null
+  }
+
+  if (selectedSelection.value.kind === 'table') {
+    return selectedSelection.value.tableId
+  }
+
+  if (selectedSelection.value.kind === 'column' || selectedSelection.value.kind === 'attachment') {
+    return selectedSelection.value.tableId
+  }
+
+  return null
+})
+
+const selectedTableOutgoingReferences = computed(() => {
+  if (!selectedTableId.value) {
+    return []
+  }
+
+  return model.references.filter((reference) => {
+    return reference.fromTable === selectedTableId.value && reference.toTable !== selectedTableId.value
+  })
+})
+
+const selectedTableRelationalRowKeys = computed(() => {
+  return new Set(selectedTableOutgoingReferences.value.map((reference) => {
+    return getColumnAnchorKey(reference.toTable, reference.toColumn)
+  }))
+})
+
+const selectedObjectImpactTargets = computed(() => {
+  if (selectedSelection.value?.kind !== 'object') {
+    return []
+  }
+
+  const selectedObjectNode = objectLayoutStates.value[selectedSelection.value.id]
+
+  if (!selectedObjectNode) {
+    return []
+  }
+
+  return selectedObjectNode.impactTargets.length > 0
+    ? selectedObjectNode.impactTargets
+    : selectedObjectNode.tableIds.map((tableId) => {
+        return {
+          columnName: null,
+          tableId
+        }
+      })
+})
+
+const selectedObjectImpactRowKeys = computed(() => {
+  return new Set(selectedObjectImpactTargets.value.flatMap((impactTarget) => {
+    if (!impactTarget.columnName) {
+      return []
+    }
+
+    return [getColumnAnchorKey(impactTarget.tableId, impactTarget.columnName)]
+  }))
+})
+
+const nodeOrderById = computed(() => {
+  const entries: Record<string, number> = {}
+  let order = 1
+
+  groupNodes.value.forEach((group) => {
+    entries[group.id] = order
+    order += 1
+  })
+
+  tableCards.value.filter(card => !card.groupId).forEach((card) => {
+    entries[card.id] = order
+    order += 1
+  })
+
+  objectNodes.value.forEach((node) => {
+    entries[node.id] = order
+    order += 1
+  })
+
+  return entries
+})
+
+const getRoutingWorker = () => {
+  if (routingWorker) {
+    return routingWorker
+  }
+
+  const worker = new Worker(new URL('../../workers/diagram-routing.worker.ts', import.meta.url), {
+    type: 'module'
+  })
+
+  worker.onmessage = (event: MessageEvent<RoutingWorkerResponse>) => {
+    const pendingRequest = pendingRoutingRequests.get(event.data.requestId)
+
+    if (!pendingRequest) {
+      return
+    }
+
+    pendingRoutingRequests.delete(event.data.requestId)
+    pendingRequest.resolve(event.data.lines)
+  }
+  worker.onerror = (error) => {
+    pendingRoutingRequests.forEach((pendingRequest) => {
+      pendingRequest.reject(error)
+    })
+    pendingRoutingRequests.clear()
+  }
+  routingWorker = worker
+  return worker
+}
+
+const createBounds = (x: number, y: number, width: number, height: number): MeasuredBounds => {
+  return {
+    bottom: y + height,
+    height,
+    left: x,
+    right: x + width,
+    top: y,
+    width
+  }
+}
+
+const geometryRegistry = computed(() => {
+  const columnGeometry = new Map<string, RoutingWorkerGeometryInput>()
+  const objectGeometry = new Map<string, RoutingWorkerGeometryInput>()
+  const tableGeometry = new Map<string, RoutingWorkerGeometryInput>()
+  const groupHeaderBands = [
+    ...groupNodes.value.map((group) => {
+      return {
+        bottom: group.y + diagramGroupHeaderHeight,
+        left: group.x,
+        right: group.x + group.width,
+        top: group.y
+      }
+    }),
+    ...tableCards.value.map((card) => {
+      return {
+        bottom: card.y + card.headerHeight,
+        left: card.x,
+        right: card.x + card.width,
+        top: card.y
+      }
+    })
+  ]
+
+  tableCards.value.forEach((card) => {
+    const cardBounds = createBounds(card.x, card.y, card.width, card.height)
+
+    tableGeometry.set(card.id, {
+      bounds: cardBounds,
+      groupNodeId: card.groupId,
+      identity: `table:${card.id}`,
+      isColumnAnchor: false,
+      isColumnLabelAnchor: false,
+      locator: {
+        attribute: 'data-table-anchor',
+        value: card.id
+      },
+      nodeAnchorId: card.groupId || card.id,
+      ownerNodeId: card.groupId || card.id,
+      rowKey: null,
+      tableBounds: cardBounds,
+      tableId: card.id
+    })
+
+    card.rows.forEach((row, index) => {
+      const rowBounds = createBounds(
+        card.x,
+        card.y + card.headerHeight + index * diagramTableRowHeight,
+        card.width,
+        diagramTableRowHeight
+      )
+
+      if (row.kind !== 'column' || !row.columnName) {
+        return
+      }
+
+      columnGeometry.set(getColumnAnchorKey(card.id, row.columnName), {
+        bounds: rowBounds,
+        groupNodeId: card.groupId,
+        identity: `${card.id}:${row.columnName}`,
+        isColumnAnchor: true,
+        isColumnLabelAnchor: false,
+        locator: {
+          attribute: 'data-column-anchor',
+          value: getColumnAnchorKey(card.id, row.columnName)
+        },
+        nodeAnchorId: card.groupId || card.id,
+        ownerNodeId: card.groupId || card.id,
+        rowKey: row.key,
+        tableBounds: cardBounds,
+        tableId: card.id
+      })
+    })
+  })
+
+  objectNodes.value.forEach((node) => {
+    objectGeometry.set(node.id, {
+      bounds: createBounds(node.x, node.y, node.width, node.height),
+      groupNodeId: null,
+      identity: `object:${node.id}`,
+      isColumnAnchor: false,
+      isColumnLabelAnchor: false,
+      locator: {
+        attribute: 'data-node-anchor',
+        value: node.id
+      },
+      nodeAnchorId: node.id,
+      ownerNodeId: node.id,
+      rowKey: null,
+      tableBounds: null,
+      tableId: null
+    })
+  })
+
+  return {
+    columnGeometry,
+    objectGeometry,
+    groupHeaderBands,
+    tableGeometry
+  }
+})
+
+const computeConnectionLines = async () => {
+  latestConnectionRequestId += 1
+  const requestId = latestConnectionRequestId
+  const descriptors: RoutingWorkerDescriptorInput[] = []
+
+  model.references.forEach((reference) => {
+    const fromGeometry = geometryRegistry.value.columnGeometry.get(getColumnAnchorKey(reference.fromTable, reference.fromColumn))
+    const toGeometry = geometryRegistry.value.columnGeometry.get(getColumnAnchorKey(reference.toTable, reference.toColumn))
+
+    if (!fromGeometry || !toGeometry) {
+      return
+    }
+
+    const isSelectedOutgoingReference = selectedTableId.value !== null && reference.fromTable === selectedTableId.value
+
+    descriptors.push({
+      animated: isSelectedOutgoingReference,
+      color: isSelectedOutgoingReference
+        ? (tableColorById.value[reference.fromTable] || tableColorById.value[reference.toTable] || '#79e3ea')
+        : (tableColorById.value[reference.toTable] || '#79e3ea'),
+      dashPattern: isSelectedOutgoingReference ? '10 7' : '0',
+      dashed: isSelectedOutgoingReference,
+      fromGeometry,
+      key: `ref:${reference.fromTable}:${reference.fromColumn}:${reference.toTable}:${reference.toColumn}`,
+      selectedForeground: isSelectedOutgoingReference,
+      toGeometry
+    })
+  })
+
+  objectNodes.value.forEach((node) => {
+    const fromGeometry = geometryRegistry.value.objectGeometry.get(node.id)
+    const impactTargets = node.impactTargets.length > 0
+      ? node.impactTargets
+      : node.tableIds.map((tableId) => {
+          return {
+            columnName: null,
+            tableId
+          } satisfies DiagramGpuImpactTarget
+        })
+
+    if (!fromGeometry) {
+      return
+    }
+
+    impactTargets.forEach((impactTarget) => {
+      const toGeometry = impactTarget.columnName
+        ? geometryRegistry.value.columnGeometry.get(getColumnAnchorKey(impactTarget.tableId, impactTarget.columnName))
+        : geometryRegistry.value.tableGeometry.get(impactTarget.tableId)
+
+      if (!toGeometry) {
+        return
+      }
+
+      const isSelectedObjectImpact = selectedSelection.value?.kind === 'object' && selectedSelection.value.id === node.id
+
+      descriptors.push({
+        animated: isSelectedObjectImpact,
+        color: node.color,
+        dashPattern: node.kindLabel === 'Custom Type' && !isSelectedObjectImpact ? '2 5' : '10 7',
+        dashed: true,
+        fromGeometry,
+        key: `${node.id}->${impactTarget.tableId}:${impactTarget.columnName || '*'}`,
+        selectedForeground: isSelectedObjectImpact,
+        toGeometry
+      })
+    })
+  })
+
+  if (descriptors.length === 0) {
+    connectionLines.value = []
+    return
+  }
+
+  const worker = getRoutingWorker()
+
+  try {
+    const lines = await new Promise<DiagramGpuConnectionLine[]>((resolve, reject) => {
+      pendingRoutingRequests.set(requestId, {
+        reject,
+        resolve
+      })
+      worker.postMessage({
+        descriptors,
+        groupHeaderBands: geometryRegistry.value.groupHeaderBands,
+        nodeOrders: nodeOrderById.value,
+        planeBounds: createBounds(0, 0, Math.max(worldBounds.value.maxX + 200, 1), Math.max(worldBounds.value.maxY + 200, 1)),
+        requestId,
+        scale: 1
+      })
+    })
+
+    if (requestId === latestConnectionRequestId) {
+      connectionLines.value = lines
+    }
+  } catch {
+    if (requestId === latestConnectionRequestId) {
+      connectionLines.value = []
+    }
+  }
+}
+
+const selectedGroup = computed(() => {
+  if (selectedSelection.value?.kind !== 'group') {
+    return null
+  }
+
+  return groupLayoutStates.value[selectedSelection.value.id] || null
+})
+
+const selectedTable = computed(() => {
+  const tableId = selectedTableId.value
+
+  if (!tableId) {
+    return null
+  }
+
+  return tableCards.value.find(card => card.id === tableId) || null
+})
+
+const selectedColumn = computed(() => {
+  if (selectedSelection.value?.kind !== 'column') {
+    return null
+  }
+
+  const table = model.tables.find(entry => entry.fullName === selectedSelection.value.tableId)
+  const column = table?.columns.find(entry => entry.name === selectedSelection.value.columnName)
+
+  if (!table || !column) {
+    return null
+  }
+
+  return {
+    column,
+    table
+  }
+})
+
+const selectedAttachment = computed(() => {
+  if (selectedSelection.value?.kind !== 'attachment') {
+    return null
+  }
+
+  const attachment = (tableAttachmentState.value.attachmentsByTableId[selectedSelection.value.tableId] || [])
+    .find(entry => entry.id === selectedSelection.value?.attachmentId)
+
+  return attachment || null
+})
+
+const selectedObject = computed(() => {
+  if (selectedSelection.value?.kind !== 'object') {
+    return null
+  }
+
+  return objectLayoutStates.value[selectedSelection.value.id] || null
+})
+
+const diagramPanelTitle = computed(() => {
+  if (activePanelTab.value === 'entities') {
+    return 'Entities'
+  }
+
+  if (activePanelTab.value === 'export') {
+    return 'Export'
+  }
+
+  if (selectedColumn.value) {
+    return selectedColumn.value.column.name
+  }
+
+  if (selectedAttachment.value) {
+    return selectedAttachment.value.title
+  }
+
+  if (selectedGroup.value) {
+    return selectedGroup.value.title
+  }
+
+  if (selectedTable.value) {
+    return selectedTable.value.title
+  }
+
+  if (selectedObject.value) {
+    return selectedObject.value.title
+  }
+
+  return 'Inspector'
+})
+
+const diagramPanelDescription = computed(() => {
+  if (activePanelTab.value === 'entities') {
+    return 'Browse groups, tables, and procedural objects.'
+  }
+
+  if (activePanelTab.value === 'export') {
+    return 'Export the current accelerated diagram view.'
+  }
+
+  if (selectedColumn.value) {
+    return `${selectedColumn.value.table.name} field.`
+  }
+
+  if (selectedAttachment.value) {
+    return `${selectedAttachment.value.kind} attached to ${selectedAttachment.value.tableId}.`
+  }
+
+  if (selectedGroup.value) {
+    return `${selectedGroup.value.tableCount} tables grouped together.`
+  }
+
+  if (selectedTable.value) {
+    return `${selectedTable.value.schema} schema table with ${selectedTable.value.rows.length} rows.`
+  }
+
+  if (selectedObject.value) {
+    return `${selectedObject.value.kindLabel} object.`
+  }
+
+  return 'Select a group, table, row, or object.'
+})
+
+const diagramViewportStyle = {
+  backgroundColor: diagramSurfaceColor,
+  borderColor: 'var(--studio-divider)'
+}
+
+const floatingPanelStyle = {
+  backgroundColor: diagramPanelSurfaceColor,
+  borderColor: 'var(--studio-divider)',
+  boxShadow: 'var(--studio-floating-shadow)',
+  backdropFilter: 'blur(18px)'
+}
+
+const diagramPanelSurfaceClass = computed(() => {
+  return isMobilePanelView.value
+    ? 'absolute inset-0 z-[3] grid min-h-0 w-full grid-rows-[auto_auto_minmax(0,1fr)] overflow-hidden'
+    : 'absolute bottom-3 right-3 top-14 z-[3] grid w-[320px] grid-rows-[auto_auto_minmax(0,1fr)] overflow-hidden border max-[900px]:left-3 max-[900px]:w-auto'
+})
+
+const toggleSidePanel = () => {
+  isDesktopSidePanelOpen.value = !isDesktopSidePanelOpen.value
+}
+
+const focusSourceRange = (sourceRange?: PgmlSourceRange) => {
+  if (!sourceRange) {
+    return
+  }
+
+  emit('focusSource', sourceRange)
+}
+
+const updateGroupState = (
+  id: string,
+  partial: Partial<DiagramGpuGroupNode>,
+  options: {
+    emitLayout?: boolean
+  } = {}
+) => {
+  const current = groupLayoutStates.value[id]
+
+  if (!current) {
+    return
+  }
+
+  const nextGroup = {
+    ...current,
+    ...partial
+  }
+
+  groupLayoutStates.value = {
+    ...groupLayoutStates.value,
+    [id]: nextGroup
+  }
+
+  if (options.emitLayout !== false) {
+    emit('nodePropertiesChange', getNodeLayoutProperties())
+  }
+}
+
+const updateTableState = (
+  id: string,
+  partial: Partial<DiagramGpuNodeLayoutState>,
+  options: {
+    emitLayout?: boolean
+  } = {}
+) => {
+  const current = floatingTableStates.value[id]
+
+  if (!current) {
+    return
+  }
+
+  floatingTableStates.value = {
+    ...floatingTableStates.value,
+    [id]: {
+      ...current,
+      ...partial
+    }
+  }
+
+  if (options.emitLayout !== false) {
+    emit('nodePropertiesChange', getNodeLayoutProperties())
+  }
+}
+
+const updateObjectState = (
+  id: string,
+  partial: Partial<DiagramGpuObjectNode>,
+  options: {
+    emitLayout?: boolean
+  } = {}
+) => {
+  const current = objectLayoutStates.value[id]
+
+  if (!current) {
+    return
+  }
+
+  objectLayoutStates.value = {
+    ...objectLayoutStates.value,
+    [id]: {
+      ...current,
+      ...partial
+    }
+  }
+
+  if (options.emitLayout !== false) {
+    emit('nodePropertiesChange', getNodeLayoutProperties())
+  }
+}
+
+const toggleObjectCollapsed = (id: string) => {
+  const current = objectLayoutStates.value[id]
+
+  if (!current) {
+    return
+  }
+
+  if (current.collapsed) {
+    updateObjectState(id, {
+      collapsed: false,
+      height: Math.max(current.expandedHeight, diagramObjectCollapsedHeight),
+      minHeight: current.expandedHeight
+    })
+    return
+  }
+
+  updateObjectState(id, {
+    collapsed: true,
+    expandedHeight: Math.max(current.expandedHeight, current.height),
+    height: diagramObjectCollapsedHeight,
+    minHeight: diagramObjectCollapsedHeight
+  })
+}
+
+const handleSceneMoveNode = (payload: { id: string, kind: 'group' | 'object' | 'table', x: number, y: number }) => {
+  const nextX = snapToGrid.value ? Math.round(payload.x / 18) * 18 : payload.x
+  const nextY = snapToGrid.value ? Math.round(payload.y / 18) * 18 : payload.y
+
+  if (payload.kind === 'group') {
+    updateGroupState(payload.id, {
+      x: nextX,
+      y: nextY
+    }, {
+      emitLayout: false
+    })
+    return
+  }
+
+  if (payload.kind === 'table') {
+    updateTableState(payload.id, {
+      x: nextX,
+      y: nextY
+    }, {
+      emitLayout: false
+    })
+    return
+  }
+
+  updateObjectState(payload.id, {
+    x: nextX,
+    y: nextY
+  }, {
+    emitLayout: false
+  })
+}
+
+const handleSceneMoveEnd = () => {
+  emit('nodePropertiesChange', getNodeLayoutProperties())
+}
+
+const handleSceneToggleObjectCollapsed = (id: string) => {
+  toggleObjectCollapsed(id)
+}
+
+const handleSceneSelect = (nextSelection: DiagramGpuSelection | null) => {
+  selectedSelection.value = nextSelection
+  activePanelTab.value = 'inspector'
+}
+
+const getNodeLayoutProperties = () => {
+  const entries: DiagramGpuNodeLayoutState[] = [
+    ...Object.values(groupLayoutStates.value).map((group) => {
+      return {
+        color: group.color,
+        height: group.height,
+        id: group.id,
+        kind: 'group' as const,
+        minHeight: group.minHeight,
+        minWidth: group.minWidth,
+        tableColumns: group.columnCount,
+        tableWidthScale: group.tableWidthScale,
+        title: group.title,
+        visible: true,
+        width: group.width,
+        x: group.x,
+        y: group.y
+      }
+    }),
+    ...Object.values(floatingTableStates.value),
+    ...Object.values(objectLayoutStates.value).map((objectNode) => {
+      return {
+        collapsed: objectNode.collapsed,
+        color: objectNode.color,
+        height: objectNode.height,
+        id: objectNode.id,
+        kind: 'object' as const,
+        minHeight: objectNode.minHeight,
+        minWidth: objectNode.minWidth,
+        title: objectNode.title,
+        visible: true,
+        width: objectNode.width,
+        x: objectNode.x,
+        y: objectNode.y
+      }
+    })
+  ]
+
+  return normalizeDiagramNodeLayoutProperties(entries, model.nodeProperties)
+}
+
+const escapeXml = (value: string) => {
+  return value
+    .replaceAll('&', '&amp;')
+    .replaceAll('<', '&lt;')
+    .replaceAll('>', '&gt;')
+    .replaceAll('"', '&quot;')
+    .replaceAll('\'', '&apos;')
+}
+
+const buildExportSvg = () => {
+  const padding = 96
+  const exportWidth = Math.ceil(worldBounds.value.maxX - worldBounds.value.minX + padding * 2)
+  const exportHeight = Math.ceil(worldBounds.value.maxY - worldBounds.value.minY + padding * 2)
+  const offsetX = padding - worldBounds.value.minX
+  const offsetY = padding - worldBounds.value.minY
+  const parts: string[] = [
+    `<svg xmlns="http://www.w3.org/2000/svg" width="${exportWidth}" height="${exportHeight}" viewBox="0 0 ${exportWidth} ${exportHeight}">`,
+    '<defs>',
+    '<pattern id="pgml-grid" width="18" height="18" patternUnits="userSpaceOnUse">',
+    '<circle cx="9" cy="9" r="1" fill="rgba(148,163,184,0.2)" />',
+    '</pattern>',
+    '</defs>',
+    `<rect x="0" y="0" width="${exportWidth}" height="${exportHeight}" fill="${diagramSurfaceColor}" />`,
+    `<rect x="0" y="0" width="${exportWidth}" height="${exportHeight}" fill="url(#pgml-grid)" />`
+  ]
+
+  groupNodes.value.forEach((group) => {
+    parts.push(
+      `<rect x="${group.x + offsetX}" y="${group.y + offsetY}" width="${group.width}" height="${group.height}" rx="2" ry="2" fill="${group.color}" fill-opacity="0.14" stroke="${group.color}" stroke-opacity="0.42" />`,
+      `<text x="${group.x + offsetX + 12}" y="${group.y + offsetY + 18}" fill="${group.color}" font-size="8" font-family="ui-monospace, monospace">TABLE GROUP</text>`,
+      `<text x="${group.x + offsetX + 12}" y="${group.y + offsetY + 38}" fill="${diagramTextColor}" font-size="14" font-weight="600" font-family="ui-sans-serif, system-ui">${escapeXml(group.title)}</text>`,
+      `<line x1="${group.x + offsetX}" y1="${group.y + offsetY + diagramGroupHeaderHeight}" x2="${group.x + offsetX + group.width}" y2="${group.y + offsetY + diagramGroupHeaderHeight}" stroke="${diagramDividerColor}" />`
+    )
+  })
+
+  connectionLines.value.forEach((line) => {
+    const path = line.points.map((point, index) => {
+      const x = point.x + offsetX
+      const y = point.y + offsetY
+
+      return `${index === 0 ? 'M' : 'L'} ${x} ${y}`
+    }).join(' ')
+
+    parts.push(
+      `<path d="${path}" fill="none" stroke="${line.color}" stroke-width="2" stroke-dasharray="${line.dashed ? line.dashPattern : '0'}" />`
+    )
+  })
+
+  tableCards.value.forEach((card) => {
+    parts.push(
+      `<rect x="${card.x + offsetX}" y="${card.y + offsetY}" width="${card.width}" height="${card.height}" rx="2" ry="2" fill="${diagramTableSurfaceColor}" stroke="${card.color}" stroke-opacity="0.48" />`,
+      `<line x1="${card.x + offsetX}" y1="${card.y + offsetY + card.headerHeight}" x2="${card.x + offsetX + card.width}" y2="${card.y + offsetY + card.headerHeight}" stroke="${diagramDividerColor}" />`,
+      `<text x="${card.x + offsetX + 10}" y="${card.y + offsetY + 16}" fill="${card.color}" font-size="8" font-family="ui-monospace, monospace">TABLE</text>`,
+      `<text x="${card.x + offsetX + 10}" y="${card.y + offsetY + 32}" fill="${diagramTextColor}" font-size="14" font-weight="600" font-family="ui-sans-serif, system-ui">${escapeXml(card.title)}</text>`
+    )
+
+    card.rows.forEach((row, index) => {
+      const rowY = card.y + offsetY + card.headerHeight + index * diagramTableRowHeight
+
+      parts.push(
+        `<rect x="${card.x + offsetX}" y="${rowY}" width="${card.width}" height="${diagramTableRowHeight}" fill="${diagramRowSurfaceColor}" />`,
+        `<text x="${card.x + offsetX + 10}" y="${rowY + 14}" fill="${diagramTextColor}" font-size="9" font-family="ui-monospace, monospace">${escapeXml(row.title)}</text>`,
+        `<text x="${card.x + offsetX + 10}" y="${rowY + 25}" fill="${diagramMutedTextColor}" font-size="8" font-family="ui-sans-serif, system-ui">${escapeXml(row.subtitle)}</text>`
+      )
+    })
+  })
+
+  objectNodes.value.forEach((node) => {
+    parts.push(
+      `<rect x="${node.x + offsetX}" y="${node.y + offsetY}" width="${node.width}" height="${node.height}" fill="${diagramSurfaceColor}" stroke="${node.color}" stroke-opacity="0.4" />`,
+      `<text x="${node.x + offsetX + 10}" y="${node.y + offsetY + 16}" fill="${node.color}" font-size="8" font-family="ui-monospace, monospace">${escapeXml(node.kindLabel.toUpperCase())}</text>`,
+      `<text x="${node.x + offsetX + 10}" y="${node.y + offsetY + 32}" fill="${diagramTextColor}" font-size="14" font-family="ui-sans-serif, system-ui">${escapeXml(node.title)}</text>`
+    )
+  })
+
+  parts.push('</svg>')
+
+  return {
+    height: exportHeight,
+    svg: parts.join(''),
+    width: exportWidth
+  }
+}
+
+const exportSvg = async () => {
+  const result = buildExportSvg()
+  const blob = new Blob([result.svg], {
+    type: 'image/svg+xml;charset=utf-8'
+  })
+
+  downloadBlob(blob, `${exportBaseName}-diagram.svg`)
+}
+
+const exportPng = async (scaleFactor: number) => {
+  const result = buildExportSvg()
+  const blob = new Blob([result.svg], {
+    type: 'image/svg+xml;charset=utf-8'
+  })
+  const objectUrl = URL.createObjectURL(blob)
+
+  try {
+    const image = await new Promise<HTMLImageElement>((resolve, reject) => {
+      const nextImage = new Image()
+
+      nextImage.onload = () => resolve(nextImage)
+      nextImage.onerror = () => reject(new Error('Unable to render diagram export.'))
+      nextImage.src = objectUrl
+    })
+    const canvas = document.createElement('canvas')
+    const context = canvas.getContext('2d')
+
+    if (!context) {
+      throw new Error('Unable to create export canvas.')
+    }
+
+    canvas.width = Math.ceil(result.width * scaleFactor)
+    canvas.height = Math.ceil(result.height * scaleFactor)
+    context.setTransform(scaleFactor, 0, 0, scaleFactor, 0, 0)
+    context.drawImage(image, 0, 0, result.width, result.height)
+
+    const pngBlob = await new Promise<Blob>((resolve, reject) => {
+      canvas.toBlob((output) => {
+        if (!output) {
+          reject(new Error('Unable to encode PNG export.'))
+          return
+        }
+
+        resolve(output)
+      }, 'image/png')
+    })
+
+    downloadBlob(pngBlob, `${exportBaseName}-diagram.png`)
+  } finally {
+    URL.revokeObjectURL(objectUrl)
+  }
+}
+
+const exportDiagram = async (format: 'svg' | 'png', scaleFactor = 1) => {
+  if (format === 'svg') {
+    await exportSvg()
+    return
+  }
+
+  await exportPng(scaleFactor)
+}
+
+watch(
+  () => model,
+  () => {
+    syncLayoutStates()
+  },
+  {
+    deep: true,
+    immediate: true
+  }
+)
+
+watch(
+  () => [groupNodes.value, tableCards.value, selectedTableId.value],
+  () => {
+    computeConnectionLines()
+  },
+  {
+    deep: true,
+    immediate: true
+  }
+)
+
+watch(
+  () => activePanelTab.value,
+  (nextTab) => {
+    emit('panelTabChange', nextTab)
+  }
+)
+
+watch(
+  () => mobilePanelTab,
+  (nextPanelTab) => {
+    if (nextPanelTab && nextPanelTab !== activePanelTab.value) {
+      activePanelTab.value = nextPanelTab
+    }
+  },
+  {
+    immediate: true
+  }
+)
+
+watch(
+  () => selectedSelection.value,
+  () => {
+    computeConnectionLines()
+  },
+  {
+    deep: true
+  }
+)
+
+watch(
+  () => [
+    connectionLines.value.length,
+    tableCards.value.length,
+    groupNodes.value.length,
+    objectNodes.value.length,
+    worldBounds.value.maxX,
+    worldBounds.value.maxY
+  ],
+  () => {
+    if (!import.meta.client) {
+      return
+    }
+
+    ;(window as Window & {
+      __pgmlSceneDebug?: {
+        connectionCount: number
+        firstConnection: DiagramGpuConnectionLine | null
+        groupCount: number
+        objectCount: number
+        objectCards: Array<{ height: number, id: string, width: number, x: number, y: number }>
+        selectedSelection: DiagramGpuSelection | null
+        tableCards: Array<{ height: number, id: string, width: number, x: number, y: number }>
+        tableCount: number
+        worldBounds: DiagramGpuWorldBounds
+      }
+    }).__pgmlSceneDebug = {
+      connectionCount: connectionLines.value.length,
+      firstConnection: connectionLines.value[0] || null,
+      groupCount: groupNodes.value.length,
+      objectCount: objectNodes.value.length,
+      objectCards: objectNodes.value.map((node) => {
+        return {
+          height: node.height,
+          id: node.id,
+          width: node.width,
+          x: node.x,
+          y: node.y
+        }
+      }),
+      selectedSelection: selectedSelection.value,
+      tableCards: tableCards.value.map((card) => {
+        return {
+          height: card.height,
+          id: card.id,
+          width: card.width,
+          x: card.x,
+          y: card.y
+        }
+      }),
+      tableCount: tableCards.value.length,
+      worldBounds: worldBounds.value
+    }
+  },
+  {
+    deep: true,
+    immediate: true
+  }
+)
+
+onBeforeUnmount(() => {
+  routingWorker?.terminate()
+  routingWorker = null
+  pendingRoutingRequests.clear()
+})
+
+defineExpose<{
+  exportDiagram: (format: 'svg' | 'png', scaleFactor?: number) => Promise<void>
+  exportPng: (scaleFactor: number) => Promise<void>
+  exportSvg: () => Promise<void>
+  getNodeLayoutProperties: () => Record<string, PgmlNodeProperties>
+}>({
+  exportDiagram,
+  exportPng,
+  exportSvg,
+  getNodeLayoutProperties
+})
+</script>
+
+<template>
+  <div
+    data-diagram-viewport="true"
+    class="relative h-full min-h-0 overflow-hidden border"
+    :style="diagramViewportStyle"
+  >
+    <PgmlDiagramGpuScene
+      ref="sceneRef"
+      :connections="connectionLines"
+      :groups="groupNodes"
+      :objects="objectNodes"
+      :selection="selectedSelection"
+      :show-relationship-lines="showRelationshipLines"
+      :tables="tableCards"
+      :viewport-inset-right="!isMobilePanelView && isDiagramPanelVisible ? 336 : 0"
+      :viewport-reset-key="viewportResetKey"
+      :world-bounds="worldBounds"
+      @focus-source="focusSourceRange"
+      @move-end="handleSceneMoveEnd"
+      @move-node="handleSceneMoveNode"
+      @scale-change="currentScale = $event"
+      @select="handleSceneSelect"
+      @toggle-object-collapsed="handleSceneToggleObjectCollapsed"
+    />
+
+    <div
+      v-if="shouldShowZoomToolbar"
+      class="pointer-events-none absolute inset-x-0 bottom-3 z-[4] flex justify-center"
+    >
+      <div
+        data-diagram-zoom-toolbar="true"
+        class="pointer-events-auto flex items-center gap-1 border px-1 py-1"
+        :style="floatingPanelStyle"
+      >
+        <UButton
+          icon="i-lucide-zoom-out"
+          color="neutral"
+          variant="ghost"
+          size="xs"
+          class="rounded-none text-[color:var(--studio-shell-muted)] hover:bg-[color:var(--studio-surface-hover)] hover:text-[color:var(--studio-shell-text)]"
+          @click="sceneRef?.zoomBy(-1)"
+        />
+        <div class="min-w-[52px] text-center font-mono text-[0.7rem] text-[color:var(--studio-shell-text)]">
+          {{ Math.round(currentScale * 100) }}%
+        </div>
+        <UButton
+          icon="i-lucide-zoom-in"
+          color="neutral"
+          variant="ghost"
+          size="xs"
+          class="rounded-none text-[color:var(--studio-shell-muted)] hover:bg-[color:var(--studio-surface-hover)] hover:text-[color:var(--studio-shell-text)]"
+          @click="sceneRef?.zoomBy(1)"
+        />
+        <UButton
+          label="Reset"
+          color="neutral"
+          variant="ghost"
+          size="xs"
+          class="rounded-none text-[color:var(--studio-shell-muted)] hover:bg-[color:var(--studio-surface-hover)] hover:text-[color:var(--studio-shell-text)]"
+          @click="sceneRef?.resetView()"
+        />
+        <button
+          type="button"
+          data-relationship-lines-toggle="true"
+          :aria-pressed="showRelationshipLines"
+          :class="getStudioStateButtonClass({
+            emphasized: showRelationshipLines,
+            extraClass: 'inline-flex items-center gap-1.5 text-[0.62rem]'
+          })"
+          @click="showRelationshipLines = !showRelationshipLines"
+        >
+          <UIcon
+            :name="showRelationshipLines ? 'i-lucide-eye' : 'i-lucide-eye-off'"
+            class="h-3.5 w-3.5"
+          />
+          Lines
+        </button>
+        <button
+          type="button"
+          data-grid-snap-toggle="true"
+          :aria-pressed="snapToGrid"
+          :class="getStudioStateButtonClass({
+            emphasized: snapToGrid,
+            extraClass: 'inline-flex items-center gap-1.5 text-[0.62rem]'
+          })"
+          @click="snapToGrid = !snapToGrid"
+        >
+          <UIcon
+            :name="snapToGrid ? 'i-lucide-lock' : 'i-lucide-unlock'"
+            class="h-3.5 w-3.5"
+          />
+          Snap
+        </button>
+      </div>
+    </div>
+
+    <div
+      v-if="shouldShowDiagramPanelToggle"
+      class="pointer-events-none absolute right-3 top-3 z-[4] flex justify-end gap-2"
+    >
+      <UButton
+        data-diagram-panel-toggle="true"
+        :label="isDiagramPanelVisible ? 'Hide panel' : 'Show panel'"
+        :leading-icon="isDiagramPanelVisible ? 'i-lucide-panel-right-close' : 'i-lucide-panel-right-open'"
+        color="neutral"
+        variant="outline"
+        size="xs"
+        class="pointer-events-auto"
+        :class="panelToggleButtonClass"
+        @click="toggleSidePanel"
+      />
+    </div>
+
+    <aside
+      v-if="isDiagramPanelVisible"
+      data-diagram-panel="true"
+      :class="diagramPanelSurfaceClass"
+      :style="floatingPanelStyle"
+    >
+      <div class="flex items-start justify-between gap-3 border-b border-[color:var(--studio-divider)] px-3 py-2.5">
+        <div class="min-w-0 flex-1">
+          <div class="flex items-start justify-between gap-3">
+            <div class="min-w-0">
+              <div class="font-mono text-[0.6rem] uppercase tracking-[0.08em] text-[color:var(--studio-shell-label)]">
+                Diagram panel
+              </div>
+              <h3 class="truncate text-[0.88rem] font-semibold leading-5 text-[color:var(--studio-shell-text)]">
+                {{ diagramPanelTitle }}
+              </h3>
+              <p class="mt-1 text-[0.66rem] leading-5 text-[color:var(--studio-shell-muted)]">
+                {{ diagramPanelDescription }}
+              </p>
+            </div>
+
+            <UButton
+              v-if="shouldShowDiagramPanelToggle"
+              icon="i-lucide-x"
+              color="neutral"
+              variant="ghost"
+              size="xs"
+              :class="sidePanelCloseButtonClass"
+              aria-label="Hide panel"
+              @click="toggleSidePanel"
+            />
+          </div>
+
+          <div class="mt-3 flex flex-wrap gap-2">
+            <UButton
+              data-diagram-create-table="true"
+              label="Add table"
+              leading-icon="i-lucide-table-properties"
+              color="neutral"
+              variant="outline"
+              size="xs"
+              :class="sidePanelActionButtonClass"
+              @click="emit('createTable', null)"
+            />
+            <UButton
+              data-diagram-create-group="true"
+              label="Add group"
+              leading-icon="i-lucide-folder-plus"
+              color="neutral"
+              variant="outline"
+              size="xs"
+              :class="sidePanelActionButtonClass"
+              @click="emit('createGroup')"
+            />
+          </div>
+        </div>
+      </div>
+
+      <div class="grid grid-cols-3 border-b border-[color:var(--studio-divider)]">
+        <button
+          type="button"
+          data-diagram-panel-tab="inspector"
+          :class="getStudioTabButtonClass({ active: activePanelTab === 'inspector', withTrailingBorder: true })"
+          @click="activePanelTab = 'inspector'"
+        >
+          Inspector
+        </button>
+        <button
+          type="button"
+          data-diagram-panel-tab="entities"
+          :class="getStudioTabButtonClass({ active: activePanelTab === 'entities', withTrailingBorder: true })"
+          @click="activePanelTab = 'entities'"
+        >
+          Entities
+        </button>
+        <button
+          type="button"
+          data-diagram-panel-tab="export"
+          :class="getStudioTabButtonClass({ active: activePanelTab === 'export' })"
+          @click="activePanelTab = 'export'"
+        >
+          Export
+        </button>
+      </div>
+
+      <div
+        v-if="activePanelTab === 'inspector'"
+        data-studio-scrollable="true"
+        class="grid content-start gap-3 overflow-auto px-3 py-3"
+      >
+        <div
+          v-if="selectedGroup"
+          class="grid gap-3"
+        >
+          <label class="grid gap-1">
+            <span class="font-mono text-[0.58rem] uppercase tracking-[0.08em] text-[color:var(--studio-shell-label)]">Group Label</span>
+            <input
+              :value="selectedGroup.title"
+              type="text"
+              :class="joinStudioClasses(studioCompactInputClass, 'select-text')"
+              @input="updateGroupState(selectedGroup.id, { title: ($event.target as HTMLInputElement).value })"
+            >
+          </label>
+          <label class="grid gap-1">
+            <span class="font-mono text-[0.58rem] uppercase tracking-[0.08em] text-[color:var(--studio-shell-label)]">Accent</span>
+            <input
+              :value="selectedGroup.color"
+              type="color"
+              :class="studioColorInputClass"
+              @input="updateGroupState(selectedGroup.id, { color: ($event.target as HTMLInputElement).value })"
+            >
+          </label>
+          <USwitch
+            :model-value="selectedGroup.masonry"
+            color="neutral"
+            size="sm"
+            label="Masonry"
+            description="Pack grouped tables vertically to reduce whitespace."
+            :ui="studioSwitchUi"
+            @update:model-value="updateGroupState(selectedGroup.id, { masonry: Boolean($event) })"
+          />
+          <label class="grid gap-1">
+            <span class="font-mono text-[0.58rem] uppercase tracking-[0.08em] text-[color:var(--studio-shell-label)]">Table Width</span>
+            <USelect
+              :items="tableWidthScaleItems"
+              :model-value="selectedGroup.tableWidthScale"
+              value-key="value"
+              label-key="label"
+              color="neutral"
+              variant="outline"
+              size="sm"
+              :ui="studioSelectUi"
+              @update:model-value="updateGroupState(selectedGroup.id, { tableWidthScale: normalizePgmlTableWidthScale(Number($event)) })"
+            />
+          </label>
+          <label class="grid gap-1">
+            <span class="font-mono text-[0.58rem] uppercase tracking-[0.08em] text-[color:var(--studio-shell-label)]">Table Columns · {{ selectedGroup.columnCount }}</span>
+            <input
+              :value="selectedGroup.columnCount"
+              type="range"
+              min="1"
+              :max="Math.max(1, selectedGroup.tableCount)"
+              class="w-full"
+              @input="updateGroupState(selectedGroup.id, { columnCount: Number(($event.target as HTMLInputElement).value) })"
+            >
+          </label>
+          <div class="flex flex-wrap gap-2">
+            <UButton
+              label="Add table"
+              leading-icon="i-lucide-table-properties"
+              color="neutral"
+              variant="outline"
+              size="xs"
+              @click="emit('createTable', selectedGroup.title)"
+            />
+            <UButton
+              label="Edit group"
+              leading-icon="i-lucide-pencil-line"
+              color="neutral"
+              variant="outline"
+              size="xs"
+              @click="emit('editGroup', selectedGroup.title)"
+            />
+            <UButton
+              v-if="groupSourceRangeById[selectedGroup.id]"
+              label="Focus source"
+              leading-icon="i-lucide-braces"
+              color="neutral"
+              variant="outline"
+              size="xs"
+              @click="focusSourceRange(groupSourceRangeById[selectedGroup.id])"
+            />
+          </div>
+        </div>
+
+        <div
+          v-else-if="selectedColumn"
+          class="grid gap-2"
+        >
+          <div class="font-mono text-[0.58rem] uppercase tracking-[0.08em] text-[color:var(--studio-shell-label)]">
+            Column
+          </div>
+          <div class="text-[0.82rem] font-semibold text-[color:var(--studio-shell-text)]">
+            {{ selectedColumn.column.name }}
+          </div>
+          <div class="text-[0.68rem] text-[color:var(--studio-shell-muted)]">
+            {{ selectedColumn.table.fullName }}
+          </div>
+          <div class="rounded-none border border-[color:var(--studio-divider)] bg-[color:var(--studio-control-bg)] px-3 py-2 text-[0.7rem] text-[color:var(--studio-shell-muted)]">
+            <div>Type: {{ selectedColumn.column.type }}</div>
+            <div v-if="selectedColumn.column.modifiers.length">Modifiers: {{ selectedColumn.column.modifiers.join(', ') }}</div>
+            <div v-if="selectedColumn.column.note">Note: {{ selectedColumn.column.note }}</div>
+          </div>
+          <UButton
+            v-if="selectedTable?.sourceRange"
+            label="Focus table source"
+            leading-icon="i-lucide-braces"
+            color="neutral"
+            variant="outline"
+            size="xs"
+            @click="focusSourceRange(selectedTable.sourceRange)"
+          />
+        </div>
+
+        <div
+          v-else-if="selectedAttachment"
+          class="grid gap-2"
+        >
+          <div class="font-mono text-[0.58rem] uppercase tracking-[0.08em] text-[color:var(--studio-shell-label)]">
+            {{ selectedAttachment.kind }}
+          </div>
+          <div class="text-[0.82rem] font-semibold text-[color:var(--studio-shell-text)]">
+            {{ selectedAttachment.title }}
+          </div>
+          <div class="text-[0.68rem] text-[color:var(--studio-shell-muted)]">
+            {{ selectedAttachment.subtitle }}
+          </div>
+          <div class="rounded-none border border-[color:var(--studio-divider)] bg-[color:var(--studio-control-bg)] px-3 py-2 text-[0.7rem] leading-6 text-[color:var(--studio-shell-muted)]">
+            <div
+              v-for="detail in selectedAttachment.details"
+              :key="detail"
+            >
+              {{ detail }}
+            </div>
+          </div>
+          <UButton
+            v-if="selectedAttachment.sourceRange"
+            label="Focus source"
+            leading-icon="i-lucide-braces"
+            color="neutral"
+            variant="outline"
+            size="xs"
+            @click="focusSourceRange(selectedAttachment.sourceRange)"
+          />
+        </div>
+
+        <div
+          v-else-if="selectedTable"
+          class="grid gap-3"
+        >
+          <div class="grid gap-1">
+            <span class="font-mono text-[0.58rem] uppercase tracking-[0.08em] text-[color:var(--studio-shell-label)]">Table</span>
+            <div class="text-[0.82rem] font-semibold text-[color:var(--studio-shell-text)]">
+              {{ selectedTable.title }}
+            </div>
+            <div class="text-[0.68rem] text-[color:var(--studio-shell-muted)]">
+              {{ selectedTable.schema }} schema · {{ selectedTable.rows.length }} rows
+            </div>
+          </div>
+          <label
+            v-if="!selectedTable.groupId"
+            class="grid gap-1"
+          >
+            <span class="font-mono text-[0.58rem] uppercase tracking-[0.08em] text-[color:var(--studio-shell-label)]">Accent</span>
+            <input
+              :value="selectedTable.color"
+              type="color"
+              :class="studioColorInputClass"
+              @input="updateTableState(selectedTable.id, { color: ($event.target as HTMLInputElement).value })"
+            >
+          </label>
+          <div class="flex flex-wrap gap-2">
+            <UButton
+              label="Edit table"
+              leading-icon="i-lucide-pencil-line"
+              color="neutral"
+              variant="outline"
+              size="xs"
+              @click="emit('editTable', selectedTable.id)"
+            />
+            <UButton
+              v-if="selectedTable.sourceRange"
+              label="Focus source"
+              leading-icon="i-lucide-braces"
+              color="neutral"
+              variant="outline"
+              size="xs"
+              @click="focusSourceRange(selectedTable.sourceRange)"
+            />
+          </div>
+        </div>
+
+        <div
+          v-else-if="selectedObject"
+          class="grid gap-2"
+        >
+          <div class="font-mono text-[0.58rem] uppercase tracking-[0.08em] text-[color:var(--studio-shell-label)]">
+            {{ selectedObject.kindLabel }}
+          </div>
+          <div class="text-[0.82rem] font-semibold text-[color:var(--studio-shell-text)]">
+            {{ selectedObject.title }}
+          </div>
+          <div class="text-[0.68rem] text-[color:var(--studio-shell-muted)]">
+            {{ selectedObject.subtitle }}
+          </div>
+          <div class="rounded-none border border-[color:var(--studio-divider)] bg-[color:var(--studio-control-bg)] px-3 py-2 text-[0.7rem] leading-6 text-[color:var(--studio-shell-muted)]">
+            <div
+              v-for="detail in selectedObject.details"
+              :key="detail"
+            >
+              {{ detail }}
+            </div>
+          </div>
+          <UButton
+            v-if="selectedObject.sourceRange"
+            label="Focus source"
+            leading-icon="i-lucide-braces"
+            color="neutral"
+            variant="outline"
+            size="xs"
+            @click="focusSourceRange(selectedObject.sourceRange)"
+          />
+        </div>
+
+        <div
+          v-else
+          class="rounded-none border border-[color:var(--studio-divider)] bg-[color:var(--studio-control-bg)] px-3 py-3 text-[0.7rem] leading-6 text-[color:var(--studio-shell-muted)]"
+        >
+          Click a group, table, column, attachment, or object to inspect it.
+        </div>
+      </div>
+
+      <div
+        v-else-if="activePanelTab === 'entities'"
+        data-studio-scrollable="true"
+        class="grid content-start gap-3 overflow-auto px-3 py-3"
+      >
+        <article
+          v-for="group in groupNodes"
+          :key="group.id"
+          class="border border-[color:var(--studio-divider)] bg-[color:var(--studio-control-bg)]"
+        >
+          <button
+            type="button"
+            class="grid w-full gap-1 px-3 py-2 text-left"
+            @click="selectedSelection = { kind: 'group', id: group.id }"
+          >
+            <span class="font-mono text-[0.56rem] uppercase tracking-[0.08em]" :style="{ color: group.color }">Table Group</span>
+            <span class="text-[0.8rem] font-semibold text-[color:var(--studio-shell-text)]">{{ group.title }}</span>
+            <span class="text-[0.66rem] text-[color:var(--studio-shell-muted)]">{{ group.tableCount }} tables</span>
+          </button>
+          <div class="border-t border-[color:var(--studio-divider)]">
+            <button
+              v-for="table in tableCards.filter(card => card.groupId === group.id)"
+              :key="table.id"
+              type="button"
+              class="flex w-full items-center justify-between gap-3 border-b border-[color:var(--studio-divider)] px-3 py-2 text-left last:border-b-0"
+              @click="selectedSelection = { kind: 'table', tableId: table.id }"
+            >
+              <span class="min-w-0">
+                <span class="block truncate text-[0.74rem] font-semibold text-[color:var(--studio-shell-text)]">{{ table.title }}</span>
+                <span class="block truncate text-[0.62rem] text-[color:var(--studio-shell-muted)]">{{ table.schema }}</span>
+              </span>
+              <span class="font-mono text-[0.58rem] uppercase tracking-[0.06em] text-[color:var(--studio-shell-muted)]">
+                {{ table.rows.length }} rows
+              </span>
+            </button>
+          </div>
+        </article>
+
+        <article
+          v-for="table in tableCards.filter(card => !card.groupId)"
+          :key="table.id"
+          class="border border-[color:var(--studio-divider)] bg-[color:var(--studio-control-bg)]"
+        >
+          <button
+            type="button"
+            class="grid w-full gap-1 px-3 py-2 text-left"
+            @click="selectedSelection = { kind: 'table', tableId: table.id }"
+          >
+            <span class="font-mono text-[0.56rem] uppercase tracking-[0.08em]" :style="{ color: table.color }">Table</span>
+            <span class="text-[0.8rem] font-semibold text-[color:var(--studio-shell-text)]">{{ table.title }}</span>
+            <span class="text-[0.66rem] text-[color:var(--studio-shell-muted)]">{{ table.schema }} · {{ table.rows.length }} rows</span>
+          </button>
+        </article>
+
+        <article
+          v-for="node in objectNodes"
+          :key="node.id"
+          class="border border-[color:var(--studio-divider)] bg-[color:var(--studio-control-bg)]"
+        >
+          <button
+            type="button"
+            class="grid w-full gap-1 px-3 py-2 text-left"
+            @click="selectedSelection = { kind: 'object', id: node.id }"
+          >
+            <span class="font-mono text-[0.56rem] uppercase tracking-[0.08em]" :style="{ color: node.color }">{{ node.kindLabel }}</span>
+            <span class="text-[0.8rem] font-semibold text-[color:var(--studio-shell-text)]">{{ node.title }}</span>
+            <span class="text-[0.66rem] text-[color:var(--studio-shell-muted)]">{{ node.subtitle }}</span>
+          </button>
+        </article>
+      </div>
+
+      <div
+        v-else
+        data-studio-scrollable="true"
+        class="grid content-start gap-3 overflow-auto px-3 py-3"
+      >
+        <div class="rounded-none border border-[color:var(--studio-divider)] bg-[color:var(--studio-control-bg)] px-3 py-3 text-[0.7rem] leading-6 text-[color:var(--studio-shell-muted)]">
+          Export the accelerated scene directly. The preview renderer keeps diagram export working while visual behavior is being reviewed.
+        </div>
+        <div class="grid grid-cols-2 gap-2">
+          <UButton
+            label="PNG 1x"
+            color="neutral"
+            variant="outline"
+            size="sm"
+            @click="exportPng(1)"
+          />
+          <UButton
+            label="PNG 2x"
+            color="neutral"
+            variant="outline"
+            size="sm"
+            @click="exportPng(2)"
+          />
+          <UButton
+            label="SVG"
+            color="neutral"
+            variant="outline"
+            size="sm"
+            class="col-span-2"
+            @click="exportSvg"
+          />
+        </div>
+      </div>
+    </aside>
+  </div>
+</template>
