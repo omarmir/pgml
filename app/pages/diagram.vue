@@ -57,6 +57,7 @@ import {
 } from '~/utils/pgml-table-editor'
 import {
   getStudioChoiceButtonClass,
+  studioPersistentSelectMenuProps,
   getStudioSelectMenuSearchInputProps,
   getStudioToggleChipClass,
   joinStudioClasses,
@@ -1528,6 +1529,7 @@ onBeforeUnmount(() => {
                 aria-label="Table group"
                 :model-value="tableEditorDraft.groupName || 'Ungrouped'"
                 :items="groupSelectItems"
+                v-bind="studioPersistentSelectMenuProps"
                 :search-input="getStudioSelectMenuSearchInputProps('Search groups')"
                 :filter-fields="['label', 'description', 'value']"
                 value-key="value"
@@ -1618,6 +1620,7 @@ onBeforeUnmount(() => {
                         aria-label="Column type preset"
                         :model-value="column.type"
                         :items="tableTypeItems"
+                        v-bind="studioPersistentSelectMenuProps"
                         :search-input="getStudioSelectMenuSearchInputProps('Search column types')"
                         :filter-fields="['label', 'description', 'value']"
                         value-key="value"
@@ -1759,6 +1762,7 @@ onBeforeUnmount(() => {
                       aria-label="Reference target table"
                       :model-value="`${column.referenceSchema}.${column.referenceTable}`"
                       :items="tableTargetItems"
+                      v-bind="studioPersistentSelectMenuProps"
                       :search-input="getStudioSelectMenuSearchInputProps('Search tables')"
                       :filter-fields="['label', 'description', 'value']"
                       value-key="value"
@@ -1779,6 +1783,7 @@ onBeforeUnmount(() => {
                       aria-label="Reference target column"
                       :items="getReferenceColumnItems(`${column.referenceSchema}.${column.referenceTable}`)"
                       :model-value="column.referenceColumn"
+                      v-bind="studioPersistentSelectMenuProps"
                       :search-input="getStudioSelectMenuSearchInputProps('Search columns')"
                       :filter-fields="['label', 'description', 'value']"
                       value-key="value"
@@ -1894,6 +1899,7 @@ onBeforeUnmount(() => {
                 :items="groupTableItems"
                 :model-value="groupEditorDraft.tableNames"
                 :multiple="true"
+                v-bind="studioPersistentSelectMenuProps"
                 :search-input="getStudioSelectMenuSearchInputProps('Search tables')"
                 :filter-fields="['label', 'description', 'value']"
                 value-key="value"

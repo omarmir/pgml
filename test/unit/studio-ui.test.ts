@@ -11,6 +11,7 @@ import {
   getStudioChoiceButtonClass,
   getStudioStateButtonClass,
   getStudioToggleChipClass,
+  studioPersistentSelectMenuProps,
   studioButtonClasses,
   studioModalSurfaceClass
 } from '../../app/utils/uiStyles'
@@ -44,6 +45,8 @@ describe('studio ui modules', () => {
     expect(studioSelectUi.base).toContain('min-w-0')
     expect(studioSelectUi.content).toContain('z-[70]')
     expect(studioSelectUi.placeholder).toContain('break-words')
+    expect(studioPersistentSelectMenuProps.resetSearchTermOnBlur).toBe(false)
+    expect(studioPersistentSelectMenuProps.resetSearchTermOnSelect).toBe(false)
     expect(studioSwitchUi.base).toContain('data-[state=checked]:bg-[color:var(--studio-shell-label)]')
     expect(studioButtonClasses.iconGhost).toContain('studio-button--icon')
   })

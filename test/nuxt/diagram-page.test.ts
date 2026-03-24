@@ -15,5 +15,6 @@ describe('diagram page source', () => {
     expect(file).toContain('Add table group')
     expect(file).toContain('Columns')
     expect(file).toContain('Tables in this group')
+    expect(file).toContain('v-bind="studioPersistentSelectMenuProps"')
   })
 })
