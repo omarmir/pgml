@@ -22,6 +22,10 @@ import {
 } from '~/utils/pgml-export'
 import { readPgmlExportPreferences, writePgmlExportPreferences } from '~/utils/pgml-export-preferences'
 import {
+  buildDiagramConnectionPreviewLayers,
+  type DiagramConnectionPreviewDragState
+} from '~/utils/diagram-connection-preview'
+import {
   getDiagramConnectionZIndex,
   getDiagramGroupBackgroundZIndex,
   getDiagramNodeZIndex
@@ -150,11 +154,27 @@ type CanvasNodeState = {
 type ConnectionLine = {
   key: string
   path: string
+  points: LayoutPoint[]
+  bounds: {
+    minX: number
+    minY: number
+    maxX: number
+    maxY: number
+  }
   color: string
   dashed: boolean
   dashPattern: string
   animated: boolean
   zIndex: number
+  fromOwnerNodeId: string | null
+  toOwnerNodeId: string | null
+  fromEndpoint: ConnectionEndpointLocator | null
+  toEndpoint: ConnectionEndpointLocator | null
+}
+
+type ConnectionEndpointLocator = {
+  attribute: string
+  value: string
 }
 
 type CanvasSelection = {
@@ -284,10 +304,16 @@ const selectedNodeId: Ref<string | null> = ref(null)
 const selectedCanvasSelection: Ref<CanvasSelection | null> = ref(null)
 const nodeStates: Ref<Record<string, CanvasNodeState>> = ref({})
 const connectionLines: Ref<ConnectionLine[]> = ref([])
+const activeNodeDrag: Ref<DiagramConnectionPreviewDragState | null> = ref(null)
+const dragPreviewPaths: Ref<Record<string, string>> = ref({})
 const isDesktopSidePanelOpen: Ref<boolean> = ref(true)
 const activePanelTab: Ref<DiagramPanelTab> = ref('inspector')
 const touchPanSession: Ref<TouchPanSession | null> = ref(null)
 const touchPinchSession: Ref<TouchPinchSession | null> = ref(null)
+const viewportSize: Ref<{ width: number, height: number }> = ref({
+  width: 0,
+  height: 0
+})
 const viewportTransformBatcher = createAnimationFrameBatcher()
 const connectionRefreshBatcher = createAnimationFrameBatcher()
 const wheelZoomBatcher = createAnimationFrameBatcher()
@@ -349,6 +375,7 @@ const groupTableWidth = 232
 const groupTableGap = 16
 const groupHorizontalPadding = 20
 const groupHeaderHeight = 56
+const diagramLineViewportOverscan = 240
 const groupVerticalPadding = 18
 const groupColumnRowHeight = 31
 const objectColumnX = 1060
@@ -541,27 +568,77 @@ const getCanvasNodeZIndex = (node: CanvasNodeState) => {
 
   return node.kind === 'group' ? 'auto' : getNodeForegroundLayerZIndex(node.id)
 }
+const getNodeDragStyle = (nodeId: string): CSSProperties | undefined => {
+  if (
+    !activeNodeDrag.value
+    || activeNodeDrag.value.nodeId !== nodeId
+    || (activeNodeDrag.value.deltaX === 0 && activeNodeDrag.value.deltaY === 0)
+  ) {
+    return undefined
+  }
+
+  return {
+    transform: `translate3d(${activeNodeDrag.value.deltaX}px, ${activeNodeDrag.value.deltaY}px, 0)`,
+    willChange: 'transform'
+  }
+}
+const doesLineBoundsIntersectViewport = (
+  bounds: ConnectionLine['bounds'],
+  viewportBounds: {
+    minX: number
+    minY: number
+    maxX: number
+    maxY: number
+  }
+) => {
+  return (
+    bounds.maxX >= viewportBounds.minX
+    && bounds.minX <= viewportBounds.maxX
+    && bounds.maxY >= viewportBounds.minY
+    && bounds.minY <= viewportBounds.maxY
+  )
+}
+const renderedLineViewportBounds = computed(() => {
+  if (viewportSize.value.width <= 0 || viewportSize.value.height <= 0) {
+    return null
+  }
+
+  const overscan = diagramLineViewportOverscan / Math.max(scale.value, 0.01)
+
+  return {
+    minX: (-pan.value.x) / scale.value - overscan,
+    minY: (-pan.value.y) / scale.value - overscan,
+    maxX: (viewportSize.value.width - pan.value.x) / scale.value + overscan,
+    maxY: (viewportSize.value.height - pan.value.y) / scale.value + overscan
+  }
+})
 const visibleConnectionLines = computed(() => {
   return showRelationshipLines.value ? connectionLines.value : []
 })
-const connectionLineLayers = computed(() => {
-  const layers = visibleConnectionLines.value.reduce<Record<string, ConnectionLine[]>>((entries, line) => {
-    const key = String(line.zIndex)
+const renderedConnectionLines = computed(() => {
+  const activeDragNodeId = activeNodeDrag.value?.nodeId || null
+  const viewportBounds = renderedLineViewportBounds.value
 
-    if (!entries[key]) {
-      entries[key] = []
+  if (!viewportBounds) {
+    return visibleConnectionLines.value
+  }
+
+  return visibleConnectionLines.value.filter((line) => {
+    if (
+      activeDragNodeId
+      && (line.fromOwnerNodeId === activeDragNodeId || line.toOwnerNodeId === activeDragNodeId)
+    ) {
+      return true
     }
 
-    entries[key]?.push(line)
-    return entries
-  }, {})
-
-  return Object.entries(layers)
-    .map(([key, lines]) => ({
-      zIndex: Number.parseInt(key, 10),
-      lines
-    }))
-    .sort((left, right) => left.zIndex - right.zIndex)
+    return doesLineBoundsIntersectViewport(line.bounds, viewportBounds)
+  })
+})
+const connectionLineLayers = computed(() => {
+  return buildDiagramConnectionPreviewLayers(
+    renderedConnectionLines.value,
+    activeNodeDrag.value
+  )
 })
 const hasEmbeddedLayout = computed(() => Object.keys(model.nodeProperties).length > 0)
 const selectedNode = computed(() => {
@@ -2044,6 +2121,10 @@ const syncMeasuredNodeSizes = () => {
 }
 
 const scheduleNodeUpdateFollowUp = (remeasure: boolean) => {
+  if (activeNodeDrag.value) {
+    return
+  }
+
   pendingNodeUpdateNeedsRemeasure = pendingNodeUpdateNeedsRemeasure || remeasure
 
   if (hasPendingNodeUpdateSync) {
@@ -2141,8 +2222,36 @@ const syncMeasuredGroupTableHeights = () => {
 }
 
 const layoutObserverTargets: Ref<HTMLElement[]> = ref([])
+const syncViewportSize = () => {
+  if (!(viewportRef.value instanceof HTMLElement)) {
+    if (viewportSize.value.width === 0 && viewportSize.value.height === 0) {
+      return
+    }
+
+    viewportSize.value = {
+      width: 0,
+      height: 0
+    }
+    return
+  }
+
+  const nextSize = {
+    width: viewportRef.value.clientWidth,
+    height: viewportRef.value.clientHeight
+  }
+
+  if (
+    nextSize.width === viewportSize.value.width
+    && nextSize.height === viewportSize.value.height
+  ) {
+    return
+  }
+
+  viewportSize.value = nextSize
+}
 const syncLayoutObserverTargets = async () => {
   await nextTick()
+  syncViewportSize()
   layoutObserverTargets.value = getCanvasLayoutObserverTargets()
 }
 
@@ -2156,7 +2265,9 @@ const refreshMeasuredGroupTableHeights = async () => {
 }
 
 const handleCanvasLayoutResize = () => {
-  if (Date.now() < suppressLayoutObserverUntil) {
+  syncViewportSize()
+
+  if (Date.now() < suppressLayoutObserverUntil || activeNodeDrag.value) {
     return
   }
 
@@ -4371,6 +4482,35 @@ const getElementIdentity = (element: HTMLElement) => {
     || ''
   )
 }
+const getConnectionEndpointLocator = (element: HTMLElement): ConnectionEndpointLocator | null => {
+  const attributes = [
+    'data-impact-anchor',
+    'data-column-label-anchor',
+    'data-column-anchor',
+    'data-table-anchor',
+    'data-node-anchor'
+  ]
+
+  for (const attribute of attributes) {
+    const value = element.getAttribute(attribute)
+
+    if (value) {
+      return {
+        attribute,
+        value
+      }
+    }
+  }
+
+  return null
+}
+const getConnectionEndpointElement = (locator: ConnectionEndpointLocator | null) => {
+  if (!planeRef.value || !locator) {
+    return null
+  }
+
+  return planeRef.value.querySelector(`[${locator.attribute}="${locator.value}"]`)
+}
 const getConnectionOwnerNodeId = (element: HTMLElement) => {
   const owner = element.closest('[data-node-anchor]')
 
@@ -4449,6 +4589,10 @@ const setViewportScale = (nextScale: number) => {
   scheduleViewportTransformSync()
 }
 const scheduleConnectionRefresh = () => {
+  if (activeNodeDrag.value) {
+    return
+  }
+
   connectionRefreshBatcher.schedule(() => {
     updateConnections()
   })
@@ -5183,6 +5327,157 @@ const buildPathFromPoints = (points: LayoutPoint[]) => {
   }).join(' ')
 }
 
+const getConnectionLineBounds = (points: LayoutPoint[]) => {
+  const firstPoint = points[0]
+
+  if (!firstPoint) {
+    return {
+      minX: 0,
+      minY: 0,
+      maxX: 0,
+      maxY: 0
+    }
+  }
+
+  return points.slice(1).reduce<ConnectionLine['bounds']>((bounds, point) => {
+    return {
+      minX: Math.min(bounds.minX, point.x),
+      minY: Math.min(bounds.minY, point.y),
+      maxX: Math.max(bounds.maxX, point.x),
+      maxY: Math.max(bounds.maxY, point.y)
+    }
+  }, {
+    minX: firstPoint.x,
+    minY: firstPoint.y,
+    maxX: firstPoint.x,
+    maxY: firstPoint.y
+  })
+}
+
+const getPreviewRouteAnchor = (
+  element: HTMLElement,
+  otherElement: HTMLElement,
+  fallbackSide: AnchorSide,
+  planeBounds: DOMRect
+) => {
+  const elementBounds = element.getBoundingClientRect()
+  const otherBounds = otherElement.getBoundingClientRect()
+  const targetCenterX = otherBounds.left + otherBounds.width / 2
+  const targetCenterY = otherBounds.top + otherBounds.height / 2
+  const tableElement = isFieldEndpointElement(element) ? getOwningTableElement(element) : null
+  const anchorHost = tableElement || element
+  const anchorBounds = anchorHost.getBoundingClientRect()
+  const groupElement = getOwningGroupElement(anchorHost)
+  const groupBounds = groupElement?.getBoundingClientRect()
+  let side: AnchorSide = fallbackSide
+
+  if (tableElement) {
+    side = targetCenterX >= anchorBounds.left + anchorBounds.width / 2 ? 'right' : 'left'
+  } else if (groupBounds) {
+    side = getHeaderSafeGroupLaneSide(
+      {
+        x: anchorBounds.left + anchorBounds.width / 2,
+        y: anchorBounds.top + anchorBounds.height / 2
+      },
+      {
+        x: targetCenterX,
+        y: targetCenterY
+      },
+      {
+        left: groupBounds.left,
+        right: groupBounds.right,
+        top: groupBounds.top,
+        bottom: groupBounds.bottom
+      }
+    )
+  }
+
+  const ratio = tableElement
+    ? clamp(
+        ((elementBounds.top + elementBounds.height / 2) - anchorBounds.top) / Math.max(anchorBounds.height, 1),
+        0.16,
+        0.84
+      )
+    : getDesiredAnchorRatio(side, anchorBounds, targetCenterX, targetCenterY)
+
+  return getExactAnchorPoint(anchorHost, side, ratio, planeBounds)
+}
+
+const buildMinimalConnectionDragPreviewPath = (fromElement: HTMLElement, toElement: HTMLElement) => {
+  if (!(planeRef.value instanceof HTMLElement)) {
+    return null
+  }
+
+  const planeBounds = planeRef.value.getBoundingClientRect()
+  const defaultSides = decideAnchorSides(fromElement, toElement)
+  const fromAnchor = getPreviewRouteAnchor(fromElement, toElement, defaultSides.from, planeBounds)
+  const toAnchor = getPreviewRouteAnchor(toElement, fromElement, defaultSides.to, planeBounds)
+  const previewOffset = Math.max(8, Math.min(18, getRouteOffset(fromAnchor, toAnchor)))
+  const fromExit = moveAnchorPoint(fromAnchor, previewOffset)
+  const toExit = moveAnchorPoint(toAnchor, previewOffset)
+  const points: LayoutPoint[] = []
+  const middlePoints = buildOrthogonalMiddlePoints(fromExit, fromAnchor.side, toExit, toAnchor.side)
+
+  ;[
+    { x: fromAnchor.x, y: fromAnchor.y },
+    fromExit,
+    ...middlePoints,
+    toExit,
+    { x: toAnchor.x, y: toAnchor.y }
+  ].forEach((point) => {
+    appendRoutePoint(points, point)
+  })
+
+  return buildPathFromPoints(points)
+}
+
+const syncDragConnectionPreviewPaths = () => {
+  if (
+    !activeNodeDrag.value
+    || (activeNodeDrag.value.deltaX === 0 && activeNodeDrag.value.deltaY === 0)
+  ) {
+    if (Object.keys(dragPreviewPaths.value).length > 0) {
+      dragPreviewPaths.value = {}
+    }
+
+    return
+  }
+
+  const nextPreviewPaths = renderedConnectionLines.value.reduce<Record<string, string>>((paths, line) => {
+    const fromDraggedNode = line.fromOwnerNodeId === activeNodeDrag.value?.nodeId
+    const toDraggedNode = line.toOwnerNodeId === activeNodeDrag.value?.nodeId
+
+    if (fromDraggedNode === toDraggedNode) {
+      return paths
+    }
+
+    const fromElement = getConnectionEndpointElement(line.fromEndpoint)
+    const toElement = getConnectionEndpointElement(line.toEndpoint)
+
+    if (!(fromElement instanceof HTMLElement) || !(toElement instanceof HTMLElement)) {
+      return paths
+    }
+
+    const previewPath = buildMinimalConnectionDragPreviewPath(fromElement, toElement)
+
+    if (previewPath) {
+      paths[line.key] = previewPath
+    }
+
+    return paths
+  }, {})
+
+  dragPreviewPaths.value = nextPreviewPaths
+}
+
+const getConnectionDragPreviewPath = (line: ConnectionLine) => {
+  if (!activeNodeDrag.value || (activeNodeDrag.value.deltaX === 0 && activeNodeDrag.value.deltaY === 0)) {
+    return line.path
+  }
+
+  return dragPreviewPaths.value[line.key] || line.path
+}
+
 const getVerticalSegmentUsageKey = (x: number) => {
   return `vertical:${Math.round(x * verticalSegmentKeyScale) / verticalSegmentKeyScale}`
 }
@@ -5667,7 +5962,7 @@ const buildPathPointsFromLegs = (
   return offsetOverlappingVerticalSegments(points, verticalUsage, headerBands)
 }
 
-const buildSharedGroupPath = (
+const buildSharedGroupPathPoints = (
   fromElement: HTMLElement,
   toElement: HTMLElement,
   groupElement: HTMLElement,
@@ -5750,7 +6045,7 @@ const buildSharedGroupPath = (
     appendRoutePoint(points, { x: laneX, y: toAnchor.y })
     appendRoutePoint(points, { x: toAnchor.x, y: toAnchor.y })
 
-    return buildPathFromPoints(offsetOverlappingVerticalSegments(points, verticalUsage, headerBands))
+    return offsetOverlappingVerticalSegments(points, verticalUsage, headerBands)
   }
 
   const laneY = Math.min(groupBottom - groupLaneInnerBorderClearance, Math.max(fromAnchor.y, toAnchor.y) + laneOffset)
@@ -5759,7 +6054,7 @@ const buildSharedGroupPath = (
   appendRoutePoint(points, { x: toAnchor.x, y: laneY })
   appendRoutePoint(points, { x: toAnchor.x, y: toAnchor.y })
 
-  return buildPathFromPoints(offsetOverlappingVerticalSegments(points, verticalUsage, headerBands))
+  return offsetOverlappingVerticalSegments(points, verticalUsage, headerBands)
 }
 
 const decideAnchorSides = (fromElement: HTMLElement, toElement: HTMLElement): { from: AnchorSide, to: AnchorSide } => {
@@ -5800,8 +6095,19 @@ const buildPathBetween = (
   const sharedGroupElement = !dashed ? getSharedGroupElement(fromElement, toElement) : null
 
   if (sharedGroupElement) {
+    const sharedGroupPoints = buildSharedGroupPathPoints(
+      fromElement,
+      toElement,
+      sharedGroupElement,
+      planeBounds,
+      usage,
+      verticalUsage,
+      headerBands
+    )
+
     return {
-      path: buildSharedGroupPath(fromElement, toElement, sharedGroupElement, planeBounds, usage, verticalUsage, headerBands),
+      path: buildPathFromPoints(sharedGroupPoints),
+      points: sharedGroupPoints,
       color,
       dashed
     }
@@ -5900,6 +6206,7 @@ const buildPathBetween = (
 
   return {
     path: buildPathFromPoints(chosenCandidate.points),
+    points: chosenCandidate.points,
     color,
     dashed
   }
@@ -6005,16 +6312,27 @@ const updateConnections = () => {
         return null
       }
 
+      const fromOwnerNodeId = getConnectionOwnerNodeId(descriptor.fromElement)
+      const toOwnerNodeId = getConnectionOwnerNodeId(descriptor.toElement)
+      const fromEndpoint = getConnectionEndpointLocator(descriptor.fromElement)
+      const toEndpoint = getConnectionEndpointLocator(descriptor.toElement)
+
       return {
         key: descriptor.key,
         path: result.path,
+        points: result.points,
+        bounds: getConnectionLineBounds(result.points),
         color: result.color,
         dashed: result.dashed,
         dashPattern: descriptor.dashPattern,
         animated: descriptor.animated,
+        fromOwnerNodeId,
+        toOwnerNodeId,
+        fromEndpoint,
+        toEndpoint,
         zIndex: getDiagramConnectionZIndex(
-          nodeOrders[getConnectionOwnerNodeId(descriptor.fromElement) || ''] || 1,
-          nodeOrders[getConnectionOwnerNodeId(descriptor.toElement) || ''] || 1,
+          nodeOrders[fromOwnerNodeId || ''] || 1,
+          nodeOrders[toOwnerNodeId || ''] || 1,
           descriptor.selectedForeground
         )
       } satisfies ConnectionLine
@@ -6369,6 +6687,20 @@ const getNodeLayoutProperties = () => {
 
 const emitNodePropertiesChange = () => {
   emit('nodePropertiesChange', getNodeLayoutProperties())
+}
+
+const setActiveNodeDrag = (nextDrag: DiagramConnectionPreviewDragState | null) => {
+  const currentDrag = activeNodeDrag.value
+
+  if (
+    currentDrag?.nodeId === nextDrag?.nodeId
+    && currentDrag?.deltaX === nextDrag?.deltaX
+    && currentDrag?.deltaY === nextDrag?.deltaY
+  ) {
+    return
+  }
+
+  activeNodeDrag.value = nextDrag
 }
 
 const hasCanvasNodeStateChanged = (current: CanvasNodeState, nextNode: CanvasNodeState) => {
@@ -6740,20 +7072,42 @@ const startDragNode = (event: PointerEvent, id: string) => {
 
   flushViewportTransformSync()
   beginViewportGpuAcceleration()
+  setActiveNodeDrag({
+    nodeId: id,
+    deltaX: 0,
+    deltaY: 0
+  })
 
   startPointerSession({
     frameThrottle: true,
     onMove: (moveEvent) => {
-      updateNode(id, {
-        x: snapCoordinate(origin.nodeX + (moveEvent.clientX - origin.x) / scale.value),
-        y: snapCoordinate(origin.nodeY + (moveEvent.clientY - origin.y) / scale.value)
-      }, {
-        remeasure: false,
-        emitNodeProperties: false
+      const nextX = snapCoordinate(origin.nodeX + (moveEvent.clientX - origin.x) / scale.value)
+      const nextY = snapCoordinate(origin.nodeY + (moveEvent.clientY - origin.y) / scale.value)
+
+      setActiveNodeDrag({
+        nodeId: id,
+        deltaX: nextX - origin.nodeX,
+        deltaY: nextY - origin.nodeY
       })
     },
     onEnd: () => {
-      emitNodePropertiesChange()
+      const finalDeltaX = activeNodeDrag.value?.nodeId === id ? activeNodeDrag.value.deltaX : 0
+      const finalDeltaY = activeNodeDrag.value?.nodeId === id ? activeNodeDrag.value.deltaY : 0
+      const hasMoved = finalDeltaX !== 0 || finalDeltaY !== 0
+
+      setActiveNodeDrag(null)
+
+      if (hasMoved) {
+        updateNode(id, {
+          x: snapCoordinate(origin.nodeX + finalDeltaX),
+          y: snapCoordinate(origin.nodeY + finalDeltaY)
+        }, {
+          remeasure: false,
+          emitNodeProperties: false
+        })
+        emitNodePropertiesChange()
+      }
+
       scheduleViewportGpuAccelerationReset()
     }
   })
@@ -6974,6 +7328,19 @@ watch(
 )
 
 watch(
+  [
+    () => activeNodeDrag.value?.nodeId || null,
+    () => activeNodeDrag.value?.deltaX || 0,
+    () => activeNodeDrag.value?.deltaY || 0,
+    () => renderedConnectionLines.value.map(line => line.key).join('|')
+  ],
+  () => {
+    syncDragConnectionPreviewPaths()
+  },
+  { flush: 'post' }
+)
+
+watch(
   () => canvasNodes.value.map(node => `${node.id}:${node.kind}:${node.collapsed}`).join('|'),
   () => {
     void syncLayoutObserverTargets()
@@ -6983,6 +7350,7 @@ watch(
 
 onMounted(() => {
   syncViewportTransform()
+  syncViewportSize()
 
   nextTick(async () => {
     await syncLayoutObserverTargets()
@@ -7059,7 +7427,9 @@ defineExpose<{
         :class="[
           'absolute select-none',
           node.kind === 'group' ? 'overflow-hidden rounded-[2px]' : 'overflow-hidden rounded-none border',
-          node.kind === 'table' || node.kind === 'object' ? 'transition-transform duration-150 hover:-translate-y-0.5 hover:ring-1 hover:ring-[color:var(--studio-ring)]' : '',
+          node.kind === 'table' || node.kind === 'object'
+            ? 'hover:ring-1 hover:ring-[color:var(--studio-ring)]'
+            : '',
           isNodeSelectionActive(node.id) && node.kind !== 'group' ? 'pgml-selection-glow' : ''
         ]"
         :style="[
@@ -7072,6 +7442,7 @@ defineExpose<{
             borderColor: node.kind === 'group' ? 'transparent' : getNodeBorderColor(node),
             background: node.kind === 'group' ? 'transparent' : getNodeBackground(node)
           },
+          getNodeDragStyle(node.id),
           node.kind === 'table' || node.kind === 'object' ? getSelectionGlowStyle(node.color) : undefined
         ]"
         :data-node-anchor="node.id"
@@ -7203,7 +7574,7 @@ defineExpose<{
               v-for="table in getRenderedGroupTables(node.title)"
               :key="table.fullName"
               :class="[
-                'relative min-w-0 self-start overflow-hidden rounded-[2px] border border-[color:var(--studio-shell-border)] bg-[color:var(--studio-table-surface)] transition-transform duration-150 hover:-translate-y-0.5 hover:ring-1 hover:ring-[color:var(--studio-ring)]',
+                'relative min-w-0 self-start overflow-hidden rounded-[2px] border border-[color:var(--studio-shell-border)] bg-[color:var(--studio-table-surface)] hover:ring-1 hover:ring-[color:var(--studio-ring)]',
                 isTableSelectionActive(table.fullName) ? 'pgml-selection-glow pgml-selection-glow-subtle' : ''
               ]"
               :style="[
@@ -7341,7 +7712,7 @@ defineExpose<{
         preserveAspectRatio="none"
       >
         <path
-          v-for="line in layer.lines"
+          v-for="line in layer.staticLines"
           :key="line.key"
           :class="line.animated ? 'pgml-reference-race-path' : undefined"
           :d="line.path"
@@ -7356,6 +7727,45 @@ defineExpose<{
           stroke-linejoin="miter"
           opacity="0.9"
         />
+        <path
+          v-for="line in layer.bridgedLines"
+          :key="`${line.key}:bridge-preview`"
+          :class="line.animated ? 'pgml-reference-race-path' : undefined"
+          :d="getConnectionDragPreviewPath(line)"
+          fill="none"
+          :stroke="line.color"
+          stroke-width="2"
+          :stroke-dasharray="line.dashPattern"
+          :style="line.animated ? getReferenceRaceStyle(line.color) : undefined"
+          :data-connection-key="line.key"
+          :data-connection-highlighted="line.animated ? 'true' : undefined"
+          stroke-linecap="square"
+          stroke-linejoin="miter"
+          opacity="0.9"
+        />
+        <g
+          v-if="activeNodeDrag && layer.translatedLines.length > 0"
+          data-connection-drag-preview="true"
+          :data-connection-drag-node="activeNodeDrag.nodeId"
+          :transform="`translate(${activeNodeDrag.deltaX} ${activeNodeDrag.deltaY})`"
+        >
+          <path
+            v-for="line in layer.translatedLines"
+            :key="`${line.key}:drag-preview`"
+            :class="line.animated ? 'pgml-reference-race-path' : undefined"
+            :d="line.path"
+            fill="none"
+            :stroke="line.color"
+            stroke-width="2"
+            :stroke-dasharray="line.dashPattern"
+            :style="line.animated ? getReferenceRaceStyle(line.color) : undefined"
+            :data-connection-key="line.key"
+            :data-connection-highlighted="line.animated ? 'true' : undefined"
+            stroke-linecap="square"
+            stroke-linejoin="miter"
+            opacity="0.9"
+          />
+        </g>
       </svg>
     </div>
 

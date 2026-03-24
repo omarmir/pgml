@@ -662,47 +662,7 @@ Table public.tenants {
   await expect(groupHeader).toBeVisible()
   await expect(connection).toBeVisible()
 
-  const headerBox = await groupHeader.boundingBox()
-
-  if (!headerBox) {
-    throw new Error('Core group header is not measurable.')
-  }
-
-  const dragStart = {
-    x: headerBox.x + headerBox.width / 2,
-    y: headerBox.y + 16
-  }
-  const dropPoint = {
-    x: dragStart.x + 126,
-    y: dragStart.y + 78
-  }
-
-  await page.mouse.move(dragStart.x, dragStart.y)
-  await page.mouse.down()
-  await page.mouse.move(dropPoint.x, dropPoint.y, { steps: 10 })
-  await page.mouse.up()
-
-  await expect.poll(async () => {
-    const settledBox = await groupHeader.boundingBox()
-
-    if (!settledBox) {
-      return Number.POSITIVE_INFINITY
-    }
-
-    return Math.abs((settledBox.x + settledBox.width / 2) - dropPoint.x)
-  }).toBeLessThanOrEqual(10)
-
-  await expect.poll(async () => {
-    const settledBox = await groupHeader.boundingBox()
-
-    if (!settledBox) {
-      return Number.POSITIVE_INFINITY
-    }
-
-    return Math.abs((settledBox.y + 16) - dropPoint.y)
-  }).toBeLessThanOrEqual(10)
-
-  await expect.poll(async () => {
+  const getConnectionAttachment = () => {
     return page.evaluate(() => {
       const plane = document.querySelector('[data-diagram-plane="true"]')
       const fromTable = document.querySelector('[data-diagram-plane="true"] [data-table-anchor="public.users"]')
@@ -718,32 +678,20 @@ Table public.tenants {
         return null
       }
 
-      const getOffsetWithinPlane = (element: HTMLElement) => {
-        let current: HTMLElement | null = element
-        let x = 0
-        let y = 0
-
-        while (current && current !== plane) {
-          x += current.offsetLeft
-          y += current.offsetTop
-          current = current.offsetParent instanceof HTMLElement ? current.offsetParent : null
-        }
-
-        return { x, y }
-      }
-
-      const hosts = [fromTable, toTable].map((element) => {
-        const offset = getOffsetWithinPlane(element)
+      const planeBounds = plane.getBoundingClientRect()
+      const scale = planeBounds.width / Math.max(plane.offsetWidth, 1)
+      const projectBounds = (element: HTMLElement) => {
+        const bounds = element.getBoundingClientRect()
 
         return {
           label: element.getAttribute('data-table-anchor'),
-          left: offset.x,
-          top: offset.y,
-          right: offset.x + element.offsetWidth,
-          bottom: offset.y + element.offsetHeight
+          left: (bounds.left - planeBounds.left) / scale,
+          top: (bounds.top - planeBounds.top) / scale,
+          right: (bounds.right - planeBounds.left) / scale,
+          bottom: (bounds.bottom - planeBounds.top) / scale
         }
-      })
-
+      }
+      const hosts = [projectBounds(fromTable), projectBounds(toTable)]
       const points = Array.from((path.getAttribute('d') || '').matchAll(/[ML]\s*(-?\d+(?:\.\d+)?)\s+(-?\d+(?:\.\d+)?)/g)).map((match) => {
         return {
           x: Number.parseFloat(match[1] || '0'),
@@ -778,7 +726,64 @@ Table public.tenants {
         to: resolveHost(end)
       }
     })
-  }).toEqual({
+  }
+
+  const headerBox = await groupHeader.boundingBox()
+
+  if (!headerBox) {
+    throw new Error('Core group header is not measurable.')
+  }
+
+  const dragStart = {
+    x: headerBox.x + headerBox.width / 2,
+    y: headerBox.y + 16
+  }
+  const dropPoint = {
+    x: dragStart.x + 126,
+    y: dragStart.y + 78
+  }
+
+  await page.mouse.move(dragStart.x, dragStart.y)
+  await page.mouse.down()
+  await page.mouse.move(dropPoint.x, dropPoint.y, { steps: 10 })
+
+  await expect.poll(getConnectionAttachment).toEqual({
+    from: 'public.users',
+    to: 'public.tenants'
+  })
+
+  await page.mouse.up()
+
+  const droppedBox = await groupHeader.boundingBox()
+
+  if (!droppedBox) {
+    throw new Error('Core group header is not measurable immediately after drop.')
+  }
+
+  expect(Math.abs((droppedBox.x + droppedBox.width / 2) - dropPoint.x)).toBeLessThanOrEqual(10)
+  expect(Math.abs((droppedBox.y + 16) - dropPoint.y)).toBeLessThanOrEqual(10)
+
+  await expect.poll(async () => {
+    const settledBox = await groupHeader.boundingBox()
+
+    if (!settledBox) {
+      return Number.POSITIVE_INFINITY
+    }
+
+    return Math.abs((settledBox.x + settledBox.width / 2) - dropPoint.x)
+  }).toBeLessThanOrEqual(10)
+
+  await expect.poll(async () => {
+    const settledBox = await groupHeader.boundingBox()
+
+    if (!settledBox) {
+      return Number.POSITIVE_INFINITY
+    }
+
+    return Math.abs((settledBox.y + 16) - dropPoint.y)
+  }).toBeLessThanOrEqual(10)
+
+  await expect.poll(getConnectionAttachment).toEqual({
     from: 'public.users',
     to: 'public.tenants'
   })
