@@ -1,5 +1,14 @@
 import { nanoid } from 'nanoid'
-import { parsePgml, type PgmlColumn, type PgmlGroup, type PgmlSchemaModel, type PgmlSourceRange, type PgmlTable } from './pgml'
+import {
+  buildPgmlWithNodeProperties,
+  parsePgml,
+  type PgmlColumn,
+  type PgmlGroup,
+  type PgmlNodeProperties,
+  type PgmlSchemaModel,
+  type PgmlSourceRange,
+  type PgmlTable
+} from './pgml'
 
 export type PgmlEditableColumnDraft = {
   id: string
@@ -33,6 +42,7 @@ export type PgmlEditableTableDraft = {
 }
 
 export type PgmlEditableGroupDraft = {
+  color: string
   mode: 'create' | 'edit'
   name: string
   note: string
@@ -48,6 +58,7 @@ type SourceEdit = {
 
 const trimEditorValue = (value: string) => value.trim()
 const escapeRegExp = (value: string) => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+const colorValuePattern = /^#(?:[\da-f]{3}|[\da-f]{6})$/i
 const normalizeGroupName = (value: string | null | undefined) => {
   const normalized = trimEditorValue(value || '')
 
@@ -78,6 +89,7 @@ const normalizeGroupTableNames = (tableNames: string[]) => {
 const getNormalizedSelectedGroupTableNames = (tableNames: string[]) => {
   return Array.from(new Set(normalizeGroupTableNames(tableNames)))
 }
+const getStoredGroupId = (groupName: string) => `group:${groupName}`
 const serializeColumnReference = (column: PgmlEditableColumnDraft) => {
   if (
     !column.referenceEnabled
@@ -492,8 +504,12 @@ export const createEditableTableDraftForGroup = (groupName: string | null = null
   }
 }
 
-export const createEditableGroupDraft = (group: PgmlGroup): PgmlEditableGroupDraft => {
+export const createEditableGroupDraft = (
+  group: PgmlGroup,
+  model: PgmlSchemaModel | null = null
+): PgmlEditableGroupDraft => {
   return {
+    color: model?.nodeProperties[getStoredGroupId(group.name)]?.color || '',
     mode: 'edit',
     name: group.name,
     note: group.note || '',
@@ -504,6 +520,7 @@ export const createEditableGroupDraft = (group: PgmlGroup): PgmlEditableGroupDra
 
 export const createEditableGroupDraftForCreate = (): PgmlEditableGroupDraft => {
   return {
+    color: '',
     mode: 'create',
     name: '',
     note: '',
@@ -531,6 +548,7 @@ export const cloneEditableTableDraft = (draft: PgmlEditableTableDraft): PgmlEdit
 
 export const cloneEditableGroupDraft = (draft: PgmlEditableGroupDraft): PgmlEditableGroupDraft => {
   return {
+    color: draft.color,
     mode: draft.mode,
     name: draft.name,
     note: draft.note,
@@ -581,9 +599,14 @@ export const getEditableTableDraftErrors = (draft: PgmlEditableTableDraft) => {
 
 export const getEditableGroupDraftErrors = (draft: PgmlEditableGroupDraft) => {
   const errors: string[] = []
+  const normalizedColor = trimEditorValue(draft.color)
 
   if (trimEditorValue(draft.name).length === 0) {
     errors.push('Group name is required.')
+  }
+
+  if (normalizedColor.length > 0 && !colorValuePattern.test(normalizedColor)) {
+    errors.push('Group color must use a 3- or 6-digit hex value.')
   }
 
   return errors
@@ -638,6 +661,7 @@ export const applyEditableGroupDraftToSource = (
   draft: PgmlEditableGroupDraft
 ) => {
   const normalizedSource = source.replaceAll('\r\n', '\n')
+  const normalizedColor = trimEditorValue(draft.color)
   const currentGroup = draft.originalName
     ? model.groups.find(group => group.name === draft.originalName) || null
     : null
@@ -679,13 +703,48 @@ export const applyEditableGroupDraftToSource = (
 
     return workingSource
   }
+  const applyGroupColorProperties = (nextSource: string, groupName: string) => {
+    const nextModel = parsePgml(nextSource)
+    const nextNodeProperties = { ...nextModel.nodeProperties }
+    const groupId = getStoredGroupId(groupName)
+    const nextProperties: PgmlNodeProperties = {
+      ...(nextNodeProperties[groupId] || {})
+    }
+    const hasPersistableProperties = [
+      typeof nextProperties.x === 'number',
+      typeof nextProperties.y === 'number',
+      typeof nextProperties.collapsed === 'boolean',
+      nextProperties.visible === false,
+      typeof nextProperties.tableColumns === 'number',
+      nextProperties.masonry === true
+    ].some(Boolean)
+
+    if (normalizedColor.length > 0) {
+      nextProperties.color = normalizedColor
+      nextNodeProperties[groupId] = nextProperties
+
+      return buildPgmlWithNodeProperties(nextSource, nextNodeProperties)
+    }
+
+    if (hasPersistableProperties) {
+      const { color: _removedColor, ...remainingProperties } = nextProperties
+
+      nextNodeProperties[groupId] = remainingProperties
+
+      return buildPgmlWithNodeProperties(nextSource, nextNodeProperties)
+    }
+
+    const { [groupId]: _removedGroup, ...remainingNodeProperties } = nextNodeProperties
+
+    return buildPgmlWithNodeProperties(nextSource, remainingNodeProperties)
+  }
 
   if (draft.mode === 'create') {
     const insertLine = getCreateGroupInsertLine(model)
 
-    return applySelectedTableMemberships(applySourceEdits(normalizedSource, [
+    return applyGroupColorProperties(applySelectedTableMemberships(applySourceEdits(normalizedSource, [
       buildCreateEmptyGroupInsertEdit(normalizedSource, draft, insertLine)
-    ]))
+    ])), trimEditorValue(draft.name))
   }
 
   if (!currentGroup?.sourceRange) {
@@ -726,11 +785,11 @@ export const applyEditableGroupDraftToSource = (
   const nextSource = applySourceEdits(normalizedSource, edits)
 
   if (currentGroup.name === nextName) {
-    return applySelectedTableMemberships(nextSource)
+    return applyGroupColorProperties(applySelectedTableMemberships(nextSource), nextName)
   }
 
-  return applySelectedTableMemberships(nextSource.replace(
+  return applyGroupColorProperties(applySelectedTableMemberships(nextSource.replace(
     new RegExp(`Properties\\s+"group:${escapeRegExp(currentGroup.name)}"`, 'g'),
     `Properties "group:${nextName}"`
-  ))
+  )), nextName)
 }

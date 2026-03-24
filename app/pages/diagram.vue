@@ -62,6 +62,7 @@ import {
   getStudioToggleChipClass,
   joinStudioClasses,
   studioButtonClasses,
+  studioColorInputClass,
   studioCompactBodyCopyClass,
   studioCompactFieldKickerClass,
   studioEmptyStateClass,
@@ -857,7 +858,7 @@ const openGroupEditor = (groupName: string) => {
     return
   }
 
-  groupEditorDraft.value = cloneEditableGroupDraft(createEditableGroupDraft(group))
+  groupEditorDraft.value = cloneEditableGroupDraft(createEditableGroupDraft(group, parsedModel.value))
   groupEditorOpen.value = true
 }
 
@@ -943,6 +944,33 @@ const updateGroupDraftTableNames = (value: unknown) => {
           .filter(entry => entry.trim().length > 0)
       ))
     : []
+}
+
+const getGroupEditorColorPickerValue = (value: string) => {
+  const normalizedValue = value.trim()
+  const expandedHexMatch = normalizedValue.match(/^#([\da-f]{6})$/i)
+  const shortHexMatch = normalizedValue.match(/^#([\da-f]{3})$/i)
+
+  if (expandedHexMatch) {
+    return normalizedValue
+  }
+
+  if (shortHexMatch) {
+    const shortHexDigits = shortHexMatch[1] || ''
+    const [red = '0', green = '0', blue = '0'] = shortHexDigits.split('')
+
+    return `#${red}${red}${green}${green}${blue}${blue}`.toLowerCase()
+  }
+
+  return '#14b8a6'
+}
+
+const updateGroupDraftColor = (value: string) => {
+  if (!groupEditorDraft.value) {
+    return
+  }
+
+  groupEditorDraft.value.color = value
 }
 
 const updateTableDraftReferenceTarget = (columnId: string, value: string) => {
@@ -1879,18 +1907,35 @@ onBeforeUnmount(() => {
           </div>
 
           <div class="grid gap-3 lg:grid-cols-[minmax(0,0.9fr)_minmax(0,1.1fr)]">
-            <label class="grid gap-1">
-              <span :class="studioFieldKickerClass">Group name</span>
-              <UInput
-                v-model="groupEditorDraft.name"
-                aria-label="Group name"
-                data-group-editor-name="true"
-                color="neutral"
-                variant="outline"
-                size="sm"
-                :ui="studioFieldUi"
-              />
-            </label>
+            <div class="grid gap-3">
+              <label class="grid gap-1">
+                <span :class="studioFieldKickerClass">Group name</span>
+                <UInput
+                  v-model="groupEditorDraft.name"
+                  aria-label="Group name"
+                  data-group-editor-name="true"
+                  color="neutral"
+                  variant="outline"
+                  size="sm"
+                  :ui="studioFieldUi"
+                />
+              </label>
+
+              <label class="grid gap-1">
+                <span :class="studioFieldKickerClass">Group color</span>
+                <input
+                  :value="getGroupEditorColorPickerValue(groupEditorDraft.color)"
+                  aria-label="Group color"
+                  data-group-editor-color="true"
+                  type="color"
+                  :class="studioColorInputClass"
+                  @input="updateGroupDraftColor(($event.target as HTMLInputElement).value)"
+                >
+                <p :class="studioCompactBodyCopyClass">
+                  Choose the same persisted accent used by the diagram inspector.
+                </p>
+              </label>
+            </div>
 
             <div class="grid gap-1">
               <span :class="studioFieldKickerClass">Tables in this group</span>

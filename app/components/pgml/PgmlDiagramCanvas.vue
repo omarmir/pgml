@@ -60,6 +60,7 @@ import {
   getStudioTabButtonClass,
   joinStudioClasses,
   studioButtonClasses,
+  studioColorInputClass,
   studioCompactInputClass,
   studioToolbarButtonClass
 } from '~/utils/uiStyles'
@@ -7150,7 +7151,7 @@ defineExpose<{
             <input
               :value="selectedNode.color"
               type="color"
-              class="h-9 w-full border border-[color:var(--studio-rail)] bg-[color:var(--studio-input-bg)] p-0.5"
+              :class="studioColorInputClass"
               @input="updateNode(selectedNode.id, { color: ($event.target as HTMLInputElement).value })"
             >
           </label>

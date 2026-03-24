@@ -40,6 +40,7 @@ export const studioBodyCopyClass = 'text-[0.8rem] leading-5 text-[color:var(--st
 export const studioCompactBodyCopyClass = 'text-[0.74rem] leading-5 text-[color:var(--studio-shell-muted)]'
 export const studioCodeBlockClass = 'spec-code-block max-w-full overflow-x-auto px-4 py-4 font-mono text-[0.77rem] leading-6 text-[color:var(--studio-shell-text)] sm:text-[0.8rem]'
 export const studioToolbarButtonClass = 'px-2 py-1 font-mono text-[0.62rem] uppercase tracking-[0.08em]'
+export const studioColorInputClass = 'h-9 w-full cursor-default border border-[color:var(--studio-rail)] bg-[color:var(--studio-input-bg)] p-0.5'
 export const textareaClass = 'w-full resize-y border border-[color:var(--studio-shell-border)] bg-[color:var(--studio-input-bg)] px-3 py-2 text-[0.8rem] text-[color:var(--studio-shell-text)] outline-none'
 export const studioPersistentSelectMenuProps = Object.freeze({
   resetSearchTermOnBlur: false,
