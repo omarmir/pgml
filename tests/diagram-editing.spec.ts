@@ -638,6 +638,64 @@ test('canvas snaps dragged nodes to the grid and zooms around the mouse position
   expect(Math.abs(projectedPoint.y - zoomPoint.y)).toBeLessThan(8)
 })
 
+test('column modifier badges start below the field name to preserve label space', async ({ goto, page }) => {
+  await goto('/diagram')
+
+  const editor = getPgmlEditor(page)
+
+  await setPgmlEditorValue(editor, `Table public.related_records {
+  id bigint [pk]
+}
+
+Table public.audit_entries {
+  exceptionally_long_field_name_that_should_stay_visible bigint [not null, ref: > public.related_records.id]
+}`)
+
+  const targetRow = page.locator('[data-table-anchor="public.audit_entries"] [data-table-row-anchor="public.audit_entries.exceptionally_long_field_name_that_should_stay_visible"]')
+
+  await expect(targetRow).toBeVisible()
+
+  const layout = await targetRow.evaluate((element) => {
+    const row = element as HTMLElement
+    const title = row.querySelector('[data-table-row-title]')
+    const subtitle = row.querySelector('[data-table-row-subtitle]')
+    const badges = Array.from(row.querySelectorAll('[data-table-row-badge]'))
+
+    if (!(title instanceof HTMLElement) || !(subtitle instanceof HTMLElement) || badges.length === 0) {
+      return null
+    }
+
+    const firstBadge = badges[0]
+    const lastBadge = badges.at(-1)
+
+    if (!(firstBadge instanceof HTMLElement) || !(lastBadge instanceof HTMLElement)) {
+      return null
+    }
+
+    const rowRect = row.getBoundingClientRect()
+    const titleRect = title.getBoundingClientRect()
+    const subtitleRect = subtitle.getBoundingClientRect()
+    const firstBadgeRect = firstBadge.getBoundingClientRect()
+    const lastBadgeRect = lastBadge.getBoundingClientRect()
+
+    return {
+      badgeTop: firstBadgeRect.top - rowRect.top,
+      lastBadgeTop: lastBadgeRect.top - rowRect.top,
+      titleBottom: titleRect.bottom - rowRect.top,
+      titleWidth: titleRect.width,
+      subtitleWidth: subtitleRect.width
+    }
+  })
+
+  if (!layout) {
+    throw new Error('Expected the rendered column row to expose title, subtitle, and modifier badge measurements.')
+  }
+
+  expect(layout.badgeTop).toBeGreaterThanOrEqual(layout.titleBottom - 1)
+  expect(Math.abs(layout.badgeTop - layout.lastBadgeTop)).toBeLessThanOrEqual(1)
+  expect(layout.titleWidth).toBeGreaterThan(layout.subtitleWidth)
+})
+
 test('relationship lines can be hidden and restored from the bottom toolbar', async ({ goto, page }) => {
   await goto('/diagram')
 
