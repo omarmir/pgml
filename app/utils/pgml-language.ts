@@ -138,6 +138,9 @@ export type PgmlDocumentAnalysis = {
   tables: PgmlTableSymbol[]
   groups: PgmlGroupSymbol[]
   customTypes: PgmlCustomTypeSymbol[]
+  functions: PgmlNamedRange[]
+  procedures: PgmlNamedRange[]
+  triggers: PgmlNamedRange[]
   sequences: PgmlNamedRange[]
   references: PgmlReferenceSymbol[]
   propertyTargets: PgmlPropertyTarget[]
@@ -874,6 +877,43 @@ const collectCustomTypeBody = (
   })
 }
 
+const collectRoutineSymbol = (
+  block: PgmlRawBlock,
+  keyword: 'Function' | 'Procedure',
+  routines: PgmlNamedRange[]
+) => {
+  const headerMatch = block.header.match(new RegExp(`^${keyword}\\s+(.+)$`))
+
+  if (!headerMatch) {
+    return
+  }
+
+  const signature = cleanName(headerMatch[1] || '')
+  const name = cleanName(signature.split('(')[0] || '')
+
+  if (name.length === 0) {
+    return
+  }
+
+  routines.push(createNamedRange(name, block.headerLine, headerMatch[1] || name))
+}
+
+const collectTriggerSymbol = (block: PgmlRawBlock, triggers: PgmlNamedRange[]) => {
+  const headerMatch = block.header.match(/^Trigger\s+([^\s]+)(?:\s+on\s+([^\s]+))?$/)
+
+  if (!headerMatch) {
+    return
+  }
+
+  const name = cleanName(headerMatch[1] || '')
+
+  if (name.length === 0) {
+    return
+  }
+
+  triggers.push(createNamedRange(name, block.headerLine, headerMatch[1] || name))
+}
+
 const collectTopLevelReference = (
   line: PgmlLineInfo,
   diagnostics: PgmlLanguageDiagnostic[],
@@ -1169,6 +1209,9 @@ const createPropertyTargets = (
   groups: PgmlGroupSymbol[],
   tables: PgmlTableSymbol[],
   customTypes: PgmlCustomTypeSymbol[],
+  functions: PgmlNamedRange[],
+  procedures: PgmlNamedRange[],
+  triggers: PgmlNamedRange[],
   sequences: PgmlNamedRange[]
 ) => {
   const propertyTargets: Set<string> = new Set()
@@ -1185,6 +1228,18 @@ const createPropertyTargets = (
     propertyTargets.add(`custom-type:${customType.kind}:${customType.name}`)
   })
 
+  functions.forEach((pgFunction) => {
+    propertyTargets.add(`function:${pgFunction.name}`)
+  })
+
+  procedures.forEach((procedure) => {
+    propertyTargets.add(`procedure:${procedure.name}`)
+  })
+
+  triggers.forEach((trigger) => {
+    propertyTargets.add(`trigger:${trigger.name}`)
+  })
+
   sequences.forEach((sequence) => {
     propertyTargets.add(`sequence:${sequence.name}`)
   })
@@ -1193,10 +1248,10 @@ const createPropertyTargets = (
 }
 
 const runSemanticDiagnostics = (analysis: PgmlDocumentAnalysis) => {
-  const { diagnostics, tables, groups, customTypes, sequences, references, propertyTargets } = analysis
+  const { diagnostics, tables, groups, customTypes, functions, procedures, triggers, sequences, references, propertyTargets } = analysis
   const tableMap = new Map<string, PgmlTableSymbol>()
   const groupNames = new Set(groups.map(group => group.name))
-  const validPropertyTargets = createPropertyTargets(groups, tables, customTypes, sequences)
+  const validPropertyTargets = createPropertyTargets(groups, tables, customTypes, functions, procedures, triggers, sequences)
 
   tables.forEach((table) => {
     tableMap.set(lower(table.fullName), table)
@@ -1522,6 +1577,9 @@ export const analyzePgmlDocument = (source: string) => {
   const tables: PgmlTableSymbol[] = []
   const groups: PgmlGroupSymbol[] = []
   const customTypes: PgmlCustomTypeSymbol[] = []
+  const functions: PgmlNamedRange[] = []
+  const procedures: PgmlNamedRange[] = []
+  const triggers: PgmlNamedRange[] = []
   const sequences: PgmlNamedRange[] = []
   const references: PgmlReferenceSymbol[] = []
   const propertyTargets: PgmlPropertyTarget[] = []
@@ -1575,6 +1633,16 @@ export const analyzePgmlDocument = (source: string) => {
     if (block.kind === 'Function' || block.kind === 'Procedure' || block.kind === 'Trigger') {
       collectExecutableBody(block, diagnostics, contexts)
 
+      if (block.kind === 'Function') {
+        collectRoutineSymbol(block, 'Function', functions)
+        return
+      }
+
+      if (block.kind === 'Procedure') {
+        collectRoutineSymbol(block, 'Procedure', procedures)
+        return
+      }
+
       if (block.kind === 'Trigger') {
         const triggerMatch = block.header.match(/^Trigger\s+([^\s]+)(?:\s+on\s+([^\s]+))?$/)
 
@@ -1586,6 +1654,8 @@ export const analyzePgmlDocument = (source: string) => {
             'Trigger headers must use `Trigger name on schema.table {` or `Trigger name {`.',
             block.headerLine
           )
+        } else {
+          collectTriggerSymbol(block, triggers)
         }
       }
 
@@ -1627,6 +1697,9 @@ export const analyzePgmlDocument = (source: string) => {
     tables,
     groups,
     customTypes,
+    functions,
+    procedures,
+    triggers,
     sequences,
     references,
     propertyTargets
@@ -1773,6 +1846,18 @@ const getPropertyTargetCompletions = (analysis: PgmlDocumentAnalysis, fragment: 
 
   analysis.customTypes.forEach((customType) => {
     values.push(`custom-type:${customType.kind}:${customType.name}`)
+  })
+
+  analysis.functions.forEach((pgFunction) => {
+    values.push(`function:${pgFunction.name}`)
+  })
+
+  analysis.procedures.forEach((procedure) => {
+    values.push(`procedure:${procedure.name}`)
+  })
+
+  analysis.triggers.forEach((trigger) => {
+    values.push(`trigger:${trigger.name}`)
   })
 
   analysis.sequences.forEach((sequence) => {

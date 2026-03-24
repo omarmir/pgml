@@ -225,6 +225,75 @@ test('studio autosaves changes to local storage and updates the header status ic
   })
 })
 
+test('standalone function collapse toggles autosave and persists embedded PGML properties', async ({ goto, page }) => {
+  await goto('/diagram')
+
+  const editor = getPgmlEditor(page)
+  const source = `Function orphan_report() {
+  language: sql
+  source: $sql$
+    select 1;
+  $sql$
+}`
+
+  await setPgmlEditorValue(editor, source)
+  await expect(page.locator('[data-node-anchor="function:orphan_report"]')).toBeVisible()
+  await expect.poll(async () => {
+    return page.locator('[data-studio-schema-status]').getAttribute('data-studio-schema-status')
+  }, {
+    timeout: 8000
+  }).toBe('saved')
+
+  await page.getByRole('button', { name: 'Expand orphan_report' }).click()
+  await expect(page.locator('[data-node-body="function:orphan_report"]')).toBeVisible()
+  await expect(page.locator('[data-studio-schema-status]')).toHaveAttribute('data-studio-schema-status', 'pending')
+  await expect.poll(async () => readPgmlEditorValue(editor), {
+    timeout: 8000
+  }).toMatch(/Properties "function:orphan_report" \{[\s\S]*collapsed: false/)
+  await expect.poll(async () => {
+    const savedSchemas = await page.evaluate(() => {
+      return JSON.parse(window.localStorage.getItem('pgml-studio-schemas-v1') || '[]')
+    })
+    const status = await page.locator('[data-studio-schema-status]').getAttribute('data-studio-schema-status')
+
+    return {
+      count: savedSchemas.length,
+      status,
+      text: savedSchemas[0]?.text || ''
+    }
+  }, {
+    timeout: 8000
+  }).toEqual({
+    count: 1,
+    status: 'saved',
+    text: expect.stringMatching(/Properties "function:orphan_report" \{[\s\S]*collapsed: false/)
+  })
+
+  await page.getByRole('button', { name: 'Collapse orphan_report' }).click()
+  await expect(page.locator('[data-node-body="function:orphan_report"]')).toHaveCount(0)
+  await expect.poll(async () => readPgmlEditorValue(editor), {
+    timeout: 8000
+  }).toMatch(/Properties "function:orphan_report" \{[\s\S]*collapsed: true/)
+  await expect.poll(async () => {
+    const savedSchemas = await page.evaluate(() => {
+      return JSON.parse(window.localStorage.getItem('pgml-studio-schemas-v1') || '[]')
+    })
+    const status = await page.locator('[data-studio-schema-status]').getAttribute('data-studio-schema-status')
+
+    return {
+      count: savedSchemas.length,
+      status,
+      text: savedSchemas[0]?.text || ''
+    }
+  }, {
+    timeout: 8000
+  }).toEqual({
+    count: 1,
+    status: 'saved',
+    text: expect.stringMatching(/Properties "function:orphan_report" \{[\s\S]*collapsed: true/)
+  })
+})
+
 test('browser-backed save failures show a toast', async ({ goto, page }) => {
   await goto('/diagram')
 

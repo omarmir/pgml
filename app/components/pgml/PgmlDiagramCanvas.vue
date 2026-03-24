@@ -172,6 +172,18 @@ type CanvasSelection = {
   tableId: string
   attachmentId: string
 }
+
+const storedCollapsedObjectKinds = new Set<ObjectKind>([
+  'Custom Type',
+  'Function',
+  'Procedure',
+  'Trigger',
+  'Sequence'
+])
+
+const storesCollapsedState = (objectKind: ObjectKind | undefined) => {
+  return typeof objectKind === 'string' && storedCollapsedObjectKinds.has(objectKind)
+}
 type EntityBrowserItemKind = 'group' | 'table' | 'column' | 'attachment' | 'object'
 
 type EntityBrowserItem = {
@@ -4273,7 +4285,7 @@ const syncNodeStates = () => {
   for (const objectNode of objectNodes) {
     const existing = nodeStates.value[objectNode.id]
     const storedLayout = model.nodeProperties[objectNode.id]
-    const collapsed = objectNode.objectKind === 'Custom Type'
+    const collapsed = storesCollapsedState(objectNode.objectKind)
       ? storedLayout?.collapsed ?? existing?.collapsed ?? true
       : existing?.collapsed ?? true
     const expandedHeight = Math.max(
@@ -6337,7 +6349,7 @@ const getNodeLayoutProperties = () => {
       nextProperties.y = Math.round(node.y)
     }
 
-    if (node.kind === 'object' && node.objectKind === 'Custom Type') {
+    if (node.kind === 'object' && storesCollapsedState(node.objectKind)) {
       nextProperties.collapsed = node.collapsed
     }
 
@@ -6502,11 +6514,18 @@ const toggleNodeCollapsed = (id: string) => {
     return
   }
 
+  const emitCollapsedStateChange = () => {
+    emitNodePropertiesChange()
+  }
+
   if (node.collapsed) {
     updateNode(id, {
       collapsed: false,
       height: Math.max(node.expandedHeight || node.height, collapsedObjectHeight)
+    }, {
+      emitNodeProperties: false
     })
+    emitCollapsedStateChange()
     return
   }
 
@@ -6520,7 +6539,10 @@ const toggleNodeCollapsed = (id: string) => {
     collapsed: true,
     expandedHeight: node.height,
     height: nextCollapsedHeight
+  }, {
+    emitNodeProperties: false
   })
+  emitCollapsedStateChange()
 }
 
 const startPan = (event: PointerEvent) => {

@@ -295,6 +295,272 @@ const buildGroupTableReferenceLookup = (tables: PgmlTable[]) => {
   return referenceLookup
 }
 
+const cleanForSearch = (value: string) => lower(value).replaceAll(/[^\w.]+/g, ' ')
+const sanitizeReferenceValue = (value: string) => {
+  return value
+    .trim()
+    .replaceAll('"', '')
+    .replaceAll('\'', '')
+    .replace(/[(),;]/g, '')
+}
+const uniqueValues = <Value>(values: Value[]) => Array.from(new Set(values))
+const resolveTableIdentifier = (
+  tables: PgmlTable[],
+  referenceLookup: Map<string, string>,
+  value: string
+) => {
+  const normalized = sanitizeReferenceValue(value).toLowerCase()
+
+  if (!normalized) {
+    return null
+  }
+
+  const directMatch = referenceLookup.get(normalized)
+
+  if (directMatch) {
+    return directMatch
+  }
+
+  const byName = tables.find(table => lower(table.name) === normalized)
+
+  return byName?.fullName || null
+}
+const resolveTableIdsFromValue = (
+  tables: PgmlTable[],
+  referenceLookup: Map<string, string>,
+  value: string,
+  defaultTableId: string | null = null
+) => {
+  const normalized = sanitizeReferenceValue(value)
+
+  if (!normalized) {
+    return []
+  }
+
+  const parts = normalized.split('.')
+
+  if (
+    parts.length === 2
+    && defaultTableId
+    && (lower(parts[0] || '') === 'new' || lower(parts[0] || '') === 'old')
+  ) {
+    return [defaultTableId]
+  }
+
+  if (parts.length === 3) {
+    const tableId = resolveTableIdentifier(tables, referenceLookup, `${parts[0]}.${parts[1]}`)
+
+    return tableId ? [tableId] : []
+  }
+
+  if (parts.length === 2) {
+    const fullTableMatch = resolveTableIdentifier(tables, referenceLookup, `${parts[0]}.${parts[1]}`)
+
+    if (fullTableMatch) {
+      return [fullTableMatch]
+    }
+
+    const matchingTable = tables.find((table) => {
+      return lower(table.name) === lower(parts[0] || '')
+    })
+
+    if (matchingTable && matchingTable.columns.some(column => lower(column.name) === lower(parts[1] || ''))) {
+      return [matchingTable.fullName]
+    }
+  }
+
+  const directTable = resolveTableIdentifier(tables, referenceLookup, normalized)
+
+  if (directTable) {
+    return [directTable]
+  }
+
+  if (defaultTableId) {
+    const defaultTable = tables.find(table => table.fullName === defaultTableId)
+
+    if (defaultTable?.columns.some(column => lower(column.name) === lower(normalized))) {
+      return [defaultTableId]
+    }
+  }
+
+  return []
+}
+const getTableIdsFromValues = (
+  tables: PgmlTable[],
+  referenceLookup: Map<string, string>,
+  values: string[],
+  defaultTableId: string | null = null
+) => {
+  return uniqueValues(values.flatMap(value => resolveTableIdsFromValue(tables, referenceLookup, value, defaultTableId)))
+}
+const inferSourceTableIds = (
+  tables: PgmlTable[],
+  referenceLookup: Map<string, string>,
+  source: string,
+  defaultTableId: string | null = null
+) => {
+  const values: string[] = []
+
+  Array.from(source.matchAll(/\b(?:insert\s+into|update|delete\s+from|from|join|on|owned\s+by)\s+([a-zA-Z_"][\w."]*)/gi)).forEach((match) => {
+    const identifier = match[1] || ''
+
+    if (identifier.length > 0) {
+      values.push(identifier)
+    }
+  })
+
+  Array.from(source.matchAll(/\b(?:NEW|OLD)\.([a-zA-Z_]\w*)/g)).forEach((match) => {
+    const columnName = match[1] || ''
+
+    if (columnName.length > 0) {
+      values.push(`NEW.${columnName}`)
+    }
+  })
+
+  return getTableIdsFromValues(tables, referenceLookup, values, defaultTableId)
+}
+const inferRoutineTableIds = (tables: PgmlTable[], routine: PgmlRoutine) => {
+  const haystack = cleanForSearch(`${routine.signature} ${routine.details.join(' ')}`)
+  const tableIds: string[] = []
+
+  for (const table of tables) {
+    const fullName = cleanForSearch(table.fullName)
+    const bareName = cleanForSearch(table.name)
+    const singularName = bareName.endsWith('s') ? bareName.slice(0, -1) : bareName
+
+    if (
+      haystack.includes(fullName)
+      || haystack.includes(bareName)
+      || (singularName.length > 2 && haystack.includes(singularName))
+    ) {
+      tableIds.push(table.fullName)
+    }
+  }
+
+  return uniqueValues(tableIds)
+}
+const getRoutinePrimaryTableIds = (
+  tables: PgmlTable[],
+  referenceLookup: Map<string, string>,
+  routine: PgmlRoutine
+) => {
+  const candidateGroups = routine.affects
+    ? [routine.affects.ownedBy, routine.affects.sets, routine.affects.writes]
+    : []
+
+  for (const values of candidateGroups) {
+    const tableIds = getTableIdsFromValues(tables, referenceLookup, values)
+
+    if (tableIds.length) {
+      return tableIds
+    }
+  }
+
+  const affectValues = routine.affects
+    ? [
+        ...routine.affects.writes,
+        ...routine.affects.sets,
+        ...routine.affects.dependsOn,
+        ...routine.affects.reads,
+        ...routine.affects.uses,
+        ...routine.affects.ownedBy
+      ]
+    : []
+  const sourceTableIds = routine.source
+    ? inferSourceTableIds(tables, referenceLookup, routine.source)
+    : []
+
+  return uniqueValues([
+    ...getTableIdsFromValues(tables, referenceLookup, affectValues),
+    ...sourceTableIds,
+    ...inferRoutineTableIds(tables, routine)
+  ])
+}
+const getMetadataValue = (metadata: PgmlMetadataEntry[], key: string) => {
+  return metadata.find(entry => normalizeEffectKey(entry.key) === normalizeEffectKey(key))?.value || null
+}
+const getRoutineNameSearchKeys = (value: string) => {
+  return uniqueValues([
+    cleanForSearch(value),
+    cleanForSearch(value.split('.').at(-1) || value)
+  ]).filter(entry => entry.length > 0)
+}
+const buildTriggerTableIdsByRoutineName = (
+  model: PgmlSchemaModel,
+  referenceLookup: Map<string, string>
+) => {
+  const mapping = new Map<string, string[]>()
+
+  model.triggers.forEach((trigger) => {
+    const routineName = getMetadataValue(trigger.metadata, 'function')
+
+    if (!routineName) {
+      return
+    }
+
+    const tableId = resolveTableIdentifier(model.tables, referenceLookup, trigger.tableName)
+
+    if (!tableId) {
+      return
+    }
+
+    getRoutineNameSearchKeys(routineName).forEach((key) => {
+      mapping.set(key, uniqueValues([...(mapping.get(key) || []), tableId]))
+    })
+  })
+
+  return mapping
+}
+const getSequenceOwnedTableIds = (
+  tables: PgmlTable[],
+  referenceLookup: Map<string, string>,
+  sequence: PgmlSequence
+) => {
+  const metadataOwnedBy = getMetadataValue(sequence.metadata, 'owned_by')
+  const explicitOwnedBy = sequence.affects?.ownedBy || []
+  const values = metadataOwnedBy
+    ? [metadataOwnedBy, ...explicitOwnedBy]
+    : explicitOwnedBy
+
+  return getTableIdsFromValues(tables, referenceLookup, values)
+}
+const getPersistableStandaloneObjectPropertyTargetIds = (model: PgmlSchemaModel) => {
+  const referenceLookup = buildGroupTableReferenceLookup(model.tables)
+  const triggerTableIdsByRoutineName = buildTriggerTableIdsByRoutineName(model, referenceLookup)
+  const getStandaloneRoutineIds = (routines: PgmlRoutine[], prefix: 'function' | 'procedure') => {
+    return routines
+      .filter((routine) => {
+        const triggerTableIds = uniqueValues(getRoutineNameSearchKeys(routine.name).flatMap((key) => {
+          return triggerTableIdsByRoutineName.get(key) || []
+        }))
+        const tableIds = triggerTableIds.length
+          ? triggerTableIds
+          : getRoutinePrimaryTableIds(model.tables, referenceLookup, routine)
+
+        return tableIds.length === 0
+      })
+      .map(routine => `${prefix}:${routine.name}`)
+  }
+  const standaloneTriggerIds = model.triggers
+    .filter((trigger) => {
+      return resolveTableIdentifier(model.tables, referenceLookup, trigger.tableName) === null
+    })
+    .map(trigger => `trigger:${trigger.name}`)
+  const standaloneSequenceIds = model.sequences
+    .filter((sequence) => {
+      return getSequenceOwnedTableIds(model.tables, referenceLookup, sequence).length === 0
+    })
+    .map(sequence => `sequence:${sequence.name}`)
+
+  return [
+    ...model.customTypes.map(customType => `custom-type:${customType.kind}:${customType.name}`),
+    ...getStandaloneRoutineIds(model.functions, 'function'),
+    ...getStandaloneRoutineIds(model.procedures, 'procedure'),
+    ...standaloneTriggerIds,
+    ...standaloneSequenceIds
+  ]
+}
+
 export const getOrderedGroupTables = (model: PgmlSchemaModel, groupName: string) => {
   const group = model.groups.find(entry => entry.name === groupName) || null
   const groupedTables = model.tables.filter(table => table.groupName === groupName)
@@ -1672,8 +1938,7 @@ export const buildPgmlWithNodeProperties = (
   const persistablePropertyTargetIds = new Set<string>([
     ...parsedModel.tables.map(table => table.fullName),
     ...parsedModel.groups.map(group => `group:${group.name}`),
-    ...parsedModel.customTypes.map(customType => `custom-type:${customType.kind}:${customType.name}`),
-    ...parsedModel.sequences.map(sequence => `sequence:${sequence.name}`)
+    ...getPersistableStandaloneObjectPropertyTargetIds(parsedModel)
   ])
   const propertyBlocks = Object.entries(nodeProperties)
     .filter(([id]) => {

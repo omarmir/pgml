@@ -208,10 +208,14 @@ Properties "group:Core" {
     expect(reparsed.nodeProperties['sequence:user_number_seq']?.height).toBeUndefined()
   })
 
-  it('drops stale node properties for unsupported executable entities when rebuilding layout blocks', () => {
+  it('keeps standalone function properties and drops attached executable layout blocks when rebuilding layout blocks', () => {
     const sourceWithOldLayout = `${baseSource}
 
 Function public.touch_users() returns trigger {
+  affects {
+    sets: [public.users.id]
+  }
+
   source: $sql$
     begin
       return new;
@@ -219,10 +223,24 @@ Function public.touch_users() returns trigger {
   $sql$
 }
 
+Function orphan_report() {
+  source: $sql$
+    select 1;
+  $sql$
+}
+
 Properties "function:public.touch_users" {
   x: 1056
   y: 1920
   color: #c084fc
+  collapsed: false
+}
+
+Properties "function:orphan_report" {
+  x: 1188
+  y: 1660
+  color: #38bdf8
+  collapsed: false
 }`
 
     const built = buildPgmlWithNodeProperties(sourceWithOldLayout, {
@@ -233,11 +251,30 @@ Properties "function:public.touch_users" {
       'function:public.touch_users': {
         x: 1056,
         y: 1920,
-        color: '#c084fc'
+        color: '#c084fc',
+        collapsed: false
+      },
+      'function:orphan_report': {
+        x: 1188,
+        y: 1660,
+        color: '#38bdf8',
+        collapsed: false
       }
     })
 
     expect(built).toContain('Properties "group:Core" {')
+    expect(built).toContain('Properties "function:orphan_report" {')
+    expect(built).toContain('collapsed: false')
     expect(built).not.toContain('Properties "function:public.touch_users" {')
+
+    const reparsed = parsePgml(built)
+
+    expect(reparsed.nodeProperties['function:orphan_report']).toEqual({
+      x: 1188,
+      y: 1660,
+      color: '#38bdf8',
+      collapsed: false
+    })
+    expect(reparsed.nodeProperties['function:public.touch_users']).toBeUndefined()
   })
 })

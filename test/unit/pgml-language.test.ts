@@ -19,6 +19,17 @@ Properties "public.users" {
   collapsed: false
   masonry: true
   table_width_scale: 1.5
+}
+
+Function orphan_report() {
+  language: sql
+  source: $sql$
+    select 1;
+  $sql$
+}
+
+Properties "function:orphan_report" {
+  collapsed: false
 }`
 
     const analysis = analyzePgmlDocument(source)
@@ -133,6 +144,27 @@ Properties "group:Core" {
       expect.objectContaining({
         label: 'table_width_scale',
         kind: 'property'
+      })
+    ]))
+  })
+
+  it('offers standalone executable targets in properties completions', () => {
+    const source = `Function orphan_report() {
+  language: sql
+  source: $sql$
+    select 1;
+  $sql$
+}
+
+Properties "fun" {
+}`
+    const cursor = source.indexOf('fun') + 'fun'.length
+    const items = getPgmlCompletionItems(source, cursor)
+
+    expect(items).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        label: 'function:orphan_report',
+        kind: 'symbol'
       })
     ]))
   })
