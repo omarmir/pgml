@@ -18,6 +18,7 @@ const {
   getRelationalRowHighlightColor,
   getSelectedAttachmentRowStyle,
   getSelectionGlowStyle,
+  isColumnSelectionActive,
   isAttachmentSelectionActive,
   isHighlightedRelationalRow,
   rows,
@@ -61,6 +62,10 @@ const {
   },
   getSelectionGlowStyle: {
     type: Function as PropType<(color: string) => CSSProperties>,
+    required: true
+  },
+  isColumnSelectionActive: {
+    type: Function as PropType<(tableId: string, columnName: string) => boolean>,
     required: true
   },
   isAttachmentSelectionActive: {
@@ -132,9 +137,12 @@ const handleAttachmentDoubleClick = (attachment: TableAttachment) => {
       :data-column-anchor="getColumnAnchorKey(tableId, row.column.name)"
       :class="[
         columnRowClass,
-        isHighlightedRelationalRow(tableId, row.column.name) ? 'pgml-selection-glow pgml-selection-glow-subtle' : ''
+        isColumnSelectionActive(tableId, row.column.name) || isHighlightedRelationalRow(tableId, row.column.name)
+          ? 'pgml-selection-glow pgml-selection-glow-subtle'
+          : ''
       ]"
       :style="getColumnRowStyle(row.column.name)"
+      :data-selection-active="isColumnSelectionActive(tableId, row.column.name) ? 'true' : undefined"
       :data-relational-highlighted="isHighlightedRelationalRow(tableId, row.column.name) ? 'true' : undefined"
     >
       <strong

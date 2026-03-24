@@ -941,6 +941,53 @@ test('side panel can switch tabs, hide entities, and restore them from saved pro
   await expect.poll(async () => readPgmlEditorValue(editor)).not.toContain('Properties "public.users" {\n  visible: false')
 })
 
+test('entity panel clicks select groups, tables, and fields while raising the active host group', async ({ goto, page }) => {
+  await goto('/diagram')
+
+  const isNodeAtTopOfStack = async (nodeId: string) => {
+    return page.evaluate((targetNodeId) => {
+      const target = document.querySelector(`[data-node-anchor="${targetNodeId}"]`)
+
+      if (!(target instanceof HTMLElement)) {
+        return false
+      }
+
+      const getNodeZIndex = (element: HTMLElement) => {
+        const zIndex = Number.parseInt(getComputedStyle(element).zIndex || '0', 10)
+
+        return Number.isFinite(zIndex) ? zIndex : 0
+      }
+
+      const targetZIndex = getNodeZIndex(target)
+      const maxZIndex = Array.from(document.querySelectorAll('[data-node-anchor]')).reduce((max, entry) => {
+        if (!(entry instanceof HTMLElement)) {
+          return max
+        }
+
+        return Math.max(max, getNodeZIndex(entry))
+      }, 0)
+
+      return targetZIndex > 0 && targetZIndex === maxZIndex
+    }, nodeId)
+  }
+
+  await page.locator('[data-diagram-panel-tab="entities"]').click()
+
+  await page.locator('[data-browser-entity-row="group:Core"] button').first().click()
+  await expect(page.locator('[data-node-anchor="group:Core"]')).toHaveAttribute('data-selection-active', 'true')
+  await expect.poll(async () => isNodeAtTopOfStack('group:Core')).toBe(true)
+
+  await page.locator('[data-browser-entity-row="public.orders"] button').first().click()
+  await expect(page.locator('[data-node-anchor="group:Commerce"] [data-table-anchor="public.orders"]')).toHaveAttribute('data-selection-active', 'true')
+  await expect(page.locator('[data-node-anchor="group:Core"]')).not.toHaveAttribute('data-selection-active', 'true')
+  await expect.poll(async () => isNodeAtTopOfStack('group:Commerce')).toBe(true)
+
+  await page.locator('[data-browser-entity-row="public.users.email"] button').first().click()
+  await expect(page.locator('[data-column-anchor="public.users.email"]')).toHaveAttribute('data-selection-active', 'true')
+  await expect(page.locator('[data-node-anchor="group:Commerce"] [data-table-anchor="public.orders"]')).not.toHaveAttribute('data-selection-active', 'true')
+  await expect.poll(async () => isNodeAtTopOfStack('group:Core')).toBe(true)
+})
+
 test('scrolling inside the diagram panel scrolls the panel instead of the canvas', async ({ goto, page }) => {
   await goto('/diagram')
 

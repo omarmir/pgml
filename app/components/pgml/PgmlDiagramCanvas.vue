@@ -164,6 +164,10 @@ type CanvasSelection = {
   kind: 'table'
   tableId: string
 } | {
+  kind: 'column'
+  tableId: string
+  columnName: string
+} | {
   kind: 'attachment'
   tableId: string
   attachmentId: string
@@ -366,6 +370,7 @@ const exportArtifactButtonErrorClass = 'border-[color:var(--studio-shell-error)]
 const panelToggleButtonClass = joinStudioClasses(studioButtonClasses.secondary, studioToolbarButtonClass)
 const sidePanelCloseButtonClass = joinStudioClasses(studioButtonClasses.iconGhost, 'h-7 w-7 justify-center px-0')
 const sidePanelActionButtonClass = joinStudioClasses(studioButtonClasses.secondary, studioToolbarButtonClass)
+const selectedCanvasStackZIndex = 2147483644
 const attachmentKindOrder: Record<TableAttachmentKind, number> = {
   Index: 0,
   Constraint: 1,
@@ -488,12 +493,26 @@ const getSchemaBadgeStyle = (schemaName: string) => {
 const getTableSchemaName = (tableId: string) => {
   return model.tables.find(table => table.fullName === tableId)?.schema || 'public'
 }
+const getSelectionStackTargetId = (selection: CanvasSelection | null) => {
+  if (!selection) {
+    return null
+  }
+
+  if (selection.kind === 'node') {
+    return selection.id
+  }
+
+  const groupName = tableGroupById.value[selection.tableId]
+
+  return groupName ? getStoredGroupId(groupName) : selection.tableId
+}
 const nodeLayerOrderById = computed(() => {
   return canvasNodes.value.reduce<Record<string, number>>((orders, node, index) => {
     orders[node.id] = index + 1
     return orders
   }, {})
 })
+const selectedStackTargetId = computed(() => getSelectionStackTargetId(selectedCanvasSelection.value))
 const getNodeLayerOrder = (nodeId: string) => {
   return nodeLayerOrderById.value[nodeId] || 1
 }
@@ -502,6 +521,13 @@ const getGroupBackgroundLayerZIndex = (nodeId: string) => {
 }
 const getNodeForegroundLayerZIndex = (nodeId: string) => {
   return getDiagramNodeZIndex(getNodeLayerOrder(nodeId))
+}
+const getCanvasNodeZIndex = (node: CanvasNodeState) => {
+  if (selectedStackTargetId.value === node.id) {
+    return selectedCanvasStackZIndex
+  }
+
+  return node.kind === 'group' ? 'auto' : getNodeForegroundLayerZIndex(node.id)
 }
 const visibleConnectionLines = computed(() => {
   return showRelationshipLines.value ? connectionLines.value : []
@@ -542,6 +568,25 @@ const selectedTable = computed(() => {
 
   return model.tables.find(table => table.fullName === selection.tableId) || null
 })
+const selectedColumn = computed(() => {
+  const selection = selectedCanvasSelection.value
+
+  if (selection?.kind !== 'column') {
+    return null
+  }
+
+  const table = model.tables.find(entry => entry.fullName === selection.tableId)
+  const column = table?.columns.find(entry => entry.name === selection.columnName)
+
+  if (!table || !column) {
+    return null
+  }
+
+  return {
+    table,
+    column
+  }
+})
 const selectedAttachment = computed(() => {
   const selection = selectedCanvasSelection.value
 
@@ -558,6 +603,10 @@ const selectedCanvasEntityTitle = computed(() => {
     return selectedNode.value.title
   }
 
+  if (selectedColumn.value) {
+    return selectedColumn.value.column.name
+  }
+
   if (selectedTable.value) {
     return selectedTable.value.name
   }
@@ -571,6 +620,10 @@ const selectedCanvasEntityTitle = computed(() => {
 const selectedCanvasEntityDescription = computed(() => {
   if (selectedNode.value) {
     return 'Adjust the selected node.'
+  }
+
+  if (selectedColumn.value) {
+    return `${selectedColumn.value.table.schema} schema field on ${selectedColumn.value.table.name}.`
   }
 
   if (selectedTable.value) {
@@ -3025,8 +3078,9 @@ const buildBrowserTableItem = (table: PgmlSchemaModel['tables'][number]): Entity
       searchText: cleanForSearch(`field ${column.name} ${column.type} ${table.fullName}`),
       children: [],
       selection: {
-        kind: 'table',
-        tableId: table.fullName
+        kind: 'column',
+        tableId: table.fullName,
+        columnName: column.name
       },
       sourceRange: table.sourceRange
     }
@@ -4266,6 +4320,18 @@ const syncNodeStates = () => {
     selectedCanvasSelection.value = null
   }
 
+  const columnSelection = selectedCanvasSelection.value
+
+  if (columnSelection?.kind === 'column') {
+    const table = model.tables.find((entry) => {
+      return entry.fullName === columnSelection.tableId && isTableEffectivelyVisible(entry)
+    })
+
+    if (!table || !table.columns.some(column => column.name === columnSelection.columnName)) {
+      selectedCanvasSelection.value = null
+    }
+  }
+
   const attachmentSelection = selectedCanvasSelection.value
 
   if (attachmentSelection?.kind === 'attachment') {
@@ -4409,6 +4475,10 @@ const browserItemSelectionEquals = (left: CanvasSelection | null, right: CanvasS
     return left.tableId === right.tableId
   }
 
+  if (left.kind === 'column' && right.kind === 'column') {
+    return left.tableId === right.tableId && left.columnName === right.columnName
+  }
+
   if (left.kind === 'attachment' && right.kind === 'attachment') {
     return left.tableId === right.tableId && left.attachmentId === right.attachmentId
   }
@@ -4426,6 +4496,10 @@ const isBrowserItemDirectlyVisible = (item: EntityBrowserItem) => {
     return isEntityDirectlyVisible(selection.tableId)
   }
 
+  if (selection.kind === 'column') {
+    return isEntityDirectlyVisible(selection.tableId)
+  }
+
   if (selection.kind === 'attachment') {
     return isEntityDirectlyVisible(selection.attachmentId)
   }
@@ -4436,6 +4510,12 @@ const isBrowserItemEffectivelyVisible = (item: EntityBrowserItem) => {
   const selection = item.selection
 
   if (selection.kind === 'table') {
+    const table = model.tables.find(entry => entry.fullName === selection.tableId)
+
+    return table ? isTableEffectivelyVisible(table) : false
+  }
+
+  if (selection.kind === 'column') {
     const table = model.tables.find(entry => entry.fullName === selection.tableId)
 
     return table ? isTableEffectivelyVisible(table) : false
@@ -4471,6 +4551,10 @@ const getBrowserItemTableId = (item: EntityBrowserItem) => {
   const selection = item.selection
 
   if (selection.kind === 'table') {
+    return selection.tableId
+  }
+
+  if (selection.kind === 'column') {
     return selection.tableId
   }
 
@@ -4520,7 +4604,11 @@ const getBrowserItemVisibilityId = (item: EntityBrowserItem) => {
     return item.selection.attachmentId
   }
 
-  return item.selection.id
+  if (item.selection.kind === 'node') {
+    return item.selection.id
+  }
+
+  return null
 }
 const toggleBrowserItemVisibility = (item: EntityBrowserItem) => {
   if (isBrowserItemHiddenByAncestor(item)) {
@@ -4557,6 +4645,11 @@ const selectBrowserItem = (item: EntityBrowserItem) => {
 
   if (selection.kind === 'table') {
     handleTableClick(selection.tableId)
+    return
+  }
+
+  if (selection.kind === 'column') {
+    handleColumnClick(selection.tableId, selection.columnName)
     return
   }
 
@@ -4640,6 +4733,13 @@ const isNodeSelectionActive = (nodeId: string) => {
 const isTableSelectionActive = (tableId: string) => {
   return selectedCanvasSelection.value?.kind === 'table' && selectedCanvasSelection.value.tableId === tableId
 }
+const isColumnSelectionActive = (tableId: string, columnName: string) => {
+  return (
+    selectedCanvasSelection.value?.kind === 'column'
+    && selectedCanvasSelection.value.tableId === tableId
+    && selectedCanvasSelection.value.columnName === columnName
+  )
+}
 const isAttachmentSelectionActive = (tableId: string, attachmentId: string) => {
   return (
     selectedCanvasSelection.value?.kind === 'attachment'
@@ -4648,6 +4748,10 @@ const isAttachmentSelectionActive = (tableId: string, attachmentId: string) => {
   )
 }
 const getRelationalRowHighlightColor = (tableId: string, columnName: string) => {
+  if (isColumnSelectionActive(tableId, columnName)) {
+    return tableGroupColorByTableId.value[tableId] || '#79e3ea'
+  }
+
   const rowKey = getColumnAnchorKey(tableId, columnName)
 
   if (selectedTableRelationalRowKeys.value.has(rowKey)) {
@@ -6300,6 +6404,7 @@ const updateEntityVisibility = (id: string, visible: boolean) => {
     && (
       (selectedCanvasSelection.value?.kind === 'node' && selectedCanvasSelection.value.id === id)
       || (selectedCanvasSelection.value?.kind === 'table' && selectedCanvasSelection.value.tableId === id)
+      || (selectedCanvasSelection.value?.kind === 'column' && selectedCanvasSelection.value.tableId === id)
       || (selectedCanvasSelection.value?.kind === 'attachment' && selectedCanvasSelection.value.attachmentId === id)
     )
   ) {
@@ -6684,6 +6789,15 @@ const handleTableClick = (tableId: string) => {
   }
 }
 
+const handleColumnClick = (tableId: string, columnName: string) => {
+  selectedNodeId.value = null
+  selectedCanvasSelection.value = {
+    kind: 'column',
+    tableId,
+    columnName
+  }
+}
+
 const handleAttachmentClick = (tableId: string, attachment: TableAttachment) => {
   selectedNodeId.value = null
   selectedCanvasSelection.value = {
@@ -6913,7 +7027,7 @@ defineExpose<{
             top: `${node.y}px`,
             width: `${node.width}px`,
             height: `${node.height}px`,
-            zIndex: node.kind === 'group' ? 'auto' : getNodeForegroundLayerZIndex(node.id),
+            zIndex: getCanvasNodeZIndex(node),
             borderColor: node.kind === 'group' ? 'transparent' : getNodeBorderColor(node),
             background: node.kind === 'group' ? 'transparent' : getNodeBackground(node)
           },
@@ -7100,6 +7214,7 @@ defineExpose<{
                   :get-relational-row-highlight-color="getRelationalRowHighlightColor"
                   :get-selected-attachment-row-style="getSelectedAttachmentRowStyle"
                   :get-selection-glow-style="getSelectionGlowStyle"
+                  :is-column-selection-active="isColumnSelectionActive"
                   :is-attachment-selection-active="isAttachmentSelectionActive"
                   :is-highlighted-relational-row="isHighlightedRelationalRow"
                   :rows="getTableRows(table.fullName)"
@@ -7127,6 +7242,7 @@ defineExpose<{
             :get-relational-row-highlight-color="getRelationalRowHighlightColor"
             :get-selected-attachment-row-style="getSelectedAttachmentRowStyle"
             :get-selection-glow-style="getSelectionGlowStyle"
+            :is-column-selection-active="isColumnSelectionActive"
             :is-attachment-selection-active="isAttachmentSelectionActive"
             :is-highlighted-relational-row="isHighlightedRelationalRow"
             :rows="getTableRows(node.id)"
