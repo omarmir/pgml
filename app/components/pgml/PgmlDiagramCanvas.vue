@@ -5719,6 +5719,7 @@ const updateConnections = () => {
     dashed: boolean
     dashPattern: string
     animated: boolean
+    selectedForeground: boolean
     fromElement: HTMLElement
     toElement: HTMLElement
   }> = []
@@ -5750,6 +5751,7 @@ const updateConnections = () => {
       dashed: isSelectedOutgoingReference,
       dashPattern: isSelectedOutgoingReference ? '10 7' : '0',
       animated: isSelectedOutgoingReference,
+      selectedForeground: isSelectedOutgoingReference,
       fromElement,
       toElement
     })
@@ -5781,6 +5783,7 @@ const updateConnections = () => {
         dashed: true,
         dashPattern: node.objectKind === 'Custom Type' && !isSelectedNodeImpact ? '2 5' : '10 7',
         animated: isSelectedNodeImpact,
+        selectedForeground: false,
         fromElement,
         toElement
       })
@@ -5812,7 +5815,8 @@ const updateConnections = () => {
         animated: descriptor.animated,
         zIndex: getDiagramConnectionZIndex(
           nodeOrders[getConnectionOwnerNodeId(descriptor.fromElement) || ''] || 1,
-          nodeOrders[getConnectionOwnerNodeId(descriptor.toElement) || ''] || 1
+          nodeOrders[getConnectionOwnerNodeId(descriptor.toElement) || ''] || 1,
+          descriptor.selectedForeground
         )
       } satisfies ConnectionLine
     })

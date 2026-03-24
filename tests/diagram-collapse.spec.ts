@@ -270,13 +270,54 @@ test('selecting a table animates its outgoing references and target relational r
   await goto('/diagram')
 
   const ordersTable = page.locator('[data-table-anchor="public.orders"]')
+  const productsTable = page.locator('[data-table-anchor="public.products"]')
   const usersIdRow = page.locator('[data-column-anchor="public.users.id"]')
+  const customerReference = page.locator('[data-connection-key="ref:public.orders:customer_id:public.users:id"]')
   const highlightedConnections = page.locator('[data-connection-highlighted="true"]')
+
+  const initialReferenceLayerZIndex = await customerReference.evaluate((element) => {
+    const layer = element.closest('[data-connection-layer="true"]')
+
+    if (!(layer instanceof SVGElement)) {
+      return null
+    }
+
+    return Number.parseInt(getComputedStyle(layer).zIndex || '0', 10)
+  })
+
+  expect(initialReferenceLayerZIndex).toBe(1001)
 
   await ordersTable.click()
 
   await expect(highlightedConnections).toHaveCount(2)
   await expect(usersIdRow).toHaveAttribute('data-relational-highlighted', 'true')
+  await expect.poll(async () => {
+    return customerReference.evaluate((element) => {
+      const layer = element.closest('[data-connection-layer="true"]')
+      const plane = document.querySelector('[data-diagram-plane="true"]')
+
+      if (!(layer instanceof SVGElement) || !(plane instanceof HTMLElement)) {
+        return false
+      }
+
+      const layerZIndex = Number.parseInt(getComputedStyle(layer).zIndex || '0', 10)
+      const maxNonConnectionZIndex = Array.from(plane.querySelectorAll('*')).reduce((max, entry) => {
+        if (!(entry instanceof HTMLElement) || entry.closest('[data-connection-layer="true"]')) {
+          return max
+        }
+
+        const zIndex = Number.parseInt(getComputedStyle(entry).zIndex || '0', 10)
+
+        if (!Number.isFinite(zIndex)) {
+          return max
+        }
+
+        return Math.max(max, zIndex)
+      }, 0)
+
+      return layerZIndex > maxNonConnectionZIndex
+    })
+  }).toBe(true)
 
   await expect.poll(async () => {
     return highlightedConnections.first().evaluate((element) => {
@@ -317,6 +358,21 @@ test('selecting a table animates its outgoing references and target relational r
     borderWidth: '1px',
     selectionColor: true
   })
+
+  await productsTable.click()
+
+  await expect(customerReference).not.toHaveAttribute('data-connection-highlighted', 'true')
+  await expect.poll(async () => {
+    return customerReference.evaluate((element) => {
+      const layer = element.closest('[data-connection-layer="true"]')
+
+      if (!(layer instanceof SVGElement)) {
+        return null
+      }
+
+      return Number.parseInt(getComputedStyle(layer).zIndex || '0', 10)
+    })
+  }).toBe(initialReferenceLayerZIndex)
 })
 
 test('initial connector geometry stays stable after a non-layout selection refresh', async ({ goto, page }) => {
