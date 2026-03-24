@@ -474,11 +474,16 @@ export const createComputerPgmlFile = async (
     await writeComputerFileText(handle, input.text)
 
     const nextRecord = await upsertRecentComputerFileRecord(handle, store)
+    const loadedFile = await loadRecentComputerPgmlFile(nextRecord.id, {
+      store
+    })
 
-    return {
-      entry: toRecentComputerFile(nextRecord),
-      text: input.text
+    if (!loadedFile) {
+      await store.delete(nextRecord.id)
+      return null
     }
+
+    return loadedFile
   } catch (error) {
     if (isAbortError(error)) {
       return null

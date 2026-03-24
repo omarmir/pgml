@@ -302,6 +302,68 @@ describe('computer file utilities', () => {
     expect(files.get('permission-target')?.text).toContain('status text')
   })
 
+  it('re-prompts on the stored recent-file handle right after creating a file', async () => {
+    const files = new Map<string, MemoryFile>([
+      ['save-target', {
+        fileName: 'created-schema.pgml',
+        text: ''
+      }]
+    ])
+    const records = new Map<string, {
+      handle: PgmlComputerFileHandle
+      id: string
+      name: string
+      updatedAt: string
+    }>()
+    const persistedPermission = {
+      query: 'prompt' as const,
+      request: 'granted' as const
+    }
+    const store: PgmlComputerFileStore = {
+      delete: async (id) => {
+        records.delete(id)
+      },
+      getAll: async () => {
+        return Array.from(records.values())
+      },
+      getById: async (id) => {
+        const record = records.get(id)
+
+        if (!record) {
+          return null
+        }
+
+        return {
+          ...record,
+          handle: createMemoryHandle('save-target', files, persistedPermission)
+        }
+      },
+      put: async (record) => {
+        records.set(record.id, record)
+      }
+    }
+    const access: PgmlFileSystemAccessApi = {
+      showOpenFilePicker: async () => {
+        return []
+      },
+      showSaveFilePicker: async () => {
+        return createMemoryHandle('save-target', files)
+      }
+    }
+
+    const createdFile = await createComputerPgmlFile({
+      name: 'Created schema',
+      text: 'Table public.created {\n  id uuid [pk]\n}'
+    }, {
+      access,
+      store
+    })
+
+    expect(createdFile?.entry.name).toBe('created-schema')
+    expect(createdFile?.text).toContain('Table public.created')
+    expect(persistedPermission.query).toBe('granted')
+  })
+
   it('reports the stored recent-file permission state without prompting first', async () => {
     const files = new Map<string, MemoryFile>([
       ['permission-target', {
