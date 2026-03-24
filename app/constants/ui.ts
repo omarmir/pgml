@@ -66,8 +66,8 @@ export const studioModalSurfaceStyle: StudioModalSurfaceStyle = Object.freeze({
 })
 
 export const studioModalUi: UiClassMap = Object.freeze({
-  overlay: 'bg-black/60 backdrop-blur-[2px]',
-  content: 'overflow-visible border-none bg-transparent p-0 shadow-none ring-0'
+  overlay: 'z-40 bg-black/60 backdrop-blur-[2px]',
+  content: 'z-[60] overflow-visible border-none bg-transparent p-0 shadow-none ring-0'
 })
 
 export const studioSelectUi = studioSelectTriggerUi

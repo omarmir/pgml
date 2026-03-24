@@ -20,7 +20,7 @@
 }
 
 html {
-  background: #0a151d;
+  background: var(--studio-shell-bg, #0a151d);
   color: #e2edf3;
   overflow-x: clip;
 }
@@ -29,7 +29,7 @@ body {
   min-height: 100vh;
   color: inherit;
   overflow-x: clip;
-  background: transparent;
+  background: inherit;
 }
 
 #__nuxt {

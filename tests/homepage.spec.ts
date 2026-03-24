@@ -125,6 +125,40 @@ ALTER TABLE ONLY public.users ADD CONSTRAINT users_pkey PRIMARY KEY (id);`)
   }).toBe(1)
 })
 
+test('pg_dump modal keeps the top bar visible and the light theme root aligned while open', async ({ goto, page }) => {
+  await goto('/')
+
+  await page.getByRole('button', { name: 'Switch to light mode' }).click()
+  await page.evaluate(() => window.scrollTo(0, 600))
+  await page.locator('[data-source-card="computer-saved-file"]').getByRole('button', { name: 'Import a pg_dump' }).click()
+
+  await expect(page.locator('[data-studio-modal-surface="pg-dump-import"]')).toContainText('Import pg_dump into a new computer file')
+  await expect.poll(async () => {
+    return await page.evaluate(() => {
+      const header = document.querySelector('header')
+      const overlay = document.querySelector('[data-slot="overlay"]')
+      const content = document.querySelector('[data-slot="content"]')
+      const headerRect = header?.getBoundingClientRect()
+
+      return {
+        contentZ: content ? window.getComputedStyle(content).zIndex : null,
+        headerZ: header ? window.getComputedStyle(header).zIndex : null,
+        htmlBackground: window.getComputedStyle(document.documentElement).backgroundColor,
+        headerTop: headerRect ? Math.round(headerRect.top) : null,
+        overlayZ: overlay ? window.getComputedStyle(overlay).zIndex : null,
+        themeBackground: window.getComputedStyle(document.documentElement).getPropertyValue('--studio-shell-bg').trim()
+      }
+    })
+  }).toEqual({
+    contentZ: '60',
+    headerZ: '50',
+    headerTop: 0,
+    htmlBackground: 'rgb(244, 241, 234)',
+    overlayZ: '40',
+    themeBackground: '#f4f1ea'
+  })
+})
+
 test('studio header includes a Home link back to the source chooser', async ({ goto, page }) => {
   await goto('/')
 
