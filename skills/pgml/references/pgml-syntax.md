@@ -180,6 +180,14 @@ Supported relation tokens:
 
 Inline column refs and top-level `Ref:` lines both become relationship edges in the parsed model. Deduplicate them before emitting SQL if they describe the same foreign-key relationship.
 
+Inline references can also carry foreign-key actions as neighboring modifiers:
+
+```pgml
+customer_id uuid [ref: > public.users.id, delete: restrict, update: cascade]
+```
+
+`delete:` maps to `ON DELETE ...` and `update:` maps to `ON UPDATE ...` in generated SQL.
+
 ## Custom Types
 
 PGML currently supports three custom-type block kinds.

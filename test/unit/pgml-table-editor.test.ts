@@ -197,4 +197,30 @@ Table billing.users {
     expect(nextSource).toContain('TableGroup Core {\n  public.users\n  billing.users\n}')
     expect(nextSource).toContain('Table billing.users in Core {')
   })
+
+  it('persists reference delete and update actions through the table editor draft', () => {
+    const sourceWithReference = `Table public.users {
+  id uuid [pk]
+}
+
+Table public.orders {
+  id uuid [pk]
+  customer_id uuid [ref: > public.users.id]
+}`
+    const model = parsePgml(sourceWithReference)
+    const ordersTable = model.tables.find(table => table.fullName === 'public.orders')
+
+    if (!ordersTable) {
+      throw new Error('Expected orders table in test model.')
+    }
+
+    const draft = createEditableTableDraft(ordersTable)
+
+    draft.columns[1]!.referenceDeleteAction = 'restrict'
+    draft.columns[1]!.referenceUpdateAction = 'cascade'
+
+    const nextSource = applyEditableTableDraftToSource(sourceWithReference, model, draft)
+
+    expect(nextSource).toContain('customer_id uuid [ref: > public.users.id, delete: restrict, update: cascade]')
+  })
 })

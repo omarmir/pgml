@@ -67,6 +67,12 @@ type PgDumpImportAccumulator = {
   triggers: Map<string, PgDumpImportTrigger>
 }
 
+type PgDumpImportReferenceActions = {
+  onDelete: string | null
+  onUpdate: string | null
+  remainder: string
+}
+
 export type PgDumpImportResult = {
   pgml: string
   schemaName: string
@@ -903,6 +909,40 @@ const parseConstraintColumns = (value: string) => {
   })
 }
 
+const extractReferenceAction = (
+  value: string,
+  kind: 'delete' | 'update'
+) => {
+  const match = value.match(new RegExp(`\\bon ${kind}\\s+(no action|restrict|cascade|set null|set default)\\b`, 'iu'))
+
+  if (!match) {
+    return {
+      action: null,
+      remainder: normalizeSqlWhitespace(value)
+    }
+  }
+
+  const matchIndex = match.index || 0
+  const matchedValue = match[0] || ''
+  const remainder = `${value.slice(0, matchIndex)} ${value.slice(matchIndex + matchedValue.length)}`
+
+  return {
+    action: normalizeSqlWhitespace(match[1] || '').toLowerCase(),
+    remainder: normalizeSqlWhitespace(remainder)
+  }
+}
+
+const parseReferenceActions = (value: string): PgDumpImportReferenceActions => {
+  const deleteAction = extractReferenceAction(value, 'delete')
+  const updateAction = extractReferenceAction(deleteAction.remainder, 'update')
+
+  return {
+    onDelete: deleteAction.action,
+    onUpdate: updateAction.action,
+    remainder: updateAction.remainder
+  }
+}
+
 const buildForeignKeyConstraintExpression = (
   columns: string[],
   targetTable: string,
@@ -921,9 +961,9 @@ const applyForeignKeyConstraint = (
   columns: string[],
   targetTable: string,
   targetColumns: string[],
-  suffix: string
+  actions: PgDumpImportReferenceActions
 ) => {
-  if (columns.length !== 1 || targetColumns.length !== 1 || suffix.trim().length > 0) {
+  if (columns.length !== 1 || targetColumns.length !== 1) {
     return false
   }
 
@@ -933,7 +973,19 @@ const applyForeignKeyConstraint = (
     return false
   }
 
-  return addColumnModifier(column, `ref: > ${normalizeReferenceTarget(targetTable, targetColumns[0] || '')}`)
+  if (!addColumnModifier(column, `ref: > ${normalizeReferenceTarget(targetTable, targetColumns[0] || '')}`)) {
+    return false
+  }
+
+  if (actions.onDelete && !addColumnModifier(column, `delete: ${actions.onDelete}`)) {
+    return false
+  }
+
+  if (actions.onUpdate && !addColumnModifier(column, `update: ${actions.onUpdate}`)) {
+    return false
+  }
+
+  return true
 }
 
 const parseForeignKeyDefinition = (value: string) => {
@@ -1004,13 +1056,16 @@ const applyTableConstraint = (
   const foreignKeyDefinition = parseForeignKeyDefinition(normalizedExpression)
 
   if (foreignKeyDefinition) {
-    if (!applyForeignKeyConstraint(
+    const referenceActions = parseReferenceActions(foreignKeyDefinition.suffix)
+    const appliedReference = applyForeignKeyConstraint(
       table,
       foreignKeyDefinition.columns,
       foreignKeyDefinition.targetTable,
       foreignKeyDefinition.targetColumns,
-      foreignKeyDefinition.suffix
-    )) {
+      referenceActions
+    )
+
+    if (!appliedReference || referenceActions.remainder.length > 0) {
       table.constraints.push({
         expression: buildForeignKeyConstraintExpression(
           foreignKeyDefinition.columns,
@@ -1107,9 +1162,18 @@ const parseColumnModifiers = (value: string, column: PgDumpImportColumn) => {
 
       if (referenceMatch) {
         const referenceColumns = parseConstraintColumns(referenceMatch[2] || '')
+        const referenceActions = parseReferenceActions(referenceMatch[3] || '')
 
         if (referenceColumns.length === 1) {
           addColumnModifier(column, `ref: > ${normalizeReferenceTarget(referenceMatch[1] || '', referenceColumns[0] || '')}`)
+
+          if (referenceActions.onDelete) {
+            addColumnModifier(column, `delete: ${referenceActions.onDelete}`)
+          }
+
+          if (referenceActions.onUpdate) {
+            addColumnModifier(column, `update: ${referenceActions.onUpdate}`)
+          }
         }
       }
 

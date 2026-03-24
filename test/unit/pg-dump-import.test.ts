@@ -93,6 +93,45 @@ ignored
     ]))
   })
 
+  it('imports quoted ALTER TABLE foreign keys as relations while preserving delete actions', () => {
+    const sql = `CREATE TABLE public."Agency_Profile" (
+  id bigint NOT NULL
+);
+CREATE TABLE public."Transfer_Payment_Profile" (
+  id bigint NOT NULL,
+  egcs_tp_agency bigint NOT NULL
+);
+ALTER TABLE ONLY public."Agency_Profile"
+  ADD CONSTRAINT "Agency_Profile_pkey" PRIMARY KEY (id);
+ALTER TABLE ONLY public."Transfer_Payment_Profile"
+  ADD CONSTRAINT "Transfer_Payment_Profile_pkey" PRIMARY KEY (id);
+ALTER TABLE ONLY public."Transfer_Payment_Profile"
+  ADD CONSTRAINT "Transfer_Payment_Profile_egcs_tp_agency_fkey" FOREIGN KEY (egcs_tp_agency) REFERENCES public."Agency_Profile"(id) ON DELETE RESTRICT;`
+    const result = convertPgDumpToPgml({ sql })
+    const model = parsePgml(result.pgml)
+    const table = model.tables.find(currentTable => currentTable.fullName === 'public.Transfer_Payment_Profile')
+
+    expect(result.pgml).toContain('egcs_tp_agency bigint [not null, ref: > public.Agency_Profile.id, delete: restrict]')
+    expect(table?.columns).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        modifiers: expect.arrayContaining(['ref: > public.Agency_Profile.id', 'delete: restrict']),
+        name: 'egcs_tp_agency'
+      })
+    ]))
+    expect(model.references).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        fromColumn: 'egcs_tp_agency',
+        fromTable: 'public.Transfer_Payment_Profile',
+        onDelete: 'restrict',
+        onUpdate: null,
+        relation: '>',
+        toColumn: 'id',
+        toTable: 'public.Agency_Profile'
+      })
+    ]))
+    expect(table?.constraints).toEqual([])
+  })
+
   it('derives imported schema names and rejects dumps without schema objects', () => {
     expect(derivePgDumpSchemaName('  finance-schema.dump  ')).toBe('finance-schema')
     expect(derivePgDumpSchemaName()).toBe('Imported schema')

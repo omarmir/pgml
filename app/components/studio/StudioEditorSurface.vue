@@ -21,6 +21,13 @@ const {
   sourceWarningCount: number
   visibleSourceDiagnostics: PgmlLanguageDiagnostic[]
 }>()
+const formatDiagnosticLineLabel = (diagnostic: PgmlLanguageDiagnostic) => {
+  const lines = diagnostic.lines && diagnostic.lines.length > 0
+    ? diagnostic.lines
+    : [diagnostic.line]
+
+  return lines.map(line => `L${line}`).join(', ')
+}
 </script>
 
 <template>
@@ -66,7 +73,7 @@ const {
             :class="diagnostic.severity === 'error' ? 'text-[color:var(--studio-shell-error)]' : 'text-[color:var(--studio-shell-label)]'"
             @click="focusDiagnostic(diagnostic)"
           >
-            L{{ diagnostic.line }}
+            {{ formatDiagnosticLineLabel(diagnostic) }}
           </button>
           <span
             :class="diagnostic.severity === 'error' ? 'text-[color:var(--studio-shell-error)]' : 'text-[color:var(--studio-shell-muted)]'"

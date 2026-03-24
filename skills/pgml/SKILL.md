@@ -131,6 +131,8 @@ Apply these translation rules:
 - `not null` -> `NOT NULL`
 - `default: expr` -> `DEFAULT expr`
 - `ref: > target` or equivalent standalone `Ref:` -> foreign key edge
+- `delete: action` next to a `ref:` -> `ON DELETE ACTION`
+- `update: action` next to a `ref:` -> `ON UPDATE ACTION`
 - `Index idx_name (col) [type: gin]` -> `CREATE INDEX idx_name ON schema.table USING gin (col);`
 - `Constraint chk_name: expr` -> `CONSTRAINT chk_name CHECK (expr)` unless the expression clearly indicates a different constraint form
 

@@ -750,6 +750,38 @@ const referenceRelationSymbolItems: ReferenceTargetItem[] = referenceRelationIte
   value: item.value,
   description: item.label
 }))
+const referenceActionItems: ReferenceTargetItem[] = [
+  {
+    label: 'Default behavior',
+    value: '',
+    description: 'Do not write an explicit clause. PostgreSQL keeps its default action.'
+  },
+  {
+    label: 'No action',
+    value: 'no action',
+    description: 'Keep the reference valid at statement end without adding a cascading change.'
+  },
+  {
+    label: 'Restrict',
+    value: 'restrict',
+    description: 'Reject the change immediately when dependent rows still exist.'
+  },
+  {
+    label: 'Cascade',
+    value: 'cascade',
+    description: 'Propagate the delete or update to dependent rows.'
+  },
+  {
+    label: 'Set null',
+    value: 'set null',
+    description: 'Set the referencing column to null.'
+  },
+  {
+    label: 'Set default',
+    value: 'set default',
+    description: 'Set the referencing column to its default value.'
+  }
+]
 const tableTargetItems = computed<ReferenceTargetItem[]>(() => {
   return parsedModel.value.tables
     .map(table => ({
@@ -861,10 +893,12 @@ const addTableDraftColumn = () => {
     notNull: false,
     primaryKey: false,
     referenceColumn: '',
+    referenceDeleteAction: '',
     referenceEnabled: false,
     referenceRelation: '>',
     referenceSchema: 'public',
     referenceTable: '',
+    referenceUpdateAction: '',
     type: 'text',
     unique: false
   })
@@ -1687,7 +1721,7 @@ onBeforeUnmount(() => {
 
                 <div
                   v-if="column.referenceEnabled"
-                  class="grid gap-3 lg:grid-cols-[minmax(0,0.34fr)_minmax(0,0.4fr)_minmax(0,0.26fr)]"
+                  class="grid gap-3 lg:grid-cols-2"
                 >
                   <label class="grid gap-1">
                     <span :class="studioCompactFieldKickerClass">Relationship direction</span>
@@ -1756,6 +1790,38 @@ onBeforeUnmount(() => {
                       size="sm"
                       :ui="studioInputMenuUi"
                       @update:model-value="updateTableDraftReferenceColumn(column.id, String($event || ''))"
+                    />
+                  </label>
+
+                  <label class="grid gap-1">
+                    <span :class="studioCompactFieldKickerClass">On delete</span>
+                    <USelect
+                      v-model="column.referenceDeleteAction"
+                      aria-label="Reference on delete action"
+                      :items="referenceActionItems"
+                      value-key="value"
+                      label-key="label"
+                      description-key="description"
+                      color="neutral"
+                      variant="outline"
+                      size="sm"
+                      :ui="studioSelectUi"
+                    />
+                  </label>
+
+                  <label class="grid gap-1">
+                    <span :class="studioCompactFieldKickerClass">On update</span>
+                    <USelect
+                      v-model="column.referenceUpdateAction"
+                      aria-label="Reference on update action"
+                      :items="referenceActionItems"
+                      value-key="value"
+                      label-key="label"
+                      description-key="description"
+                      color="neutral"
+                      variant="outline"
+                      size="sm"
+                      :ui="studioSelectUi"
                     />
                   </label>
                 </div>

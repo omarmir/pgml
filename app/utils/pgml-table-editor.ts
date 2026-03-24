@@ -10,10 +10,12 @@ export type PgmlEditableColumnDraft = {
   notNull: boolean
   primaryKey: boolean
   referenceColumn: string
+  referenceDeleteAction: string
   referenceEnabled: boolean
   referenceRelation: '>' | '<' | '-'
   referenceSchema: string
   referenceTable: string
+  referenceUpdateAction: string
   type: string
   unique: boolean
 }
@@ -89,11 +91,20 @@ const serializeColumnReference = (column: PgmlEditableColumnDraft) => {
 
   return `ref: ${column.referenceRelation} ${referenceSchema}.${trimEditorValue(column.referenceTable)}.${trimEditorValue(column.referenceColumn)}`
 }
+const serializeReferenceActionModifier = (keyword: 'delete' | 'update', value: string) => {
+  const normalizedValue = trimEditorValue(value)
+
+  if (normalizedValue.length === 0) {
+    return null
+  }
+
+  return `${keyword}: ${normalizedValue.toLowerCase()}`
+}
 const extractDefaultModifier = (modifiers: string[]) => {
   return modifiers.find(modifier => modifier.startsWith('default:'))?.replace(/^default:\s*/, '') || ''
 }
-const extractColumnExtraModifiers = (modifiers: string[]) => {
-  return modifiers.filter((modifier) => {
+const extractColumnExtraModifiers = (column: PgmlColumn) => {
+  return column.modifiers.filter((modifier) => {
     const normalizedModifier = modifier.toLowerCase()
 
     return (
@@ -104,6 +115,8 @@ const extractColumnExtraModifiers = (modifiers: string[]) => {
       && !normalizedModifier.startsWith('default:')
       && !normalizedModifier.startsWith('note:')
       && !normalizedModifier.startsWith('ref:')
+      && (!column.reference || !normalizedModifier.startsWith('delete:'))
+      && (!column.reference || !normalizedModifier.startsWith('update:'))
     )
   })
 }
@@ -113,7 +126,7 @@ const toEditableColumnDraft = (column: PgmlColumn): PgmlEditableColumnDraft => {
   return {
     id: nanoid(),
     defaultValue: extractDefaultModifier(column.modifiers),
-    extraModifiers: extractColumnExtraModifiers(column.modifiers),
+    extraModifiers: extractColumnExtraModifiers(column),
     name: column.name,
     note: column.note || '',
     notNull: column.modifiers.some(modifier => modifier.toLowerCase() === 'not null'),
@@ -123,12 +136,14 @@ const toEditableColumnDraft = (column: PgmlColumn): PgmlEditableColumnDraft => {
       return normalizedModifier === 'pk' || normalizedModifier === 'primary key'
     }),
     referenceColumn: column.reference?.toColumn || '',
+    referenceDeleteAction: column.reference?.onDelete || '',
     referenceEnabled: Boolean(column.reference),
     referenceRelation: column.reference?.relation || '>',
     referenceSchema: referenceTableParts.length >= 2 ? referenceTableParts[0] || 'public' : 'public',
     referenceTable: referenceTableParts.length >= 2
       ? referenceTableParts[1] || ''
       : (referenceTableParts[0] || ''),
+    referenceUpdateAction: column.reference?.onUpdate || '',
     type: column.type,
     unique: column.modifiers.some(modifier => modifier.toLowerCase() === 'unique')
   }
@@ -160,6 +175,17 @@ const serializeColumn = (column: PgmlEditableColumnDraft) => {
 
   if (referenceModifier) {
     modifiers.push(referenceModifier)
+
+    const deleteModifier = serializeReferenceActionModifier('delete', column.referenceDeleteAction)
+    const updateModifier = serializeReferenceActionModifier('update', column.referenceUpdateAction)
+
+    if (deleteModifier) {
+      modifiers.push(deleteModifier)
+    }
+
+    if (updateModifier) {
+      modifiers.push(updateModifier)
+    }
   }
 
   modifiers.push(...column.extraModifiers.filter(modifier => trimEditorValue(modifier).length > 0))
@@ -445,10 +471,12 @@ export const createEditableTableDraftForGroup = (groupName: string | null = null
         notNull: true,
         primaryKey: true,
         referenceColumn: '',
+        referenceDeleteAction: '',
         referenceEnabled: false,
         referenceRelation: '>',
         referenceSchema: 'public',
         referenceTable: '',
+        referenceUpdateAction: '',
         type: 'uuid',
         unique: false
       }

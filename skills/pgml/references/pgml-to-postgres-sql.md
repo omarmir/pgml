@@ -153,6 +153,8 @@ Translate known modifiers as follows:
 - `not null` -> `NOT NULL`
 - `default: expr` -> `DEFAULT expr`
 - `ref:` -> `REFERENCES ...`
+- `delete: restrict|cascade|set null|set default|no action` -> `ON DELETE ...`
+- `update: restrict|cascade|set null|set default|no action` -> `ON UPDATE ...`
 
 If PGML includes both an inline `ref:` and a top-level `Ref:` for the same edge, emit only one foreign key definition.
 

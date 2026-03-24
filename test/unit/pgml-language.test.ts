@@ -37,6 +37,7 @@ Properties "public.users" {
     expect(diagnostics).toEqual(expect.arrayContaining([
       expect.objectContaining({
         code: 'pgml/column-duplicate',
+        lines: [2, 3],
         severity: 'error'
       }),
       expect.objectContaining({
@@ -71,6 +72,29 @@ Properties "group:Missing" {
       expect.objectContaining({
         code: 'pgml/properties-target-missing',
         severity: 'error'
+      })
+    ]))
+  })
+
+  it('reports duplicate enum definitions as warnings', () => {
+    const source = `Enum public.Language_Preference {
+  eng
+  fra
+}
+
+Enum public.language_preference {
+  eng
+  fra
+}`
+
+    const diagnostics = analyzePgmlDocument(source).diagnostics
+
+    expect(diagnostics).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        code: 'pgml/custom-type-duplicate',
+        lines: [1, 6],
+        message: 'Duplicate enum definition for `public.language_preference`. Lines 1, 6.',
+        severity: 'warning'
       })
     ]))
   })
@@ -117,6 +141,12 @@ Ref: public.users.id > public.u`
       }),
       expect.objectContaining({
         label: 'ref:'
+      }),
+      expect.objectContaining({
+        label: 'delete:'
+      }),
+      expect.objectContaining({
+        label: 'update:'
       })
     ]))
     expect(referenceCompletions).toEqual(expect.arrayContaining([

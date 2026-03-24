@@ -92,6 +92,29 @@ describe('PGML model parsing', () => {
     expect(registerTrigger?.docs?.summary).toContain('Registers a Common_Entity id')
   })
 
+  it('parses reference delete and update actions from inline modifiers', () => {
+    const source = `Table public.users {
+  id uuid [pk]
+}
+
+Table public.orders {
+  id uuid [pk]
+  customer_id uuid [ref: > public.users.id, delete: restrict, update: cascade]
+}`
+    const model = parsePgml(source)
+
+    expect(model.references).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        fromColumn: 'customer_id',
+        fromTable: 'public.orders',
+        onDelete: 'restrict',
+        onUpdate: 'cascade',
+        toColumn: 'id',
+        toTable: 'public.users'
+      })
+    ]))
+  })
+
   it('tracks source ranges for navigable schema objects', () => {
     const source = `TableGroup Core {
   orders

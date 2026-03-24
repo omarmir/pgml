@@ -44,6 +44,8 @@ export type PgmlReference = {
   toTable: string
   toColumn: string
   relation: '>' | '<' | '-'
+  onDelete: string | null
+  onUpdate: string | null
 }
 
 export type PgmlGroup = {
@@ -222,6 +224,17 @@ const trimMultiline = (value: string) => value.replace(/^\n+|\n+$/g, '')
 const normalizeEffectKey = (value: string) => cleanName(value).toLowerCase().replaceAll(/[^\w]+/g, '_')
 const normalizeSource = (value: string) => value.replaceAll('\n', ' ').replace(/\s+/g, ' ').trim()
 const lower = (value: string) => value.toLowerCase()
+const getModifierValue = (modifiers: string[], key: string) => {
+  const modifier = modifiers.find((entry) => {
+    return entry.toLowerCase().startsWith(`${key}:`)
+  })
+
+  if (!modifier) {
+    return null
+  }
+
+  return modifier.slice(modifier.indexOf(':') + 1).trim().toLowerCase()
+}
 
 const parseBracketParts = (value: string) => {
   return value
@@ -1154,6 +1167,8 @@ const parseTable = (block: NamedBlock) => {
     const modifiers = columnOptions ? parseBracketParts(columnOptions) : []
     const refPart = modifiers.find(part => part.startsWith('ref:'))
     const notePart = modifiers.find(part => part.startsWith('note:'))
+    const onDelete = getModifierValue(modifiers, 'delete')
+    const onUpdate = getModifierValue(modifiers, 'update')
     let reference: PgmlReference | null = null
 
     if (refPart) {
@@ -1167,6 +1182,8 @@ const parseTable = (block: NamedBlock) => {
         reference = {
           fromTable: `${nameTarget.schema}.${nameTarget.table}`,
           fromColumn: cleanName(columnName),
+          onDelete,
+          onUpdate,
           toTable: `${target.schema}.${target.table}`,
           toColumn: target.column,
           relation
@@ -1419,6 +1436,8 @@ const parseTopLevelReference = (line: string) => {
   return {
     fromTable: `${fromTarget.schema}.${fromTarget.table}`,
     fromColumn: readMatch(fromTarget.column),
+    onDelete: null,
+    onUpdate: null,
     toTable: `${toTarget.schema}.${toTarget.table}`,
     toColumn: readMatch(toTarget.column),
     relation

@@ -9,6 +9,7 @@ export type PgmlLanguageDiagnostic = {
   from: number
   to: number
   line: number
+  lines?: number[]
 }
 
 export type PgmlLanguageCompletionKind = 'keyword' | 'property' | 'symbol' | 'type' | 'value'
@@ -222,7 +223,9 @@ const modifierKeywordTemplates = [
   { label: 'not null', detail: 'Prevent null values.', apply: 'not null' },
   { label: 'default:', detail: 'Set a default expression.', apply: 'default: ' },
   { label: 'note:', detail: 'Add a note to the column.', apply: 'note: ' },
-  { label: 'ref:', detail: 'Add a relationship modifier.', apply: 'ref: > ' }
+  { label: 'ref:', detail: 'Add a relationship modifier.', apply: 'ref: > ' },
+  { label: 'delete:', detail: 'Set the ON DELETE action for a reference.', apply: 'delete: cascade' },
+  { label: 'update:', detail: 'Set the ON UPDATE action for a reference.', apply: 'update: cascade' }
 ] as const
 
 const propertyKeySet = new Set(['x', 'y', 'width', 'height', 'color', 'collapsed', 'visible', 'masonry', 'table_columns', 'tablecolumns', 'columns'])
@@ -235,6 +238,12 @@ const normalizeLineEndings = (source: string) => source.replaceAll('\r\n', '\n')
 const cleanName = (value: string) => value.replaceAll('"', '').trim()
 const cleanText = (value: string) => value.trim().replace(/^"(.*)"$/, '$1').replace(/^'(.*)'$/, '$1')
 const lower = (value: string) => value.toLowerCase()
+const getDuplicateLineNumbers = <T extends { line: number }>(values: T[]) => {
+  return Array.from(new Set(values.map(value => value.line))).sort((left, right) => left - right)
+}
+const formatDuplicateLineSummary = (lines: number[]) => {
+  return `Lines ${lines.join(', ')}.`
+}
 
 const parseTableName = (value: string) => {
   const cleanedValue = cleanName(value)
@@ -1193,54 +1202,66 @@ const runSemanticDiagnostics = (analysis: PgmlDocumentAnalysis) => {
   })
 
   detectDuplicates(tables, table => lower(table.fullName)).forEach((entry) => {
+    const duplicateLines = getDuplicateLineNumbers(entry.values)
+
     entry.values.slice(1).forEach((table) => {
       diagnostics.push({
         code: 'pgml/table-duplicate',
         severity: 'error',
-        message: `Duplicate table definition for \`${table.fullName}\`.`,
+        message: `Duplicate table definition for \`${table.fullName}\`. ${formatDuplicateLineSummary(duplicateLines)}`,
         from: table.from,
         to: table.to,
-        line: table.line
+        line: table.line,
+        lines: duplicateLines
       })
     })
   })
 
   detectDuplicates(groups, group => lower(group.name)).forEach((entry) => {
+    const duplicateLines = getDuplicateLineNumbers(entry.values)
+
     entry.values.slice(1).forEach((group) => {
       diagnostics.push({
         code: 'pgml/group-duplicate',
         severity: 'error',
-        message: `Duplicate group definition for \`${group.name}\`.`,
+        message: `Duplicate group definition for \`${group.name}\`. ${formatDuplicateLineSummary(duplicateLines)}`,
         from: group.from,
         to: group.to,
-        line: group.line
+        line: group.line,
+        lines: duplicateLines
       })
     })
   })
 
   detectDuplicates(customTypes, customType => `${lower(customType.kind)}:${lower(customType.name)}`).forEach((entry) => {
+    const duplicateLines = getDuplicateLineNumbers(entry.values)
+
     entry.values.slice(1).forEach((customType) => {
       diagnostics.push({
         code: 'pgml/custom-type-duplicate',
-        severity: 'error',
-        message: `Duplicate ${customType.kind.toLowerCase()} definition for \`${customType.name}\`.`,
+        severity: 'warning',
+        message: `Duplicate ${customType.kind.toLowerCase()} definition for \`${customType.name}\`. ${formatDuplicateLineSummary(duplicateLines)}`,
         from: customType.from,
         to: customType.to,
-        line: customType.line
+        line: customType.line,
+        lines: duplicateLines
       })
     })
   })
 
   tables.forEach((table) => {
     detectDuplicates(table.columns, column => lower(column.name)).forEach((entry) => {
+      const duplicateLines = getDuplicateLineNumbers(entry.values)
+
       entry.values.slice(1).forEach((column) => {
         diagnostics.push({
           code: 'pgml/column-duplicate',
           severity: 'error',
-          message: `Duplicate column \`${column.name}\` in table \`${table.fullName}\`.`,
+          message: `Duplicate column \`${column.name}\` in table \`${table.fullName}\`. ${formatDuplicateLineSummary(duplicateLines)}`,
           from: column.from,
           to: column.to,
-          line: column.line
+          line: column.line,
+          lines: duplicateLines
         })
       })
     })
@@ -1372,14 +1393,17 @@ const runSemanticDiagnostics = (analysis: PgmlDocumentAnalysis) => {
     references,
     reference => `${lower(reference.fromTable)}.${lower(reference.fromColumn)}:${reference.relation}:${lower(reference.toTable)}.${lower(reference.toColumn)}`
   ).forEach((entry) => {
+    const duplicateLines = getDuplicateLineNumbers(entry.values)
+
     entry.values.slice(1).forEach((reference) => {
       diagnostics.push({
         code: 'pgml/ref-duplicate',
         severity: 'warning',
-        message: 'Duplicate relationship declaration.',
+        message: `Duplicate relationship declaration. ${formatDuplicateLineSummary(duplicateLines)}`,
         from: reference.from,
         to: reference.to,
-        line: reference.line
+        line: reference.line,
+        lines: duplicateLines
       })
     })
   })
