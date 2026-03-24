@@ -175,11 +175,18 @@ type ConnectionLine = {
   toOwnerNodeId: string | null
   fromEndpoint: ConnectionEndpointLocator | null
   toEndpoint: ConnectionEndpointLocator | null
+  usageReservations: UsageReservation[]
 }
 
 type ConnectionEndpointLocator = {
   attribute: string
   value: string
+}
+
+type UsageReservation = {
+  count: number
+  key: string
+  slot: number
 }
 
 type MeasuredElementBounds = {
@@ -388,6 +395,7 @@ let pendingWheelZoomPivot: { x: number, y: number } | null = null
 let hasPendingNodeUpdateSync = false
 let pendingNodeUpdateNeedsRemeasure = false
 let connectionGeometryRegistry: ConnectionGeometryRegistry | null = null
+let pendingConnectionDirtyNodeIds: Set<string> | null = null
 const exportTypeStyleItems = [
   {
     label: 'Pragmatic app types',
@@ -2415,7 +2423,7 @@ const handleCanvasLayoutResize = () => {
         reflowAutoLayout()
       }
 
-      scheduleConnectionRefresh()
+      scheduleConnectionRefresh({ full: true })
     })
     return
   }
@@ -2424,7 +2432,7 @@ const handleCanvasLayoutResize = () => {
     reflowAutoLayout()
   }
 
-  scheduleConnectionRefresh()
+  scheduleConnectionRefresh({ full: true })
 }
 
 useResizeObserver(layoutObserverTargets, handleCanvasLayoutResize)
@@ -4852,13 +4860,28 @@ const setViewportScale = (nextScale: number) => {
   scale.value = nextScale
   scheduleViewportTransformSync()
 }
-const scheduleConnectionRefresh = () => {
+const markConnectionDirtyForNode = (nodeId: string | null) => {
+  if (!nodeId) {
+    pendingConnectionDirtyNodeIds = null
+    return
+  }
+
+  if (!pendingConnectionDirtyNodeIds) {
+    pendingConnectionDirtyNodeIds = new Set<string>()
+  }
+
+  pendingConnectionDirtyNodeIds.add(nodeId)
+}
+const scheduleConnectionRefresh = (options: { full?: boolean } = {}) => {
   if (activeNodeDrag.value) {
     return
   }
 
   connectionRefreshBatcher.schedule(() => {
-    updateConnections()
+    const dirtyNodeIds = options.full ? null : pendingConnectionDirtyNodeIds
+
+    pendingConnectionDirtyNodeIds = null
+    updateConnections(dirtyNodeIds)
   })
 }
 const canvasViewportStyle = {
@@ -5407,7 +5430,8 @@ const reserveAnchorPointFromGeometry = (
   side: AnchorSide,
   desiredRatio: number,
   planeBounds: MeasuredElementBounds,
-  usage: Map<string, number[]>
+  usage: Map<string, number[]>,
+  reservations: UsageReservation[]
 ) => {
   const count = getAnchorSlotCountForBounds(geometry.element, geometry.bounds, side)
   const key = `${geometry.identity}:${side}`
@@ -5433,6 +5457,11 @@ const reserveAnchorPointFromGeometry = (
 
   slots[bestSlot] = (slots[bestSlot] || 0) + 1
   usage.set(key, slots)
+  reservations.push({
+    key,
+    slot: bestSlot,
+    count
+  })
 
   return getAnchorPointFromGeometry(geometry, side, bestSlot, count, planeBounds)
 }
@@ -5661,7 +5690,8 @@ const reserveFieldRowAnchorPointFromGeometry = (
   side: 'left' | 'right',
   targetCenterY: number,
   planeBounds: MeasuredElementBounds,
-  usage: Map<string, number[]>
+  usage: Map<string, number[]>,
+  reservations: UsageReservation[]
 ) => {
   const rowGeometry = getOwningTableRowGeometry(fieldGeometry)
   const tableBounds = tableGeometry.bounds
@@ -5692,6 +5722,11 @@ const reserveFieldRowAnchorPointFromGeometry = (
 
   slotUsage[bestSlot] = (slotUsage[bestSlot] || 0) + 1
   usage.set(usageKey, slotUsage)
+  reservations.push({
+    key: usageKey,
+    slot: bestSlot,
+    count: candidateRatios.length
+  })
 
   return getExactAnchorPointFromGeometry(
     tableGeometry,
@@ -5917,6 +5952,40 @@ const getConnectionDragPreviewPath = (line: ConnectionLine) => {
 
 const getVerticalSegmentUsageKey = (x: number) => {
   return `vertical:${Math.round(x * verticalSegmentKeyScale) / verticalSegmentKeyScale}`
+}
+
+const seedUsageFromReservations = (reservations: UsageReservation[], usage: Map<string, number[]>) => {
+  for (const reservation of reservations) {
+    const slots = usage.get(reservation.key) || Array.from({ length: reservation.count }, () => 0)
+
+    if (slots.length < reservation.count) {
+      slots.push(...Array.from({ length: reservation.count - slots.length }, () => 0))
+    }
+
+    slots[reservation.slot] = (slots[reservation.slot] || 0) + 1
+    usage.set(reservation.key, slots)
+  }
+}
+
+const seedVerticalUsageFromPoints = (points: LayoutPoint[], verticalUsage: VerticalSegmentUsage) => {
+  for (let index = 0; index < points.length - 1; index += 1) {
+    const fromPoint = points[index]
+    const toPoint = points[index + 1]
+
+    if (!fromPoint || !toPoint || Math.abs(fromPoint.x - toPoint.x) >= 0.5 || Math.abs(fromPoint.y - toPoint.y) < 0.5) {
+      continue
+    }
+
+    const key = getVerticalSegmentUsageKey(fromPoint.x)
+    const segments = verticalUsage.get(key) || []
+
+    segments.push({
+      start: Math.min(fromPoint.y, toPoint.y),
+      end: Math.max(fromPoint.y, toPoint.y),
+      shift: 0
+    })
+    verticalUsage.set(key, segments)
+  }
 }
 
 const getElementOffsetWithinAncestor = (element: HTMLElement, ancestor: HTMLElement) => {
@@ -6660,6 +6729,7 @@ const reserveRouteLegAnchorFromGeometry = (
   fallbackSide: AnchorSide,
   planeBounds: MeasuredElementBounds,
   usage: Map<string, number[]>,
+  reservations: UsageReservation[],
   forcedSide: AnchorSide | null = null
 ) => {
   const elementBounds = geometry.bounds
@@ -6704,10 +6774,10 @@ const reserveRouteLegAnchorFromGeometry = (
 
   return {
     anchor: tableGeometry && isHorizontalDiagramSide(side)
-      ? reserveFieldRowAnchorPointFromGeometry(geometry, tableGeometry, side, targetCenterY, planeBounds, usage)
+      ? reserveFieldRowAnchorPointFromGeometry(geometry, tableGeometry, side, targetCenterY, planeBounds, usage, reservations)
       : tableGeometry
         ? getExactAnchorPointFromGeometry(anchorHost, side, ratio, planeBounds)
-        : reserveAnchorPointFromGeometry(anchorHost, side, ratio, planeBounds, usage),
+        : reserveAnchorPointFromGeometry(anchorHost, side, ratio, planeBounds, usage, reservations),
     side,
     groupGeometry,
     hostCenterX: ((anchorBounds.left - planeBounds.left) / scale.value) + (anchorBounds.width / (2 * scale.value))
@@ -6723,7 +6793,8 @@ const finalizeRouteLegFromGeometry = (
   },
   planeBounds: MeasuredElementBounds,
   usage: Map<string, number[]>,
-  routeOffset: number
+  routeOffset: number,
+  reservations: UsageReservation[]
 ): RouteLeg => {
   const exit = moveAnchorPoint(pendingLeg.anchor, routeOffset)
 
@@ -6746,6 +6817,11 @@ const finalizeRouteLegFromGeometry = (
     groupLaneOuterBaseOffset,
     groupLaneOuterGap
   )
+  reservations.push({
+    key: `group-lane:${pendingLeg.groupGeometry.element.getAttribute('data-node-anchor')}:${pendingLeg.side}`,
+    slot: 0,
+    count: 1
+  })
   const groupLeft = (groupBounds.left - planeBounds.left) / scale.value
   const groupRight = (groupBounds.right - planeBounds.left) / scale.value
   const groupBottom = (groupBounds.bottom - planeBounds.top) / scale.value
@@ -6773,7 +6849,8 @@ const buildSharedGroupPathPointsFromGeometry = (
   planeBounds: MeasuredElementBounds,
   usage: Map<string, number[]>,
   verticalUsage: VerticalSegmentUsage,
-  headerBands: DiagramRect[]
+  headerBands: DiagramRect[],
+  reservations: UsageReservation[]
 ) => {
   const fromBounds = fromGeometry.bounds
   const toBounds = toGeometry.bounds
@@ -6816,20 +6893,25 @@ const buildSharedGroupPathPointsFromGeometry = (
     : getDesiredAnchorRatio(laneSide, toAnchorBounds, sourceCenterX, sourceCenterY)
   const fromAnchor = fromTableGeometry
     ? isHorizontalDiagramSide(laneSide)
-      ? reserveFieldRowAnchorPointFromGeometry(fromGeometry, fromTableGeometry, laneSide, targetCenterY, planeBounds, usage)
+      ? reserveFieldRowAnchorPointFromGeometry(fromGeometry, fromTableGeometry, laneSide, targetCenterY, planeBounds, usage, reservations)
       : getExactAnchorPointFromGeometry(fromAnchorHost, laneSide, fromRatio, planeBounds)
-    : reserveAnchorPointFromGeometry(fromAnchorHost, laneSide, fromRatio, planeBounds, usage)
+    : reserveAnchorPointFromGeometry(fromAnchorHost, laneSide, fromRatio, planeBounds, usage, reservations)
   const toAnchor = toTableGeometry
     ? isHorizontalDiagramSide(laneSide)
-      ? reserveFieldRowAnchorPointFromGeometry(toGeometry, toTableGeometry, laneSide, sourceCenterY, planeBounds, usage)
+      ? reserveFieldRowAnchorPointFromGeometry(toGeometry, toTableGeometry, laneSide, sourceCenterY, planeBounds, usage, reservations)
       : getExactAnchorPointFromGeometry(toAnchorHost, laneSide, toRatio, planeBounds)
-    : reserveAnchorPointFromGeometry(toAnchorHost, laneSide, toRatio, planeBounds, usage)
+    : reserveAnchorPointFromGeometry(toAnchorHost, laneSide, toRatio, planeBounds, usage, reservations)
   const laneOffset = reserveLaneOffset(
     `group-lane:${groupGeometry.element.getAttribute('data-node-anchor')}:${laneSide}`,
     usage,
     groupLaneInnerBaseOffset,
     groupLaneInnerGap
   )
+  reservations.push({
+    key: `group-lane:${groupGeometry.element.getAttribute('data-node-anchor')}:${laneSide}`,
+    slot: 0,
+    count: 1
+  })
   const points: LayoutPoint[] = []
   const groupLeft = (groupBounds.left - planeBounds.left) / scale.value
   const groupRight = (groupBounds.right - planeBounds.left) / scale.value
@@ -6903,6 +6985,7 @@ const buildPathBetweenFromGeometry = (
   const sharedGroupGeometry = !dashed ? getSharedGroupGeometry(fromGeometry, toGeometry) : null
 
   if (sharedGroupGeometry) {
+    const reservations: UsageReservation[] = []
     const sharedGroupPoints = buildSharedGroupPathPointsFromGeometry(
       fromGeometry,
       toGeometry,
@@ -6910,14 +6993,16 @@ const buildPathBetweenFromGeometry = (
       planeBounds,
       usage,
       verticalUsage,
-      headerBands
+      headerBands,
+      reservations
     )
 
     return {
       path: buildPathFromPoints(sharedGroupPoints),
       points: sharedGroupPoints,
       color,
-      dashed
+      dashed,
+      usageReservations: reservations
     }
   }
 
@@ -6925,6 +7010,7 @@ const buildPathBetweenFromGeometry = (
   const buildCandidate = (forcedSides: Partial<{ from: AnchorSide, to: AnchorSide }> = {}) => {
     const localUsage = cloneUsageMap(usage)
     const localVerticalUsage = cloneVerticalSegmentUsage(verticalUsage)
+    const reservations: UsageReservation[] = []
     const sides = {
       from: forcedSides.from || defaultSides.from,
       to: forcedSides.to || defaultSides.to
@@ -6935,6 +7021,7 @@ const buildPathBetweenFromGeometry = (
       sides.from,
       planeBounds,
       localUsage,
+      reservations,
       forcedSides.from || null
     )
     const toPendingLeg = reserveRouteLegAnchorFromGeometry(
@@ -6943,11 +7030,12 @@ const buildPathBetweenFromGeometry = (
       sides.to,
       planeBounds,
       localUsage,
+      reservations,
       forcedSides.to || null
     )
     const routeOffset = getRouteOffset(fromPendingLeg.anchor, toPendingLeg.anchor)
-    const fromLeg = finalizeRouteLegFromGeometry(fromPendingLeg, planeBounds, localUsage, routeOffset)
-    const toLeg = finalizeRouteLegFromGeometry(toPendingLeg, planeBounds, localUsage, routeOffset)
+    const fromLeg = finalizeRouteLegFromGeometry(fromPendingLeg, planeBounds, localUsage, routeOffset, reservations)
+    const toLeg = finalizeRouteLegFromGeometry(toPendingLeg, planeBounds, localUsage, routeOffset, reservations)
     const points = buildPathPointsFromLegs(fromLeg, toLeg, localVerticalUsage, headerBands)
 
     return {
@@ -6956,6 +7044,7 @@ const buildPathBetweenFromGeometry = (
       fromLeg,
       toLeg,
       points,
+      reservations,
       forcedSides
     }
   }
@@ -7030,7 +7119,8 @@ const buildPathBetweenFromGeometry = (
     path: buildPathFromPoints(chosenCandidate.points),
     points: chosenCandidate.points,
     color,
-    dashed
+    dashed,
+    usageReservations: chosenCandidate.reservations
   }
 }
 
@@ -7168,11 +7258,12 @@ const buildPathBetween = (
   }
 }
 
-const updateConnections = () => {
+const updateConnections = (dirtyNodeIds: Set<string> | null = null) => {
   flushViewportTransformSync()
 
   if (!planeRef.value) {
     connectionGeometryRegistry = null
+    connectionLines.value = []
     return
   }
 
@@ -7196,6 +7287,9 @@ const updateConnections = () => {
   const selectedTableColor = selectedTableId
     ? (tableColors[selectedTableId] || '#79e3ea')
     : null
+  const previousLinesByKey = new Map(connectionLines.value.map((line) => {
+    return [line.key, line]
+  }))
 
   for (const reference of model.references) {
     const fromGeometry = getFieldAnchorGeometry(reference.fromTable, reference.fromColumn)
@@ -7254,8 +7348,72 @@ const updateConnections = () => {
     }
   }
 
+  const shouldAttemptDirtyReroute = Boolean(
+    dirtyNodeIds
+    && dirtyNodeIds.size > 0
+    && connectionLines.value.length > 0
+  )
+  const dirtyKeys = new Set<string>()
+
+  if (shouldAttemptDirtyReroute) {
+    for (const descriptor of descriptors) {
+      const previousLine = previousLinesByKey.get(descriptor.key)
+
+      if (!previousLine) {
+        dirtyKeys.add(descriptor.key)
+        continue
+      }
+
+      if (
+        previousLine.fromEndpoint?.attribute !== descriptor.fromGeometry.locator?.attribute
+        || previousLine.fromEndpoint?.value !== descriptor.fromGeometry.locator?.value
+        || previousLine.toEndpoint?.attribute !== descriptor.toGeometry.locator?.attribute
+        || previousLine.toEndpoint?.value !== descriptor.toGeometry.locator?.value
+      ) {
+        dirtyKeys.add(descriptor.key)
+        continue
+      }
+
+      if (
+        dirtyNodeIds?.has(descriptor.fromGeometry.ownerNodeId || '')
+        || dirtyNodeIds?.has(descriptor.toGeometry.ownerNodeId || '')
+      ) {
+        dirtyKeys.add(descriptor.key)
+        continue
+      }
+
+      seedUsageFromReservations(previousLine.usageReservations || [], usage)
+      seedVerticalUsageFromPoints(previousLine.points, verticalUsage)
+    }
+  }
+
   const lines = descriptors
     .map((descriptor) => {
+      const previousLine = previousLinesByKey.get(descriptor.key)
+
+      if (shouldAttemptDirtyReroute && previousLine && !dirtyKeys.has(descriptor.key)) {
+        const fromOwnerNodeId = descriptor.fromGeometry.ownerNodeId
+        const toOwnerNodeId = descriptor.toGeometry.ownerNodeId
+
+        return {
+          ...previousLine,
+          color: descriptor.color,
+          dashed: descriptor.dashed,
+          dashPattern: descriptor.dashPattern,
+          animated: descriptor.animated,
+          fromOwnerNodeId,
+          toOwnerNodeId,
+          fromEndpoint: descriptor.fromGeometry.locator,
+          toEndpoint: descriptor.toGeometry.locator,
+          usageReservations: previousLine.usageReservations || [],
+          zIndex: getDiagramConnectionZIndex(
+            nodeOrders[fromOwnerNodeId || ''] || 1,
+            nodeOrders[toOwnerNodeId || ''] || 1,
+            descriptor.selectedForeground
+          )
+        } satisfies ConnectionLine
+      }
+
       const result = buildPathBetweenFromGeometry(
         descriptor.fromGeometry,
         descriptor.toGeometry,
@@ -7288,6 +7446,7 @@ const updateConnections = () => {
         toOwnerNodeId,
         fromEndpoint,
         toEndpoint,
+        usageReservations: result.usageReservations,
         zIndex: getDiagramConnectionZIndex(
           nodeOrders[fromOwnerNodeId || ''] || 1,
           nodeOrders[toOwnerNodeId || ''] || 1,
@@ -7298,6 +7457,7 @@ const updateConnections = () => {
     .filter((line): line is ConnectionLine => Boolean(line))
 
   connectionLines.value = lines
+  pendingConnectionDirtyNodeIds = null
 }
 
 const reflowAutoLayout = () => {
@@ -7676,6 +7836,19 @@ const hasCanvasNodeStateChanged = (current: CanvasNodeState, nextNode: CanvasNod
   return false
 }
 
+const nodeChangeAffectsConnections = (current: CanvasNodeState, nextNode: CanvasNodeState) => {
+  return (
+    current.x !== nextNode.x
+    || current.y !== nextNode.y
+    || current.width !== nextNode.width
+    || current.height !== nextNode.height
+    || current.collapsed !== nextNode.collapsed
+    || current.columnCount !== nextNode.columnCount
+    || current.masonry !== nextNode.masonry
+    || current.tableWidthScale !== nextNode.tableWidthScale
+  )
+}
+
 const updateGroupTableWidthScale = (id: string, value: string | number | null | undefined) => {
   const nextValue = typeof value === 'number'
     ? value
@@ -7805,6 +7978,10 @@ const updateNode = (
 
   if (!hasCanvasNodeStateChanged(current, nextNode)) {
     return
+  }
+
+  if (nodeChangeAffectsConnections(current, nextNode)) {
+    markConnectionDirtyForNode(id)
   }
 
   nodeStates.value[id] = nextNode
@@ -8281,7 +8458,7 @@ watch(
   selectedCanvasSelection,
   () => {
     nextTick(() => {
-      scheduleConnectionRefresh()
+      scheduleConnectionRefresh({ full: true })
     })
   },
   { deep: true }
