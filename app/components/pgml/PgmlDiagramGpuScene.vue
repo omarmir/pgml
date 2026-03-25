@@ -18,7 +18,6 @@ import {
   diagramDividerColor,
   diagramDotColor,
   diagramGridDotSpacing,
-  diagramGroupFillAlpha,
   diagramGroupHeaderHeight,
   diagramLabelTextColor,
   diagramLineViewportOverscan,
@@ -158,8 +157,10 @@ let deferredFullRenderTimeout: ReturnType<typeof window.setTimeout> | null = nul
 let lineAnimationFrame: number | null = null
 let lineAnimationOffset = 0
 
-const fontMono = '600 9px ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, Liberation Mono, monospace'
-const fontMonoSmall = '600 8px ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, Liberation Mono, monospace'
+const fontMonoFamily = '"IBM Plex Mono", "IBM Plex Mono Fallback: Courier New", "IBM Plex Mono Fallback: Roboto Mono", "IBM Plex Mono Fallback: Noto Sans Mono", monospace'
+const fontMono = `600 9px ${fontMonoFamily}`
+const fontMonoSmall = `600 8px ${fontMonoFamily}`
+const fontMonoSmallRegular = `400 8px ${fontMonoFamily}`
 const fontSansTitle = '600 14px ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif'
 const fontSansBody = '500 10px ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif'
 const fontSansMuted = '400 8px ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif'
@@ -454,9 +455,117 @@ const drawBadge = (
   context.stroke()
   context.fillStyle = mixColors(color, sceneTheme.shellText, 0.72)
   context.textBaseline = 'middle'
+  context.save()
+  context.beginPath()
+  context.rect(x + 4, y + 1, Math.max(0, width - 8), 10)
+  context.clip()
   context.fillText(text, x + 5, y + 6.5)
+  context.restore()
 
   return width
+}
+
+const normalizeBadgeWidths = (
+  widths: number[],
+  columnMaxWidth: number,
+  gap: number,
+  minimumWidth = 34
+) => {
+  const nextWidths = [...widths]
+  const getTotalWidth = () => nextWidths.reduce((total, width) => total + width, 0) + Math.max(0, nextWidths.length - 1) * gap
+
+  while (getTotalWidth() > columnMaxWidth) {
+    let largestIndex = -1
+    let largestWidth = minimumWidth
+
+    nextWidths.forEach((width, index) => {
+      if (width > largestWidth) {
+        largestWidth = width
+        largestIndex = index
+      }
+    })
+
+    if (largestIndex < 0) {
+      break
+    }
+
+    nextWidths[largestIndex] = Math.max(minimumWidth, nextWidths[largestIndex] - 4)
+  }
+
+  return nextWidths
+}
+
+const drawHeaderChip = (
+  context: CanvasRenderingContext2D,
+  x: number,
+  y: number,
+  width: number,
+  label: string,
+  font = fontMonoSmall
+) => {
+  context.fillStyle = 'rgba(255, 255, 255, 0.014)'
+  context.strokeStyle = 'rgba(255, 255, 255, 0.05)'
+  context.lineWidth = 1
+  context.strokeRect(x, y, width, 17)
+  context.fillRect(x, y, width, 17)
+  context.font = font
+  context.fillStyle = sceneTheme.muted
+  context.textBaseline = 'top'
+  context.fillText(label, x + 6, y + 4.5)
+}
+
+const drawTableGridGlyph = (
+  context: CanvasRenderingContext2D,
+  x: number,
+  y: number,
+  strokeColor: string
+) => {
+  context.strokeStyle = strokeColor
+  context.lineWidth = 1
+  context.strokeRect(x, y, 10, 10)
+  context.beginPath()
+  context.moveTo(x + 5.5, y + 1)
+  context.lineTo(x + 5.5, y + 9)
+  context.moveTo(x + 1, y + 5.5)
+  context.lineTo(x + 9, y + 5.5)
+  context.stroke()
+}
+
+const drawPencilGlyph = (
+  context: CanvasRenderingContext2D,
+  x: number,
+  y: number,
+  strokeColor: string
+) => {
+  context.strokeStyle = strokeColor
+  context.lineWidth = 1
+  context.beginPath()
+  context.moveTo(x + 1, y + 9)
+  context.lineTo(x + 3.5, y + 9)
+  context.lineTo(x + 9, y + 3.5)
+  context.lineTo(x + 6.5, y + 1)
+  context.closePath()
+  context.stroke()
+}
+
+const drawHeaderIconChip = (
+  context: CanvasRenderingContext2D,
+  x: number,
+  y: number,
+  glyph: 'grid' | 'pencil'
+) => {
+  context.fillStyle = 'rgba(255, 255, 255, 0.014)'
+  context.strokeStyle = 'rgba(255, 255, 255, 0.05)'
+  context.lineWidth = 1
+  context.strokeRect(x, y, 17, 17)
+  context.fillRect(x, y, 17, 17)
+
+  if (glyph === 'grid') {
+    drawTableGridGlyph(context, x + 3.5, y + 3.5, sceneTheme.muted)
+    return
+  }
+
+  drawPencilGlyph(context, x + 3.5, y + 3.5, sceneTheme.muted)
 }
 
 const destroyTextureEntries = (entries: Map<string, TextureCacheEntry>) => {
@@ -558,27 +667,60 @@ const drawPanelGlyph = (
 const buildTableCanvas = (card: DiagramGpuTableCard, resolution: number) => {
   const { canvas, context } = createCanvas(card.width, card.height, resolution)
   const selectionKey = getSelectionStateKey(card.id)
+  const isGroupedTable = typeof card.groupId === 'string' && card.groupId.length > 0
 
   const accentColor = getNodeAccentColor(card.color)
   const borderColor = getNodeBorderColor(card.color, 'table')
-  const backgroundColor = mixColors(card.color, sceneTheme.tableSurface, 0.08)
-  const headerTopColor = mixColors(card.color, sceneTheme.surface, 0.2)
-  const headerBottomColor = mixColors(card.color, sceneTheme.tableSurface, 0.14)
+  const backgroundColor = isGroupedTable
+    ? sceneTheme.tableSurface
+    : mixColors(card.color, sceneTheme.tableSurface, 0.06)
+  const headerBaseColor = isGroupedTable
+    ? sceneTheme.tableSurface
+    : mixColors(sceneTheme.surface, sceneTheme.tableSurface, 0.52)
+  const headerMidColor = isGroupedTable
+    ? withAlpha(sceneTheme.label, 0)
+    : withAlpha(card.color, 0.1)
+  const headerTopColor = isGroupedTable
+    ? withAlpha(sceneTheme.label, 0)
+    : withAlpha(card.color, 0.2)
+  const headerBottomColor = isGroupedTable
+    ? withAlpha(sceneTheme.label, 0)
+    : withAlpha(card.color, 0.05)
   const dividerColor = sceneTheme.divider
   const rowSelectedColor = withAlpha(card.color, 0.16)
   const shellTextColor = sceneTheme.shellText
   const mutedTextColor = sceneTheme.muted
+  const shellInsetX = isGroupedTable ? 0 : 0.5
+  const shellInsetY = isGroupedTable ? 0 : 0.5
+  const shellWidth = isGroupedTable ? card.width : card.width - 1
+  const shellHeight = isGroupedTable ? card.height : card.height - 1
+  const shellClipInset = isGroupedTable ? 0 : 1
+  const shellClipWidth = isGroupedTable ? card.width : card.width - 2
+  const shellClipHeight = isGroupedTable ? card.height : card.height - 2
 
   context.fillStyle = backgroundColor
-  roundRect(context, 0.5, 0.5, card.width - 1, card.height - 1, 2.5)
-  context.fill()
+  if (isGroupedTable) {
+    context.fillRect(0, 0, card.width, card.height)
+  } else {
+    roundRect(context, 0.5, 0.5, card.width - 1, card.height - 1, 2.5)
+    context.fill()
+  }
 
   context.save()
-  roundRect(context, 1, 1, card.width - 2, card.height - 2, 2)
-  context.clip()
+  if (isGroupedTable) {
+    context.beginPath()
+    context.rect(shellClipInset, shellClipInset, shellClipWidth, shellClipHeight)
+    context.clip()
+  } else {
+    roundRect(context, 1, 1, card.width - 2, card.height - 2, 2)
+    context.clip()
+  }
 
+  context.fillStyle = headerBaseColor
+  context.fillRect(1, 1, Math.max(0, card.width - 2), Math.max(0, card.headerHeight - 1))
   const headerGradient = context.createLinearGradient(0, 0, 0, card.headerHeight)
   headerGradient.addColorStop(0, headerTopColor)
+  headerGradient.addColorStop(0.64, headerMidColor)
   headerGradient.addColorStop(1, headerBottomColor)
   context.fillStyle = headerGradient
   context.fillRect(1, 1, Math.max(0, card.width - 2), Math.max(0, card.headerHeight - 1))
@@ -589,30 +731,28 @@ const buildTableCanvas = (card: DiagramGpuTableCard, resolution: number) => {
   context.lineTo(card.width - 1, card.headerHeight + 0.5)
   context.stroke()
 
-  context.font = fontMonoSmall
+  context.font = fontMonoSmallRegular
   context.fillStyle = accentColor
   context.textBaseline = 'top'
   context.fillText('TABLE', 10, 8)
 
   context.font = fontSansTitle
   context.fillStyle = shellTextColor
-  context.fillText(fitText(context, card.title, card.width - 90), 10, 21)
-
   const rowCountLabel = `${card.rows.length} ROWS`
   context.font = fontMonoSmall
-  const rowCountWidth = Math.max(54, context.measureText(rowCountLabel).width + 12)
-  context.strokeStyle = sceneTheme.rail
-  context.lineWidth = 1
-  context.strokeRect(card.width - rowCountWidth - 10, 8, rowCountWidth, 18)
-  context.fillStyle = mutedTextColor
-  context.fillText(rowCountLabel, card.width - rowCountWidth - 4, 14)
+  const rowCountWidth = Math.max(52, context.measureText(rowCountLabel).width + 12)
+  context.font = fontSansTitle
+  context.fillText(fitText(context, card.title, card.width - rowCountWidth - 28), 10, 18)
+
+  context.font = fontMonoSmall
+  drawHeaderChip(context, card.width - rowCountWidth - 10, 8, rowCountWidth, rowCountLabel)
 
   drawBadge(
     context,
     card.schema,
     getDiagramSchemaBadgeColor(card.schema),
     10,
-    card.headerHeight - 17,
+    card.headerHeight - 13,
     Math.min(78, card.width - 20)
   )
 
@@ -644,14 +784,19 @@ const buildTableCanvas = (card: DiagramGpuTableCard, resolution: number) => {
       context.stroke()
     }
 
-    let badgeX = card.width - 10
+    const badgeGap = 4
     const reversedBadges = [...row.badges].reverse()
+    const rawBadgeWidths = reversedBadges.map((badge) => {
+      return measureBadgeWidth(context, badge.label, reversedBadges.length > 1 ? 72 : 90)
+    })
+    const badgeWidths = normalizeBadgeWidths(rawBadgeWidths, reversedBadges.length > 1 ? 104 : 90, badgeGap)
+    let badgeX = card.width - 10
 
-    reversedBadges.forEach((badge) => {
-      const width = measureBadgeWidth(context, badge.label, 92)
+    reversedBadges.forEach((badge, badgeIndex) => {
+      const width = badgeWidths[badgeIndex] || measureBadgeWidth(context, badge.label, 72)
       badgeX -= width
       drawBadge(context, badge.label, badge.color, badgeX, rowY + 8, width)
-      badgeX -= 6
+      badgeX -= badgeGap
     })
 
     if (row.kind === 'attachment' && row.accentColor && row.kindLabel) {
@@ -683,10 +828,17 @@ const buildTableCanvas = (card: DiagramGpuTableCard, resolution: number) => {
 
   context.restore()
 
-  context.strokeStyle = selectionKey.startsWith('selected') ? accentColor : borderColor
-  context.lineWidth = selectionKey.startsWith('selected') ? 1.5 : 1
-  roundRect(context, 0.5, 0.5, card.width - 1, card.height - 1, 2.5)
-  context.stroke()
+  if (selectionKey.startsWith('selected') || !isGroupedTable) {
+    context.strokeStyle = selectionKey.startsWith('selected') ? accentColor : borderColor
+    context.lineWidth = selectionKey.startsWith('selected') ? 1.5 : 1
+
+    if (isGroupedTable) {
+      context.strokeRect(shellInsetX, shellInsetY, shellWidth, shellHeight)
+    } else {
+      roundRect(context, 0.5, 0.5, card.width - 1, card.height - 1, 2.5)
+      context.stroke()
+    }
+  }
 
   return canvas
 }
@@ -696,48 +848,50 @@ const buildGroupCanvas = (group: DiagramGpuGroupNode, resolution: number) => {
   const selectionKey = getSelectionStateKey(group.id)
   const accentColor = getNodeAccentColor(group.color)
   const borderColor = getNodeBorderColor(group.color, 'group')
-  const bodyFill = mixColors(group.color, sceneTheme.groupSurface, 0.16)
-  const headerGradient = context.createLinearGradient(0, 0, 0, diagramGroupHeaderHeight + 10)
-  headerGradient.addColorStop(0, mixColors(group.color, sceneTheme.groupSurfaceSoft, 0.34))
-  headerGradient.addColorStop(0.72, mixColors(group.color, bodyFill, 0.42))
-  headerGradient.addColorStop(1, bodyFill)
+  const shellFill = sceneTheme.groupSurface
+  const bodyOverlayFill = withAlpha(group.color, 0.02)
+  const headerFadeHeight = Math.max(diagramGroupHeaderHeight + 28, Math.round(group.height * 0.22))
+  const headerGradient = context.createLinearGradient(0, 0, 0, headerFadeHeight)
+  headerGradient.addColorStop(0, withAlpha(group.color, 0.119))
+  headerGradient.addColorStop(0.38, withAlpha(group.color, 0.065))
+  headerGradient.addColorStop(1, bodyOverlayFill)
 
-  context.fillStyle = bodyFill
+  context.fillStyle = shellFill
   roundRect(context, 0.5, 0.5, group.width - 1, group.height - 1, 2.5)
   context.fill()
 
   context.save()
   roundRect(context, 1, 1, group.width - 2, group.height - 2, 2)
   context.clip()
+  context.fillStyle = bodyOverlayFill
+  context.fillRect(1, 1, Math.max(0, group.width - 2), Math.max(0, group.height - 2))
   context.fillStyle = headerGradient
-  context.fillRect(1, 1, Math.max(0, group.width - 2), Math.max(0, diagramGroupHeaderHeight + 10))
-  context.fillStyle = withAlpha(group.color, diagramGroupFillAlpha)
-  context.fillRect(1, diagramGroupHeaderHeight, Math.max(0, group.width - 2), Math.max(0, group.height - diagramGroupHeaderHeight - 1))
+  context.fillRect(1, 1, Math.max(0, group.width - 2), Math.max(0, headerFadeHeight))
 
-  context.font = fontMonoSmall
+  context.font = fontMonoSmallRegular
   context.fillStyle = accentColor
   context.textBaseline = 'top'
   context.fillText('TABLE GROUP', 12, 9)
 
+  const pill = `${group.tableCount} TABLES`
+  context.font = fontMonoSmallRegular
+  const pillWidth = Math.max(58, context.measureText(pill).width + 12)
+  const pillX = group.width - 12 - pillWidth
+  const headerControlsWidth = pillWidth + 12
+
   context.font = fontSansTitle
   context.fillStyle = sceneTheme.shellText
-  context.fillText(fitText(context, group.title, group.width - 128), 12, 24)
+  context.fillText(fitText(context, group.title, group.width - headerControlsWidth - 28), 12, 24)
 
   if (group.note) {
     context.font = fontSansMuted
     context.fillStyle = sceneTheme.muted
-    context.fillText(fitText(context, group.note, group.width - 128), 12, 42)
+    context.fillText(fitText(context, group.note, group.width - headerControlsWidth - 28), 12, 42)
   }
 
-  context.font = fontMonoSmall
-  const pill = `${group.tableCount} TABLES`
-  const pillWidth = Math.max(58, context.measureText(pill).width + 12)
-  context.strokeStyle = sceneTheme.rail
-  context.strokeRect(group.width - pillWidth - 12, 9, pillWidth, 18)
-  context.fillStyle = sceneTheme.muted
-  context.fillText(pill, group.width - pillWidth - 6, 14)
+  drawHeaderChip(context, pillX, 9, pillWidth, pill, fontMonoSmallRegular)
 
-  context.strokeStyle = sceneTheme.divider
+  context.strokeStyle = mixColors(group.color, sceneTheme.divider, 0.1)
   context.beginPath()
   context.moveTo(1, diagramGroupHeaderHeight + 0.5)
   context.lineTo(group.width - 1, diagramGroupHeaderHeight + 0.5)
@@ -878,7 +1032,7 @@ const updateBackgroundGrid = () => {
   for (let x = diagramGridDotSpacing / 2; x < viewportWidth.value; x += diagramGridDotSpacing) {
     for (let y = diagramGridDotSpacing / 2; y < viewportHeight.value; y += diagramGridDotSpacing) {
       backgroundGraphics.circle(x, y, 1).fill({
-        alpha: 0.18,
+        alpha: 0.12,
         color: hexToNumber(sceneTheme.dot, 0x94a3b8)
       })
     }
@@ -1245,11 +1399,11 @@ const renderConnectionLayer = () => {
   visibleLines.forEach((line) => {
     const color = hexToNumber(line.color, 0x79e3ea)
     const solidStyle = {
-      alpha: line.animated ? 0.74 : 0.92,
+      alpha: line.animated ? 0.62 : 0.72,
       cap: line.animated ? 'square' : 'round',
       color,
       join: 'miter',
-      width: line.dashed ? 1.24 : 1.36
+      width: line.dashed ? 1.02 : 1.08
     } as const
 
     if (!line.dashed) {
@@ -1260,8 +1414,8 @@ const renderConnectionLayer = () => {
     if (line.animated) {
       drawSolidPolyline(lineGraphics, line.points, {
         ...solidStyle,
-        alpha: 0.28,
-        width: 1.18
+        alpha: 0.18,
+        width: 0.94
       })
     }
 
@@ -1272,11 +1426,11 @@ const renderConnectionLayer = () => {
       dashPattern,
       line.animated ? lineAnimationOffset : 0,
       {
-        alpha: line.animated ? 0.98 : 0.88,
+        alpha: line.animated ? 0.9 : 0.7,
         cap: 'square',
         color,
         join: 'miter',
-        width: line.animated ? 1.72 : 1.28
+        width: line.animated ? 1.34 : 1.02
       }
     )
   })
