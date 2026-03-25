@@ -329,10 +329,21 @@ const refreshSceneTheme = () => {
 
 const getTextureResolution = () => {
   if (!import.meta.client) {
-    return 1.6
+    return 2
   }
 
-  return clamp((window.devicePixelRatio || 1) * 1.15, 1.45, 2.2)
+  const deviceResolution = Math.max(window.devicePixelRatio || 1, 1)
+  const scaleAdjustedResolution = deviceResolution * clamp(Math.max(worldScale, 1), 1, 1.8)
+
+  if (scaleAdjustedResolution <= 1.75) {
+    return 2
+  }
+
+  if (scaleAdjustedResolution <= 2.75) {
+    return 3
+  }
+
+  return 4
 }
 
 const measureViewport = () => {
@@ -994,6 +1005,7 @@ const getOrCreateSpriteEntry = (
   sprite.width = width
   sprite.height = height
   sprite.eventMode = 'none'
+  sprite.roundPixels = true
 
   const nextEntry = {
     key: nextKey,
