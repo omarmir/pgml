@@ -4051,9 +4051,31 @@ defineExpose<{
 
           <div
             v-if="!filteredGroupedBrowserItems.length && !filteredUngroupedBrowserItems.length && !filteredStandaloneBrowserItems.length"
-            class="border border-[color:var(--studio-divider)] bg-[color:var(--studio-input-bg)] px-3 py-3 text-[0.68rem] leading-6 text-[color:var(--studio-shell-muted)]"
+            class="grid gap-3 border border-[color:var(--studio-divider)] bg-[color:var(--studio-input-bg)] px-3 py-3 text-[0.68rem] leading-6 text-[color:var(--studio-shell-muted)]"
           >
-            No entities match the current search.
+            <p>No entities match the current search.</p>
+
+            <div class="flex flex-wrap gap-2">
+              <button
+                v-if="normalizedEntitySearchQuery"
+                type="button"
+                data-entity-search-empty-clear="true"
+                class="border px-2 py-1 font-mono text-[0.54rem] uppercase tracking-[0.08em] text-[color:var(--studio-shell-text)] transition-colors duration-150 hover:bg-[color:var(--studio-surface-hover)]"
+                @click="clearEntitySearch"
+              >
+                Clear search
+              </button>
+
+              <button
+                v-if="hiddenEntityCount > 0"
+                type="button"
+                data-entity-search-empty-restore="true"
+                class="border px-2 py-1 font-mono text-[0.54rem] uppercase tracking-[0.08em] text-[color:var(--studio-shell-text)] transition-colors duration-150 hover:bg-[color:var(--studio-surface-hover)]"
+                @click="restoreAllEntityVisibility"
+              >
+                Show all entities
+              </button>
+            </div>
           </div>
         </div>
       </div>

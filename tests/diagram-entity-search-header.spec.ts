@@ -49,3 +49,18 @@ test('entities header can restore all hidden rows', async ({ goto, page }) => {
   await expect(page.locator('[data-entity-restore-visibility="true"]')).toHaveCount(0)
   await expect(page.locator('[data-browser-visibility-toggle="public.users"]')).toContainText('Hide')
 })
+
+test('entities empty state can clear a search with no matches', async ({ goto, page }) => {
+  await goto('/diagram')
+  await page.locator('[data-diagram-panel-tab="entities"]').click()
+  await page.locator('[data-entity-search="true"]').fill('zzzzzzzz')
+
+  await expect(page.locator('[data-diagram-panel="true"]')).toContainText('No entities match the current search.')
+  await expect(page.locator('[data-entity-search-empty-clear="true"]')).toBeVisible()
+
+  await page.locator('[data-entity-search-empty-clear="true"]').click()
+
+  await expect(page.locator('[data-entity-search="true"]')).toHaveValue('')
+  await expect(page.locator('[data-entity-search-empty-clear="true"]')).toHaveCount(0)
+  await expect(page.locator('[data-browser-entity-row="public.users"]')).toBeVisible()
+})
