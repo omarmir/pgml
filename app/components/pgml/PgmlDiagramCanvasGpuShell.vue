@@ -3085,6 +3085,7 @@ defineExpose<{
       >
         <UButton
           icon="i-lucide-zoom-out"
+          aria-label="Zoom out"
           color="neutral"
           variant="ghost"
           size="xs"
@@ -3096,6 +3097,7 @@ defineExpose<{
         </div>
         <UButton
           icon="i-lucide-zoom-in"
+          aria-label="Zoom in"
           color="neutral"
           variant="ghost"
           size="xs"
@@ -3103,7 +3105,8 @@ defineExpose<{
           @click="sceneRef?.zoomBy(1)"
         />
         <UButton
-          label="Reset"
+          data-diagram-fit-view="true"
+          label="Fit view"
           color="neutral"
           variant="ghost"
           size="xs"
