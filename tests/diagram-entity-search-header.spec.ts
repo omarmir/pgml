@@ -18,7 +18,7 @@ test('entities search header reports matches and clears the current filter', asy
   await expect(page.locator('[data-entity-search-clear="true"]')).toBeVisible()
   await expect(page.locator('[data-diagram-panel="true"]')).toContainText('matches')
 
-  await page.locator('[data-entity-search-clear="true"]').click()
+  await page.locator('[data-entity-search="true"]').press('Escape')
 
   await expect(page.locator('[data-entity-search="true"]')).toHaveValue('')
   await expect(page.locator('[data-entity-search-clear="true"]')).toHaveCount(0)

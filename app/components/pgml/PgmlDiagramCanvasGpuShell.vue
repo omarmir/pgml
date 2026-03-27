@@ -3586,6 +3586,7 @@ defineExpose<{
               type="text"
               placeholder="Groups, tables, routines..."
               :class="studioCompactInputClass"
+              @keydown.esc.prevent="clearEntitySearch"
             >
           </label>
           <div class="flex items-center justify-between gap-3 text-[0.62rem] text-[color:var(--studio-shell-muted)]">
