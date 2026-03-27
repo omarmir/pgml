@@ -1220,6 +1220,24 @@ const filteredStandaloneBrowserItems = computed(() => {
 
 const normalizedEntitySearchQuery = computed(() => cleanForSearch(entitySearchQuery.value).trim())
 
+const countEntityBrowserItems = (items: EntityBrowserItem[]): number => {
+  return items.reduce((total, item) => {
+    return total + 1 + countEntityBrowserItems(item.children)
+  }, 0)
+}
+
+const filteredEntityResultCount = computed(() => {
+  return countEntityBrowserItems([
+    ...filteredGroupedBrowserItems.value,
+    ...filteredUngroupedBrowserItems.value,
+    ...filteredStandaloneBrowserItems.value
+  ])
+})
+
+const clearEntitySearch = () => {
+  entitySearchQuery.value = ''
+}
+
 const hiddenEntityCount = computed(() => {
   return Object.values(model.nodeProperties).filter(properties => properties.visible === false).length
 })
@@ -3514,8 +3532,21 @@ defineExpose<{
             >
           </label>
           <div class="flex items-center justify-between gap-3 text-[0.62rem] text-[color:var(--studio-shell-muted)]">
-            <span>{{ filteredGroupedBrowserItems.length + filteredUngroupedBrowserItems.length + filteredStandaloneBrowserItems.length }} sections</span>
-            <span>{{ hiddenEntityCount }} hidden</span>
+            <span>
+              {{ normalizedEntitySearchQuery ? `${filteredEntityResultCount} matches` : `${filteredEntityResultCount} visible rows` }}
+            </span>
+            <div class="flex items-center gap-2">
+              <span>{{ hiddenEntityCount }} hidden</span>
+              <button
+                v-if="normalizedEntitySearchQuery"
+                type="button"
+                data-entity-search-clear="true"
+                class="border px-2 py-1 font-mono text-[0.54rem] uppercase tracking-[0.08em] text-[color:var(--studio-shell-text)] transition-colors duration-150 hover:bg-[color:var(--studio-surface-hover)]"
+                @click="clearEntitySearch"
+              >
+                Clear
+              </button>
+            </div>
           </div>
         </div>
 
