@@ -21,7 +21,7 @@ test('mobile studio exposes one-tap quick switches for diagram, panel, and PGML'
 
   await expect(diagramQuickView).toBeVisible()
   await expect(panelQuickView).toBeVisible()
-  await expect(panelQuickView).toContainText('Entities')
+  await expect(panelQuickView).toContainText('Entities panel')
   await expect(pgmlQuickView).toBeVisible()
 
   await pgmlQuickView.click()

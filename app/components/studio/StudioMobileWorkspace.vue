@@ -56,7 +56,7 @@ const mobileQuickViewButtons = computed(() => {
     {
       icon: studioMobileWorkspaceViewIconByValue.panel,
       key: 'panel',
-      label: diagramPanelTabLabelByValue[activePanelTab.value],
+      label: `${diagramPanelTabLabelByValue[activePanelTab.value]} panel`,
       onSelect: () => {
         setPanelView(activePanelTab.value)
       }
