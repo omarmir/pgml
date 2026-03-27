@@ -2613,6 +2613,23 @@ const toggleBrowserItemVisibility = (item: EntityBrowserItem) => {
 
   updateEntityVisibility(visibilityId, !isBrowserItemDirectlyVisible(item))
 }
+const restoreAllEntityVisibility = () => {
+  const nextProperties = Object.entries(model.nodeProperties).reduce<Record<string, PgmlNodeProperties>>((entries, [id, value]) => {
+    const nextEntry: PgmlNodeProperties = {
+      ...value
+    }
+
+    delete nextEntry.visible
+
+    if (Object.values(nextEntry).some(entryValue => entryValue !== undefined && entryValue !== null)) {
+      entries[id] = nextEntry
+    }
+
+    return entries
+  }, {})
+
+  emit('nodePropertiesChange', nextProperties)
+}
 
 const focusBrowserItemSource = (item: EntityBrowserItem) => {
   focusSourceRange(item.sourceRange)
@@ -3538,6 +3555,15 @@ defineExpose<{
             </span>
             <div class="flex items-center gap-2">
               <span>{{ hiddenEntityCount }} hidden</span>
+              <button
+                v-if="hiddenEntityCount > 0"
+                type="button"
+                data-entity-restore-visibility="true"
+                class="border px-2 py-1 font-mono text-[0.54rem] uppercase tracking-[0.08em] text-[color:var(--studio-shell-text)] transition-colors duration-150 hover:bg-[color:var(--studio-surface-hover)]"
+                @click="restoreAllEntityVisibility"
+              >
+                Show all
+              </button>
               <button
                 v-if="normalizedEntitySearchQuery"
                 type="button"

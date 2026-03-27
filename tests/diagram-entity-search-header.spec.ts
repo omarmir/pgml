@@ -29,3 +29,21 @@ test('entities tree labels grouped and standalone sections with counts', async (
   await expect(page.locator('[data-entity-section-label="grouped"]')).toContainText(/Grouped Tables · \d+ groups/)
   await expect(page.locator('[data-entity-section-label="standalone"]')).toContainText(/Standalone Objects · \d+/)
 })
+
+test('entities header can restore all hidden rows', async ({ goto, page }) => {
+  await goto('/diagram')
+  await page.locator('[data-diagram-panel-tab="entities"]').click()
+
+  const usersVisibilityButton = page.locator('[data-browser-visibility-toggle="public.users"]')
+
+  await expect(usersVisibilityButton).toContainText('Hide')
+  await usersVisibilityButton.click()
+  await expect(page.locator('[data-diagram-panel="true"]')).toContainText('1 hidden')
+  await expect(page.locator('[data-entity-restore-visibility="true"]')).toBeVisible()
+
+  await page.locator('[data-entity-restore-visibility="true"]').click()
+
+  await expect(page.locator('[data-diagram-panel="true"]')).toContainText('0 hidden')
+  await expect(page.locator('[data-entity-restore-visibility="true"]')).toHaveCount(0)
+  await expect(page.locator('[data-browser-visibility-toggle="public.users"]')).toContainText('Hide')
+})
