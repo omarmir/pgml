@@ -305,6 +305,23 @@ const mixColors = (left: string, right: string, leftWeight: number) => {
   })
 }
 
+const compositeColors = (foreground: string, background: string) => {
+  const foregroundColor = parseColor(foreground)
+  const backgroundColor = parseColor(background)
+  const alpha = foregroundColor.a + backgroundColor.a * (1 - foregroundColor.a)
+
+  if (alpha <= 0) {
+    return 'rgba(0, 0, 0, 0)'
+  }
+
+  return colorToString({
+    a: alpha,
+    b: (foregroundColor.b * foregroundColor.a + backgroundColor.b * backgroundColor.a * (1 - foregroundColor.a)) / alpha,
+    g: (foregroundColor.g * foregroundColor.a + backgroundColor.g * backgroundColor.a * (1 - foregroundColor.a)) / alpha,
+    r: (foregroundColor.r * foregroundColor.a + backgroundColor.r * backgroundColor.a * (1 - foregroundColor.a)) / alpha
+  })
+}
+
 const withAlpha = (value: string, alpha: number) => {
   const nextColor = parseColor(value)
 
@@ -960,19 +977,18 @@ const buildGroupHeaderOverlayCanvas = (group: DiagramGpuGroupNode, resolution: n
   const borderColor = getNodeBorderColor(group.color, 'group')
   const shellFill = sceneTheme.groupSurface
   const bodyOverlayFill = withAlpha(group.color, 0.02)
+  const headerBaseFill = compositeColors(bodyOverlayFill, compositeColors(shellFill, sceneTheme.background))
   const headerFadeHeight = Math.max(diagramGroupHeaderHeight + 18, Math.round(group.height * 0.22))
   const visibleHeaderFadeHeight = Math.min(diagramGroupHeaderBandHeight, headerFadeHeight)
   const headerGradient = context.createLinearGradient(0, 0, 0, visibleHeaderFadeHeight)
-  headerGradient.addColorStop(0, withAlpha(group.color, 0.119))
-  headerGradient.addColorStop(0.38, withAlpha(group.color, 0.065))
-  headerGradient.addColorStop(1, bodyOverlayFill)
+  headerGradient.addColorStop(0, compositeColors(withAlpha(group.color, 0.119), headerBaseFill))
+  headerGradient.addColorStop(0.38, compositeColors(withAlpha(group.color, 0.065), headerBaseFill))
+  headerGradient.addColorStop(1, compositeColors(bodyOverlayFill, headerBaseFill))
 
   context.save()
   topRoundRect(context, 0.5, 0.5, group.width - 1, diagramGroupHeaderBandHeight - 0.5, 2.5)
   context.clip()
-  context.fillStyle = shellFill
-  context.fillRect(1, 1, Math.max(0, group.width - 2), Math.max(0, diagramGroupHeaderBandHeight - 1))
-  context.fillStyle = bodyOverlayFill
+  context.fillStyle = headerBaseFill
   context.fillRect(1, 1, Math.max(0, group.width - 2), Math.max(0, diagramGroupHeaderBandHeight - 1))
   context.fillStyle = headerGradient
   context.fillRect(1, 1, Math.max(0, group.width - 2), Math.max(0, visibleHeaderFadeHeight))
