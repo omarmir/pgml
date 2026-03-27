@@ -7,6 +7,37 @@ test.beforeEach(async ({ page }) => {
   await authorizeStudioLaunchAccess(page)
 })
 
+test('mobile studio exposes one-tap quick switches for diagram, panel, and PGML', async ({ goto, page }) => {
+  await page.setViewportSize({
+    width: 390,
+    height: 844
+  })
+  await goto('/diagram')
+
+  const currentView = page.locator('[data-mobile-studio-current-view="true"]')
+  const diagramQuickView = page.locator('[data-mobile-quick-view="diagram"]')
+  const panelQuickView = page.locator('[data-mobile-quick-view="panel"]')
+  const pgmlQuickView = page.locator('[data-mobile-quick-view="pgml"]')
+
+  await expect(diagramQuickView).toBeVisible()
+  await expect(panelQuickView).toBeVisible()
+  await expect(panelQuickView).toContainText('Entities')
+  await expect(pgmlQuickView).toBeVisible()
+
+  await pgmlQuickView.click()
+  await expect(currentView).toHaveText('PGML')
+  await expect(page.locator('[data-pgml-editor="true"]')).toBeVisible()
+
+  await diagramQuickView.click()
+  await expect(currentView).toHaveText('Diagram')
+  await expect(page.locator('[data-diagram-viewport="true"]')).toBeVisible()
+
+  await panelQuickView.click()
+  await expect(currentView).toHaveText('Entities panel')
+  await expect(page.locator('[data-diagram-panel="true"]')).toBeVisible()
+  await expect(page.locator('[data-entity-search="true"]')).toBeVisible()
+})
+
 test('mobile studio menu switches views and keeps modals inside the viewport', async ({ goto, page }) => {
   await page.setViewportSize({
     width: 390,
