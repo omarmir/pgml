@@ -197,6 +197,7 @@ const showRelationshipLines: Ref<boolean> = ref(true)
 const snapToGrid: Ref<boolean> = ref(true)
 const currentScale: Ref<number> = ref(1)
 const entitySearchQuery: Ref<string> = ref('')
+const entitySearchInputRef: Ref<HTMLInputElement | null> = ref(null)
 const connectionLines: Ref<DiagramGpuConnectionLine[]> = ref([])
 const groupLayoutStates: Ref<Record<string, DiagramGpuGroupNode>> = ref({})
 const floatingTableStates: Ref<Record<string, DiagramGpuNodeLayoutState>> = ref({})
@@ -2869,8 +2870,15 @@ watch(
 
 watch(
   () => activePanelTab.value,
-  (nextTab) => {
+  async (nextTab) => {
     emit('panelTabChange', nextTab)
+
+    if (nextTab !== 'entities') {
+      return
+    }
+
+    await nextTick()
+    entitySearchInputRef.value?.focus()
   }
 )
 
@@ -3572,6 +3580,7 @@ defineExpose<{
           <label class="grid gap-1">
             <span class="font-mono text-[0.58rem] uppercase tracking-[0.08em] text-[color:var(--studio-shell-label)]">Search entities</span>
             <input
+              ref="entitySearchInputRef"
               v-model="entitySearchQuery"
               data-entity-search="true"
               type="text"

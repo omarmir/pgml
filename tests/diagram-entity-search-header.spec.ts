@@ -11,6 +11,7 @@ test('entities search header reports matches and clears the current filter', asy
   await goto('/diagram')
   await page.locator('[data-diagram-panel-tab="entities"]').click()
 
+  await expect(page.locator('[data-entity-search="true"]')).toBeFocused()
   await expect(page.locator('[data-diagram-panel="true"]')).toContainText('visible rows')
   await page.locator('[data-entity-search="true"]').fill('email')
 
