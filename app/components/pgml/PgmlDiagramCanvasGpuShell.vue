@@ -2042,6 +2042,31 @@ const selectedObject = computed(() => {
   return objectLayoutStates.value[selectedSelection.value.id] || null
 })
 
+const inspectorOverviewStats = computed(() => {
+  return [
+    {
+      key: 'groups',
+      label: 'Groups',
+      value: groupNodes.value.length
+    },
+    {
+      key: 'tables',
+      label: 'Tables',
+      value: tableCards.value.length
+    },
+    {
+      key: 'objects',
+      label: 'Objects',
+      value: objectNodes.value.length
+    },
+    {
+      key: 'lines',
+      label: 'Lines',
+      value: connectionLines.value.length
+    }
+  ]
+})
+
 const selectedDetailPopover = computed<DiagramDetailPopover | null>(() => {
   if (selectedAttachment.value) {
     return {
@@ -3413,9 +3438,63 @@ defineExpose<{
 
         <div
           v-else
-          class="rounded-none border border-[color:var(--studio-divider)] bg-[color:var(--studio-control-bg)] px-3 py-3 text-[0.7rem] leading-6 text-[color:var(--studio-shell-muted)]"
+          data-inspector-overview="true"
+          class="grid gap-3 rounded-none border border-[color:var(--studio-divider)] bg-[color:var(--studio-control-bg)] px-3 py-3 text-[0.7rem] leading-6 text-[color:var(--studio-shell-muted)]"
         >
-          Click a group, table, column, attachment, or object to inspect it.
+          <div class="grid gap-1">
+            <div class="font-mono text-[0.58rem] uppercase tracking-[0.08em] text-[color:var(--studio-shell-label)]">
+              Schema overview
+            </div>
+            <p>
+              Click a group, table, column, attachment, or object to inspect it.
+            </p>
+          </div>
+
+          <div class="grid grid-cols-2 gap-2">
+            <div
+              v-for="stat in inspectorOverviewStats"
+              :key="stat.key"
+              class="grid gap-1 border border-[color:var(--studio-divider)] bg-[color:var(--studio-input-bg)] px-2 py-2"
+            >
+              <span class="font-mono text-[0.54rem] uppercase tracking-[0.08em] text-[color:var(--studio-shell-label)]">
+                {{ stat.label }}
+              </span>
+              <span
+                :data-inspector-overview-value="stat.key"
+                class="text-[0.84rem] font-semibold leading-5 text-[color:var(--studio-shell-text)]"
+              >
+                {{ stat.value }}
+              </span>
+            </div>
+          </div>
+
+          <div
+            v-if="hiddenEntityCount > 0"
+            class="border border-[color:var(--studio-divider)] bg-[color:var(--studio-input-bg)] px-3 py-2 text-[0.66rem] leading-5"
+          >
+            {{ hiddenEntityCount }} entities are hidden by saved properties.
+          </div>
+
+          <div class="flex flex-wrap gap-2">
+            <UButton
+              data-inspector-overview-action="entities"
+              label="Browse entities"
+              leading-icon="i-lucide-list-tree"
+              color="neutral"
+              variant="outline"
+              size="xs"
+              @click="activePanelTab = 'entities'"
+            />
+            <UButton
+              data-inspector-overview-action="fit"
+              label="Fit diagram"
+              leading-icon="i-lucide-scan-search"
+              color="neutral"
+              variant="outline"
+              size="xs"
+              @click="sceneRef?.resetView()"
+            />
+          </div>
         </div>
       </div>
 
