@@ -14,6 +14,12 @@ import {
   type DiagramSpatialGridIndex
 } from '~/utils/diagram-spatial-index'
 import {
+  getDiagramPinchViewportTransform,
+  getDiagramTouchGesture,
+  type DiagramTouchGesture,
+  type DiagramTouchPoint
+} from '~/utils/diagram-touch'
+import {
   diagramBackgroundColor,
   diagramDividerColor,
   diagramDotColor,
@@ -73,6 +79,13 @@ type DragSession = {
   originX?: number
   originY?: number
   pressedTarget: HitTarget | null
+}
+
+type TouchPinchSession = {
+  initialCenter: DiagramTouchPoint
+  initialDistance: number
+  initialPan: DiagramTouchPoint
+  initialScale: number
 }
 
 type HitTarget = {
@@ -145,6 +158,7 @@ let worldPanY = 0
 let worldScale = 1
 let destroyed = false
 let dragSession: DragSession | null = null
+let touchPinchSession: TouchPinchSession | null = null
 let lastClickTargetKey = ''
 let lastClickTimestamp = 0
 let activeVisibleTableIds = new Set<string>()
@@ -380,6 +394,42 @@ const worldPointFromClient = (clientX: number, clientY: number) => {
     x: (clientX - bounds.left - worldPanX) / Math.max(worldScale, 0.001),
     y: (clientY - bounds.top - worldPanY) / Math.max(worldScale, 0.001)
   }
+}
+
+const getTouchGesture = (touches: TouchList): DiagramTouchGesture | null => {
+  const firstTouch = touches.item(0)
+  const secondTouch = touches.item(1)
+
+  if (!firstTouch || !secondTouch) {
+    return null
+  }
+
+  return getDiagramTouchGesture(
+    {
+      x: firstTouch.clientX,
+      y: firstTouch.clientY
+    },
+    {
+      x: secondTouch.clientX,
+      y: secondTouch.clientY
+    }
+  )
+}
+
+const startTouchPinchSession = (gesture: DiagramTouchGesture) => {
+  touchPinchSession = {
+    initialCenter: gesture.center,
+    initialDistance: gesture.distance,
+    initialPan: {
+      x: worldPanX,
+      y: worldPanY
+    },
+    initialScale: worldScale
+  }
+}
+
+const resetTouchInteraction = () => {
+  touchPinchSession = null
 }
 
 const updateWorldTransform = () => {
@@ -753,7 +803,7 @@ const buildTableCanvas = (card: DiagramGpuTableCard, resolution: number) => {
   context.font = fontMonoSmall
   const rowCountWidth = Math.max(52, context.measureText(rowCountLabel).width + 12)
   context.font = fontSansTitle
-  context.fillText(fitText(context, card.title, card.width - rowCountWidth - 28), 10, 18)
+  context.fillText(fitText(context, card.title, card.width - 20), 10, 29)
 
   context.font = fontMonoSmall
   drawHeaderChip(context, card.width - rowCountWidth - 10, 8, rowCountWidth, rowCountLabel)
@@ -1737,6 +1787,22 @@ const handlePointerDown = (event: PointerEvent) => {
   }
 }
 
+const handleTouchStart = (event: TouchEvent) => {
+  if (event.touches.length < 2) {
+    return
+  }
+
+  const gesture = getTouchGesture(event.touches)
+
+  if (!gesture) {
+    return
+  }
+
+  dragSession = null
+  event.preventDefault()
+  startTouchPinchSession(gesture)
+}
+
 const handlePointerMove = (event: PointerEvent) => {
   if (!dragSession) {
     return
@@ -1772,15 +1838,60 @@ const handlePointerMove = (event: PointerEvent) => {
   })
 }
 
+const handleTouchMove = (event: TouchEvent) => {
+  if (event.touches.length < 2) {
+    return
+  }
+
+  const gesture = getTouchGesture(event.touches)
+
+  if (!gesture) {
+    return
+  }
+
+  if (!touchPinchSession) {
+    startTouchPinchSession(gesture)
+  }
+
+  if (!touchPinchSession) {
+    return
+  }
+
+  event.preventDefault()
+  const transform = getDiagramPinchViewportTransform({
+    currentCenter: gesture.center,
+    currentDistance: gesture.distance,
+    initialCenter: touchPinchSession.initialCenter,
+    initialDistance: touchPinchSession.initialDistance,
+    initialPan: touchPinchSession.initialPan,
+    initialScale: touchPinchSession.initialScale,
+    maxScale: diagramMaxScale,
+    minScale: diagramMinScale
+  })
+
+  worldScale = transform.scale
+  worldPanX = transform.pan.x
+  worldPanY = transform.pan.y
+  scheduleTransformRender()
+  scheduleDeferredFullRender(48)
+}
+
 const handlePointerUp = (event: PointerEvent) => {
   if (!dragSession) {
+    if (overlayRef.value?.hasPointerCapture(event.pointerId)) {
+      overlayRef.value.releasePointerCapture(event.pointerId)
+    }
+
     return
   }
 
   const deltaX = Math.abs(event.clientX - dragSession.originClientX)
   const deltaY = Math.abs(event.clientY - dragSession.originClientY)
   const moved = deltaX > 4 || deltaY > 4
-  overlayRef.value?.releasePointerCapture(event.pointerId)
+
+  if (overlayRef.value?.hasPointerCapture(event.pointerId)) {
+    overlayRef.value.releasePointerCapture(event.pointerId)
+  }
 
   if (moved && dragSession.nodeId && dragSession.nodeKind && dragSession.mode === 'drag') {
     emit('moveEnd', {
@@ -1811,6 +1922,22 @@ const handlePointerUp = (event: PointerEvent) => {
   }
 
   dragSession = null
+}
+
+const handleTouchEnd = (event: TouchEvent) => {
+  if (event.touches.length >= 2) {
+    const gesture = getTouchGesture(event.touches)
+
+    if (!gesture) {
+      resetTouchInteraction()
+      return
+    }
+
+    startTouchPinchSession(gesture)
+    return
+  }
+
+  resetTouchInteraction()
 }
 
 const rebuildSpatialIndices = () => {
@@ -1902,6 +2029,7 @@ const initPixi = async () => {
 
 const destroyPixi = () => {
   destroyed = true
+  resetTouchInteraction()
   if (deferredFullRenderTimeout !== null) {
     window.clearTimeout(deferredFullRenderTimeout)
     deferredFullRenderTimeout = null
@@ -2007,6 +2135,10 @@ defineExpose<{
       @pointermove="handlePointerMove"
       @pointerup="handlePointerUp"
       @pointercancel="handlePointerUp"
+      @touchstart="handleTouchStart"
+      @touchmove="handleTouchMove"
+      @touchend="handleTouchEnd"
+      @touchcancel="handleTouchEnd"
       @wheel="handleWheel"
     />
   </div>

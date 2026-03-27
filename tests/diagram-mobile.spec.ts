@@ -92,3 +92,83 @@ test('mobile studio menu switches views and keeps modals inside the viewport', a
   expect(modalBounds?.right || 0).toBeLessThanOrEqual(modalBounds?.viewportWidth || 0)
   expect(modalBounds?.bottom || 0).toBeLessThanOrEqual(modalBounds?.viewportHeight || 0)
 })
+
+test('mobile studio diagram supports pinch zoom on the GPU viewport', async ({ browserName, goto, page }) => {
+  test.skip(browserName !== 'chromium', 'CDP multi-touch dispatch is Chromium-only.')
+
+  await page.setViewportSize({
+    width: 390,
+    height: 844
+  })
+  await goto('/diagram')
+
+  const viewport = page.locator('[data-diagram-viewport="true"]')
+
+  await expect(viewport).toBeVisible()
+  await page.waitForFunction(() => {
+    return typeof (window as Window & {
+      __pgmlSceneRendererDebug?: {
+        scale: number
+      }
+    }).__pgmlSceneRendererDebug?.scale === 'number'
+  })
+
+  const viewportBox = await viewport.boundingBox()
+
+  if (!viewportBox) {
+    throw new Error('Diagram viewport is not measurable.')
+  }
+
+  const pinchCenterX = viewportBox.x + viewportBox.width * 0.5
+  const pinchCenterY = viewportBox.y + viewportBox.height * 0.46
+  const initialOffset = Math.round(Math.min(viewportBox.width, viewportBox.height) * 0.08)
+  const expandedOffset = Math.round(initialOffset * 2.1)
+  const client = await page.context().newCDPSession(page)
+  const initialScale = await page.evaluate(() => {
+    return (window as Window & {
+      __pgmlSceneRendererDebug?: {
+        scale: number
+      }
+    }).__pgmlSceneRendererDebug?.scale || 0
+  })
+
+  const buildTouchPoint = (id: number, x: number, y: number) => {
+    return {
+      force: 1,
+      id,
+      radiusX: 14,
+      radiusY: 14,
+      x: Math.round(x),
+      y: Math.round(y)
+    }
+  }
+
+  await client.send('Input.dispatchTouchEvent', {
+    touchPoints: [
+      buildTouchPoint(1, pinchCenterX - initialOffset, pinchCenterY),
+      buildTouchPoint(2, pinchCenterX + initialOffset, pinchCenterY)
+    ],
+    type: 'touchStart'
+  })
+  await client.send('Input.dispatchTouchEvent', {
+    touchPoints: [
+      buildTouchPoint(1, pinchCenterX - expandedOffset, pinchCenterY),
+      buildTouchPoint(2, pinchCenterX + expandedOffset, pinchCenterY)
+    ],
+    type: 'touchMove'
+  })
+  await client.send('Input.dispatchTouchEvent', {
+    touchPoints: [],
+    type: 'touchEnd'
+  })
+
+  await expect.poll(async () => {
+    return await page.evaluate(() => {
+      return (window as Window & {
+        __pgmlSceneRendererDebug?: {
+          scale: number
+        }
+      }).__pgmlSceneRendererDebug?.scale || 0
+    })
+  }).toBeGreaterThan(initialScale + 0.05)
+})

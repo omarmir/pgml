@@ -485,6 +485,30 @@ const getRoutineNameSearchKeys = (value: string) => {
     cleanForSearch(value.split('.').at(-1) || value)
   ]).filter(entry => entry.length > 0)
 }
+const getSequenceSearchKeys = (value: string) => {
+  return uniqueValues([
+    cleanForSearch(value),
+    cleanForSearch(value.split('.').at(-1) || value)
+  ]).filter(entry => entry.length > 0)
+}
+const getSequenceModifierTableIds = (
+  tables: PgmlTable[],
+  sequence: PgmlSequence
+) => {
+  const searchKeys = getSequenceSearchKeys(sequence.name)
+
+  return uniqueValues(tables.flatMap((table) => {
+    const hasSequenceReference = table.columns.some((column) => {
+      return column.modifiers.some((modifier) => {
+        const haystack = cleanForSearch(modifier)
+
+        return searchKeys.some(key => haystack.includes(key))
+      })
+    })
+
+    return hasSequenceReference ? [table.fullName] : []
+  }))
+}
 const buildTriggerTableIdsByRoutineName = (
   model: PgmlSchemaModel,
   referenceLookup: Map<string, string>
@@ -522,7 +546,20 @@ const getSequenceOwnedTableIds = (
     ? [metadataOwnedBy, ...explicitOwnedBy]
     : explicitOwnedBy
 
-  return getTableIdsFromValues(tables, referenceLookup, values)
+  return uniqueValues([
+    ...getTableIdsFromValues(tables, referenceLookup, values),
+    ...getSequenceModifierTableIds(tables, sequence)
+  ])
+}
+export const getSequenceAttachedTableIds = (
+  tables: PgmlTable[],
+  sequence: PgmlSequence
+) => {
+  return getSequenceOwnedTableIds(
+    tables,
+    buildGroupTableReferenceLookup(tables),
+    sequence
+  )
 }
 const getPersistableStandaloneObjectPropertyTargetIds = (model: PgmlSchemaModel) => {
   const referenceLookup = buildGroupTableReferenceLookup(model.tables)
@@ -548,7 +585,7 @@ const getPersistableStandaloneObjectPropertyTargetIds = (model: PgmlSchemaModel)
     .map(trigger => `trigger:${trigger.name}`)
   const standaloneSequenceIds = model.sequences
     .filter((sequence) => {
-      return getSequenceOwnedTableIds(model.tables, referenceLookup, sequence).length === 0
+      return getSequenceAttachedTableIds(model.tables, sequence).length === 0
     })
     .map(sequence => `sequence:${sequence.name}`)
 

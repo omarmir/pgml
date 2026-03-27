@@ -59,7 +59,7 @@ import type {
   PgmlSourceRange,
   PgmlTrigger
 } from '~/utils/pgml'
-import { getOrderedGroupTables } from '~/utils/pgml'
+import { getOrderedGroupTables, getSequenceAttachedTableIds } from '~/utils/pgml'
 import {
   defaultStudioMobilePanelTab,
   type DiagramPanelTab,
@@ -135,6 +135,32 @@ type TableAttachmentState = {
   attachmentsByTableId: Record<string, TableAttachment[]>
 }
 
+type EntityBrowserItemKind = 'attachment' | 'column' | 'group' | 'object' | 'table'
+
+type EntityBrowserItem = {
+  children: EntityBrowserItem[]
+  id: string
+  kind: EntityBrowserItemKind
+  kindLabel: string
+  label: string
+  searchText: string
+  selection: DiagramGpuSelection
+  sourceRange?: PgmlSourceRange
+  subtitle: string
+}
+
+type DiagramDetailPopover = {
+  color: string
+  details: string[]
+  flags: TableAttachmentFlag[]
+  id: string
+  kind: 'attachment' | 'object'
+  kindLabel: string
+  sourceRange?: PgmlSourceRange
+  subtitle: string
+  title: string
+}
+
 const {
   exportBaseName = 'pgml-schema',
   exportPreferenceKey = 'name:pgml-schema',
@@ -170,6 +196,7 @@ const isDesktopSidePanelOpen: Ref<boolean> = ref(true)
 const showRelationshipLines: Ref<boolean> = ref(true)
 const snapToGrid: Ref<boolean> = ref(true)
 const currentScale: Ref<number> = ref(1)
+const entitySearchQuery: Ref<string> = ref('')
 const connectionLines: Ref<DiagramGpuConnectionLine[]> = ref([])
 const groupLayoutStates: Ref<Record<string, DiagramGpuGroupNode>> = ref({})
 const floatingTableStates: Ref<Record<string, DiagramGpuNodeLayoutState>> = ref({})
@@ -186,6 +213,8 @@ const pendingRoutingRequests = new Map<number, {
 const panelToggleButtonClass = joinStudioClasses(studioButtonClasses.secondary, studioToolbarButtonClass)
 const sidePanelActionButtonClass = joinStudioClasses(studioButtonClasses.secondary, studioToolbarButtonClass)
 const sidePanelCloseButtonClass = joinStudioClasses(studioButtonClasses.iconGhost, 'h-7 w-7 justify-center px-0')
+const detailPopoverKindBadgeClass = 'inline-flex items-center border px-1.5 font-mono text-[0.56rem] uppercase tracking-[0.08em]'
+const detailPopoverFlagBadgeClass = 'inline-flex items-center border px-1.5 py-0.5 font-mono text-[0.54rem] uppercase tracking-[0.06em]'
 const tableWidthScaleItems = pgmlTableWidthScaleValues.map((value) => {
   return {
     label: `${value}x`,
@@ -231,6 +260,7 @@ const downloadBlob = (blob: Blob, fileName: string) => {
 
 const isMobileCanvasShell = computed(() => mobileActiveView !== null)
 const isMobilePanelView = computed(() => mobileActiveView === 'panel')
+const previewableObjectKindLabels = new Set(['Function', 'Procedure', 'Sequence', 'Trigger'])
 const isDiagramPanelVisible = computed(() => {
   if (isMobileCanvasShell.value) {
     return isMobilePanelView.value
@@ -705,10 +735,7 @@ const triggerTableIdsByRoutineName = computed(() => {
 })
 
 const getSequenceOwnedTableIds = (sequence: PgmlSequence) => {
-  const explicitOwnedBy = sequence.affects?.ownedBy || []
-  const metadataOwnedBy = getMetadataValue(sequence.metadata, 'owned_by')
-
-  return resolveTableIds(metadataOwnedBy ? [metadataOwnedBy, ...explicitOwnedBy] : explicitOwnedBy)
+  return getSequenceAttachedTableIds(model.tables, sequence)
 }
 
 const buildIndexSubtitle = (index: { columns: string[], type: string }) => {
@@ -971,6 +998,232 @@ const tableRowsByTableId = computed(() => {
 
 const getTableRows = (tableId: string) => tableRowsByTableId.value[tableId] || []
 
+const buildBrowserTableItem = (table: PgmlSchemaModel['tables'][number]): EntityBrowserItem => {
+  const columns = table.columns.map<EntityBrowserItem>((column) => {
+    return {
+      children: [],
+      id: `${table.fullName}.${column.name}`,
+      kind: 'column',
+      kindLabel: 'Field',
+      label: column.name,
+      searchText: cleanForSearch(`field ${column.name} ${column.type} ${table.fullName}`),
+      selection: {
+        columnName: column.name,
+        kind: 'column',
+        tableId: table.fullName
+      },
+      sourceRange: table.sourceRange,
+      subtitle: ''
+    }
+  })
+  const attachments = (tableAttachmentState.value.attachmentsByTableId[table.fullName] || []).map<EntityBrowserItem>((attachment) => {
+    return {
+      children: [],
+      id: attachment.id,
+      kind: 'attachment',
+      kindLabel: attachment.kind,
+      label: attachment.title,
+      searchText: cleanForSearch(`${attachment.kind} ${attachment.title} ${attachment.subtitle} ${attachment.details.join(' ')}`),
+      selection: {
+        attachmentId: attachment.id,
+        kind: 'attachment',
+        tableId: table.fullName
+      },
+      sourceRange: attachment.sourceRange,
+      subtitle: ''
+    }
+  })
+
+  return {
+    children: [...columns, ...attachments],
+    id: table.fullName,
+    kind: 'table',
+    kindLabel: 'Table',
+    label: table.name,
+    searchText: cleanForSearch(`table ${table.fullName} ${table.note || ''}`),
+    selection: {
+      kind: 'table',
+      tableId: table.fullName
+    },
+    sourceRange: table.sourceRange,
+    subtitle: ''
+  }
+}
+
+const groupedBrowserItems = computed<EntityBrowserItem[]>(() => {
+  return model.groups.map((group) => {
+    const tables = getOrderedGroupTables(model, group.name)
+
+    return {
+      children: tables.map(table => buildBrowserTableItem(table)),
+      id: getStoredGroupId(group.name),
+      kind: 'group',
+      kindLabel: 'Group',
+      label: group.name,
+      searchText: cleanForSearch(`group ${group.name}`),
+      selection: {
+        id: getStoredGroupId(group.name),
+        kind: 'group'
+      },
+      sourceRange: group.sourceRange,
+      subtitle: `${tables.length} table${tables.length === 1 ? '' : 's'}`
+    }
+  })
+})
+
+const filteredUngroupedBrowserItemsSource = computed<EntityBrowserItem[]>(() => {
+  return model.tables
+    .filter(table => !table.groupName)
+    .map(table => buildBrowserTableItem(table))
+})
+
+const filteredStandaloneBrowserItemsSource = computed<EntityBrowserItem[]>(() => {
+  const items: EntityBrowserItem[] = []
+  const attachedObjectIds = tableAttachmentState.value.attachedObjectIds
+  const pushNodeItem = (
+    id: string,
+    label: string,
+    kindLabel: string,
+    subtitle: string,
+    sourceRange?: PgmlSourceRange
+  ) => {
+    items.push({
+      children: [],
+      id,
+      kind: 'object',
+      kindLabel,
+      label,
+      searchText: cleanForSearch(`${kindLabel} ${label} ${subtitle}`),
+      selection: {
+        id,
+        kind: 'object'
+      },
+      sourceRange,
+      subtitle
+    })
+  }
+
+  model.functions.forEach((routine) => {
+    const id = `function:${routine.name}`
+
+    if (!attachedObjectIds.has(id)) {
+      pushNodeItem(id, routine.name, 'Function', routine.signature, routine.sourceRange)
+    }
+  })
+
+  model.procedures.forEach((routine) => {
+    const id = `procedure:${routine.name}`
+
+    if (!attachedObjectIds.has(id)) {
+      pushNodeItem(id, routine.name, 'Procedure', routine.signature, routine.sourceRange)
+    }
+  })
+
+  model.triggers.forEach((trigger) => {
+    const id = `trigger:${trigger.name}`
+
+    if (!attachedObjectIds.has(id)) {
+      pushNodeItem(id, trigger.name, 'Trigger', buildTriggerSubtitle(trigger), trigger.sourceRange)
+    }
+  })
+
+  model.sequences.forEach((sequence) => {
+    const id = `sequence:${sequence.name}`
+
+    if (!attachedObjectIds.has(id)) {
+      pushNodeItem(id, sequence.name, 'Sequence', buildSequenceSubtitle(sequence), sequence.sourceRange)
+    }
+  })
+
+  model.customTypes.forEach((customType) => {
+    pushNodeItem(
+      `custom-type:${customType.kind}:${customType.name}`,
+      customType.name,
+      customType.kind,
+      customType.details.join(' '),
+      customType.sourceRange
+    )
+  })
+
+  return items.sort((left, right) => {
+    const kindDelta = left.kindLabel.localeCompare(right.kindLabel)
+
+    if (kindDelta !== 0) {
+      return kindDelta
+    }
+
+    return left.label.localeCompare(right.label)
+  })
+})
+
+const filterEntityBrowserItems = (items: EntityBrowserItem[], query: string): EntityBrowserItem[] => {
+  const normalizedQuery = cleanForSearch(query).trim()
+
+  if (!normalizedQuery) {
+    return items
+  }
+
+  return items.flatMap((item) => {
+    const filteredChildren = filterEntityBrowserItems(item.children, normalizedQuery)
+
+    if (item.kind === 'group') {
+      if (item.searchText.includes(normalizedQuery)) {
+        return [{
+          ...item,
+          children: []
+        }]
+      }
+
+      if (filteredChildren.length > 0) {
+        return [{
+          ...item,
+          children: filteredChildren
+        }]
+      }
+
+      return []
+    }
+
+    if (item.kind === 'table') {
+      if (item.searchText.includes(normalizedQuery) || filteredChildren.length > 0) {
+        return [{
+          ...item,
+          children: item.children
+        }]
+      }
+
+      return []
+    }
+
+    if (item.searchText.includes(normalizedQuery)) {
+      return [{
+        ...item,
+        children: []
+      }]
+    }
+
+    return []
+  })
+}
+
+const filteredGroupedBrowserItems = computed(() => {
+  return filterEntityBrowserItems(groupedBrowserItems.value, entitySearchQuery.value)
+})
+
+const filteredUngroupedBrowserItems = computed(() => {
+  return filterEntityBrowserItems(filteredUngroupedBrowserItemsSource.value, entitySearchQuery.value)
+})
+
+const filteredStandaloneBrowserItems = computed(() => {
+  return filterEntityBrowserItems(filteredStandaloneBrowserItemsSource.value, entitySearchQuery.value)
+})
+
+const normalizedEntitySearchQuery = computed(() => cleanForSearch(entitySearchQuery.value).trim())
+
+const hiddenEntityCount = computed(() => {
+  return Object.values(model.nodeProperties).filter(properties => properties.visible === false).length
+})
+
 const isGroupVisible = (groupName: string) => isEntityDirectlyVisible(getStoredGroupId(groupName))
 const isTableVisible = (table: PgmlSchemaModel['tables'][number]) => {
   const directVisible = isEntityDirectlyVisible(table.fullName)
@@ -1076,7 +1329,10 @@ const syncLayoutStates = () => {
     )
     const layout = computeGroupLayout(group.name, tables, columnCount, masonry, tableWidthScale)
     const width = Math.max(diagramGroupHorizontalPadding * 2 + layout.contentWidth, diagramGroupTableWidth + diagramGroupHorizontalPadding * 2)
-    const height = Math.max(diagramGroupHeaderHeight + diagramGroupVerticalPadding + layout.contentHeight, diagramGroupHeaderHeight + 48)
+    const height = Math.max(
+      diagramGroupHeaderHeight + diagramGroupVerticalPadding * 2 + layout.contentHeight,
+      diagramGroupHeaderHeight + 48
+    )
 
     nextGroupStates[groupId] = {
       color: storedLayout?.color || previousState?.color || diagramPalette[index % diagramPalette.length] || '#8b5cf6',
@@ -1145,7 +1401,7 @@ const syncLayoutStates = () => {
         const impactTargets = inferRoutineTargets(entry)
 
       return {
-        color: objectKindColors.Function,
+        color: objectKindColors.Function || '#c084fc',
         details: entry.details,
         expandedHeight: 176,
         id: `function:${entry.name}`,
@@ -1164,7 +1420,7 @@ const syncLayoutStates = () => {
         const impactTargets = inferRoutineTargets(entry)
 
       return {
-        color: objectKindColors.Procedure,
+        color: objectKindColors.Procedure || '#f97316',
         details: entry.details,
         expandedHeight: 156,
         id: `procedure:${entry.name}`,
@@ -1184,7 +1440,7 @@ const syncLayoutStates = () => {
         const impactTargets = tableId ? inferTriggerTargets(tableId, entry) : []
 
       return {
-        color: objectKindColors.Trigger,
+        color: objectKindColors.Trigger || '#22c55e',
         details: entry.details,
         expandedHeight: 168,
         id: `trigger:${entry.name}`,
@@ -1203,7 +1459,7 @@ const syncLayoutStates = () => {
         const impactTargets = inferSequenceTargets(entry)
 
       return {
-        color: objectKindColors.Sequence,
+        color: objectKindColors.Sequence || '#eab308',
         details: entry.details,
         expandedHeight: 156,
         id: `sequence:${entry.name}`,
@@ -1220,7 +1476,7 @@ const syncLayoutStates = () => {
       const impactTargets = inferCustomTypeTargets(entry)
 
       return {
-        color: objectKindColors['Custom Type'],
+        color: objectKindColors['Custom Type'] || '#14b8a6',
         details: entry.details,
         expandedHeight: 114,
         id: `custom-type:${entry.kind}:${entry.name}`,
@@ -1532,7 +1788,7 @@ const geometryRegistry = computed(() => {
   const groupHeaderBands = [
     ...groupNodes.value.map((group) => {
       return {
-        bottom: group.y + diagramGroupHeaderHeight,
+        bottom: group.y + diagramGroupHeaderHeight + diagramGroupVerticalPadding,
         left: group.x,
         right: group.x + group.width,
         top: group.y
@@ -1746,12 +2002,14 @@ const selectedTable = computed(() => {
 })
 
 const selectedColumn = computed(() => {
-  if (selectedSelection.value?.kind !== 'column') {
+  const selection = selectedSelection.value
+
+  if (selection?.kind !== 'column') {
     return null
   }
 
-  const table = model.tables.find(entry => entry.fullName === selectedSelection.value.tableId)
-  const column = table?.columns.find(entry => entry.name === selectedSelection.value.columnName)
+  const table = model.tables.find(entry => entry.fullName === selection.tableId)
+  const column = table?.columns.find(entry => entry.name === selection.columnName)
 
   if (!table || !column) {
     return null
@@ -1764,12 +2022,14 @@ const selectedColumn = computed(() => {
 })
 
 const selectedAttachment = computed(() => {
-  if (selectedSelection.value?.kind !== 'attachment') {
+  const selection = selectedSelection.value
+
+  if (selection?.kind !== 'attachment') {
     return null
   }
 
-  const attachment = (tableAttachmentState.value.attachmentsByTableId[selectedSelection.value.tableId] || [])
-    .find(entry => entry.id === selectedSelection.value?.attachmentId)
+  const attachment = (tableAttachmentState.value.attachmentsByTableId[selection.tableId] || [])
+    .find(entry => entry.id === selection.attachmentId)
 
   return attachment || null
 })
@@ -1781,6 +2041,243 @@ const selectedObject = computed(() => {
 
   return objectLayoutStates.value[selectedSelection.value.id] || null
 })
+
+const selectedDetailPopover = computed<DiagramDetailPopover | null>(() => {
+  if (selectedAttachment.value) {
+    return {
+      color: selectedAttachment.value.color,
+      details: selectedAttachment.value.details,
+      flags: selectedAttachment.value.flags,
+      id: selectedAttachment.value.id,
+      kind: 'attachment',
+      kindLabel: selectedAttachment.value.kind,
+      sourceRange: selectedAttachment.value.sourceRange,
+      subtitle: selectedAttachment.value.subtitle,
+      title: selectedAttachment.value.title
+    }
+  }
+
+  if (!selectedObject.value || !previewableObjectKindLabels.has(selectedObject.value.kindLabel)) {
+    return null
+  }
+
+  return {
+    color: selectedObject.value.color,
+    details: selectedObject.value.details,
+    flags: [],
+    id: selectedObject.value.id,
+    kind: 'object',
+    kindLabel: selectedObject.value.kindLabel,
+    sourceRange: selectedObject.value.sourceRange,
+    subtitle: selectedObject.value.subtitle,
+    title: selectedObject.value.title
+  }
+})
+
+const shouldShowDetailPopover = computed(() => {
+  return selectedDetailPopover.value !== null && !isMobilePanelView.value
+})
+
+const detailPopoverContainerClass = computed(() => {
+  return isMobileCanvasShell.value
+    ? 'pointer-events-none absolute inset-x-3 top-3 z-[4] flex'
+    : 'pointer-events-none absolute left-3 top-3 z-[4] flex max-w-[26rem]'
+})
+
+const getDetailPopoverBadgeStyle = (color: string) => {
+  return {
+    backgroundColor: `color-mix(in srgb, ${color} 14%, transparent)`,
+    borderColor: `color-mix(in srgb, ${color} 54%, var(--studio-rail) 46%)`,
+    color: `color-mix(in srgb, ${color} 78%, var(--studio-shell-text) 22%)`
+  }
+}
+
+const getDetailPopoverFlagStyle = (flag: TableAttachmentFlag) => {
+  return getDetailPopoverBadgeStyle(flag.color)
+}
+
+const closeDetailPopover = () => {
+  selectedSelection.value = null
+}
+
+const browserItemSelectionEquals = (left: DiagramGpuSelection | null, right: DiagramGpuSelection) => {
+  if (!left || left.kind !== right.kind) {
+    return false
+  }
+
+  if ((left.kind === 'group' || left.kind === 'object') && (right.kind === 'group' || right.kind === 'object')) {
+    return left.id === right.id
+  }
+
+  if (left.kind === 'table' && right.kind === 'table') {
+    return left.tableId === right.tableId
+  }
+
+  if (left.kind === 'column' && right.kind === 'column') {
+    return left.tableId === right.tableId && left.columnName === right.columnName
+  }
+
+  if (left.kind === 'attachment' && right.kind === 'attachment') {
+    return left.tableId === right.tableId && left.attachmentId === right.attachmentId
+  }
+
+  return false
+}
+
+const isBrowserItemSelected = (item: EntityBrowserItem) => {
+  return browserItemSelectionEquals(selectedSelection.value, item.selection)
+}
+
+const browserItemSupportsVisibility = (item: EntityBrowserItem) => item.kind !== 'column'
+
+const isAttachmentEffectivelyVisible = (tableId: string, attachmentId: string) => {
+  const table = model.tables.find(entry => entry.fullName === tableId)
+
+  return table ? isTableVisible(table) && isEntityDirectlyVisible(attachmentId) : false
+}
+
+const isBrowserItemDirectlyVisible = (item: EntityBrowserItem) => {
+  if (item.selection.kind === 'table') {
+    return isEntityDirectlyVisible(item.selection.tableId)
+  }
+
+  if (item.selection.kind === 'column') {
+    return isEntityDirectlyVisible(item.selection.tableId)
+  }
+
+  if (item.selection.kind === 'attachment') {
+    return isEntityDirectlyVisible(item.selection.attachmentId)
+  }
+
+  return isEntityDirectlyVisible(item.selection.id)
+}
+
+const isBrowserItemEffectivelyVisible = (item: EntityBrowserItem) => {
+  const selection = item.selection
+
+  if (selection.kind === 'table') {
+    const table = model.tables.find(entry => entry.fullName === selection.tableId)
+
+    return table ? isTableVisible(table) : false
+  }
+
+  if (selection.kind === 'column') {
+    const table = model.tables.find(entry => entry.fullName === selection.tableId)
+
+    return table ? isTableVisible(table) : false
+  }
+
+  if (selection.kind === 'attachment') {
+    return isAttachmentEffectivelyVisible(selection.tableId, selection.attachmentId)
+  }
+
+  if (selection.kind === 'group') {
+    return isGroupVisible(selection.id.replace(/^group:/, ''))
+  }
+
+  return isEntityDirectlyVisible(selection.id)
+}
+
+const isBrowserItemHiddenByAncestor = (item: EntityBrowserItem) => {
+  return !isBrowserItemEffectivelyVisible(item) && isBrowserItemDirectlyVisible(item)
+}
+
+const getBrowserItemVisibilityButtonClass = (item: EntityBrowserItem, compact = false) => {
+  return getStudioStateButtonClass({
+    compact,
+    disabled: isBrowserItemHiddenByAncestor(item),
+    emphasized: !isBrowserItemDirectlyVisible(item),
+    extraClass: 'shrink-0'
+  })
+}
+
+const getBrowserItemTableId = (item: EntityBrowserItem) => {
+  if (item.selection.kind === 'table') {
+    return item.selection.tableId
+  }
+
+  if (item.selection.kind === 'column') {
+    return item.selection.tableId
+  }
+
+  if (item.selection.kind === 'attachment') {
+    return item.selection.tableId
+  }
+
+  return null
+}
+
+const getGroupColor = (groupId: string) => {
+  return groupLayoutStates.value[groupId]?.color || model.nodeProperties[groupId]?.color || '#79e3ea'
+}
+
+const getTableColor = (tableId: string) => {
+  const groupId = tableGroupById.value[tableId] ? getStoredGroupId(tableGroupById.value[tableId] || '') : null
+
+  if (groupId) {
+    return getGroupColor(groupId)
+  }
+
+  return tableColorById.value[tableId] || floatingTableStates.value[tableId]?.color || model.nodeProperties[tableId]?.color || '#38bdf8'
+}
+
+const getObjectColor = (id: string) => {
+  return objectLayoutStates.value[id]?.color || model.nodeProperties[id]?.color || '#14b8a6'
+}
+
+const getBrowserItemAccentColor = (item: EntityBrowserItem) => {
+  const tableId = getBrowserItemTableId(item)
+
+  if (tableId) {
+    return getTableColor(tableId)
+  }
+
+  if (item.selection.kind === 'group') {
+    return getGroupColor(item.selection.id)
+  }
+
+  if (item.selection.kind === 'object') {
+    return getObjectColor(item.selection.id)
+  }
+
+  return '#79e3ea'
+}
+
+const isBrowserItemSearchMatch = (item: EntityBrowserItem) => {
+  return normalizedEntitySearchQuery.value.length > 0 && item.searchText.includes(normalizedEntitySearchQuery.value)
+}
+
+const getBrowserItemSearchMatchStyle = (item: EntityBrowserItem) => {
+  if (!isBrowserItemSearchMatch(item)) {
+    return undefined
+  }
+
+  return {
+    '--pgml-browser-match-color': getBrowserItemAccentColor(item)
+  }
+}
+
+const getBrowserItemVisibilityId = (item: EntityBrowserItem) => {
+  if (!browserItemSupportsVisibility(item)) {
+    return null
+  }
+
+  const selection = item.selection
+
+  if (selection.kind === 'table') {
+    return selection.tableId
+  }
+
+  if (selection.kind === 'attachment') {
+    return selection.attachmentId
+  }
+
+  if (selection.kind === 'group' || selection.kind === 'object') {
+    return selection.id
+  }
+
+  return null
+}
 
 const diagramPanelTitle = computed(() => {
   if (activePanelTab.value === 'entities') {
@@ -1816,7 +2313,7 @@ const diagramPanelTitle = computed(() => {
 
 const diagramPanelDescription = computed(() => {
   if (activePanelTab.value === 'entities') {
-    return 'Browse groups, tables, and procedural objects.'
+    return `${hiddenEntityCount.value} hidden in saved properties.`
   }
 
   if (activePanelTab.value === 'export') {
@@ -2025,6 +2522,66 @@ const handleSceneSelect = (nextSelection: DiagramGpuSelection | null) => {
   activePanelTab.value = 'inspector'
 }
 
+const updateEntityVisibility = (id: string, visible: boolean) => {
+  const nextProperties = getNodeLayoutProperties()
+  const nextEntry: PgmlNodeProperties = {
+    ...(nextProperties[id] || {})
+  }
+
+  if (visible) {
+    delete nextEntry.visible
+  } else {
+    nextEntry.visible = false
+  }
+
+  if (Object.values(nextEntry).some(value => value !== undefined && value !== null)) {
+    nextProperties[id] = nextEntry
+  } else {
+    delete nextProperties[id]
+  }
+
+  emit('nodePropertiesChange', nextProperties)
+
+  if (
+    !visible
+    && (
+      (selectedSelection.value?.kind === 'group' && selectedSelection.value.id === id)
+      || (selectedSelection.value?.kind === 'object' && selectedSelection.value.id === id)
+      || (selectedSelection.value?.kind === 'table' && selectedSelection.value.tableId === id)
+      || (selectedSelection.value?.kind === 'column' && selectedSelection.value.tableId === id)
+      || (selectedSelection.value?.kind === 'attachment' && selectedSelection.value.attachmentId === id)
+    )
+  ) {
+    selectedSelection.value = null
+  }
+}
+
+const toggleBrowserItemVisibility = (item: EntityBrowserItem) => {
+  if (isBrowserItemHiddenByAncestor(item)) {
+    return
+  }
+
+  const visibilityId = getBrowserItemVisibilityId(item)
+
+  if (!visibilityId) {
+    return
+  }
+
+  updateEntityVisibility(visibilityId, !isBrowserItemDirectlyVisible(item))
+}
+
+const focusBrowserItemSource = (item: EntityBrowserItem) => {
+  focusSourceRange(item.sourceRange)
+}
+
+const selectBrowserItem = (item: EntityBrowserItem) => {
+  if (!isBrowserItemEffectivelyVisible(item)) {
+    return
+  }
+
+  selectedSelection.value = item.selection
+}
+
 const getNodeLayoutProperties = () => {
   const entries: DiagramGpuNodeLayoutState[] = [
     ...Object.values(groupLayoutStates.value).map((group) => {
@@ -2119,7 +2676,8 @@ const buildExportSvg = () => {
       `<rect x="${card.x + offsetX}" y="${card.y + offsetY}" width="${card.width}" height="${card.height}" rx="2" ry="2" fill="${diagramTableSurfaceColor}" stroke="${card.color}" stroke-opacity="0.48" />`,
       `<line x1="${card.x + offsetX}" y1="${card.y + offsetY + card.headerHeight}" x2="${card.x + offsetX + card.width}" y2="${card.y + offsetY + card.headerHeight}" stroke="${diagramDividerColor}" />`,
       `<text x="${card.x + offsetX + 10}" y="${card.y + offsetY + 16}" fill="${card.color}" font-size="8" font-family="ui-monospace, monospace">TABLE</text>`,
-      `<text x="${card.x + offsetX + 10}" y="${card.y + offsetY + 32}" fill="${diagramTextColor}" font-size="14" font-weight="600" font-family="ui-sans-serif, system-ui">${escapeXml(card.title)}</text>`
+      `<text x="${card.x + offsetX + card.width - 10}" y="${card.y + offsetY + 16}" fill="${diagramMutedTextColor}" font-size="8" text-anchor="end" font-family="ui-monospace, monospace">${card.rows.length} ROWS</text>`,
+      `<text x="${card.x + offsetX + 10}" y="${card.y + offsetY + 42}" fill="${diagramTextColor}" font-size="14" font-weight="600" font-family="ui-sans-serif, system-ui">${escapeXml(card.title)}</text>`
     )
 
     card.rows.forEach((row, index) => {
@@ -2368,6 +2926,90 @@ defineExpose<{
     />
 
     <div
+      v-if="shouldShowDetailPopover && selectedDetailPopover"
+      :class="detailPopoverContainerClass"
+    >
+      <div
+        data-diagram-detail-popover="true"
+        :data-attachment-popover="selectedDetailPopover.kind === 'attachment' ? selectedDetailPopover.id : undefined"
+        :data-object-popover="selectedDetailPopover.kind === 'object' ? selectedDetailPopover.id : undefined"
+        class="pointer-events-auto grid w-full gap-3 border px-3 py-3"
+        :style="floatingPanelStyle"
+      >
+        <div class="flex items-start justify-between gap-3">
+          <div class="min-w-0 flex-1">
+            <span
+              :class="detailPopoverKindBadgeClass"
+              :style="getDetailPopoverBadgeStyle(selectedDetailPopover.color)"
+            >
+              {{ selectedDetailPopover.kindLabel }}
+            </span>
+            <h4 class="mt-2 break-words text-[0.82rem] font-semibold leading-5 text-[color:var(--studio-shell-text)]">
+              {{ selectedDetailPopover.title }}
+            </h4>
+            <p
+              v-if="selectedDetailPopover.subtitle"
+              class="mt-1 break-words text-[0.68rem] leading-5 text-[color:var(--studio-shell-muted)]"
+            >
+              {{ selectedDetailPopover.subtitle }}
+            </p>
+          </div>
+
+          <div class="flex shrink-0 items-start gap-2">
+            <div
+              v-if="selectedDetailPopover.flags.length"
+              class="flex max-w-[9rem] flex-wrap justify-end gap-1"
+            >
+              <span
+                v-for="flag in selectedDetailPopover.flags"
+                :key="flag.key"
+                :class="detailPopoverFlagBadgeClass"
+                :style="getDetailPopoverFlagStyle(flag)"
+              >
+                {{ flag.label }}
+              </span>
+            </div>
+
+            <UButton
+              icon="i-lucide-x"
+              color="neutral"
+              variant="ghost"
+              size="xs"
+              :class="sidePanelCloseButtonClass"
+              aria-label="Close detail popover"
+              @click="closeDetailPopover"
+            />
+          </div>
+        </div>
+
+        <div class="grid max-h-64 gap-1 overflow-auto border border-[color:var(--studio-rail)] bg-[color:var(--studio-input-bg)] px-2 py-2">
+          <p
+            v-for="detail in selectedDetailPopover.details"
+            :key="detail"
+            class="break-words whitespace-pre-wrap font-mono text-[0.62rem] leading-5 text-[color:var(--studio-shell-muted)] [overflow-wrap:anywhere]"
+          >
+            {{ detail }}
+          </p>
+        </div>
+
+        <div
+          v-if="selectedDetailPopover.sourceRange"
+          class="flex flex-wrap gap-2"
+        >
+          <UButton
+            label="Focus source"
+            leading-icon="i-lucide-braces"
+            color="neutral"
+            variant="outline"
+            size="xs"
+            :class="sidePanelActionButtonClass"
+            @click="focusSourceRange(selectedDetailPopover.sourceRange)"
+          />
+        </div>
+      </div>
+    </div>
+
+    <div
       v-if="shouldShowZoomToolbar"
       class="pointer-events-none absolute inset-x-0 bottom-3 z-[4] flex justify-center"
     >
@@ -2580,7 +3222,7 @@ defineExpose<{
             <span class="font-mono text-[0.58rem] uppercase tracking-[0.08em] text-[color:var(--studio-shell-label)]">Table Width</span>
             <USelect
               :items="tableWidthScaleItems"
-              :model-value="selectedGroup.tableWidthScale"
+              :model-value="normalizePgmlTableWidthScale(selectedGroup.tableWidthScale)"
               value-key="value"
               label-key="label"
               color="neutral"
@@ -2779,73 +3421,358 @@ defineExpose<{
 
       <div
         v-else-if="activePanelTab === 'entities'"
-        data-studio-scrollable="true"
-        class="grid content-start gap-3 overflow-auto px-3 py-3"
+        class="grid min-h-0 grid-rows-[auto_minmax(0,1fr)] overflow-hidden"
       >
-        <article
-          v-for="group in groupNodes"
-          :key="group.id"
-          class="border border-[color:var(--studio-divider)] bg-[color:var(--studio-control-bg)]"
-        >
-          <button
-            type="button"
-            class="grid w-full gap-1 px-3 py-2 text-left"
-            @click="selectedSelection = { kind: 'group', id: group.id }"
-          >
-            <span class="font-mono text-[0.56rem] uppercase tracking-[0.08em]" :style="{ color: group.color }">Table Group</span>
-            <span class="text-[0.8rem] font-semibold text-[color:var(--studio-shell-text)]">{{ group.title }}</span>
-            <span class="text-[0.66rem] text-[color:var(--studio-shell-muted)]">{{ group.tableCount }} tables</span>
-          </button>
-          <div class="border-t border-[color:var(--studio-divider)]">
-            <button
-              v-for="table in tableCards.filter(card => card.groupId === group.id)"
-              :key="table.id"
-              type="button"
-              class="flex w-full items-center justify-between gap-3 border-b border-[color:var(--studio-divider)] px-3 py-2 text-left last:border-b-0"
-              @click="selectedSelection = { kind: 'table', tableId: table.id }"
+        <div class="grid gap-2 border-b border-[color:var(--studio-divider)] px-3 py-3">
+          <label class="grid gap-1">
+            <span class="font-mono text-[0.58rem] uppercase tracking-[0.08em] text-[color:var(--studio-shell-label)]">Search entities</span>
+            <input
+              v-model="entitySearchQuery"
+              data-entity-search="true"
+              type="text"
+              placeholder="Groups, tables, routines..."
+              :class="studioCompactInputClass"
             >
-              <span class="min-w-0">
-                <span class="block truncate text-[0.74rem] font-semibold text-[color:var(--studio-shell-text)]">{{ table.title }}</span>
-                <span class="block truncate text-[0.62rem] text-[color:var(--studio-shell-muted)]">{{ table.schema }}</span>
-              </span>
-              <span class="font-mono text-[0.58rem] uppercase tracking-[0.06em] text-[color:var(--studio-shell-muted)]">
-                {{ table.rows.length }} rows
-              </span>
-            </button>
+          </label>
+          <div class="flex items-center justify-between gap-3 text-[0.62rem] text-[color:var(--studio-shell-muted)]">
+            <span>{{ filteredGroupedBrowserItems.length + filteredUngroupedBrowserItems.length + filteredStandaloneBrowserItems.length }} sections</span>
+            <span>{{ hiddenEntityCount }} hidden</span>
           </div>
-        </article>
+        </div>
 
-        <article
-          v-for="table in tableCards.filter(card => !card.groupId)"
-          :key="table.id"
-          class="border border-[color:var(--studio-divider)] bg-[color:var(--studio-control-bg)]"
+        <div
+          data-diagram-panel-scroll="true"
+          data-studio-scrollable="true"
+          class="grid content-start gap-2 overflow-auto overflow-x-hidden px-3 py-3"
+          @wheel.stop
         >
-          <button
-            type="button"
-            class="grid w-full gap-1 px-3 py-2 text-left"
-            @click="selectedSelection = { kind: 'table', tableId: table.id }"
+          <div
+            v-for="groupItem in filteredGroupedBrowserItems"
+            :key="groupItem.id"
+            class="grid content-start gap-1"
           >
-            <span class="font-mono text-[0.56rem] uppercase tracking-[0.08em]" :style="{ color: table.color }">Table</span>
-            <span class="text-[0.8rem] font-semibold text-[color:var(--studio-shell-text)]">{{ table.title }}</span>
-            <span class="text-[0.66rem] text-[color:var(--studio-shell-muted)]">{{ table.schema }} · {{ table.rows.length }} rows</span>
-          </button>
-        </article>
+            <div
+              :data-browser-entity-row="groupItem.id"
+              :data-browser-search-match="isBrowserItemSearchMatch(groupItem) ? 'true' : undefined"
+              :style="getBrowserItemSearchMatchStyle(groupItem)"
+              :class="[
+                'grid content-start gap-1.5 border px-2 py-2 transition-colors duration-150',
+                isBrowserItemSearchMatch(groupItem) ? 'pgml-browser-search-match-row' : '',
+                isBrowserItemSelected(groupItem) ? 'border-[color:var(--studio-ring)] bg-[color:var(--studio-input-bg)]' : 'border-[color:var(--studio-divider)] bg-[color:var(--studio-control-bg)]'
+              ]"
+            >
+              <div class="grid grid-cols-[minmax(0,1fr)_auto] items-start gap-2">
+                <button
+                  type="button"
+                  class="min-w-0 flex-1 text-left"
+                  @click="selectBrowserItem(groupItem)"
+                  @dblclick.stop="focusBrowserItemSource(groupItem)"
+                >
+                  <div class="font-mono text-[0.54rem] uppercase tracking-[0.08em] text-[color:var(--studio-shell-label)]">
+                    <span :class="isBrowserItemSearchMatch(groupItem) ? 'pgml-browser-search-match-text' : ''">
+                      {{ groupItem.kindLabel }}
+                    </span>
+                  </div>
+                  <div class="break-words text-[0.76rem] font-semibold leading-5 text-[color:var(--studio-shell-text)]">
+                    <span :class="isBrowserItemSearchMatch(groupItem) ? 'pgml-browser-search-match-text' : ''">
+                      {{ groupItem.label }}
+                    </span>
+                  </div>
+                  <div class="text-[0.64rem] text-[color:var(--studio-shell-muted)]">
+                    {{ groupItem.subtitle }}
+                  </div>
+                </button>
 
-        <article
-          v-for="node in objectNodes"
-          :key="node.id"
-          class="border border-[color:var(--studio-divider)] bg-[color:var(--studio-control-bg)]"
-        >
-          <button
-            type="button"
-            class="grid w-full gap-1 px-3 py-2 text-left"
-            @click="selectedSelection = { kind: 'object', id: node.id }"
+                <div class="grid shrink-0 content-start gap-1">
+                  <button
+                    type="button"
+                    :data-browser-group-edit="groupItem.label"
+                    class="border px-2 py-1 font-mono text-[0.54rem] uppercase tracking-[0.08em] text-[color:var(--studio-shell-text)] transition-colors duration-150 hover:bg-[color:var(--studio-surface-hover)]"
+                    @click="emit('editGroup', groupItem.label)"
+                  >
+                    Edit
+                  </button>
+
+                  <button
+                    type="button"
+                    :data-browser-visibility-toggle="groupItem.id"
+                    :class="getBrowserItemVisibilityButtonClass(groupItem)"
+                    @click="toggleBrowserItemVisibility(groupItem)"
+                  >
+                    {{ isBrowserItemDirectlyVisible(groupItem) ? 'Hide' : 'Show' }}
+                  </button>
+                </div>
+              </div>
+
+              <div class="grid content-start gap-1.5 pl-3">
+                <div
+                  v-for="tableItem in groupItem.children"
+                  :key="tableItem.id"
+                  :data-browser-entity-row="tableItem.id"
+                  :data-browser-search-match="isBrowserItemSearchMatch(tableItem) ? 'true' : undefined"
+                  :style="getBrowserItemSearchMatchStyle(tableItem)"
+                  :class="[
+                    'grid content-start gap-1 border-l border-[color:var(--studio-divider)] pl-3',
+                    isBrowserItemSearchMatch(tableItem) ? 'pgml-browser-search-match-row' : ''
+                  ]"
+                >
+                  <div class="grid grid-cols-[minmax(0,1fr)_auto] items-start gap-2">
+                    <button
+                      type="button"
+                      class="min-w-0 flex-1 text-left"
+                      @click="selectBrowserItem(tableItem)"
+                      @dblclick.stop="focusBrowserItemSource(tableItem)"
+                    >
+                      <div class="font-mono text-[0.52rem] uppercase tracking-[0.08em] text-[color:var(--studio-shell-label)]">
+                        <span :class="isBrowserItemSearchMatch(tableItem) ? 'pgml-browser-search-match-text' : ''">
+                          {{ tableItem.kindLabel }}
+                        </span>
+                      </div>
+                      <div
+                        class="break-words text-[0.72rem] font-medium leading-5"
+                        :class="isBrowserItemEffectivelyVisible(tableItem) ? 'text-[color:var(--studio-shell-text)]' : 'text-[color:var(--studio-shell-muted)]'"
+                      >
+                        <span :class="isBrowserItemSearchMatch(tableItem) ? 'pgml-browser-search-match-text' : ''">
+                          {{ tableItem.label }}
+                        </span>
+                      </div>
+                    </button>
+
+                    <button
+                      type="button"
+                      :data-browser-visibility-toggle="tableItem.id"
+                      :disabled="isBrowserItemHiddenByAncestor(tableItem)"
+                      :class="getBrowserItemVisibilityButtonClass(tableItem)"
+                      @click="toggleBrowserItemVisibility(tableItem)"
+                    >
+                      {{ isBrowserItemHiddenByAncestor(tableItem) ? 'Group hidden' : (isBrowserItemDirectlyVisible(tableItem) ? 'Hide' : 'Show') }}
+                    </button>
+                  </div>
+
+                  <div
+                    v-if="tableItem.children.length"
+                    class="grid content-start gap-0.5 pl-3"
+                  >
+                    <div
+                      v-for="childItem in tableItem.children"
+                      :key="childItem.id"
+                      :data-browser-entity-row="childItem.id"
+                      :data-browser-search-match="isBrowserItemSearchMatch(childItem) ? 'true' : undefined"
+                      :style="getBrowserItemSearchMatchStyle(childItem)"
+                      :class="[
+                        'grid grid-cols-[minmax(0,1fr)_auto] items-center gap-2 border-l border-[color:var(--studio-divider)] pl-3 py-0.5',
+                        isBrowserItemSearchMatch(childItem) ? 'pgml-browser-search-match-row' : ''
+                      ]"
+                    >
+                      <button
+                        type="button"
+                        class="min-w-0 text-left"
+                        @click="selectBrowserItem(childItem)"
+                        @dblclick.stop="focusBrowserItemSource(childItem)"
+                      >
+                        <span class="flex min-w-0 flex-wrap items-center gap-x-1.5 gap-y-0.5">
+                          <span class="font-mono text-[0.48rem] uppercase tracking-[0.08em] text-[color:var(--studio-shell-label)]">
+                            <span :class="isBrowserItemSearchMatch(childItem) ? 'pgml-browser-search-match-text' : ''">
+                              {{ childItem.kindLabel }}
+                            </span>
+                          </span>
+                          <span
+                            class="break-words text-[0.66rem] leading-4"
+                            :class="isBrowserItemEffectivelyVisible(childItem) ? 'text-[color:var(--studio-shell-text)]' : 'text-[color:var(--studio-shell-muted)]'"
+                          >
+                            <span :class="isBrowserItemSearchMatch(childItem) ? 'pgml-browser-search-match-text' : ''">
+                              {{ childItem.label }}
+                            </span>
+                          </span>
+                        </span>
+                      </button>
+
+                      <button
+                        v-if="browserItemSupportsVisibility(childItem)"
+                        type="button"
+                        :data-browser-visibility-toggle="childItem.id"
+                        :disabled="isBrowserItemHiddenByAncestor(childItem)"
+                        :class="getBrowserItemVisibilityButtonClass(childItem, true)"
+                        @click="toggleBrowserItemVisibility(childItem)"
+                      >
+                        {{ isBrowserItemHiddenByAncestor(childItem) ? 'Table hidden' : (isBrowserItemDirectlyVisible(childItem) ? 'Hide' : 'Show') }}
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div
+            v-if="filteredUngroupedBrowserItems.length"
+            class="grid content-start gap-1"
           >
-            <span class="font-mono text-[0.56rem] uppercase tracking-[0.08em]" :style="{ color: node.color }">{{ node.kindLabel }}</span>
-            <span class="text-[0.8rem] font-semibold text-[color:var(--studio-shell-text)]">{{ node.title }}</span>
-            <span class="text-[0.66rem] text-[color:var(--studio-shell-muted)]">{{ node.subtitle }}</span>
-          </button>
-        </article>
+            <div class="font-mono text-[0.58rem] uppercase tracking-[0.08em] text-[color:var(--studio-shell-label)]">
+              Ungrouped Tables
+            </div>
+
+            <div
+              v-for="tableItem in filteredUngroupedBrowserItems"
+              :key="tableItem.id"
+              :data-browser-entity-row="tableItem.id"
+              :data-browser-search-match="isBrowserItemSearchMatch(tableItem) ? 'true' : undefined"
+              :style="getBrowserItemSearchMatchStyle(tableItem)"
+              :class="[
+                'grid content-start gap-1 border px-2 py-2 transition-colors duration-150',
+                isBrowserItemSearchMatch(tableItem) ? 'pgml-browser-search-match-row' : '',
+                isBrowserItemSelected(tableItem) ? 'border-[color:var(--studio-ring)] bg-[color:var(--studio-input-bg)]' : 'border-[color:var(--studio-divider)] bg-[color:var(--studio-control-bg)]'
+              ]"
+            >
+              <div class="grid grid-cols-[minmax(0,1fr)_auto] items-start gap-2">
+                <button
+                  type="button"
+                  class="min-w-0 flex-1 text-left"
+                  @click="selectBrowserItem(tableItem)"
+                  @dblclick.stop="focusBrowserItemSource(tableItem)"
+                >
+                  <div class="font-mono text-[0.52rem] uppercase tracking-[0.08em] text-[color:var(--studio-shell-label)]">
+                    <span :class="isBrowserItemSearchMatch(tableItem) ? 'pgml-browser-search-match-text' : ''">
+                      {{ tableItem.kindLabel }}
+                    </span>
+                  </div>
+                  <div
+                    class="break-words text-[0.72rem] font-medium leading-5"
+                    :class="isBrowserItemEffectivelyVisible(tableItem) ? 'text-[color:var(--studio-shell-text)]' : 'text-[color:var(--studio-shell-muted)]'"
+                  >
+                    <span :class="isBrowserItemSearchMatch(tableItem) ? 'pgml-browser-search-match-text' : ''">
+                      {{ tableItem.label }}
+                    </span>
+                  </div>
+                </button>
+
+                <button
+                  type="button"
+                  :data-browser-visibility-toggle="tableItem.id"
+                  :class="getBrowserItemVisibilityButtonClass(tableItem)"
+                  @click="toggleBrowserItemVisibility(tableItem)"
+                >
+                  {{ isBrowserItemDirectlyVisible(tableItem) ? 'Hide' : 'Show' }}
+                </button>
+              </div>
+
+              <div
+                v-if="tableItem.children.length"
+                class="grid content-start gap-0.5 pl-3"
+              >
+                <div
+                  v-for="childItem in tableItem.children"
+                  :key="childItem.id"
+                  :data-browser-entity-row="childItem.id"
+                  :data-browser-search-match="isBrowserItemSearchMatch(childItem) ? 'true' : undefined"
+                  :style="getBrowserItemSearchMatchStyle(childItem)"
+                  :class="[
+                    'grid grid-cols-[minmax(0,1fr)_auto] items-center gap-2 border-l border-[color:var(--studio-divider)] pl-3 py-0.5',
+                    isBrowserItemSearchMatch(childItem) ? 'pgml-browser-search-match-row' : ''
+                  ]"
+                >
+                  <button
+                    type="button"
+                    class="min-w-0 text-left"
+                    @click="selectBrowserItem(childItem)"
+                    @dblclick.stop="focusBrowserItemSource(childItem)"
+                  >
+                    <span class="flex min-w-0 flex-wrap items-center gap-x-1.5 gap-y-0.5">
+                      <span class="font-mono text-[0.48rem] uppercase tracking-[0.08em] text-[color:var(--studio-shell-label)]">
+                        <span :class="isBrowserItemSearchMatch(childItem) ? 'pgml-browser-search-match-text' : ''">
+                          {{ childItem.kindLabel }}
+                        </span>
+                      </span>
+                      <span
+                        class="break-words text-[0.66rem] leading-4"
+                        :class="isBrowserItemEffectivelyVisible(childItem) ? 'text-[color:var(--studio-shell-text)]' : 'text-[color:var(--studio-shell-muted)]'"
+                      >
+                        <span :class="isBrowserItemSearchMatch(childItem) ? 'pgml-browser-search-match-text' : ''">
+                          {{ childItem.label }}
+                        </span>
+                      </span>
+                    </span>
+                  </button>
+
+                  <button
+                    v-if="browserItemSupportsVisibility(childItem)"
+                    type="button"
+                    :data-browser-visibility-toggle="childItem.id"
+                    :class="getBrowserItemVisibilityButtonClass(childItem, true)"
+                    @click="toggleBrowserItemVisibility(childItem)"
+                  >
+                    {{ isBrowserItemDirectlyVisible(childItem) ? 'Hide' : 'Show' }}
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div
+            v-if="filteredStandaloneBrowserItems.length"
+            class="grid content-start gap-1"
+          >
+            <div class="font-mono text-[0.58rem] uppercase tracking-[0.08em] text-[color:var(--studio-shell-label)]">
+              Standalone Objects
+            </div>
+
+            <div
+              v-for="item in filteredStandaloneBrowserItems"
+              :key="item.id"
+              :data-browser-entity-row="item.id"
+              :data-browser-search-match="isBrowserItemSearchMatch(item) ? 'true' : undefined"
+              :style="getBrowserItemSearchMatchStyle(item)"
+              :class="[
+                'flex items-start justify-between gap-2 border px-2 py-2 transition-colors duration-150',
+                isBrowserItemSearchMatch(item) ? 'pgml-browser-search-match-row' : '',
+                isBrowserItemSelected(item) ? 'border-[color:var(--studio-ring)] bg-[color:var(--studio-input-bg)]' : 'border-[color:var(--studio-divider)] bg-[color:var(--studio-control-bg)]'
+              ]"
+            >
+              <button
+                type="button"
+                class="min-w-0 flex-1 text-left"
+                @click="selectBrowserItem(item)"
+                @dblclick.stop="focusBrowserItemSource(item)"
+              >
+                <div class="font-mono text-[0.52rem] uppercase tracking-[0.08em] text-[color:var(--studio-shell-label)]">
+                  <span :class="isBrowserItemSearchMatch(item) ? 'pgml-browser-search-match-text' : ''">
+                    {{ item.kindLabel }}
+                  </span>
+                </div>
+                <div
+                  class="truncate text-[0.72rem] font-medium"
+                  :class="isBrowserItemEffectivelyVisible(item) ? 'text-[color:var(--studio-shell-text)]' : 'text-[color:var(--studio-shell-muted)]'"
+                >
+                  <span :class="isBrowserItemSearchMatch(item) ? 'pgml-browser-search-match-text' : ''">
+                    {{ item.label }}
+                  </span>
+                </div>
+                <div
+                  v-if="item.subtitle"
+                  class="break-words text-[0.62rem] leading-5 text-[color:var(--studio-shell-muted)]"
+                >
+                  {{ item.subtitle }}
+                </div>
+              </button>
+
+              <button
+                type="button"
+                :data-browser-visibility-toggle="item.id"
+                :class="getBrowserItemVisibilityButtonClass(item)"
+                @click="toggleBrowserItemVisibility(item)"
+              >
+                {{ isBrowserItemDirectlyVisible(item) ? 'Hide' : 'Show' }}
+              </button>
+            </div>
+          </div>
+
+          <div
+            v-if="!filteredGroupedBrowserItems.length && !filteredUngroupedBrowserItems.length && !filteredStandaloneBrowserItems.length"
+            class="border border-[color:var(--studio-divider)] bg-[color:var(--studio-input-bg)] px-3 py-3 text-[0.68rem] leading-6 text-[color:var(--studio-shell-muted)]"
+          >
+            No entities match the current search.
+          </div>
+        </div>
       </div>
 
       <div
@@ -2884,3 +3811,43 @@ defineExpose<{
     </aside>
   </div>
 </template>
+
+<style scoped>
+.pgml-browser-search-match-row {
+  box-shadow:
+    inset 2px 0 0 color-mix(in srgb, var(--pgml-browser-match-color) 82%, transparent),
+    inset 0 0 0 1px color-mix(in srgb, var(--pgml-browser-match-color) 14%, transparent);
+  background-image: linear-gradient(90deg, color-mix(in srgb, var(--pgml-browser-match-color) 12%, transparent), transparent 42%);
+}
+
+.pgml-browser-search-match-text {
+  display: inline-block;
+  color: color-mix(in srgb, var(--pgml-browser-match-color) 72%, var(--studio-shell-text) 28%);
+  text-shadow: 0 0 10px color-mix(in srgb, var(--pgml-browser-match-color) 26%, transparent);
+  animation: pgml-browser-match-bounce 0.26s cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .pgml-browser-search-match-text {
+    animation: none;
+  }
+}
+
+@keyframes pgml-browser-match-bounce {
+  0% {
+    transform: translateY(0) scale(1);
+  }
+
+  34% {
+    transform: translateY(-1.5px) scale(1.03);
+  }
+
+  58% {
+    transform: translateY(0.8px) scale(0.995);
+  }
+
+  100% {
+    transform: translateY(0) scale(1);
+  }
+}
+</style>
