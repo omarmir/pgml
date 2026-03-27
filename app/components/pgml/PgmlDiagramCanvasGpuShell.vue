@@ -3179,16 +3179,29 @@ defineExpose<{
               </p>
             </div>
 
-            <UButton
-              v-if="shouldShowDiagramPanelToggle"
-              icon="i-lucide-x"
-              color="neutral"
-              variant="ghost"
-              size="xs"
-              :class="sidePanelCloseButtonClass"
-              aria-label="Hide panel"
-              @click="toggleSidePanel"
-            />
+            <div class="flex shrink-0 items-start gap-1">
+              <UButton
+                v-if="activePanelTab === 'inspector' && selectedSelection"
+                data-inspector-clear-selection="true"
+                label="Clear"
+                color="neutral"
+                variant="ghost"
+                size="xs"
+                :class="sidePanelActionButtonClass"
+                @click="closeDetailPopover"
+              />
+
+              <UButton
+                v-if="shouldShowDiagramPanelToggle"
+                icon="i-lucide-x"
+                color="neutral"
+                variant="ghost"
+                size="xs"
+                :class="sidePanelCloseButtonClass"
+                aria-label="Hide panel"
+                @click="toggleSidePanel"
+              />
+            </div>
           </div>
 
           <div class="mt-3 flex flex-wrap gap-2">
