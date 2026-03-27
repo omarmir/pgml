@@ -3557,6 +3557,14 @@ defineExpose<{
           @wheel.stop
         >
           <div
+            v-if="filteredGroupedBrowserItems.length"
+            data-entity-section-label="grouped"
+            class="font-mono text-[0.58rem] uppercase tracking-[0.08em] text-[color:var(--studio-shell-label)]"
+          >
+            Grouped Tables · {{ filteredGroupedBrowserItems.length }} groups
+          </div>
+
+          <div
             v-for="groupItem in filteredGroupedBrowserItems"
             :key="groupItem.id"
             class="grid content-start gap-1"
@@ -3718,8 +3726,11 @@ defineExpose<{
             v-if="filteredUngroupedBrowserItems.length"
             class="grid content-start gap-1"
           >
-            <div class="font-mono text-[0.58rem] uppercase tracking-[0.08em] text-[color:var(--studio-shell-label)]">
-              Ungrouped Tables
+            <div
+              data-entity-section-label="ungrouped"
+              class="font-mono text-[0.58rem] uppercase tracking-[0.08em] text-[color:var(--studio-shell-label)]"
+            >
+              Ungrouped Tables · {{ filteredUngroupedBrowserItems.length }}
             </div>
 
             <div
@@ -3822,8 +3833,11 @@ defineExpose<{
             v-if="filteredStandaloneBrowserItems.length"
             class="grid content-start gap-1"
           >
-            <div class="font-mono text-[0.58rem] uppercase tracking-[0.08em] text-[color:var(--studio-shell-label)]">
-              Standalone Objects
+            <div
+              data-entity-section-label="standalone"
+              class="font-mono text-[0.58rem] uppercase tracking-[0.08em] text-[color:var(--studio-shell-label)]"
+            >
+              Standalone Objects · {{ filteredStandaloneBrowserItems.length }}
             </div>
 
             <div

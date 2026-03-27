@@ -21,3 +21,11 @@ test('entities search header reports matches and clears the current filter', asy
   await expect(page.locator('[data-entity-search-clear="true"]')).toHaveCount(0)
   await expect(page.locator('[data-diagram-panel="true"]')).toContainText('visible rows')
 })
+
+test('entities tree labels grouped and standalone sections with counts', async ({ goto, page }) => {
+  await goto('/diagram')
+  await page.locator('[data-diagram-panel-tab="entities"]').click()
+
+  await expect(page.locator('[data-entity-section-label="grouped"]')).toContainText(/Grouped Tables · \d+ groups/)
+  await expect(page.locator('[data-entity-section-label="standalone"]')).toContainText(/Standalone Objects · \d+/)
+})
