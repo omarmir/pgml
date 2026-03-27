@@ -516,6 +516,23 @@ test('code editor shows PGML diagnostics and autocomplete suggestions', async ({
   await expect(page.locator('.cm-tooltip-autocomplete')).toContainText('Table')
 })
 
+test('diagnostics panel explains when additional issues are hidden', async ({ goto, page }) => {
+  await goto('/diagram')
+
+  const editor = getPgmlEditor(page)
+  const duplicateColumns = Array.from({
+    length: 8
+  }, () => '  id uuid').join('\n')
+
+  await setPgmlEditorValue(editor, `Table public.users {
+  id uuid [pk]
+${duplicateColumns}
+}`)
+
+  await expect(page.locator('[data-pgml-diagnostics="true"]')).toContainText('Duplicate column')
+  await expect(page.locator('[data-pgml-diagnostics-overflow="true"]')).toContainText(/Showing first 6 of \d+ diagnostics\./)
+})
+
 test('clicking a diagnostic line focuses and scrolls the editor to that source location', async ({ goto, page }) => {
   await goto('/diagram')
 

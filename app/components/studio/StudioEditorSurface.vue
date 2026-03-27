@@ -28,6 +28,9 @@ const formatDiagnosticLineLabel = (diagnostic: PgmlLanguageDiagnostic) => {
 
   return lines.map(line => `L${line}`).join(', ')
 }
+const hiddenDiagnosticCount = computed(() => {
+  return Math.max(0, sourceDiagnostics.length - visibleSourceDiagnostics.length)
+})
 </script>
 
 <template>
@@ -82,6 +85,14 @@ const formatDiagnosticLineLabel = (diagnostic: PgmlLanguageDiagnostic) => {
           </span>
         </li>
       </ul>
+
+      <div
+        v-if="hiddenDiagnosticCount > 0"
+        data-pgml-diagnostics-overflow="true"
+        class="border-t border-[color:var(--studio-shell-border)] pt-2 text-[0.66rem] leading-5 text-[color:var(--studio-shell-muted)]"
+      >
+        Showing first {{ visibleSourceDiagnostics.length }} of {{ sourceDiagnostics.length }} diagnostics.
+      </div>
     </div>
   </aside>
 </template>
