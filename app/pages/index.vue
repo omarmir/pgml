@@ -79,6 +79,7 @@ type SourceCardDefinition = {
     id: string
     value: SourceCardId
   }
+  sqlDumpLabel: string
   sqlDumpDescription: string
   statusLabel: string
   statusTone: 'live' | 'placeholder'
@@ -691,6 +692,7 @@ const sourceCards = computed<SourceCardDefinition[]>(() => {
         id: 'open-pg-dump-import',
         value: 'browser-local-storage'
       },
+      sqlDumpLabel: 'Import into browser storage',
       sqlDumpDescription: 'Convert a text pg_dump into a browser-backed PGML schema and open it directly in the studio.',
       statusLabel: 'Available now',
       statusTone: 'live',
@@ -730,6 +732,7 @@ const sourceCards = computed<SourceCardDefinition[]>(() => {
         id: 'open-pg-dump-import',
         value: 'computer-saved-file'
       },
+      sqlDumpLabel: 'Import into a new file',
       sqlDumpDescription: 'Convert a text pg_dump into a new computer-backed `.pgml` file, then keep autosave pointed at that file.',
       statusLabel: 'Available now',
       statusTone: 'live',
@@ -766,6 +769,7 @@ const sourceCards = computed<SourceCardDefinition[]>(() => {
         id: 'open-pg-dump-import',
         value: 'hosted-database'
       },
+      sqlDumpLabel: 'Import from hosted lane',
       sqlDumpDescription: 'Convert a text pg_dump from this lane now, then open it in browser storage while hosted persistence stays in progress.',
       statusLabel: 'Placeholder',
       statusTone: 'placeholder',
@@ -799,6 +803,7 @@ onBeforeRouteLeave((to) => {
         :inventory="card.inventory"
         :operations="card.operations"
         :sql-dump-action="card.sqlDumpAction"
+        :sql-dump-label="card.sqlDumpLabel"
         :sql-dump-description="card.sqlDumpDescription"
         :status-label="card.statusLabel"
         :status-tone="card.statusTone"

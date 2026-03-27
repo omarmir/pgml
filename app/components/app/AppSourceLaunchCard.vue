@@ -48,6 +48,7 @@ const {
   inventory,
   operations,
   sqlDumpAction,
+  sqlDumpLabel,
   sqlDumpDescription,
   statusLabel,
   statusTone = 'placeholder',
@@ -58,6 +59,7 @@ const {
   inventory: string
   operations: SourceLaunchCardOperation[]
   sqlDumpAction?: SourceLaunchCardAction
+  sqlDumpLabel: string
   sqlDumpDescription: string
   statusLabel: string
   statusTone?: 'live' | 'placeholder'
@@ -339,7 +341,7 @@ const emitItemAction = (item: SourceLaunchCardItem) => {
       >
         <div class="min-w-0">
           <p class="text-sm font-semibold text-[color:var(--studio-shell-text)]">
-            Import a pg_dump
+            {{ sqlDumpLabel }}
           </p>
           <p :class="studioCompactBodyCopyClass">
             Paste text or upload a dump file, then convert it into PGML from this lane.

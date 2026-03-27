@@ -33,7 +33,9 @@ test('home page exposes the three schema-source lanes and the SQL dump placehold
   await expect(page.locator('[data-source-card="computer-saved-file"]')).toContainText('Save example to a new file')
   await expect(page.locator('[data-source-card="hosted-database"]')).toContainText('Preview hosted example')
   await expect(page.getByText('SQL dump', { exact: true })).toHaveCount(3)
-  await expect(page.getByRole('button', { name: 'Import a pg_dump' })).toHaveCount(3)
+  await expect(page.getByRole('button', { name: 'Import into browser storage' })).toHaveCount(1)
+  await expect(page.getByRole('button', { name: 'Import into a new file' })).toHaveCount(1)
+  await expect(page.getByRole('button', { name: 'Import from hosted lane' })).toHaveCount(1)
   await expect(page.locator('[data-spec-banner="true"]')).toContainText('Need the language reference before you open the studio?')
   await expect(page.getByRole('link', { name: 'Jump to spec' })).toHaveCount(1)
 })
@@ -124,7 +126,7 @@ test('home page can import a pasted pg_dump into the browser lane', async ({ got
 
   const browserCard = page.locator('[data-source-card="browser-local-storage"]')
 
-  await browserCard.getByRole('button', { name: 'Import a pg_dump' }).click()
+  await browserCard.getByRole('button', { name: 'Import into browser storage' }).click()
 
   const importDialog = getPgDumpImportDialog(page)
 
@@ -150,7 +152,7 @@ test('pg_dump modal keeps the top bar visible and the light theme root aligned w
 
   await page.getByRole('button', { name: 'Switch to light mode' }).click()
   await page.evaluate(() => window.scrollTo(0, 600))
-  await page.locator('[data-source-card="computer-saved-file"]').getByRole('button', { name: 'Import a pg_dump' }).click()
+  await page.locator('[data-source-card="computer-saved-file"]').getByRole('button', { name: 'Import into a new file' }).click()
 
   await expect(page.locator('[data-studio-modal-surface="pg-dump-import"]')).toContainText('Import pg_dump into a new computer file')
   await expect.poll(async () => {
@@ -267,7 +269,7 @@ test('home page can import a pg_dump file into a new computer-backed file', asyn
   const recentFileId = await queueMockComputerSave(page, 'orders-import.pgml')
 
   expect(recentFileId).toBeTruthy()
-  await page.locator('[data-source-card="computer-saved-file"]').getByRole('button', { name: 'Import a pg_dump' }).click()
+  await page.locator('[data-source-card="computer-saved-file"]').getByRole('button', { name: 'Import into a new file' }).click()
 
   const importDialog = getPgDumpImportDialog(page)
 
@@ -349,7 +351,7 @@ test('home page can seed a new computer-backed file from the bundled example', a
 test('home page shows an error when both pasted text and a pg_dump file are provided', async ({ goto, page }) => {
   await goto('/')
 
-  await page.locator('[data-source-card="browser-local-storage"]').getByRole('button', { name: 'Import a pg_dump' }).click()
+  await page.locator('[data-source-card="browser-local-storage"]').getByRole('button', { name: 'Import into browser storage' }).click()
 
   const importDialog = getPgDumpImportDialog(page)
 
