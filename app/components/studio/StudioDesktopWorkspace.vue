@@ -73,7 +73,7 @@ const editorVisibilityButtonClass = joinStudioClasses(
 
     <section class="relative min-h-0 w-full overflow-hidden p-0">
       <UButton
-        :label="isEditorPanelVisible ? 'Hide PGML' : 'Show PGML'"
+        :label="isEditorPanelVisible ? 'Hide PGML editor' : 'Show PGML editor'"
         :icon="isEditorPanelVisible ? 'i-lucide-panel-left-close' : 'i-lucide-panel-left-open'"
         data-editor-visibility-toggle="true"
         color="neutral"

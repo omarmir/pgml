@@ -49,13 +49,13 @@ test('studio editor panel can be hidden and shown again', async ({ goto, page })
   const editorToggle = page.locator('[data-editor-visibility-toggle="true"]')
 
   await expect(editorPanel).toBeVisible()
-  await expect(editorToggle).toContainText('Hide PGML')
+  await expect(editorToggle).toContainText('Hide PGML editor')
 
   await editorToggle.click()
 
   await expect(page.locator('[data-editor-panel="true"]')).toHaveCount(0)
   await expect(page.locator('[data-editor-resize-handle="true"]')).toHaveCount(0)
-  await expect(editorToggle).toContainText('Show PGML')
+  await expect(editorToggle).toContainText('Show PGML editor')
 
   await editorToggle.click()
 
