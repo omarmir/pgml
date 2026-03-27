@@ -2343,7 +2343,7 @@ const diagramPanelTitle = computed(() => {
   }
 
   if (selectedColumn.value) {
-    return selectedColumn.value.column.name
+    return `${selectedColumn.value.table.fullName}.${selectedColumn.value.column.name}`
   }
 
   if (selectedAttachment.value) {
@@ -2355,11 +2355,11 @@ const diagramPanelTitle = computed(() => {
   }
 
   if (selectedTable.value) {
-    return selectedTable.value.title
+    return selectedTable.value.id
   }
 
   if (selectedObject.value) {
-    return selectedObject.value.title
+    return selectedObject.value.id
   }
 
   return 'Inspector'

@@ -35,7 +35,7 @@ test('inspector exposes a clear action when an entity is selected', async ({ got
   await page.locator('[data-diagram-panel-tab="inspector"]').click()
 
   await expect(page.locator('[data-inspector-clear-selection="true"]')).toBeVisible()
-  await expect(page.locator('[data-diagram-panel="true"] h3')).toContainText('users')
+  await expect(page.locator('[data-diagram-panel="true"] h3')).toHaveText('public.users')
 
   await page.locator('[data-inspector-clear-selection="true"]').click()
 
