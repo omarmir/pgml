@@ -2250,6 +2250,16 @@ const getBrowserItemTableId = (item: EntityBrowserItem) => {
 
   return null
 }
+const getBrowserItemFocusSourceLabel = (item: EntityBrowserItem) => {
+  const focusTarget = item.selection.kind === 'table' || item.selection.kind === 'object'
+    ? item.id
+    : item.label
+
+  return `Focus ${focusTarget} in source`
+}
+const getBrowserGroupEditLabel = (item: EntityBrowserItem) => {
+  return `Edit group ${item.label}`
+}
 
 const getGroupColor = (groupId: string) => {
   return groupLayoutStates.value[groupId]?.color || model.nodeProperties[groupId]?.color || '#79e3ea'
@@ -3654,6 +3664,8 @@ defineExpose<{
                     type="button"
                     :data-browser-focus-source="groupItem.id"
                     :class="browserItemActionButtonClass"
+                    :aria-label="getBrowserItemFocusSourceLabel(groupItem)"
+                    :title="getBrowserItemFocusSourceLabel(groupItem)"
                     @click="focusBrowserItemSource(groupItem)"
                   >
                     <UIcon
@@ -3666,6 +3678,8 @@ defineExpose<{
                     type="button"
                     :data-browser-group-edit="groupItem.label"
                     :class="browserItemActionButtonClass"
+                    :aria-label="getBrowserGroupEditLabel(groupItem)"
+                    :title="getBrowserGroupEditLabel(groupItem)"
                     @click="emit('editGroup', groupItem.label)"
                   >
                     Edit
@@ -3722,6 +3736,8 @@ defineExpose<{
                         type="button"
                         :data-browser-focus-source="tableItem.id"
                         :class="browserItemActionButtonClass"
+                        :aria-label="getBrowserItemFocusSourceLabel(tableItem)"
+                        :title="getBrowserItemFocusSourceLabel(tableItem)"
                         @click="focusBrowserItemSource(tableItem)"
                       >
                         <UIcon
@@ -3786,6 +3802,8 @@ defineExpose<{
                           type="button"
                           :data-browser-focus-source="childItem.id"
                           :class="browserItemActionButtonClass"
+                          :aria-label="getBrowserItemFocusSourceLabel(childItem)"
+                          :title="getBrowserItemFocusSourceLabel(childItem)"
                           @click="focusBrowserItemSource(childItem)"
                         >
                           <UIcon
@@ -3863,6 +3881,8 @@ defineExpose<{
                     type="button"
                     :data-browser-focus-source="tableItem.id"
                     :class="browserItemActionButtonClass"
+                    :aria-label="getBrowserItemFocusSourceLabel(tableItem)"
+                    :title="getBrowserItemFocusSourceLabel(tableItem)"
                     @click="focusBrowserItemSource(tableItem)"
                   >
                     <UIcon
@@ -3926,6 +3946,8 @@ defineExpose<{
                       type="button"
                       :data-browser-focus-source="childItem.id"
                       :class="browserItemActionButtonClass"
+                      :aria-label="getBrowserItemFocusSourceLabel(childItem)"
+                      :title="getBrowserItemFocusSourceLabel(childItem)"
                       @click="focusBrowserItemSource(childItem)"
                     >
                       <UIcon
@@ -4005,6 +4027,8 @@ defineExpose<{
                   type="button"
                   :data-browser-focus-source="item.id"
                   :class="browserItemActionButtonClass"
+                  :aria-label="getBrowserItemFocusSourceLabel(item)"
+                  :title="getBrowserItemFocusSourceLabel(item)"
                   @click="focusBrowserItemSource(item)"
                 >
                   <UIcon

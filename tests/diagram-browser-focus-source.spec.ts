@@ -11,7 +11,10 @@ test.beforeEach(async ({ page }) => {
 test('entities rows expose an explicit focus-source action', async ({ goto, page }) => {
   await goto('/diagram')
   await page.locator('[data-diagram-panel-tab="entities"]').click()
-  await page.locator('[data-browser-focus-source="public.users"]').click()
+  const focusSourceButton = page.locator('[data-browser-focus-source="public.users"]')
+
+  await expect(focusSourceButton).toHaveAttribute('aria-label', 'Focus public.users in source')
+  await focusSourceButton.click()
 
   const editor = getPgmlEditor(page)
 
