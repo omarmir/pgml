@@ -215,6 +215,7 @@ const sidePanelActionButtonClass = joinStudioClasses(studioButtonClasses.seconda
 const sidePanelCloseButtonClass = joinStudioClasses(studioButtonClasses.iconGhost, 'h-7 w-7 justify-center px-0')
 const detailPopoverKindBadgeClass = 'inline-flex items-center border px-1.5 font-mono text-[0.56rem] uppercase tracking-[0.08em]'
 const detailPopoverFlagBadgeClass = 'inline-flex items-center border px-1.5 py-0.5 font-mono text-[0.54rem] uppercase tracking-[0.06em]'
+const browserItemActionButtonClass = 'inline-flex h-7 min-w-[2rem] items-center justify-center border px-2 font-mono text-[0.54rem] uppercase tracking-[0.08em] text-[color:var(--studio-shell-text)] transition-colors duration-150 hover:bg-[color:var(--studio-surface-hover)] disabled:cursor-default disabled:text-[color:var(--studio-shell-muted)]'
 const tableWidthScaleItems = pgmlTableWidthScaleValues.map((value) => {
   return {
     label: `${value}x`,
@@ -3603,9 +3604,22 @@ defineExpose<{
 
                 <div class="grid shrink-0 content-start gap-1">
                   <button
+                    v-if="groupItem.sourceRange"
+                    type="button"
+                    :data-browser-focus-source="groupItem.id"
+                    :class="browserItemActionButtonClass"
+                    @click="focusBrowserItemSource(groupItem)"
+                  >
+                    <UIcon
+                      name="i-lucide-braces"
+                      class="h-3.5 w-3.5"
+                    />
+                  </button>
+
+                  <button
                     type="button"
                     :data-browser-group-edit="groupItem.label"
-                    class="border px-2 py-1 font-mono text-[0.54rem] uppercase tracking-[0.08em] text-[color:var(--studio-shell-text)] transition-colors duration-150 hover:bg-[color:var(--studio-surface-hover)]"
+                    :class="browserItemActionButtonClass"
                     @click="emit('editGroup', groupItem.label)"
                   >
                     Edit
@@ -3656,15 +3670,30 @@ defineExpose<{
                       </div>
                     </button>
 
-                    <button
-                      type="button"
-                      :data-browser-visibility-toggle="tableItem.id"
-                      :disabled="isBrowserItemHiddenByAncestor(tableItem)"
-                      :class="getBrowserItemVisibilityButtonClass(tableItem)"
-                      @click="toggleBrowserItemVisibility(tableItem)"
-                    >
-                      {{ isBrowserItemHiddenByAncestor(tableItem) ? 'Group hidden' : (isBrowserItemDirectlyVisible(tableItem) ? 'Hide' : 'Show') }}
-                    </button>
+                    <div class="grid shrink-0 content-start gap-1">
+                      <button
+                        v-if="tableItem.sourceRange"
+                        type="button"
+                        :data-browser-focus-source="tableItem.id"
+                        :class="browserItemActionButtonClass"
+                        @click="focusBrowserItemSource(tableItem)"
+                      >
+                        <UIcon
+                          name="i-lucide-braces"
+                          class="h-3.5 w-3.5"
+                        />
+                      </button>
+
+                      <button
+                        type="button"
+                        :data-browser-visibility-toggle="tableItem.id"
+                        :disabled="isBrowserItemHiddenByAncestor(tableItem)"
+                        :class="getBrowserItemVisibilityButtonClass(tableItem)"
+                        @click="toggleBrowserItemVisibility(tableItem)"
+                      >
+                        {{ isBrowserItemHiddenByAncestor(tableItem) ? 'Group hidden' : (isBrowserItemDirectlyVisible(tableItem) ? 'Hide' : 'Show') }}
+                      </button>
+                    </div>
                   </div>
 
                   <div
@@ -3705,16 +3734,31 @@ defineExpose<{
                         </span>
                       </button>
 
-                      <button
-                        v-if="browserItemSupportsVisibility(childItem)"
-                        type="button"
-                        :data-browser-visibility-toggle="childItem.id"
-                        :disabled="isBrowserItemHiddenByAncestor(childItem)"
-                        :class="getBrowserItemVisibilityButtonClass(childItem, true)"
-                        @click="toggleBrowserItemVisibility(childItem)"
-                      >
-                        {{ isBrowserItemHiddenByAncestor(childItem) ? 'Table hidden' : (isBrowserItemDirectlyVisible(childItem) ? 'Hide' : 'Show') }}
-                      </button>
+                      <div class="flex items-center gap-1">
+                        <button
+                          v-if="childItem.sourceRange"
+                          type="button"
+                          :data-browser-focus-source="childItem.id"
+                          :class="browserItemActionButtonClass"
+                          @click="focusBrowserItemSource(childItem)"
+                        >
+                          <UIcon
+                            name="i-lucide-braces"
+                            class="h-3.5 w-3.5"
+                          />
+                        </button>
+
+                        <button
+                          v-if="browserItemSupportsVisibility(childItem)"
+                          type="button"
+                          :data-browser-visibility-toggle="childItem.id"
+                          :disabled="isBrowserItemHiddenByAncestor(childItem)"
+                          :class="getBrowserItemVisibilityButtonClass(childItem, true)"
+                          @click="toggleBrowserItemVisibility(childItem)"
+                        >
+                          {{ isBrowserItemHiddenByAncestor(childItem) ? 'Table hidden' : (isBrowserItemDirectlyVisible(childItem) ? 'Hide' : 'Show') }}
+                        </button>
+                      </div>
                     </div>
                   </div>
                 </div>
@@ -3767,14 +3811,29 @@ defineExpose<{
                   </div>
                 </button>
 
-                <button
-                  type="button"
-                  :data-browser-visibility-toggle="tableItem.id"
-                  :class="getBrowserItemVisibilityButtonClass(tableItem)"
-                  @click="toggleBrowserItemVisibility(tableItem)"
-                >
-                  {{ isBrowserItemDirectlyVisible(tableItem) ? 'Hide' : 'Show' }}
-                </button>
+                <div class="grid shrink-0 content-start gap-1">
+                  <button
+                    v-if="tableItem.sourceRange"
+                    type="button"
+                    :data-browser-focus-source="tableItem.id"
+                    :class="browserItemActionButtonClass"
+                    @click="focusBrowserItemSource(tableItem)"
+                  >
+                    <UIcon
+                      name="i-lucide-braces"
+                      class="h-3.5 w-3.5"
+                    />
+                  </button>
+
+                  <button
+                    type="button"
+                    :data-browser-visibility-toggle="tableItem.id"
+                    :class="getBrowserItemVisibilityButtonClass(tableItem)"
+                    @click="toggleBrowserItemVisibility(tableItem)"
+                  >
+                    {{ isBrowserItemDirectlyVisible(tableItem) ? 'Hide' : 'Show' }}
+                  </button>
+                </div>
               </div>
 
               <div
@@ -3815,15 +3874,30 @@ defineExpose<{
                     </span>
                   </button>
 
-                  <button
-                    v-if="browserItemSupportsVisibility(childItem)"
-                    type="button"
-                    :data-browser-visibility-toggle="childItem.id"
-                    :class="getBrowserItemVisibilityButtonClass(childItem, true)"
-                    @click="toggleBrowserItemVisibility(childItem)"
-                  >
-                    {{ isBrowserItemDirectlyVisible(childItem) ? 'Hide' : 'Show' }}
-                  </button>
+                  <div class="flex items-center gap-1">
+                    <button
+                      v-if="childItem.sourceRange"
+                      type="button"
+                      :data-browser-focus-source="childItem.id"
+                      :class="browserItemActionButtonClass"
+                      @click="focusBrowserItemSource(childItem)"
+                    >
+                      <UIcon
+                        name="i-lucide-braces"
+                        class="h-3.5 w-3.5"
+                      />
+                    </button>
+
+                    <button
+                      v-if="browserItemSupportsVisibility(childItem)"
+                      type="button"
+                      :data-browser-visibility-toggle="childItem.id"
+                      :class="getBrowserItemVisibilityButtonClass(childItem, true)"
+                      @click="toggleBrowserItemVisibility(childItem)"
+                    >
+                      {{ isBrowserItemDirectlyVisible(childItem) ? 'Hide' : 'Show' }}
+                    </button>
+                  </div>
                 </div>
               </div>
             </div>
@@ -3879,14 +3953,29 @@ defineExpose<{
                 </div>
               </button>
 
-              <button
-                type="button"
-                :data-browser-visibility-toggle="item.id"
-                :class="getBrowserItemVisibilityButtonClass(item)"
-                @click="toggleBrowserItemVisibility(item)"
-              >
-                {{ isBrowserItemDirectlyVisible(item) ? 'Hide' : 'Show' }}
-              </button>
+              <div class="grid shrink-0 content-start gap-1">
+                <button
+                  v-if="item.sourceRange"
+                  type="button"
+                  :data-browser-focus-source="item.id"
+                  :class="browserItemActionButtonClass"
+                  @click="focusBrowserItemSource(item)"
+                >
+                  <UIcon
+                    name="i-lucide-braces"
+                    class="h-3.5 w-3.5"
+                  />
+                </button>
+
+                <button
+                  type="button"
+                  :data-browser-visibility-toggle="item.id"
+                  :class="getBrowserItemVisibilityButtonClass(item)"
+                  @click="toggleBrowserItemVisibility(item)"
+                >
+                  {{ isBrowserItemDirectlyVisible(item) ? 'Hide' : 'Show' }}
+                </button>
+              </div>
             </div>
           </div>
 
