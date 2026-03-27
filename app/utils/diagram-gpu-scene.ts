@@ -160,6 +160,7 @@ export const diagramGroupTableGap = 16
 export const diagramGroupHorizontalPadding = 20
 export const diagramGroupHeaderHeight = 60
 export const diagramGroupVerticalPadding = 18
+export const diagramGroupHeaderBandHeight = diagramGroupHeaderHeight + diagramGroupVerticalPadding
 export const diagramTableHeaderHeight = 64
 export const diagramTableRowHeight = 31
 export const diagramObjectRowHeight = 18

@@ -11,6 +11,7 @@ import {
 } from '~/utils/pgml-node-properties'
 import {
   diagramDividerColor,
+  diagramGroupHeaderBandHeight,
   diagramGroupHeaderHeight,
   diagramGroupHorizontalPadding,
   diagramGroupTableGap,
@@ -1350,7 +1351,7 @@ const syncLayoutStates = () => {
     const layout = computeGroupLayout(group.name, tables, columnCount, masonry, tableWidthScale)
     const width = Math.max(diagramGroupHorizontalPadding * 2 + layout.contentWidth, diagramGroupTableWidth + diagramGroupHorizontalPadding * 2)
     const height = Math.max(
-      diagramGroupHeaderHeight + diagramGroupVerticalPadding * 2 + layout.contentHeight,
+      diagramGroupHeaderBandHeight + diagramGroupVerticalPadding + layout.contentHeight,
       diagramGroupHeaderHeight + 48
     )
 
@@ -1568,7 +1569,7 @@ const tableCards = computed<DiagramGpuTableCard[]>(() => {
         title: table.name,
         width: cardWidth,
         x: group.x + diagramGroupHorizontalPadding + (placement?.x || 0),
-        y: group.y + diagramGroupHeaderHeight + diagramGroupVerticalPadding + (placement?.y || 0)
+        y: group.y + diagramGroupHeaderBandHeight + (placement?.y || 0)
       }
     })
   })
@@ -1808,7 +1809,7 @@ const geometryRegistry = computed(() => {
   const groupHeaderBands = [
     ...groupNodes.value.map((group) => {
       return {
-        bottom: group.y + diagramGroupHeaderHeight + diagramGroupVerticalPadding,
+        bottom: group.y + diagramGroupHeaderBandHeight,
         left: group.x,
         right: group.x + group.width,
         top: group.y

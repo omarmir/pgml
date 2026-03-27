@@ -24,6 +24,7 @@ import {
   diagramDividerColor,
   diagramDotColor,
   diagramGridDotSpacing,
+  diagramGroupHeaderBandHeight,
   diagramGroupHeaderHeight,
   diagramLabelTextColor,
   diagramLineViewportOverscan,
@@ -139,11 +140,13 @@ let backgroundGraphics: PixiGraphics | null = null
 let worldContainer: PixiContainer | null = null
 let groupContainer: PixiContainer | null = null
 let lineGraphics: PixiGraphics | null = null
+let groupHeaderContainer: PixiContainer | null = null
 let tableContainer: PixiContainer | null = null
 let objectContainer: PixiContainer | null = null
 
 let tableSpriteEntries = new Map<string, TextureCacheEntry>()
 let groupSpriteEntries = new Map<string, TextureCacheEntry>()
+let groupHeaderSpriteEntries = new Map<string, TextureCacheEntry>()
 let objectSpriteEntries = new Map<string, TextureCacheEntry>()
 
 let tableSpatialIndex: DiagramSpatialGridIndex<string> | null = null
@@ -465,6 +468,26 @@ const roundRect = (
   context.closePath()
 }
 
+const topRoundRect = (
+  context: CanvasRenderingContext2D,
+  x: number,
+  y: number,
+  width: number,
+  height: number,
+  radius: number
+) => {
+  const safeRadius = Math.max(0, Math.min(radius, width / 2, height))
+
+  context.beginPath()
+  context.moveTo(x, y + height)
+  context.lineTo(x, y + safeRadius)
+  context.quadraticCurveTo(x, y, x + safeRadius, y)
+  context.lineTo(x + width - safeRadius, y)
+  context.quadraticCurveTo(x + width, y, x + width, y + safeRadius)
+  context.lineTo(x + width, y + height)
+  context.closePath()
+}
+
 const fitText = (
   context: CanvasRenderingContext2D,
   value: string,
@@ -640,6 +663,7 @@ const destroyTextureEntries = (entries: Map<string, TextureCacheEntry>) => {
 const destroyAllTextures = () => {
   destroyTextureEntries(tableSpriteEntries)
   destroyTextureEntries(groupSpriteEntries)
+  destroyTextureEntries(groupHeaderSpriteEntries)
   destroyTextureEntries(objectSpriteEntries)
 }
 
@@ -906,16 +930,8 @@ const buildTableCanvas = (card: DiagramGpuTableCard, resolution: number) => {
 
 const buildGroupCanvas = (group: DiagramGpuGroupNode, resolution: number) => {
   const { canvas, context } = createCanvas(group.width, group.height, resolution)
-  const selectionKey = getSelectionStateKey(group.id)
-  const accentColor = getNodeAccentColor(group.color)
-  const borderColor = getNodeBorderColor(group.color, 'group')
   const shellFill = sceneTheme.groupSurface
   const bodyOverlayFill = withAlpha(group.color, 0.02)
-  const headerFadeHeight = Math.max(diagramGroupHeaderHeight + 28, Math.round(group.height * 0.22))
-  const headerGradient = context.createLinearGradient(0, 0, 0, headerFadeHeight)
-  headerGradient.addColorStop(0, withAlpha(group.color, 0.119))
-  headerGradient.addColorStop(0.38, withAlpha(group.color, 0.065))
-  headerGradient.addColorStop(1, bodyOverlayFill)
 
   context.fillStyle = shellFill
   roundRect(context, 0.5, 0.5, group.width - 1, group.height - 1, 2.5)
@@ -926,8 +942,40 @@ const buildGroupCanvas = (group: DiagramGpuGroupNode, resolution: number) => {
   context.clip()
   context.fillStyle = bodyOverlayFill
   context.fillRect(1, 1, Math.max(0, group.width - 2), Math.max(0, group.height - 2))
+  context.clearRect(1, 1, Math.max(0, group.width - 2), Math.max(0, diagramGroupHeaderBandHeight))
+  context.restore()
+
+  context.strokeStyle = getNodeBorderColor(group.color, 'group')
+  context.lineWidth = 1
+  roundRect(context, 0.5, 0.5, group.width - 1, group.height - 1, 2.5)
+  context.stroke()
+
+  return canvas
+}
+
+const buildGroupHeaderOverlayCanvas = (group: DiagramGpuGroupNode, resolution: number) => {
+  const { canvas, context } = createCanvas(group.width, diagramGroupHeaderBandHeight, resolution)
+  const selectionKey = getSelectionStateKey(group.id)
+  const accentColor = getNodeAccentColor(group.color)
+  const borderColor = getNodeBorderColor(group.color, 'group')
+  const shellFill = sceneTheme.groupSurface
+  const bodyOverlayFill = withAlpha(group.color, 0.02)
+  const headerFadeHeight = Math.max(diagramGroupHeaderHeight + 18, Math.round(group.height * 0.22))
+  const visibleHeaderFadeHeight = Math.min(diagramGroupHeaderBandHeight, headerFadeHeight)
+  const headerGradient = context.createLinearGradient(0, 0, 0, visibleHeaderFadeHeight)
+  headerGradient.addColorStop(0, withAlpha(group.color, 0.119))
+  headerGradient.addColorStop(0.38, withAlpha(group.color, 0.065))
+  headerGradient.addColorStop(1, bodyOverlayFill)
+
+  context.save()
+  topRoundRect(context, 0.5, 0.5, group.width - 1, diagramGroupHeaderBandHeight - 0.5, 2.5)
+  context.clip()
+  context.fillStyle = shellFill
+  context.fillRect(1, 1, Math.max(0, group.width - 2), Math.max(0, diagramGroupHeaderBandHeight - 1))
+  context.fillStyle = bodyOverlayFill
+  context.fillRect(1, 1, Math.max(0, group.width - 2), Math.max(0, diagramGroupHeaderBandHeight - 1))
   context.fillStyle = headerGradient
-  context.fillRect(1, 1, Math.max(0, group.width - 2), Math.max(0, headerFadeHeight))
+  context.fillRect(1, 1, Math.max(0, group.width - 2), Math.max(0, visibleHeaderFadeHeight))
 
   context.font = fontMonoSmallRegular
   context.fillStyle = accentColor
@@ -951,17 +999,18 @@ const buildGroupCanvas = (group: DiagramGpuGroupNode, resolution: number) => {
   }
 
   drawHeaderChip(context, pillX, 9, pillWidth, pill, fontMonoSmallRegular)
-
-  context.strokeStyle = mixColors(group.color, sceneTheme.divider, 0.1)
-  context.beginPath()
-  context.moveTo(1, diagramGroupHeaderHeight + 0.5)
-  context.lineTo(group.width - 1, diagramGroupHeaderHeight + 0.5)
-  context.stroke()
   context.restore()
 
   context.strokeStyle = selectionKey === 'selected-group' ? accentColor : borderColor
   context.lineWidth = selectionKey === 'selected-group' ? 1.5 : 1
-  roundRect(context, 0.5, 0.5, group.width - 1, group.height - 1, 2.5)
+  topRoundRect(context, 0.5, 0.5, group.width - 1, diagramGroupHeaderBandHeight - 0.5, 2.5)
+  context.stroke()
+
+  context.strokeStyle = mixColors(group.color, sceneTheme.divider, 0.1)
+  context.lineWidth = 1
+  context.beginPath()
+  context.moveTo(1, diagramGroupHeaderHeight + 0.5)
+  context.lineTo(group.width - 1, diagramGroupHeaderHeight + 0.5)
   context.stroke()
 
   return canvas
@@ -1026,7 +1075,7 @@ const buildObjectCanvas = (node: DiagramGpuObjectNode, resolution: number) => {
 const getOrCreateSpriteEntry = (
   entries: Map<string, TextureCacheEntry>,
   key: string,
-  kind: 'group' | 'object' | 'table',
+  kind: 'group' | 'group-header' | 'object' | 'table',
   width: number,
   height: number,
   buildCanvas: (resolution: number) => HTMLCanvasElement
@@ -1071,6 +1120,10 @@ const getOrCreateSpriteEntry = (
 
   if (kind === 'group' && groupContainer && !groupContainer.children.includes(sprite)) {
     groupContainer.addChild(sprite)
+  }
+
+  if (kind === 'group-header' && groupHeaderContainer && !groupHeaderContainer.children.includes(sprite)) {
+    groupHeaderContainer.addChild(sprite)
   }
 
   if (kind === 'object' && objectContainer && !objectContainer.children.includes(sprite)) {
@@ -1528,7 +1581,7 @@ const syncAnimatedLineLoop = () => {
 }
 
 const renderScene = () => {
-  if (!app || !pixi || !worldContainer || !groupContainer || !lineGraphics || !tableContainer || !objectContainer) {
+  if (!app || !pixi || !worldContainer || !groupContainer || !groupHeaderContainer || !lineGraphics || !tableContainer || !objectContainer) {
     return
   }
 
@@ -1561,6 +1614,23 @@ const renderScene = () => {
     entry.sprite.visible = visibleGroupIds.has(group.id)
     entry.sprite.position.set(group.x, group.y)
     entry.sprite.zIndex = selection?.kind === 'group' && selection.id === group.id ? 2 : 0
+
+    const headerEntry = getOrCreateSpriteEntry(
+      groupHeaderSpriteEntries,
+      group.id,
+      'group-header',
+      group.width,
+      diagramGroupHeaderBandHeight,
+      (resolution) => buildGroupHeaderOverlayCanvas(group, resolution)
+    )
+
+    if (!headerEntry) {
+      return
+    }
+
+    headerEntry.sprite.visible = visibleGroupIds.has(group.id)
+    headerEntry.sprite.position.set(group.x, group.y)
+    headerEntry.sprite.zIndex = selection?.kind === 'group' && selection.id === group.id ? 4 : 0
   })
 
   tables.forEach((table) => {
@@ -1611,6 +1681,7 @@ const renderScene = () => {
   syncAnimatedLineLoop()
 
   groupContainer.sortChildren()
+  groupHeaderContainer.sortChildren()
   tableContainer.sortChildren()
   objectContainer.sortChildren()
 
@@ -2004,15 +2075,18 @@ const initPixi = async () => {
   worldContainer = new pixi.Container()
   groupContainer = new pixi.Container()
   lineGraphics = new pixi.Graphics()
+  groupHeaderContainer = new pixi.Container()
   tableContainer = new pixi.Container()
   objectContainer = new pixi.Container()
 
   groupContainer.sortableChildren = true
+  groupHeaderContainer.sortableChildren = true
   tableContainer.sortableChildren = true
   objectContainer.sortableChildren = true
 
   worldContainer.addChild(groupContainer)
   worldContainer.addChild(lineGraphics)
+  worldContainer.addChild(groupHeaderContainer)
   worldContainer.addChild(tableContainer)
   worldContainer.addChild(objectContainer)
   stageContainer.addChild(backgroundGraphics)
@@ -2050,6 +2124,7 @@ const destroyPixi = () => {
   worldContainer = null
   groupContainer = null
   lineGraphics = null
+  groupHeaderContainer = null
   tableContainer = null
   objectContainer = null
 }
