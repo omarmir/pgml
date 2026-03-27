@@ -29,6 +29,9 @@ test('home page exposes the three schema-source lanes and the SQL dump placehold
   await expect(page.locator('[data-source-card="browser-local-storage"]')).toContainText('Browser local storage')
   await expect(page.locator('[data-source-card="computer-saved-file"]')).toContainText('Computer saved file')
   await expect(page.locator('[data-source-card="hosted-database"]')).toContainText('Hosted database')
+  await expect(page.locator('[data-source-card="browser-local-storage"]')).toContainText('Open bundled example')
+  await expect(page.locator('[data-source-card="computer-saved-file"]')).toContainText('Save example to a new file')
+  await expect(page.locator('[data-source-card="hosted-database"]')).toContainText('Preview hosted example')
   await expect(page.getByText('SQL dump', { exact: true })).toHaveCount(3)
   await expect(page.getByRole('button', { name: 'Import a pg_dump' })).toHaveCount(3)
   await expect(page.locator('[data-spec-banner="true"]')).toContainText('Need the language reference before you open the studio?')
@@ -162,7 +165,7 @@ test('pg_dump modal keeps the top bar visible and the light theme root aligned w
 test('studio header includes a Home link back to the source chooser', async ({ goto, page }) => {
   await goto('/')
 
-  await page.locator('[data-source-card="browser-local-storage"]').getByRole('link', { name: 'Start from example' }).click()
+  await page.locator('[data-source-card="browser-local-storage"]').getByRole('link', { name: 'Open bundled example' }).click()
 
   await expect.poll(async () => readPgmlEditorValue(getPgmlEditor(page))).toContain('TableGroup Core')
   await page.getByRole('link', { name: 'Home' }).click()
@@ -313,7 +316,7 @@ test('home page can seed a new computer-backed file from the bundled example', a
   const recentFileId = await queueMockComputerSave(page, 'example-seeded-schema.pgml')
 
   expect(recentFileId).toBeTruthy()
-  await page.locator('[data-source-card="computer-saved-file"]').getByRole('button', { name: 'Start from example' }).click()
+  await page.locator('[data-source-card="computer-saved-file"]').getByRole('button', { name: 'Save example to a new file' }).click()
   await confirmComputerFileAccess(page, 'Continue to save dialog')
 
   const editor = getPgmlEditor(page)

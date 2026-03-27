@@ -680,7 +680,7 @@ const sourceCards = computed<SourceCardDefinition[]>(() => {
         {
           description: 'Load the bundled PGML example so you can explore the studio from a known starting point.',
           icon: 'i-lucide-flask-conical',
-          label: 'Start from example',
+          label: 'Open bundled example',
           to: {
             path: '/diagram',
             query: browserExampleQuery
@@ -719,7 +719,7 @@ const sourceCards = computed<SourceCardDefinition[]>(() => {
         {
           description: 'Save the bundled PGML example to a new `.pgml` file first, then continue editing that file in the studio.',
           icon: 'i-lucide-flask-conical',
-          label: 'Start from example',
+          label: 'Save example to a new file',
           triggerAction: {
             id: 'create-computer-file:example',
             value: 'example'
@@ -758,7 +758,7 @@ const sourceCards = computed<SourceCardDefinition[]>(() => {
         {
           description: 'Load a bundled example for the hosted workflow once database connection support is wired in.',
           icon: 'i-lucide-flask-conical',
-          label: 'Start from example',
+          label: 'Preview hosted example',
           placeholder: true
         }
       ],
