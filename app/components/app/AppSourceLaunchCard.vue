@@ -143,6 +143,18 @@ const emitItemAction = (item: SourceLaunchCardItem) => {
       </div>
     </div>
 
+    <div
+      data-source-card-inventory="true"
+      class="mt-4 flex items-center justify-between border border-[color:var(--studio-shell-border)] bg-[color:var(--studio-input-bg)] px-3 py-2 sm:hidden"
+    >
+      <p class="font-mono text-[0.56rem] uppercase tracking-[0.16em] text-[color:var(--studio-shell-label)]">
+        Inventory
+      </p>
+      <p class="text-sm font-semibold text-[color:var(--studio-shell-text)]">
+        {{ inventory }}
+      </p>
+    </div>
+
     <div class="mt-6 grid flex-1 content-start gap-3">
       <template
         v-for="operation in operations"

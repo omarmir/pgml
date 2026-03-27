@@ -38,6 +38,23 @@ test('home page exposes the three schema-source lanes and the SQL dump placehold
   await expect(page.getByRole('link', { name: 'Jump to spec' })).toHaveCount(1)
 })
 
+test('home page keeps source inventory visible on mobile cards', async ({ goto, page }) => {
+  await page.setViewportSize({
+    width: 390,
+    height: 844
+  })
+  await goto('/')
+
+  const browserCard = page.locator('[data-source-card="browser-local-storage"]')
+  const browserInventory = browserCard.locator('[data-source-card-inventory="true"]')
+  const computerInventory = page.locator('[data-source-card="computer-saved-file"] [data-source-card-inventory="true"]')
+
+  await expect(browserInventory).toBeVisible()
+  await expect(browserInventory).toContainText('Inventory')
+  await expect(browserInventory).toContainText('0 saved schemas')
+  await expect(computerInventory).toContainText('0 recent files')
+})
+
 test('studio redirects back home until the user launches it from the source chooser', async ({ goto, page }) => {
   await goto('/diagram')
 
