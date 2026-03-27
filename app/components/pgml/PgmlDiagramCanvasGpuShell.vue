@@ -2357,7 +2357,11 @@ const diagramPanelTitle = computed(() => {
 
 const diagramPanelDescription = computed(() => {
   if (activePanelTab.value === 'entities') {
-    return `${hiddenEntityCount.value} hidden in saved properties.`
+    const entitySummaryLabel = normalizedEntitySearchQuery.value
+      ? `${filteredEntityResultCount.value} matches`
+      : `${filteredEntityResultCount.value} visible rows`
+
+    return `${entitySummaryLabel} · ${hiddenEntityCount.value} hidden in saved properties.`
   }
 
   if (activePanelTab.value === 'export') {
