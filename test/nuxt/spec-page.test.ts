@@ -8,6 +8,8 @@ describe('Spec page source', () => {
     expect(file).toContain('label="Choose a studio source"')
     expect(file).toContain('to="/"')
     expect(file).toContain('data-testid="hero-quick-start"')
+    expect(file).toContain('VersionSet "Commerce schema"')
+    expect(file).toContain('Version v2')
     expect(file).toContain('TableGroup Commerce')
     expect(file).toContain('Table public.orders')
     expect(file).toContain('Function register_entity(entity_kind text) returns trigger [replace]')

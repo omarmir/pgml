@@ -20,7 +20,7 @@ import {
 } from '~/utils/pgml-document'
 import { useStudioSessionStore } from '~/stores/studio-session'
 import { useStudioSourcesStore } from '~/stores/studio-sources'
-import { pgmlExample } from '~/utils/pgml'
+import { pgmlVersionedExample } from '~/utils/pgml'
 import {
   joinStudioClasses,
   studioBodyCopyClass,
@@ -298,10 +298,12 @@ const createComputerFile = async (input: {
 const createComputerFileFromLaunch = async (launchType: 'example' | 'new') => {
   await createComputerFile({
     name: launchType === 'example' ? exampleSchemaName : untitledSchemaName,
-    text: buildVersionedPgmlText({
-      name: launchType === 'example' ? exampleSchemaName : untitledSchemaName,
-      snapshotSource: launchType === 'example' ? pgmlExample : ''
-    })
+    text: launchType === 'example'
+      ? pgmlVersionedExample
+      : buildVersionedPgmlText({
+          name: untitledSchemaName,
+          snapshotSource: ''
+        })
   })
 }
 const openRecentComputerFileFromLaunch = async (recentFileId: string) => {

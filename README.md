@@ -80,8 +80,46 @@ PGML documents are rooted in `VersionSet`. The mutable draft lives in `Workspace
 ```pgml
 VersionSet "Billing schema" {
   Workspace {
-    based_on: v1
+    based_on: v_programs
     updated_at: "2026-03-29T14:12:00Z"
+
+    Snapshot {
+      TableGroup Commerce {
+        public.orders
+      }
+
+      Table public.users {
+        id uuid [pk]
+        email text [not null]
+        status text
+      }
+
+      Table public.orders {
+        id uuid [pk]
+        customer_id uuid [ref: > public.users.id, delete: restrict]
+        total_cents integer [not null]
+      }
+    }
+  }
+
+  Version v_foundation {
+    name: "Foundation implementation"
+    role: implementation
+    created_at: "2026-03-20T15:00:00Z"
+
+    Snapshot {
+      Table public.users {
+        id uuid [pk]
+        email text [not null]
+      }
+    }
+  }
+
+  Version v_programs {
+    name: "Programs implementation sync"
+    role: implementation
+    parent: v_foundation
+    created_at: "2026-03-28T15:00:00Z"
 
     Snapshot {
       Table public.users {
@@ -92,15 +130,22 @@ VersionSet "Billing schema" {
     }
   }
 
-  Version v1 {
-    name: "Initial implementation"
-    role: implementation
-    created_at: "2026-03-20T15:00:00Z"
+  Version v_analytics {
+    name: "Analytics branch"
+    role: design
+    parent: v_foundation
+    created_at: "2026-03-29T09:15:00Z"
 
     Snapshot {
       Table public.users {
         id uuid [pk]
         email text [not null]
+      }
+
+      Table public.orders {
+        id uuid [pk]
+        customer_id uuid [ref: > public.users.id, delete: restrict]
+        total_cents integer [not null]
       }
     }
   }

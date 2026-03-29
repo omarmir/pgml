@@ -80,6 +80,7 @@ import {
   buildPgmlWithNodeProperties,
   parsePgml,
   pgmlExample,
+  pgmlVersionedExample,
   stripPgmlPropertiesBlocks,
   type PgmlNodeProperties,
   type PgmlSourceRange
@@ -294,6 +295,7 @@ const {
   documentName: computed(() => versionDocumentName.value),
   source
 })
+loadVersionedDocument(pgmlVersionedExample)
 const {
   isEditorPanelVisible,
   isCompactStudioLayout,
@@ -464,7 +466,7 @@ const {
   autosaveEnabled: computed(() => currentPersistenceSource.value === 'browser'),
   buildSchemaText,
   canEmbedLayout,
-  initialSource: versionedDocumentSource.value,
+  initialSource: pgmlVersionedExample,
   restoreLatestOnSetup: studioLaunchRequest.value === null,
   source
 })
@@ -754,7 +756,10 @@ const workspaceStatus = computed(() => {
 const compareMigrationBundle = computed(() => {
   return buildPgmlVersionMigrationBundle({
     baseSource: compareBaseSource.value,
+    baseVersionId: versionCompareBaseId.value,
+    document: versionDocument.value,
     hasSelectedBase: versionCompareBaseId.value !== null,
+    targetId: versionCompareTargetId.value,
     targetSource: compareTargetSource.value
   }, {
     baseName: `${exportBaseName.value}-${slugifySchemaName(compareBaseLabel.value)}-to-${slugifySchemaName(compareTargetLabel.value)}`
@@ -1743,6 +1748,8 @@ onBeforeUnmount(() => {
           :has-blocking-source-errors="hasBlockingSourceErrors"
           :migration-file-name="compareMigrationBundle.sql.migration.fileName"
           :migration-has-changes="compareMigrationBundle.meta.hasChanges"
+          :migration-kysely="compareMigrationBundle.kysely.migration.content"
+          :migration-kysely-file-name="compareMigrationBundle.kysely.migration.fileName"
           :migration-sql="compareMigrationBundle.sql.migration.content"
           :migration-warnings="compareMigrationBundle.sql.migration.warnings"
           :latest-version-id="latestVersionId"
@@ -1831,6 +1838,8 @@ onBeforeUnmount(() => {
           :has-blocking-source-errors="hasBlockingSourceErrors"
           :migration-file-name="compareMigrationBundle.sql.migration.fileName"
           :migration-has-changes="compareMigrationBundle.meta.hasChanges"
+          :migration-kysely="compareMigrationBundle.kysely.migration.content"
+          :migration-kysely-file-name="compareMigrationBundle.kysely.migration.fileName"
           :migration-sql="compareMigrationBundle.sql.migration.content"
           :migration-warnings="compareMigrationBundle.sql.migration.warnings"
           :latest-version-id="latestVersionId"

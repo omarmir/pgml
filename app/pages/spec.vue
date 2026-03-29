@@ -75,8 +75,46 @@ const documentationExamples = [
     description: 'PGML documents are rooted in VersionSet. Workspace is the mutable draft, Version blocks are immutable checkpoints, and Snapshot contains the existing schema grammar.',
     code: `VersionSet "Billing schema" {
   Workspace {
-    based_on: v1
+    based_on: v_programs
     updated_at: "2026-03-29T14:12:00Z"
+
+    Snapshot {
+      TableGroup Commerce {
+        public.orders
+      }
+
+      Table public.users {
+        id uuid [pk]
+        email text [not null]
+        status text
+      }
+
+      Table public.orders {
+        id uuid [pk]
+        customer_id uuid [ref: > public.users.id, delete: restrict]
+        total_cents integer [not null]
+      }
+    }
+  }
+
+  Version v_foundation {
+    name: "Foundation implementation"
+    role: implementation
+    created_at: "2026-03-20T15:00:00Z"
+
+    Snapshot {
+      Table public.users {
+        id uuid [pk]
+        email text [not null]
+      }
+    }
+  }
+
+  Version v_programs {
+    name: "Programs implementation sync"
+    role: implementation
+    parent: v_foundation
+    created_at: "2026-03-28T15:00:00Z"
 
     Snapshot {
       Table public.users {
@@ -87,15 +125,22 @@ const documentationExamples = [
     }
   }
 
-  Version v1 {
-    name: "Initial implementation"
-    role: implementation
-    created_at: "2026-03-20T15:00:00Z"
+  Version v_analytics {
+    name: "Analytics branch"
+    role: design
+    parent: v_foundation
+    created_at: "2026-03-29T09:15:00Z"
 
     Snapshot {
       Table public.users {
         id uuid [pk]
         email text [not null]
+      }
+
+      Table public.orders {
+        id uuid [pk]
+        customer_id uuid [ref: > public.users.id, delete: restrict]
+        total_cents integer [not null]
       }
     }
   }
@@ -179,6 +224,54 @@ Properties "custom-type:Domain:email_address" {
 
 const heroQuickStartCode = `VersionSet "Commerce schema" {
   Workspace {
+    based_on: v2
+    updated_at: "2026-03-29T14:12:00Z"
+
+    Snapshot {
+      TableGroup Commerce {
+        public.products
+        public.orders
+        public.order_items
+      }
+
+      Table public.orders {
+        id uuid [pk]
+        tenant_id uuid [not null, ref: > public.tenants.id]
+        customer_id uuid [ref: > public.users.id, delete: restrict]
+        total_cents integer [not null]
+      }
+
+      Function register_entity(entity_kind text) returns trigger [replace] {
+        source: $sql$
+          CREATE OR REPLACE FUNCTION public.register_entity(entity_kind text)
+          RETURNS trigger AS $$
+          BEGIN
+            RETURN NEW;
+          END;
+          $$ LANGUAGE plpgsql;
+        $sql$
+      }
+    }
+  }
+
+  Version v1 {
+    name: "Initial implementation"
+    role: implementation
+    created_at: "2026-03-20T15:00:00Z"
+
+    Snapshot {
+      Table public.products {
+        id uuid [pk]
+      }
+    }
+  }
+
+  Version v2 {
+    name: "Commerce design"
+    role: design
+    parent: v1
+    created_at: "2026-03-24T10:30:00Z"
+
     Snapshot {
       TableGroup Commerce {
         public.products

@@ -2171,41 +2171,61 @@ export const parsePgml = (source: string) => {
   } satisfies PgmlSchemaModel
 }
 
-export const pgmlExample = `TableGroup Core {
+const pgmlExampleFoundationSnapshot = `TableGroup Core {
   public.tenants
   public.users
   public.roles
   Note: Shared identity and account ownership
 }
 
-TableGroup Commerce {
+Enum role_kind {
+  owner
+  analyst
+  operator
+  support
+}
+
+Domain email_address {
+  base: text
+  check: VALUE ~* '^[^@]+@[^@]+\\\\.[^@]+$'
+}
+
+Table public.tenants {
+  id uuid [pk]
+  name text [not null]
+  slug text [unique, not null]
+  created_at timestamptz [default: now()]
+  Index idx_tenants_slug (slug) [type: btree]
+}
+
+Table public.roles {
+  id uuid [pk]
+  key role_kind [unique, not null]
+  label text [not null]
+}
+
+Table public.users {
+  id uuid [pk]
+  tenant_id uuid [not null, ref: > public.tenants.id, delete: cascade, update: cascade]
+  role_id uuid [not null, ref: > public.roles.id]
+  email email_address [unique, not null]
+  display_name text [not null]
+  created_at timestamptz [default: now()]
+  Constraint chk_users_email: email <> ''
+}`
+
+const pgmlExampleCommerceAdditions = `TableGroup Commerce {
   public.products
   public.orders
   public.order_items
   Note: Buying flow and inventory edges
 }
 
-TableGroup Programs {
-  public.common_entity
-  public.funding_opportunity_profile
-  Note: Shared entity registration hooks for programs
-}
-
-Enum role_kind {
-  owner
-  analyst
-  operator
-}
-
-Enum entity_type {
-  fundingopportunity
-  order
-  user
-}
-
-Domain email_address {
-  base: text
-  check: VALUE ~* '^[^@]+@[^@]+\\\\.[^@]+$'
+Enum order_status {
+  draft
+  submitted
+  fulfilled
+  cancelled
 }
 
 Sequence order_number_seq {
@@ -2225,46 +2245,6 @@ Sequence order_number_seq {
   $sql$
 }
 
-Sequence common_entity_id_seq {
-  docs {
-    summary: "Primary allocator for rows in Common_Entity."
-    purpose: "Supports entity-backed trigger functions shared across domains."
-  }
-
-  source: $sql$
-    CREATE SEQUENCE public.common_entity_id_seq
-      AS bigint
-      START WITH 1000
-      INCREMENT BY 1
-      CACHE 25
-      OWNED BY public.common_entity.id;
-  $sql$
-}
-
-Table public.tenants {
-  id uuid [pk]
-  name text [not null]
-  slug text [unique, not null]
-  created_at timestamptz [default: now()]
-  Index idx_tenants_slug (slug) [type: btree]
-}
-
-Table public.roles {
-  id uuid [pk]
-  key role_kind [unique, not null]
-  label text [not null]
-}
-
-Table public.users {
-  id uuid [pk]
-  tenant_id uuid [not null, ref: > public.tenants.id]
-  role_id uuid [not null, ref: > public.roles.id]
-  email email_address [unique, not null]
-  display_name text [not null]
-  created_at timestamptz [default: now()]
-  Constraint chk_users_email: email <> ''
-}
-
 Table public.products {
   id uuid [pk]
   tenant_id uuid [not null, ref: > public.tenants.id]
@@ -2279,8 +2259,8 @@ Table public.orders {
   id uuid [pk]
   tenant_id uuid [not null, ref: > public.tenants.id]
   order_number bigint [not null, unique, default: nextval('order_number_seq')]
-  customer_id uuid [ref: > public.users.id]
-  status text [not null]
+  customer_id uuid [ref: > public.users.id, delete: restrict, update: cascade]
+  status order_status [not null]
   submitted_at timestamptz
   total_cents integer [not null]
   Constraint chk_orders_total: total_cents >= 0
@@ -2292,21 +2272,6 @@ Table public.order_items {
   product_id uuid [not null, ref: > public.products.id]
   quantity integer [not null]
   unit_price_cents integer [not null]
-}
-
-Table public.common_entity {
-  id bigint [pk, default: nextval('common_entity_id_seq')]
-  entity_type entity_type [not null]
-  created_at timestamptz [default: now()]
-}
-
-Table public.funding_opportunity_profile {
-  id bigint [pk]
-  tenant_id uuid [not null, ref: > public.tenants.id]
-  owner_id uuid [ref: > public.users.id]
-  title text [not null]
-  status text [not null]
-  published_at timestamptz
 }
 
 Function recalc_order_total(order_uuid uuid) returns void [replace] {
@@ -2360,6 +2325,69 @@ Function sync_order_total() returns trigger [replace] {
   $sql$
 }
 
+Trigger trg_order_items_total_sync on public.order_items {
+  docs {
+    summary: "Recalculates the parent order total whenever line items change."
+  }
+
+  affects {
+    writes: [public.orders.total_cents]
+    depends_on: [sync_order_total, recalc_order_total, public.order_items]
+  }
+
+  source: $sql$
+    CREATE TRIGGER trg_order_items_total_sync
+      AFTER INSERT OR UPDATE OR DELETE ON public.order_items
+      FOR EACH ROW
+      EXECUTE FUNCTION public.sync_order_total();
+  $sql$
+}`
+
+const pgmlExampleProgramsAdditions = `TableGroup Programs {
+  public.common_entity
+  public.funding_opportunity_profile
+  Note: Shared entity registration hooks for programs
+}
+
+Enum entity_type {
+  fundingopportunity
+  order
+  user
+}
+
+Sequence common_entity_id_seq {
+  docs {
+    summary: "Primary allocator for rows in Common_Entity."
+    purpose: "Supports entity-backed trigger functions shared across domains."
+  }
+
+  source: $sql$
+    CREATE SEQUENCE public.common_entity_id_seq
+      AS bigint
+      START WITH 1000
+      INCREMENT BY 1
+      CACHE 25
+      OWNED BY public.common_entity.id;
+  $sql$
+}
+
+Table public.common_entity {
+  id bigint [pk, default: nextval('common_entity_id_seq')]
+  entity_type entity_type [not null]
+  created_at timestamptz [default: now()]
+}
+
+Table public.funding_opportunity_profile {
+  id bigint [pk]
+  tenant_id uuid [not null, ref: > public.tenants.id]
+  owner_id uuid
+  title text [not null]
+  status text [not null]
+  published_at timestamptz
+}
+
+Ref: public.funding_opportunity_profile.owner_id > public.users.id
+
 Function register_entity(entity_kind text) returns trigger [replace] {
   docs {
     summary: "Allocates a Common_Entity row and assigns the generated id to NEW.id."
@@ -2387,6 +2415,39 @@ Function register_entity(entity_kind text) returns trigger [replace] {
     END;
     $$ LANGUAGE plpgsql;
   $sql$
+}
+
+Trigger trg_register_fundingopportunity on public.funding_opportunity_profile {
+  docs {
+    summary: "Registers a Common_Entity id before a funding opportunity is inserted."
+    purpose: "Ensures the Programs domain participates in the shared entity registry."
+  }
+
+  affects {
+    writes: [public.common_entity]
+    sets: [public.funding_opportunity_profile.id]
+    depends_on: [register_entity]
+  }
+
+  source: $sql$
+    CREATE TRIGGER trg_register_fundingopportunity
+      BEFORE INSERT ON public.funding_opportunity_profile
+      FOR EACH ROW
+      EXECUTE FUNCTION public.register_entity('fundingopportunity');
+  $sql$
+}`
+
+const pgmlExampleAnalyticsAdditions = `TableGroup Analytics {
+  audit.order_events
+  analytics.order_rollups
+  Note: Read models and event capture around order activity
+}
+
+Composite address_record {
+  line1 text
+  city text
+  region text
+  postal_code text
 }
 
 Procedure archive_orders(retention_days integer) [replace] {
@@ -2424,41 +2485,208 @@ Procedure archive_orders(retention_days integer) [replace] {
   $sql$
 }
 
-Trigger trg_order_items_total_sync on public.order_items {
+Table audit.order_events {
+  id bigint [pk]
+  order_id uuid [not null]
+  event_name text [not null]
+  payload jsonb [not null]
+  captured_at timestamptz [default: now()]
+  Index idx_order_events_order_id (order_id) [type: btree]
+}
+
+Table analytics.order_rollups {
+  order_id uuid [pk]
+  tenant_id uuid [not null]
+  latest_status order_status [not null]
+  customer_email email_address
+  shipping_address address_record
+  last_event_at timestamptz
+  Index idx_order_rollups_status (latest_status) [type: btree]
+}
+
+Ref: audit.order_events.order_id > public.orders.id
+Ref: analytics.order_rollups.order_id > public.orders.id
+Ref: analytics.order_rollups.tenant_id > public.tenants.id
+
+Function audit.capture_order_event() returns trigger [replace] {
   docs {
-    summary: "Recalculates the parent order total whenever line items change."
+    summary: "Records an audit event whenever order status or totals change."
+    purpose: "Feeds the event stream that powers reporting views and replayable debugging."
   }
 
   affects {
-    writes: [public.orders.total_cents]
-    depends_on: [sync_order_total, recalc_order_total, public.order_items]
+    reads: [public.orders.status, public.orders.total_cents]
+    writes: [audit.order_events]
+    depends_on: [audit.order_events, public.orders]
   }
 
   source: $sql$
-    CREATE TRIGGER trg_order_items_total_sync
-      AFTER INSERT OR UPDATE OR DELETE ON public.order_items
-      FOR EACH ROW
-      EXECUTE FUNCTION public.sync_order_total();
+    CREATE OR REPLACE FUNCTION audit.capture_order_event()
+    RETURNS trigger AS $$
+    BEGIN
+      INSERT INTO audit.order_events (id, order_id, event_name, payload)
+      VALUES (
+        EXTRACT(EPOCH FROM now())::bigint,
+        NEW.id,
+        'order.changed',
+        jsonb_build_object(
+          'status', NEW.status,
+          'total_cents', NEW.total_cents
+        )
+      );
+
+      RETURN NEW;
+    END;
+    $$ LANGUAGE plpgsql;
   $sql$
 }
 
-Trigger trg_register_fundingopportunity on public.funding_opportunity_profile {
+Trigger trg_orders_audit on public.orders {
   docs {
-    summary: "Registers a Common_Entity id before a funding opportunity is inserted."
-    purpose: "Ensures the Programs domain participates in the shared entity registry."
+    summary: "Captures analytics-facing audit events after order updates."
   }
 
   affects {
-    writes: [public.common_entity]
-    sets: [public.funding_opportunity_profile.id]
-    depends_on: [register_entity]
+    writes: [audit.order_events]
+    depends_on: [capture_order_event, audit.order_events]
   }
 
   source: $sql$
-    CREATE TRIGGER trg_register_fundingopportunity
-      BEFORE INSERT ON public.funding_opportunity_profile
+    CREATE TRIGGER trg_orders_audit
+      AFTER UPDATE ON public.orders
       FOR EACH ROW
-      EXECUTE FUNCTION public.register_entity('fundingopportunity');
+      WHEN (OLD.status IS DISTINCT FROM NEW.status OR OLD.total_cents IS DISTINCT FROM NEW.total_cents)
+      EXECUTE FUNCTION audit.capture_order_event();
   $sql$
+}`
+
+const indentPgmlExampleBlock = (
+  value: string,
+  indent = '      '
+) => {
+  return value
+    .trim()
+    .split('\n')
+    .map(line => `${indent}${line}`)
+    .join('\n')
 }
-`
+
+const pgmlExampleCommerceSnapshot = `${pgmlExampleFoundationSnapshot}
+
+${pgmlExampleCommerceAdditions}`
+
+const pgmlExampleProgramsSnapshot = `${pgmlExampleCommerceSnapshot}
+
+${pgmlExampleProgramsAdditions}`
+
+const pgmlExampleAnalyticsSnapshot = `${pgmlExampleCommerceSnapshot}
+
+${pgmlExampleAnalyticsAdditions}`
+
+export const pgmlExample = `${pgmlExampleProgramsSnapshot}
+
+${pgmlExampleAnalyticsAdditions}
+
+Properties "group:Core" {
+  x: 40
+  y: 80
+}
+
+Properties "group:Commerce" {
+  x: 520
+  y: 80
+}
+
+Properties "group:Programs" {
+  x: 40
+  y: 430
+}
+
+Properties "group:Analytics" {
+  x: 520
+  y: 430
+  color: #0f766e
+  masonry: true
+  table_columns: 2
+}
+
+Properties "custom-type:Enum:role_kind" {
+  x: 40
+  y: 20
+}
+
+Properties "custom-type:Domain:email_address" {
+  x: 220
+  y: 20
+}
+
+Properties "custom-type:Enum:order_status" {
+  x: 520
+  y: 20
+}
+
+Properties "custom-type:Enum:entity_type" {
+  x: 220
+  y: 360
+}
+
+Properties "custom-type:Composite:address_record" {
+  x: 1080
+  y: 620
+  color: #0891b2
+  collapsed: false
+}`
+
+export const pgmlVersionedExample = `VersionSet "Example schema" {
+  Workspace {
+    based_on: v_programs
+    updated_at: "2026-03-29T14:12:00Z"
+
+    Snapshot {
+${indentPgmlExampleBlock(pgmlExample)}
+    }
+  }
+
+  Version v_foundation {
+    name: "Foundation implementation"
+    role: implementation
+    created_at: "2026-03-20T15:00:00Z"
+
+    Snapshot {
+${indentPgmlExampleBlock(pgmlExampleFoundationSnapshot)}
+    }
+  }
+
+  Version v_commerce {
+    name: "Commerce expansion"
+    role: design
+    parent: v_foundation
+    created_at: "2026-03-23T10:00:00Z"
+
+    Snapshot {
+${indentPgmlExampleBlock(pgmlExampleCommerceSnapshot)}
+    }
+  }
+
+  Version v_programs {
+    name: "Programs implementation sync"
+    role: implementation
+    parent: v_commerce
+    created_at: "2026-03-26T09:30:00Z"
+
+    Snapshot {
+${indentPgmlExampleBlock(pgmlExampleProgramsSnapshot)}
+    }
+  }
+
+  Version v_analytics {
+    name: "Analytics branch"
+    role: design
+    parent: v_commerce
+    created_at: "2026-03-28T16:45:00Z"
+
+    Snapshot {
+${indentPgmlExampleBlock(pgmlExampleAnalyticsSnapshot)}
+    }
+  }
+}`

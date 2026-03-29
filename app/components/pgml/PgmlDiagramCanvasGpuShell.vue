@@ -235,6 +235,8 @@ const {
   mobilePanelTab = null,
   migrationFileName = 'pgml-version.migration.sql',
   migrationHasChanges = false,
+  migrationKysely = '',
+  migrationKyselyFileName = 'pgml-version.migration.ts',
   migrationSql = '',
   migrationWarnings = [],
   model,
@@ -259,6 +261,8 @@ const {
   mobilePanelTab?: DiagramPanelTab | null
   migrationFileName?: string
   migrationHasChanges?: boolean
+  migrationKysely?: string
+  migrationKyselyFileName?: string
   migrationSql?: string
   migrationWarnings?: string[]
   model: PgmlSchemaModel
@@ -4564,6 +4568,8 @@ defineExpose<{
         :latest-version-id="latestVersionId"
         :migration-file-name="migrationFileName"
         :migration-has-changes="migrationHasChanges"
+        :migration-kysely="migrationKysely"
+        :migration-kysely-file-name="migrationKyselyFileName"
         :migration-sql="migrationSql"
         :migration-warnings="migrationWarnings"
         :preview-target-id="previewTargetId"

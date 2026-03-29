@@ -34,7 +34,6 @@ import {
   getPgmlVersionById,
   getPgmlVersionAncestorCount,
   getPgmlVersionDepth,
-  getPgmlVersionLineage,
   getPgmlVersionLineageIds,
   getPgmlSiblingVersionCount,
   getPgmlWorkspaceBaseVersion,
@@ -177,8 +176,6 @@ export const usePgmlStudioVersionHistory = (
   const latestImplementationVersion = computed(() => getLatestPgmlVersionByRole(document.value, 'implementation'))
   const versionItems = computed(() => {
     return document.value.versions.map((version) => {
-      const lineage = getPgmlVersionLineage(document.value, version.id)
-
       return {
         ancestorCount: getPgmlVersionAncestorCount(document.value, version.id),
         branchLeafCount: getPgmlBranchLeafVersionCount(document.value, version.id),
@@ -191,8 +188,7 @@ export const usePgmlStudioVersionHistory = (
         depth: getPgmlVersionDepth(document.value, version.id),
         ...version,
         parentVersionLabel: version.parentVersionId
-          ? getPgmlVersionById(document.value, version.parentVersionId)?.name
-            || version.parentVersionId
+          ? (getPgmlVersionById(document.value, version.parentVersionId)?.name || version.parentVersionId)
           : null,
         isLeaf: isPgmlLeafVersion(document.value, version.id),
         isLatestByRole: version.id === (

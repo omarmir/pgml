@@ -187,6 +187,10 @@ test('studio header includes a Home link back to the source chooser', async ({ g
   await page.locator('[data-source-card="browser-local-storage"]').getByRole('link', { name: 'Open bundled example' }).click()
 
   await expect.poll(async () => readPgmlEditorValue(getPgmlEditor(page))).toContain('TableGroup Core')
+  await page.locator('[data-diagram-panel-tab="versions"]').click()
+  await expect(page.locator('[data-diagram-versions-panel="true"]')).toContainText('Locked')
+  await expect(page.locator('[data-version-card="workspace"]')).toContainText('Programs implementation sync')
+  await expect(page.locator('[data-diagram-versions-panel="true"]').locator('[data-version-card]')).toHaveCount(5)
   await page.getByRole('link', { name: 'Home' }).click()
 
   await expect(page).toHaveURL(/\/$/)
@@ -345,7 +349,9 @@ test('home page can seed a new computer-backed file from the bundled example', a
 
   const state = await readMockComputerFileState(page)
 
-  expect(recentFileId ? state?.files[recentFileId]?.text : null).toContain('TableGroup Core')
+  expect(recentFileId ? state?.files[recentFileId]?.text : null).toContain('VersionSet "Example schema"')
+  expect(recentFileId ? state?.files[recentFileId]?.text : null).toContain('Version v_programs {')
+  expect(recentFileId ? state?.files[recentFileId]?.text : null).toContain('Composite address_record')
 })
 
 test('home page shows an error when both pasted text and a pg_dump file are provided', async ({ goto, page }) => {
@@ -401,6 +407,8 @@ test('spec page keeps the hero preview focused and documents the current section
   const heroQuickStart = page.locator('[data-testid="hero-quick-start"]')
 
   await expect(heroQuickStart).toBeVisible()
+  await expect(heroQuickStart).toContainText('VersionSet "Commerce schema"')
+  await expect(heroQuickStart).toContainText('Version v2')
   await expect(heroQuickStart).toContainText('TableGroup Commerce')
   await expect(heroQuickStart).toContainText('Table public.orders')
   await expect(heroQuickStart).toContainText('Function register_entity(entity_kind text) returns trigger [replace]')

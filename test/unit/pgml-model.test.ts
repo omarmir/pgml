@@ -5,8 +5,10 @@ import {
   getPgmlSourceScrollTop,
   getPgmlSourceSelectionRange,
   parsePgml,
-  pgmlExample
+  pgmlExample,
+  pgmlVersionedExample
 } from '../../app/utils/pgml'
+import { parsePgmlDocument } from '../../app/utils/pgml-document'
 
 describe('PGML model parsing', () => {
   it('parses the bundled example into grouped tables, refs, and custom types', () => {
@@ -18,8 +20,8 @@ describe('PGML model parsing', () => {
       && reference.toColumn === 'id'
     )
 
-    expect(model.groups.map(group => group.name)).toEqual(['Core', 'Commerce', 'Programs'])
-    expect(model.tables).toHaveLength(8)
+    expect(model.groups.map(group => group.name)).toEqual(['Core', 'Commerce', 'Programs', 'Analytics'])
+    expect(model.tables).toHaveLength(10)
     expect(model.references).toEqual(expect.arrayContaining([
       expect.objectContaining({
         fromTable: 'public.users',
@@ -32,16 +34,48 @@ describe('PGML model parsing', () => {
         fromColumn: 'customer_id',
         toTable: 'public.users',
         toColumn: 'id'
+      }),
+      expect.objectContaining({
+        fromTable: 'analytics.order_rollups',
+        fromColumn: 'order_id',
+        toTable: 'public.orders',
+        toColumn: 'id'
       })
     ]))
     expect(orderCustomerReferences).toHaveLength(1)
     expect(model.customTypes).toEqual(expect.arrayContaining([
       expect.objectContaining({ kind: 'Enum', name: 'role_kind' }),
+      expect.objectContaining({ kind: 'Enum', name: 'order_status' }),
       expect.objectContaining({ kind: 'Enum', name: 'entity_type' }),
-      expect.objectContaining({ kind: 'Domain', name: 'email_address' })
+      expect.objectContaining({ kind: 'Domain', name: 'email_address' }),
+      expect.objectContaining({ kind: 'Composite', name: 'address_record' })
     ]))
     expect(model.tables.find(table => table.fullName === 'public.orders')?.groupName).toBe('Commerce')
-    expect(model.schemas).toEqual(['public'])
+    expect(model.tables.find(table => table.fullName === 'analytics.order_rollups')?.groupName).toBe('Analytics')
+    expect(model.schemas).toEqual(expect.arrayContaining(['public', 'audit', 'analytics']))
+    expect(model.schemas).toHaveLength(3)
+  })
+
+  it('ships the bundled studio example as a multi-version document with branch history', () => {
+    const document = parsePgmlDocument(pgmlVersionedExample)
+
+    expect(document.workspace.basedOnVersionId).toBe('v_programs')
+    expect(document.versions.map(version => version.id)).toEqual([
+      'v_foundation',
+      'v_commerce',
+      'v_programs',
+      'v_analytics'
+    ])
+    expect(document.versions.map(version => version.role)).toEqual([
+      'implementation',
+      'design',
+      'implementation',
+      'design'
+    ])
+    expect(document.workspace.snapshot.source).toContain('TableGroup Analytics')
+    expect(document.workspace.snapshot.source).toContain('Composite address_record')
+    expect(document.workspace.snapshot.source).toContain('Procedure archive_orders(retention_days integer) [replace]')
+    expect(document.workspace.snapshot.source).toContain('Properties "group:Analytics"')
   })
 
   it('derives sequence ownership and routine metadata from source blocks', () => {

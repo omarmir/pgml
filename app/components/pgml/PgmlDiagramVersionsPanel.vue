@@ -66,6 +66,8 @@ const {
   latestVersionId = null,
   migrationFileName = 'pgml-version.migration.sql',
   migrationHasChanges = false,
+  migrationKysely = '',
+  migrationKyselyFileName = 'pgml-version.migration.ts',
   migrationSql = '',
   migrationWarnings = [],
   previewTargetId = 'workspace',
@@ -83,6 +85,8 @@ const {
   latestVersionId?: string | null
   migrationFileName?: string
   migrationHasChanges?: boolean
+  migrationKysely?: string
+  migrationKyselyFileName?: string
   migrationSql?: string
   migrationWarnings?: string[]
   previewTargetId?: string
@@ -101,6 +105,7 @@ const emit = defineEmits<{
 }>()
 
 const copyState: Ref<'idle' | 'success' | 'error'> = ref('idle')
+const activeMigrationFormat: Ref<'sql' | 'kysely'> = ref('sql')
 const copyButtonClass = joinStudioClasses(studioButtonClasses.secondary, 'text-[0.65rem]')
 const primaryButtonClass = joinStudioClasses(studioButtonClasses.primary, 'text-[0.65rem]')
 const secondaryButtonClass = joinStudioClasses(studioButtonClasses.secondary, 'text-[0.65rem]')
@@ -123,6 +128,7 @@ const compareTargetOption = computed(() => {
 })
 const hasDiffSections = computed(() => diffSections.length > 0 || layoutChanged > 0)
 const hasMigrationSql = computed(() => migrationHasChanges && migrationSql.trim().length > 0)
+const hasMigrationKysely = computed(() => migrationHasChanges && migrationKysely.trim().length > 0)
 const hasVersions = computed(() => versions.length > 0)
 const designVersionCount = computed(() => {
   return versions.filter(version => version.role === 'design').length
@@ -140,7 +146,31 @@ const latestDesignVersionId = computed(() => {
   return versions.find(version => version.role === 'design' && version.isLatestByRole)?.id || null
 })
 const migrationLineCount = computed(() => {
-  return hasMigrationSql.value ? migrationSql.trim().split('\n').length : 0
+  const migrationContent = activeMigrationFormat.value === 'sql'
+    ? migrationSql
+    : migrationKysely
+
+  return migrationContent.trim().length > 0
+    ? migrationContent.trim().split('\n').length
+    : 0
+})
+const activeMigrationFileName = computed(() => {
+  return activeMigrationFormat.value === 'sql'
+    ? migrationFileName
+    : migrationKyselyFileName
+})
+const activeMigrationLabel = computed(() => {
+  return activeMigrationFormat.value === 'sql' ? 'SQL' : 'Kysely'
+})
+const activeMigrationContent = computed(() => {
+  return activeMigrationFormat.value === 'sql'
+    ? migrationSql
+    : migrationKysely
+})
+const hasActiveMigration = computed(() => {
+  return activeMigrationFormat.value === 'sql'
+    ? hasMigrationSql.value
+    : hasMigrationKysely.value
 })
 const compareSummary = computed(() => {
   return buildPgmlVersionCompareSummary({
@@ -159,12 +189,12 @@ const previewLabel = computed(() => {
 })
 
 const handleCopyMigration = async () => {
-  if (migrationSql.trim().length === 0) {
+  if (activeMigrationContent.value.trim().length === 0) {
     return
   }
 
   try {
-    await navigator.clipboard.writeText(migrationSql)
+    await navigator.clipboard.writeText(activeMigrationContent.value)
     copyState.value = 'success'
   } catch {
     copyState.value = 'error'
@@ -176,18 +206,20 @@ const handleCopyMigration = async () => {
 }
 
 const handleDownloadMigration = () => {
-  if (migrationSql.trim().length === 0) {
+  if (activeMigrationContent.value.trim().length === 0) {
     return
   }
 
-  const blob = new Blob([migrationSql], {
-    type: 'text/sql;charset=utf-8'
+  const blob = new Blob([activeMigrationContent.value], {
+    type: activeMigrationFormat.value === 'sql'
+      ? 'text/sql;charset=utf-8'
+      : 'text/plain;charset=utf-8'
   })
   const objectUrl = URL.createObjectURL(blob)
   const anchor = document.createElement('a')
 
   anchor.href = objectUrl
-  anchor.download = migrationFileName
+  anchor.download = activeMigrationFileName.value
   anchor.click()
   URL.revokeObjectURL(objectUrl)
 }
@@ -244,6 +276,7 @@ const swapComparePair = () => {
     <div class="sticky top-0 z-[1] grid gap-3 bg-[color:var(--studio-shell-bg)] pb-1">
       <div class="flex flex-wrap gap-2">
         <UButton
+          data-version-create-checkpoint="true"
           label="Create checkpoint"
           color="neutral"
           variant="soft"
@@ -252,6 +285,7 @@ const swapComparePair = () => {
           @click="emit('create-checkpoint')"
         />
         <UButton
+          data-version-import-dump="true"
           label="Import dump"
           color="neutral"
           variant="outline"
@@ -490,6 +524,7 @@ const swapComparePair = () => {
       <div class="grid gap-2">
         <button
           type="button"
+          data-version-card="workspace"
           class="grid gap-1 border border-[color:var(--studio-divider)] bg-[color:var(--studio-input-bg)] px-3 py-2 text-left"
           :class="previewTargetId === 'workspace' ? 'border-[color:var(--studio-ring)]' : ''"
           @click="emit('view-target', 'workspace')"
@@ -524,6 +559,7 @@ const swapComparePair = () => {
         <div
           v-for="(version, versionIndex) in versions"
           :key="version.id"
+          :data-version-card="version.id"
           class="grid gap-2 border-l-2 border-[color:var(--studio-divider)] border-y border-r bg-[color:var(--studio-input-bg)] px-3 py-3"
           :class="previewTargetId === version.id ? 'border-[color:var(--studio-ring)]' : ''"
         >
@@ -533,7 +569,10 @@ const swapComparePair = () => {
                 <span class="border border-[color:var(--studio-divider)] px-1.5 py-0.5 font-mono text-[0.52rem] uppercase tracking-[0.08em] text-[color:var(--studio-shell-muted)]">
                   {{ versionIndex + 1 }}
                 </span>
-                <div class="truncate text-[0.8rem] font-semibold text-[color:var(--studio-shell-text)]">
+                <div
+                  data-version-label="true"
+                  class="truncate text-[0.8rem] font-semibold text-[color:var(--studio-shell-text)]"
+                >
                   {{ version.label }}
                 </div>
                 <span class="border border-[color:var(--studio-divider)] px-1.5 py-0.5 font-mono text-[0.52rem] uppercase tracking-[0.08em] text-[color:var(--studio-shell-muted)]">
@@ -643,6 +682,7 @@ const swapComparePair = () => {
 
             <div class="flex flex-wrap gap-1">
               <UButton
+                :data-version-compare="version.id"
                 label="Compare"
                 color="neutral"
                 variant="outline"
@@ -651,6 +691,7 @@ const swapComparePair = () => {
                 @click="applyComparePreset({ baseId: version.id, targetId: 'workspace' })"
               />
               <UButton
+                :data-version-view="version.id"
                 label="View"
                 color="neutral"
                 variant="outline"
@@ -660,6 +701,7 @@ const swapComparePair = () => {
                 @click="emit('view-target', version.id)"
               />
               <UButton
+                :data-version-restore="version.id"
                 label="Restore"
                 color="neutral"
                 variant="soft"
@@ -681,29 +723,51 @@ const swapComparePair = () => {
       <div class="flex items-center justify-between gap-3">
         <div>
           <div class="font-mono text-[0.6rem] uppercase tracking-[0.08em] text-[color:var(--studio-shell-label)]">
-            Migration SQL
+            Migration Output
           </div>
           <div class="mt-1 text-[0.66rem] text-[color:var(--studio-shell-muted)]">
-            {{ hasMigrationSql ? `${migrationLineCount} line${migrationLineCount === 1 ? '' : 's'} ready · ${migrationFileName}` : 'No forward migration generated yet.' }}
+            {{ hasActiveMigration ? `${activeMigrationLabel} · ${migrationLineCount} line${migrationLineCount === 1 ? '' : 's'} ready · ${activeMigrationFileName}` : `No forward ${activeMigrationLabel.toLowerCase()} migration generated yet.` }}
           </div>
         </div>
         <div class="flex flex-wrap gap-1">
           <UButton
+            data-version-migration-format="sql"
+            label="SQL"
+            color="neutral"
+            :variant="activeMigrationFormat === 'sql' ? 'soft' : 'outline'"
+            size="xs"
+            :class="activeMigrationFormat === 'sql' ? primaryButtonClass : secondaryButtonClass"
+            :disabled="!hasMigrationSql && activeMigrationFormat !== 'sql'"
+            @click="activeMigrationFormat = 'sql'"
+          />
+          <UButton
+            data-version-migration-format="kysely"
+            label="Kysely"
+            color="neutral"
+            :variant="activeMigrationFormat === 'kysely' ? 'soft' : 'outline'"
+            size="xs"
+            :class="activeMigrationFormat === 'kysely' ? primaryButtonClass : secondaryButtonClass"
+            :disabled="!hasMigrationKysely && activeMigrationFormat !== 'kysely'"
+            @click="activeMigrationFormat = 'kysely'"
+          />
+          <UButton
+            :data-version-migration-copy="activeMigrationFormat"
             :label="copyState === 'success' ? 'Copied' : (copyState === 'error' ? 'Copy failed' : 'Copy')"
             color="neutral"
             variant="outline"
             size="xs"
             :class="copyButtonClass"
-            :disabled="!hasMigrationSql"
+            :disabled="!hasActiveMigration"
             @click="handleCopyMigration"
           />
           <UButton
+            :data-version-migration-download="activeMigrationFormat"
             label="Download"
             color="neutral"
             variant="soft"
             size="xs"
             :class="primaryButtonClass"
-            :disabled="!hasMigrationSql"
+            :disabled="!hasActiveMigration"
             @click="handleDownloadMigration"
           />
         </div>
@@ -711,6 +775,7 @@ const swapComparePair = () => {
 
       <div
         v-if="migrationWarnings.length > 0"
+        data-version-migration-warnings="true"
         class="grid gap-1 border border-[color:var(--studio-shell-error)]/30 bg-[color:var(--studio-shell-error)]/8 px-3 py-3 text-[0.68rem] text-[color:var(--studio-shell-text)]"
       >
         <div class="font-mono text-[0.58rem] uppercase tracking-[0.08em] text-[color:var(--studio-shell-error)]">
@@ -725,15 +790,17 @@ const swapComparePair = () => {
       </div>
 
       <pre
-        v-if="hasMigrationSql"
+        v-if="hasActiveMigration"
+        data-version-migration-artifact="true"
+        :data-version-migration-format-active="activeMigrationFormat"
         class="max-h-96 overflow-auto border border-[color:var(--studio-divider)] bg-[color:var(--studio-input-bg)] px-3 py-3 text-[0.68rem] leading-6 text-[color:var(--studio-shell-text)]"
-      >{{ migrationSql }}</pre>
+      >{{ activeMigrationContent }}</pre>
 
       <div
         v-else
         :class="studioEmptyStateClass"
       >
-        Choose a compare pair with schema changes to preview the forward migration SQL here.
+        Choose a compare pair with schema changes to preview the forward migration output here.
       </div>
     </div>
   </div>
