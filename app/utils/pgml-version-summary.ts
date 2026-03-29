@@ -182,3 +182,7 @@ export const buildPgmlDirectIncrementCompareRelationshipSummary = (
 ) => {
   return `${targetLabel} increments directly from ${baseLabel}.`
 }
+
+export const buildPgmlDivergedCompareRelationshipSummary = (commonAncestorLabel: string) => {
+  return `Selected versions diverge from ${commonAncestorLabel}.`
+}

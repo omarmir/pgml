@@ -6,6 +6,7 @@ import {
   buildPgmlEmptyBaseCompareRelationshipSummary,
   buildPgmlCompareDeltaDescription,
   buildPgmlDirectIncrementCompareRelationshipSummary,
+  buildPgmlDivergedCompareRelationshipSummary,
   buildPgmlDocumentEditorModeDescription,
   buildPgmlEditorReadOnlyLabel,
   buildPgmlInvalidCompareRelationshipSummary,
@@ -147,5 +148,9 @@ Table public.orders {
 
   it('builds direct increment compare relationship summaries', () => {
     expect(buildPgmlDirectIncrementCompareRelationshipSummary('Add orders', 'Initial design')).toBe('Add orders increments directly from Initial design.')
+  })
+
+  it('builds diverged compare relationship summaries', () => {
+    expect(buildPgmlDivergedCompareRelationshipSummary('Initial design')).toBe('Selected versions diverge from Initial design.')
   })
 })

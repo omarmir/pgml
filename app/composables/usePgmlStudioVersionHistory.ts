@@ -1,6 +1,7 @@
 import type { ComputedRef, Ref } from 'vue'
 import {
   buildPgmlDirectIncrementCompareRelationshipSummary,
+  buildPgmlDivergedCompareRelationshipSummary,
   buildPgmlEmptyBaseCompareRelationshipSummary,
   buildPgmlInvalidCompareRelationshipSummary,
   buildPgmlWorkspaceCompareRelationshipSummary,
@@ -247,7 +248,7 @@ export const usePgmlStudioVersionHistory = (
     )
 
     if (commonAncestor) {
-      return `Selected versions diverge from ${commonAncestor.name || commonAncestor.id}.`
+      return buildPgmlDivergedCompareRelationshipSummary(commonAncestor.name || commonAncestor.id)
     }
 
     return 'Selected versions do not share a common recorded ancestor.'
