@@ -31,6 +31,7 @@ import {
   getPgmlVersionDepth,
   getPgmlVersionLineage,
   getPgmlVersionLineageIds,
+  getPgmlSiblingVersionCount,
   getPgmlWorkspaceBaseVersion,
   isPgmlLeafVersion,
   getPgmlDocumentPreviewSource,
@@ -190,6 +191,7 @@ export const usePgmlStudioVersionHistory = (
             : latestImplementationVersion.value?.id
         ),
         isRoot: version.parentVersionId === null,
+        siblingCount: getPgmlSiblingVersionCount(document.value, version.id),
         isWorkspaceBase: document.value.workspace.basedOnVersionId === version.id,
         lineageIds: getPgmlVersionLineageIds(document.value, version.id),
         lineageLabel: buildPgmlVersionLineageLabel(document.value, version.id)

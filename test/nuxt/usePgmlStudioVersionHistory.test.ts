@@ -243,7 +243,8 @@ Properties "public.users" {
       isRoot: false,
       lineageIds: expect.arrayContaining([rootVersion.id]),
       lineageLabel: 'Initial design -> Add status',
-      parentVersionLabel: 'Initial design'
+      parentVersionLabel: 'Initial design',
+      siblingCount: 0
     }))
   })
 
