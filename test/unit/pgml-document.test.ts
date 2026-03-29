@@ -14,6 +14,7 @@ import {
   getLatestPgmlVersionByRole,
   getPgmlLeafVersions,
   getPgmlRootVersions,
+  isPgmlVersionDescendant,
   isPgmlVersionAncestor,
   buildPgmlVersionLineageLabel,
   getPgmlNearestCommonAncestor,
@@ -901,6 +902,49 @@ Table public.memberships {
     expect(isPgmlVersionAncestor(parsed, 'v2', 'v3')).toBe(true)
     expect(isPgmlVersionAncestor(parsed, 'v3', 'v1')).toBe(false)
     expect(isPgmlVersionAncestor(parsed, 'v2', 'v2')).toBe(false)
+  })
+
+  it('detects whether one version is a descendant of another', () => {
+    const parsed = parsePgmlDocument(`VersionSet "Billing" {
+  Workspace {
+    based_on: v2
+
+    Snapshot {
+      Table public.users {
+        id uuid [pk]
+      }
+    }
+  }
+
+  Version v1 {
+    name: "Root"
+    role: implementation
+    created_at: "2026-03-29T12:00:00.000Z"
+
+    Snapshot {
+      Table public.users {
+        id uuid [pk]
+      }
+    }
+  }
+
+  Version v2 {
+    name: "Leaf"
+    role: design
+    parent: v1
+    created_at: "2026-03-30T12:00:00.000Z"
+
+    Snapshot {
+      Table public.users {
+        id uuid [pk]
+        email text
+      }
+    }
+  }
+}`)
+
+    expect(isPgmlVersionDescendant(parsed, 'v2', 'v1')).toBe(true)
+    expect(isPgmlVersionDescendant(parsed, 'v1', 'v2')).toBe(false)
   })
 
   it('rejects invalid VersionSet documents that reference missing parent or base versions', () => {
