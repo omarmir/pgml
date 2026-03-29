@@ -118,6 +118,25 @@ export const getPgmlDocumentVersionStats = (
   }
 }
 
+export const getPgmlNearestCommonAncestor = (
+  document: PgmlVersionSetDocument,
+  leftVersionId: string | null,
+  rightVersionId: string | null
+) => {
+  const leftLineageIds = new Set(getPgmlVersionLineage(document, leftVersionId).map(version => version.id))
+  const rightLineage = getPgmlVersionLineage(document, rightVersionId)
+
+  for (let index = rightLineage.length - 1; index >= 0; index -= 1) {
+    const candidateVersion = rightLineage[index]
+
+    if (candidateVersion && leftLineageIds.has(candidateVersion.id)) {
+      return candidateVersion
+    }
+  }
+
+  return null
+}
+
 const trimQuotedValue = (value: string) => {
   const trimmed = value.trim()
   const doubleQuotedMatch = trimmed.match(/^"(.*)"$/u)

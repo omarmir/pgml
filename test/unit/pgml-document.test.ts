@@ -10,6 +10,7 @@ import {
   getPgmlDocumentVersionStats,
   getPgmlChildVersions,
   getPgmlDescendantVersions,
+  getPgmlNearestCommonAncestor,
   getPgmlVersionById,
   getPgmlVersionDepth,
   getPgmlVersionLineage,
@@ -512,6 +513,51 @@ Table public.memberships {
       versionCount: 3,
       workspaceDirty: false
     })
+  })
+
+  it('finds the nearest common ancestor between branch versions', () => {
+    const initialDocument = createInitialPgmlDocument({
+      name: 'Billing',
+      workspaceSource: baseSnapshotSource
+    })
+    const rootDocument = createPgmlVersionFromWorkspace(initialDocument, {
+      createdAt: '2026-03-29T12:00:00.000Z',
+      name: 'Initial design',
+      role: 'design'
+    })
+    const rootVersionId = rootDocument.workspace.basedOnVersionId
+    const branchADocument = createPgmlVersionFromWorkspace(replacePgmlWorkspaceFromSnapshot(rootDocument, {
+      basedOnVersionId: rootVersionId,
+      source: `${baseSnapshotSource}
+
+Table public.orders {
+  id uuid [pk]
+}`,
+      updatedAt: '2026-03-29T12:05:00.000Z'
+    }), {
+      createdAt: '2026-03-29T12:10:00.000Z',
+      name: 'Orders branch',
+      role: 'design'
+    })
+    const branchBDocument = createPgmlVersionFromWorkspace(replacePgmlWorkspaceFromSnapshot(branchADocument, {
+      basedOnVersionId: rootVersionId,
+      source: `${baseSnapshotSource}
+
+Table public.memberships {
+  id uuid [pk]
+}`,
+      updatedAt: '2026-03-29T12:15:00.000Z'
+    }), {
+      createdAt: '2026-03-29T12:20:00.000Z',
+      name: 'Memberships branch',
+      role: 'design'
+    })
+
+    expect(getPgmlNearestCommonAncestor(
+      branchBDocument,
+      branchBDocument.versions[1]?.id || null,
+      branchBDocument.versions[2]?.id || null
+    )?.name).toBe('Initial design')
   })
 
   it('rejects invalid VersionSet documents that reference missing parent or base versions', () => {
