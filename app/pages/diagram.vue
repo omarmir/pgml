@@ -39,12 +39,12 @@ import {
 import { diffPgmlSchemaModels } from '~/utils/pgml-diff'
 import { convertPgDumpToPgml } from '~/utils/pg-dump-import'
 import { analyzePgmlDocument } from '~/utils/pgml-language'
-import { buildPgmlMigrationDiffBundle } from '~/utils/pgml-migration-diff'
 import {
   buildPgmlVersionDiffSections,
   type PgmlVersionDiffSection
 } from '~/utils/pgml-version-summary'
 import { buildPgmlCheckpointName } from '~/utils/pgml-document'
+import { buildPgmlVersionMigrationBundle } from '~/utils/pgml-version-migration'
 import {
   buildPgmlImportBaseVersionItems,
   buildPgmlVersionCompareOptions
@@ -709,30 +709,13 @@ const workspaceStatus = computed(() => {
   return 'Draft changes are waiting to be checkpointed.'
 })
 const compareMigrationBundle = computed(() => {
-  const migrationBundle = buildPgmlMigrationDiffBundle(
-    parsePgml(compareBaseSource.value),
-    parsePgml(compareTargetSource.value),
-    {
-      baseName: `${exportBaseName.value}-${slugifySchemaName(compareBaseLabel.value)}-to-${slugifySchemaName(compareTargetLabel.value)}`
-    }
-  )
-
-  if (versionCompareBaseId.value !== null) {
-    return migrationBundle
-  }
-
-  return {
-    meta: migrationBundle.meta,
-    sql: {
-      migration: {
-        ...migrationBundle.sql.migration,
-        warnings: [
-          'No base version is selected. The migration is being generated from an empty schema.',
-          ...migrationBundle.sql.migration.warnings
-        ]
-      }
-    }
-  }
+  return buildPgmlVersionMigrationBundle({
+    baseSource: compareBaseSource.value,
+    hasSelectedBase: versionCompareBaseId.value !== null,
+    targetSource: compareTargetSource.value
+  }, {
+    baseName: `${exportBaseName.value}-${slugifySchemaName(compareBaseLabel.value)}-to-${slugifySchemaName(compareTargetLabel.value)}`
+  })
 })
 const importDumpDialogCopy = computed(() => {
   const baseVersion = importDumpBaseVersionId.value
