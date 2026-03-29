@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 
 import { analyzePgmlDocument, getPgmlCompletionItems } from '../../app/utils/pgml-language'
+import { buildVersionedCompletionFixture, validVersionedEditorSource } from './pgml-editor-fixtures'
 
 describe('PGML language utility', () => {
   it('collects no diagnostics for a structurally valid document', () => {
@@ -131,49 +132,7 @@ Enum public.language_preference {
   })
 
   it('collects no diagnostics for a structurally valid versioned document', () => {
-    const source = `VersionSet "Billing" {
-  Workspace {
-    based_on: v2
-    updated_at: "2026-03-29T14:12:00.000Z"
-
-    Snapshot {
-      Table public.users {
-        id uuid [pk]
-        email text [unique, not null]
-      }
-
-      Ref: public.users.id > public.users.id
-    }
-  }
-
-  Version v1 {
-    name: "Initial implementation"
-    role: implementation
-    created_at: "2026-03-20T15:00:00.000Z"
-
-    Snapshot {
-      Table public.users {
-        id uuid [pk]
-      }
-    }
-  }
-
-  Version v2 {
-    name: "Workspace base"
-    role: design
-    parent: v1
-    created_at: "2026-03-24T10:30:00.000Z"
-
-    Snapshot {
-      Table public.users {
-        id uuid [pk]
-        email text [unique]
-      }
-    }
-  }
-}`
-
-    const analysis = analyzePgmlDocument(source)
+    const analysis = analyzePgmlDocument(validVersionedEditorSource)
 
     expect(analysis.isVersionedDocument).toBe(true)
     expect(analysis.diagnostics).toEqual([])
@@ -265,11 +224,9 @@ Ref: public.users.id > public.u`
   })
 
   it('offers version-set, workspace, and version-aware completions', () => {
-    const versionSetSource = `VersionSet "Billing" {
-  Wor
-}`
-    const workspaceSource = `VersionSet "Billing" {
-  Workspace {
+    const versionSetSource = buildVersionedCompletionFixture(`  Wor
+`)
+    const workspaceSource = buildVersionedCompletionFixture(`  Workspace {
     ba
   }
 
@@ -283,9 +240,8 @@ Ref: public.users.id > public.u`
       }
     }
   }
-}`
-    const versionRoleSource = `VersionSet "Billing" {
-  Workspace {
+`)
+    const versionRoleSource = buildVersionedCompletionFixture(`  Workspace {
     based_on: v1
 
     Snapshot {
@@ -305,9 +261,8 @@ Ref: public.users.id > public.u`
       }
     }
   }
-}`
-    const versionParentSource = `VersionSet "Billing" {
-  Workspace {
+`)
+    const versionParentSource = buildVersionedCompletionFixture(`  Workspace {
     based_on: v1
 
     Snapshot {
@@ -339,7 +294,7 @@ Ref: public.users.id > public.u`
       }
     }
   }
-}`
+`)
 
     const versionSetItems = getPgmlCompletionItems(versionSetSource, versionSetSource.indexOf('Wor') + 'Wor'.length)
     const workspaceItems = getPgmlCompletionItems(workspaceSource, workspaceSource.indexOf('ba') + 'ba'.length)

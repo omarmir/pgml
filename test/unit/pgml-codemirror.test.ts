@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 
 import { tokenizePgmlSource } from '../../app/utils/pgml-codemirror'
+import { validVersionedEditorSource } from './pgml-editor-fixtures'
 
 describe('PGML CodeMirror tokenization', () => {
   it('assigns a dedicated token type to column types without recoloring the column name', () => {
@@ -156,33 +157,7 @@ Domain email_address {
   })
 
   it('highlights version grammar keywords, metadata, and role values', () => {
-    const source = `VersionSet "Billing" {
-  Workspace {
-    based_on: v2
-    updated_at: "2026-03-29T14:12:00.000Z"
-
-    Snapshot {
-      Table public.users {
-        id uuid [pk]
-      }
-    }
-  }
-
-  Version v2 {
-    name: "Workspace base"
-    role: implementation
-    parent: v1
-    created_at: "2026-03-24T10:30:00.000Z"
-
-    Snapshot {
-      Table public.users {
-        id uuid [pk]
-      }
-    }
-  }
-}`
-
-    const tokens = tokenizePgmlSource(source).filter(token => token.value.trim().length > 0)
+    const tokens = tokenizePgmlSource(validVersionedEditorSource).filter(token => token.value.trim().length > 0)
 
     expect(tokens).toEqual(expect.arrayContaining([
       expect.objectContaining({
