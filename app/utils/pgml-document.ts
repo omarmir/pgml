@@ -676,6 +676,13 @@ export const getPgmlBranchRootVersion = (
   return getPgmlVersionLineage(document, versionId)[0] || null
 }
 
+export const getPgmlBranchRootId = (
+  document: PgmlVersionSetDocument,
+  versionId: string | null
+) => {
+  return getPgmlBranchRootVersion(document, versionId)?.id || null
+}
+
 export const getPgmlChildVersions = (
   document: PgmlVersionSetDocument,
   versionId: string | null

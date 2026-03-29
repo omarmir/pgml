@@ -12,6 +12,7 @@ import {
 } from '~/utils/uiStyles'
 
 type PgmlVersionPanelItem = {
+  branchRootId: string | null
   childCount: number
   createdAt: string
   depth: number

@@ -224,6 +224,7 @@ Properties "public.users" {
       isRoot: true
     }))
     expect(api.versionItems.value[1]).toEqual(expect.objectContaining({
+      branchRootId: rootVersion.id,
       childCount: 0,
       depth: 1,
       isRoot: false,
