@@ -51,7 +51,10 @@ import {
   getLatestPgmlVersion
 } from '~/utils/pgml-document'
 import { buildPgmlVersionMigrationBundle } from '~/utils/pgml-version-migration'
-import { buildPgmlCheckpointTargetLabel } from '~/utils/pgml-version-copy'
+import {
+  buildPgmlCheckpointRoleDescription,
+  buildPgmlCheckpointTargetLabel
+} from '~/utils/pgml-version-copy'
 import {
   buildPgmlImportBaseVersionItems,
   buildPgmlVersionCompareOptions
@@ -1857,9 +1860,7 @@ onBeforeUnmount(() => {
             </div>
             <p class="mt-2 text-[0.72rem] leading-6 text-[color:var(--studio-shell-muted)]">
               {{
-                checkpointRole === 'implementation'
-                  ? 'Use an implementation checkpoint when the workspace reflects imported database state you want to preserve as a baseline.'
-                  : 'Use a design checkpoint when the workspace captures the intended next PGML revision.'
+                buildPgmlCheckpointRoleDescription(checkpointRole)
               }}
             </p>
           </div>
