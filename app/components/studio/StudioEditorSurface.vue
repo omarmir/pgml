@@ -48,6 +48,7 @@ const formatDiagnosticLineLabel = (diagnostic: PgmlLanguageDiagnostic) => {
 const hiddenDiagnosticCount = computed(() => {
   return Math.max(0, sourceDiagnostics.length - visibleSourceDiagnostics.length)
 })
+const hasDiagnostics = computed(() => sourceDiagnostics.length > 0)
 </script>
 
 <template>
@@ -101,7 +102,7 @@ const hiddenDiagnosticCount = computed(() => {
     </div>
 
     <div
-      v-if="sourceDiagnostics.length > 0"
+      v-if="hasDiagnostics"
       data-pgml-diagnostics="true"
       class="grid shrink-0 gap-2 border-t border-[color:var(--studio-shell-border)] bg-[color:var(--studio-shell-bg)] px-4 py-3 font-mono text-[0.72rem] leading-6"
     >
@@ -147,6 +148,13 @@ const hiddenDiagnosticCount = computed(() => {
       >
         Showing first {{ visibleSourceDiagnostics.length }} of {{ sourceDiagnostics.length }} diagnostics.
       </div>
+    </div>
+
+    <div
+      v-else
+      class="border-t border-[color:var(--studio-shell-border)] px-4 py-2 font-mono text-[0.62rem] uppercase tracking-[0.08em] text-[color:var(--studio-shell-muted)]"
+    >
+      No diagnostics
     </div>
   </aside>
 </template>
