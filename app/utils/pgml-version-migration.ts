@@ -24,6 +24,12 @@ type PgmlResolvedVersionMigrationStep = {
   targetSource: string
 }
 
+type PgmlPlannedVersionMigrationStep = {
+  index: number
+  label: string
+  plan: PgmlMigrationDiffPlan
+}
+
 export type PgmlVersionMigrationStepBundle = PgmlMigrationDiffBundle & {
   target: {
     baseId: string
@@ -72,11 +78,7 @@ const buildStepBaseName = (
   return `${baseName}.step-${stepIndex + 1}-${normalizedTargetLabel}`
 }
 
-const buildVersionHistorySqlContent = (steps: Array<{
-  index: number
-  label: string
-  plan: PgmlMigrationDiffPlan
-}>) => {
+const buildVersionHistorySqlContent = (steps: PgmlPlannedVersionMigrationStep[]) => {
   const sections = steps.map((step) => {
     const warningLines = step.plan.warnings.map(warning => `-- Warning: ${warning}`)
     const statementLines = step.plan.statements.length > 0
@@ -91,11 +93,7 @@ const buildVersionHistorySqlContent = (steps: Array<{
 
 const buildVersionHistoryKyselyContent = (
   baseName: string,
-  steps: Array<{
-    index: number
-    label: string
-    plan: PgmlMigrationDiffPlan
-  }>
+  steps: PgmlPlannedVersionMigrationStep[]
 ) => {
   const stepBlocks = steps
     .map((step) => {
@@ -148,7 +146,7 @@ const buildPlannedStepDescriptors = (steps: Array<{
     baseLabel: string
     targetLabel: string
   }
-}>) => {
+}>): PgmlPlannedVersionMigrationStep[] => {
   return steps.map((step, index) => {
     return {
       index,
