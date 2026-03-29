@@ -343,6 +343,18 @@ const swapComparePair = () => {
         />
       </div>
 
+      <div class="flex flex-wrap gap-2 text-[0.58rem]">
+        <span class="border border-[color:var(--studio-shell-label)] px-1.5 py-0.5 font-mono uppercase tracking-[0.08em] text-[color:var(--studio-shell-text)]">
+          Added
+        </span>
+        <span class="border border-[color:var(--studio-divider)] px-1.5 py-0.5 font-mono uppercase tracking-[0.08em] text-[color:var(--studio-shell-muted)]">
+          Modified
+        </span>
+        <span class="border border-[color:var(--studio-shell-error)]/50 px-1.5 py-0.5 font-mono uppercase tracking-[0.08em] text-[color:var(--studio-shell-error)]">
+          Removed
+        </span>
+      </div>
+
       <div
         v-if="hasDiffSections"
         class="grid grid-cols-2 gap-2 text-[0.66rem] text-[color:var(--studio-shell-muted)]"
