@@ -68,6 +68,38 @@ describe('PGML version diffing', () => {
     expect(diff.summary.modified).toBe(0)
   })
 
+  it('ignores metadata ordering for routines when semantic content is unchanged', () => {
+    const diff = diffPgmlSchemaModels(
+      parsePgml(`Function public.refresh_orders() returns void {
+  volatility: stable
+  cost: 100
+  source: $sql$
+    CREATE OR REPLACE FUNCTION public.refresh_orders()
+    RETURNS void AS $$
+    BEGIN
+      RETURN;
+    END;
+    $$ LANGUAGE plpgsql;
+  $sql$
+}`),
+      parsePgml(`Function public.refresh_orders() returns void {
+  cost: 100
+  volatility: stable
+  source: $sql$
+    CREATE OR REPLACE FUNCTION public.refresh_orders()
+    RETURNS void AS $$
+    BEGIN
+      RETURN;
+    END;
+    $$ LANGUAGE plpgsql;
+  $sql$
+}`)
+    )
+
+    expect(diff.functions).toEqual([])
+    expect(diff.summary.modified).toBe(0)
+  })
+
   it('handles removed references, replaced custom types and omitted routines with warnings', () => {
     const baseSource = `Enum order_status {
   draft

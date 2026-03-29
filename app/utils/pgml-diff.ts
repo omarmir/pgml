@@ -99,38 +99,98 @@ const normalizeGroupValue = (group: PgmlGroup) => {
   }
 }
 
+const normalizeMetadataEntries = (
+  entries: Array<{
+    key: string
+    value: string
+  }>
+) => {
+  return [...entries]
+    .map((entry) => {
+      return {
+        key: entry.key,
+        value: entry.value
+      }
+    })
+    .sort((left, right) => {
+      if (left.key !== right.key) {
+        return left.key.localeCompare(right.key)
+      }
+
+      return left.value.localeCompare(right.value)
+    })
+}
+
+const normalizeDocumentationValue = (
+  documentation: PgmlRoutine['docs'] | PgmlTrigger['docs'] | PgmlSequence['docs']
+) => {
+  if (!documentation) {
+    return null
+  }
+
+  return {
+    entries: [...documentation.entries].sort((left, right) => {
+      if (left.key !== right.key) {
+        return left.key.localeCompare(right.key)
+      }
+
+      return left.value.localeCompare(right.value)
+    }),
+    summary: documentation.summary
+  }
+}
+
+const normalizeAffectsValue = (affects: PgmlRoutine['affects'] | PgmlTrigger['affects'] | PgmlSequence['affects']) => {
+  if (!affects) {
+    return null
+  }
+
+  return {
+    calls: [...affects.calls].sort((left, right) => left.localeCompare(right)),
+    dependsOn: [...affects.dependsOn].sort((left, right) => left.localeCompare(right)),
+    extras: [...affects.extras].map((entry) => {
+      return {
+        key: entry.key,
+        values: [...entry.values].sort((left, right) => left.localeCompare(right))
+      }
+    }).sort((left, right) => left.key.localeCompare(right.key)),
+    ownedBy: [...affects.ownedBy].sort((left, right) => left.localeCompare(right)),
+    reads: [...affects.reads].sort((left, right) => left.localeCompare(right)),
+    sets: [...affects.sets].sort((left, right) => left.localeCompare(right)),
+    uses: [...affects.uses].sort((left, right) => left.localeCompare(right)),
+    writes: [...affects.writes].sort((left, right) => left.localeCompare(right))
+  }
+}
+
 const normalizeRoutineValue = (routine: PgmlRoutine) => {
   return {
-    affects: routine.affects,
-    details: routine.details,
-    docs: routine.docs,
-    metadata: routine.metadata,
+    affects: normalizeAffectsValue(routine.affects),
+    docs: normalizeDocumentationValue(routine.docs),
+    metadata: normalizeMetadataEntries(routine.metadata),
     name: routine.name,
     signature: routine.signature,
-    source: routine.source
+    source: routine.source?.trim() || null
   }
 }
 
 const normalizeTriggerValue = (trigger: PgmlTrigger) => {
   return {
-    affects: trigger.affects,
-    details: trigger.details,
-    docs: trigger.docs,
-    metadata: trigger.metadata,
+    affects: normalizeAffectsValue(trigger.affects),
+    docs: normalizeDocumentationValue(trigger.docs),
+    metadata: normalizeMetadataEntries(trigger.metadata),
     name: trigger.name,
-    source: trigger.source,
+    source: trigger.source?.trim() || null,
     tableName: trigger.tableName
   }
 }
 
 const normalizeSequenceValue = (sequence: PgmlSequence) => {
   return {
-    affects: sequence.affects,
-    details: sequence.details,
-    docs: sequence.docs,
-    metadata: sequence.metadata,
+    affects: normalizeAffectsValue(sequence.affects),
+    docs: normalizeDocumentationValue(sequence.docs),
+    metadata: normalizeMetadataEntries(sequence.metadata),
     name: sequence.name,
-    source: sequence.source
+    source: sequence.source?.trim() || null
   }
 }
 
