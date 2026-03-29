@@ -513,6 +513,20 @@ export const getPgmlVersionDepth = (
   return lineage.length > 0 ? lineage.length - 1 : 0
 }
 
+export const getPgmlSiblingVersions = (
+  document: PgmlVersionSetDocument,
+  versionId: string | null
+) => {
+  const targetVersion = getPgmlVersionById(document, versionId)
+
+  if (!targetVersion) {
+    return []
+  }
+
+  return getPgmlChildVersions(document, targetVersion.parentVersionId)
+    .filter(version => version.id !== targetVersion.id)
+}
+
 export const serializePgmlDocument = (document: PgmlVersionSetDocument) => {
   validateVersionSetDocument(document)
 

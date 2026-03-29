@@ -9,6 +9,7 @@ import {
   getPgmlVersionDepth,
   getPgmlVersionLineage,
   getPgmlVersionMap,
+  getPgmlSiblingVersions,
   getPgmlWorkspaceBaseVersion,
   parsePgmlDocument,
   replacePgmlWorkspaceFromSnapshot,
@@ -261,6 +262,52 @@ Table public.orders {
     expect(getPgmlVersionDepth(secondVersion, secondVersion.versions[0]?.id || null)).toBe(0)
     expect(getPgmlVersionDepth(secondVersion, secondVersion.versions[1]?.id || null)).toBe(1)
     expect(getPgmlVersionDepth(secondVersion, null)).toBe(0)
+  })
+
+  it('returns sibling versions that branch from the same parent', () => {
+    const initialDocument = createInitialPgmlDocument({
+      name: 'Billing',
+      workspaceSource: baseSnapshotSource
+    })
+    const rootDocument = createPgmlVersionFromWorkspace(initialDocument, {
+      createdAt: '2026-03-29T12:00:00.000Z',
+      name: 'Initial design',
+      role: 'design'
+    })
+    const rootVersionId = rootDocument.workspace.basedOnVersionId
+    const branchADocument = createPgmlVersionFromWorkspace(replacePgmlWorkspaceFromSnapshot(rootDocument, {
+      basedOnVersionId: rootVersionId,
+      source: `${baseSnapshotSource}
+
+Table public.orders {
+  id uuid [pk]
+}`,
+      updatedAt: '2026-03-29T12:05:00.000Z'
+    }), {
+      createdAt: '2026-03-29T12:10:00.000Z',
+      name: 'Orders branch',
+      role: 'design'
+    })
+    const branchBDocument = createPgmlVersionFromWorkspace(replacePgmlWorkspaceFromSnapshot(branchADocument, {
+      basedOnVersionId: rootVersionId,
+      source: `${baseSnapshotSource}
+
+Table public.memberships {
+  id uuid [pk]
+}`,
+      updatedAt: '2026-03-29T12:15:00.000Z'
+    }), {
+      createdAt: '2026-03-29T12:20:00.000Z',
+      name: 'Memberships branch',
+      role: 'design'
+    })
+
+    expect(getPgmlSiblingVersions(branchBDocument, branchBDocument.versions[1]?.id || null).map(version => version.name)).toEqual([
+      'Memberships branch'
+    ])
+    expect(getPgmlSiblingVersions(branchBDocument, branchBDocument.versions[2]?.id || null).map(version => version.name)).toEqual([
+      'Orders branch'
+    ])
   })
 
   it('rejects invalid VersionSet documents that reference missing parent or base versions', () => {
