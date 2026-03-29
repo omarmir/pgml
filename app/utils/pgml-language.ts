@@ -41,6 +41,10 @@ type PgmlBlockKind = 'Table'
   | 'Trigger'
   | 'Sequence'
   | 'Properties'
+  | 'VersionSet'
+  | 'Workspace'
+  | 'Version'
+  | 'Snapshot'
   | 'Unknown'
 
 type PgmlRawBlock = {
@@ -56,6 +60,10 @@ type PgmlRawBlock = {
 }
 
 type PgmlContextKind = 'top-level'
+  | 'version-set'
+  | 'workspace'
+  | 'version'
+  | 'snapshot'
   | 'table'
   | 'group'
   | 'custom-type'
@@ -135,6 +143,7 @@ export type PgmlDocumentAnalysis = {
   blocks: PgmlRawBlock[]
   contexts: PgmlContextRange[]
   lines: PgmlLineInfo[]
+  isVersionedDocument: boolean
   tables: PgmlTableSymbol[]
   groups: PgmlGroupSymbol[]
   customTypes: PgmlCustomTypeSymbol[]
@@ -144,6 +153,7 @@ export type PgmlDocumentAnalysis = {
   sequences: PgmlNamedRange[]
   references: PgmlReferenceSymbol[]
   propertyTargets: PgmlPropertyTarget[]
+  versionIds: PgmlNamedRange[]
 }
 
 type DuplicateEntry<T> = {
@@ -151,7 +161,7 @@ type DuplicateEntry<T> = {
   values: T[]
 }
 
-const topLevelKeywordTemplates = [
+const snapshotTopLevelKeywordTemplates = [
   { label: 'Table', detail: 'Start a table block.', apply: 'Table ' },
   { label: 'TableGroup', detail: 'Start a table group block.', apply: 'TableGroup ' },
   { label: 'Enum', detail: 'Start an enum block.', apply: 'Enum ' },
@@ -163,6 +173,37 @@ const topLevelKeywordTemplates = [
   { label: 'Sequence', detail: 'Start a sequence block.', apply: 'Sequence ' },
   { label: 'Ref:', detail: 'Create a top-level relationship.', apply: 'Ref: ' },
   { label: 'Properties', detail: 'Attach persisted layout properties.', apply: 'Properties "' }
+] as const
+
+const rootKeywordTemplates = [
+  { label: 'VersionSet', detail: 'Start a versioned PGML document.', apply: 'VersionSet "' },
+  ...snapshotTopLevelKeywordTemplates
+] as const
+
+const versionSetKeywordTemplates = [
+  { label: 'Workspace', detail: 'Define the mutable working draft.', apply: 'Workspace {' },
+  { label: 'Version', detail: 'Lock an immutable checkpoint.', apply: 'Version ' }
+] as const
+
+const workspaceMetadataKeywordTemplates = [
+  { label: 'based_on', detail: 'Choose the locked version the workspace increments from.', apply: 'based_on: ' },
+  { label: 'updated_at', detail: 'Record the last workspace update timestamp.', apply: 'updated_at: "' }
+] as const
+
+const versionMetadataKeywordTemplates = [
+  { label: 'name', detail: 'Set a user-facing checkpoint label.', apply: 'name: "' },
+  { label: 'role', detail: 'Mark the checkpoint as design or implementation.', apply: 'role: ' },
+  { label: 'parent', detail: 'Set the predecessor version id.', apply: 'parent: ' },
+  { label: 'created_at', detail: 'Record the checkpoint timestamp.', apply: 'created_at: "' }
+] as const
+
+const snapshotKeywordTemplates = [
+  { label: 'Snapshot', detail: 'Open a nested schema snapshot block.', apply: 'Snapshot {' }
+] as const
+
+const versionRoleValueTemplates = [
+  { label: 'design', detail: 'A design-side checkpoint.', apply: 'design' },
+  { label: 'implementation', detail: 'An implementation-side checkpoint.', apply: 'implementation' }
 ] as const
 
 const tableBodyKeywordTemplates = [
@@ -238,10 +279,29 @@ const numericPropertyKeys = new Set(['x', 'y', 'width', 'height', 'table_columns
 const validColorPattern = /^#(?:[\da-f]{3}|[\da-f]{6})$/i
 let analysisCache: PgmlAnalysisCache | null = null
 
+type PgmlAnalysisState = {
+  tables: PgmlTableSymbol[]
+  groups: PgmlGroupSymbol[]
+  customTypes: PgmlCustomTypeSymbol[]
+  functions: PgmlNamedRange[]
+  procedures: PgmlNamedRange[]
+  triggers: PgmlNamedRange[]
+  sequences: PgmlNamedRange[]
+  references: PgmlReferenceSymbol[]
+  propertyTargets: PgmlPropertyTarget[]
+  versionIds: PgmlNamedRange[]
+}
+
+type CollectRawBlocksOptions = {
+  topLevelContextKind?: PgmlContextKind | null
+  topLevelBlockKind?: PgmlBlockKind
+}
+
 const normalizeLineEndings = (source: string) => source.replaceAll('\r\n', '\n')
 const cleanName = (value: string) => value.replaceAll('"', '').trim()
 const cleanText = (value: string) => value.trim().replace(/^"(.*)"$/, '$1').replace(/^'(.*)'$/, '$1')
 const lower = (value: string) => value.toLowerCase()
+const normalizeMetadataKey = (value: string) => lower(cleanName(value)).replaceAll(/[^\w]+/g, '_')
 const getDuplicateLineNumbers = <T extends { line: number }>(values: T[]) => {
   return Array.from(new Set(values.map(value => value.line))).sort((left, right) => left - right)
 }
@@ -384,6 +444,22 @@ const parseBlockKind = (header: string): { kind: PgmlBlockKind, keyword: string 
     return { kind: 'Properties', keyword }
   }
 
+  if (keyword === 'VersionSet') {
+    return { kind: 'VersionSet', keyword }
+  }
+
+  if (keyword === 'Workspace') {
+    return { kind: 'Workspace', keyword }
+  }
+
+  if (keyword === 'Version') {
+    return { kind: 'Version', keyword }
+  }
+
+  if (keyword === 'Snapshot') {
+    return { kind: 'Snapshot', keyword }
+  }
+
   return {
     kind: 'Unknown',
     keyword
@@ -412,20 +488,25 @@ const createDiagnostic = (
 const collectRawBlocks = (
   lines: PgmlLineInfo[],
   diagnostics: PgmlLanguageDiagnostic[],
-  contexts: PgmlContextRange[]
+  contexts: PgmlContextRange[],
+  options: CollectRawBlocksOptions = {}
 ) => {
   const blocks: PgmlRawBlock[] = []
   const topLevelLines: PgmlLineInfo[] = []
+  const topLevelContextKind = options.topLevelContextKind === undefined ? 'top-level' : options.topLevelContextKind
+  const topLevelBlockKind = options.topLevelBlockKind || 'Unknown'
   let index = 0
 
-  contexts.push({
-    kind: 'top-level',
-    blockKind: 'Unknown',
-    from: lines[0] ? lines[0].from : 0,
-    to: lines.length > 0 ? lines[lines.length - 1]!.to : 0,
-    startLine: lines[0] ? lines[0].number : 1,
-    endLine: lines.length > 0 ? lines[lines.length - 1]!.number : 1
-  })
+  if (topLevelContextKind) {
+    contexts.push({
+      kind: topLevelContextKind,
+      blockKind: topLevelBlockKind,
+      from: lines[0] ? lines[0].from : 0,
+      to: lines.length > 0 ? lines[lines.length - 1]!.to : 0,
+      startLine: lines[0] ? lines[0].number : 1,
+      endLine: lines.length > 0 ? lines[lines.length - 1]!.number : 1
+    })
+  }
 
   while (index < lines.length) {
     const line = lines[index]
@@ -643,6 +724,22 @@ const parseMetadataEntry = (trimmedLine: string) => {
     key: cleanName(match[1] || ''),
     value: cleanText(match[2] || '')
   }
+}
+
+const getVersionIdFromHeader = (header: string) => {
+  const match = header.match(/^Version\s+([A-Za-z][\w-]*)$/)
+
+  return match?.[1] || null
+}
+
+const getVersionSetNameFromHeader = (header: string) => {
+  const match = header.match(/^VersionSet\s+(.+)$/)
+
+  if (!match) {
+    return null
+  }
+
+  return cleanText(match[1] || '')
 }
 
 const collectTableBody = (
@@ -1482,6 +1579,54 @@ const runSemanticDiagnostics = (analysis: PgmlDocumentAnalysis) => {
 
 const buildContexts = (blocks: PgmlRawBlock[], contexts: PgmlContextRange[]) => {
   blocks.forEach((block) => {
+    if (block.kind === 'VersionSet') {
+      contexts.push({
+        kind: 'version-set',
+        blockKind: block.kind,
+        from: block.from,
+        to: block.to,
+        startLine: block.startLine,
+        endLine: block.endLine
+      })
+      return
+    }
+
+    if (block.kind === 'Workspace') {
+      contexts.push({
+        kind: 'workspace',
+        blockKind: block.kind,
+        from: block.from,
+        to: block.to,
+        startLine: block.startLine,
+        endLine: block.endLine
+      })
+      return
+    }
+
+    if (block.kind === 'Version') {
+      contexts.push({
+        kind: 'version',
+        blockKind: block.kind,
+        from: block.from,
+        to: block.to,
+        startLine: block.startLine,
+        endLine: block.endLine
+      })
+      return
+    }
+
+    if (block.kind === 'Snapshot') {
+      contexts.push({
+        kind: 'snapshot',
+        blockKind: block.kind,
+        from: block.from,
+        to: block.to,
+        startLine: block.startLine,
+        endLine: block.endLine
+      })
+      return
+    }
+
     if (block.kind === 'Table') {
       contexts.push({
         kind: 'table',
@@ -1567,30 +1712,21 @@ const buildContexts = (blocks: PgmlRawBlock[], contexts: PgmlContextRange[]) => 
   })
 }
 
-export const analyzePgmlDocument = (source: string) => {
-  if (analysisCache && analysisCache.source === source) {
-    return analysisCache.analysis
-  }
-
-  const diagnostics: PgmlLanguageDiagnostic[] = []
-  const contexts: PgmlContextRange[] = []
-  const tables: PgmlTableSymbol[] = []
-  const groups: PgmlGroupSymbol[] = []
-  const customTypes: PgmlCustomTypeSymbol[] = []
-  const functions: PgmlNamedRange[] = []
-  const procedures: PgmlNamedRange[] = []
-  const triggers: PgmlNamedRange[] = []
-  const sequences: PgmlNamedRange[] = []
-  const references: PgmlReferenceSymbol[] = []
-  const propertyTargets: PgmlPropertyTarget[] = []
-  const { lines, normalizedSource } = createLineInfo(source)
-  const { blocks, topLevelLines } = collectRawBlocks(lines, diagnostics, contexts)
-
+const analyzeSnapshotBlocks = (
+  blocks: PgmlRawBlock[],
+  topLevelLines: PgmlLineInfo[],
+  diagnostics: PgmlLanguageDiagnostic[],
+  contexts: PgmlContextRange[],
+  analysisState: PgmlAnalysisState
+) => {
+  // Snapshot bodies reuse the legacy schema grammar even when the enclosing
+  // document is versioned, so the editor keeps one semantic pipeline for
+  // tables, refs, routines, and stored layout properties.
   buildContexts(blocks, contexts)
 
   topLevelLines.forEach((line) => {
     if (line.trimmed.startsWith('Ref:')) {
-      collectTopLevelReference(line, diagnostics, references)
+      collectTopLevelReference(line, diagnostics, analysisState.references)
       return
     }
 
@@ -1615,18 +1751,29 @@ export const analyzePgmlDocument = (source: string) => {
       return
     }
 
+    if (block.kind === 'VersionSet' || block.kind === 'Workspace' || block.kind === 'Version' || block.kind === 'Snapshot') {
+      createDiagnostic(
+        diagnostics,
+        'pgml/snapshot-block-kind',
+        'error',
+        'Snapshots only allow schema blocks, refs, and properties.',
+        block.headerLine
+      )
+      return
+    }
+
     if (block.kind === 'Table') {
-      collectTableBody(block, diagnostics, tables, references)
+      collectTableBody(block, diagnostics, analysisState.tables, analysisState.references)
       return
     }
 
     if (block.kind === 'TableGroup') {
-      collectGroupBody(block, diagnostics, groups)
+      collectGroupBody(block, diagnostics, analysisState.groups)
       return
     }
 
     if (block.kind === 'Enum' || block.kind === 'Domain' || block.kind === 'Composite') {
-      collectCustomTypeBody(block, diagnostics, customTypes)
+      collectCustomTypeBody(block, diagnostics, analysisState.customTypes)
       return
     }
 
@@ -1634,12 +1781,12 @@ export const analyzePgmlDocument = (source: string) => {
       collectExecutableBody(block, diagnostics, contexts)
 
       if (block.kind === 'Function') {
-        collectRoutineSymbol(block, 'Function', functions)
+        collectRoutineSymbol(block, 'Function', analysisState.functions)
         return
       }
 
       if (block.kind === 'Procedure') {
-        collectRoutineSymbol(block, 'Procedure', procedures)
+        collectRoutineSymbol(block, 'Procedure', analysisState.procedures)
         return
       }
 
@@ -1655,7 +1802,7 @@ export const analyzePgmlDocument = (source: string) => {
             block.headerLine
           )
         } else {
-          collectTriggerSymbol(block, triggers)
+          collectTriggerSymbol(block, analysisState.triggers)
         }
       }
 
@@ -1676,7 +1823,7 @@ export const analyzePgmlDocument = (source: string) => {
       } else {
         const sequenceName = cleanName(sequenceMatch[1] || '')
 
-        sequences.push(createNamedRange(sequenceName, block.headerLine, sequenceMatch[1] || sequenceName))
+        analysisState.sequences.push(createNamedRange(sequenceName, block.headerLine, sequenceMatch[1] || sequenceName))
       }
 
       collectExecutableBody(block, diagnostics, contexts)
@@ -1684,16 +1831,343 @@ export const analyzePgmlDocument = (source: string) => {
     }
 
     if (block.kind === 'Properties') {
-      collectPropertiesBody(block, diagnostics, propertyTargets)
+      collectPropertiesBody(block, diagnostics, analysisState.propertyTargets)
+    }
+  })
+}
+
+const analyzeNestedSnapshotBlock = (
+  block: PgmlRawBlock,
+  diagnostics: PgmlLanguageDiagnostic[],
+  contexts: PgmlContextRange[],
+  analysisState: PgmlAnalysisState,
+  containerLabel: string
+) => {
+  if (block.kind !== 'Snapshot') {
+    createDiagnostic(
+      diagnostics,
+      'pgml/snapshot-header',
+      'error',
+      `${containerLabel} requires a Snapshot block.`,
+      block.headerLine
+    )
+    return
+  }
+
+  const nestedSnapshot = collectRawBlocks(block.body, diagnostics, contexts, {
+    topLevelContextKind: null
+  })
+
+  analyzeSnapshotBlocks(
+    nestedSnapshot.blocks,
+    nestedSnapshot.topLevelLines,
+    diagnostics,
+    contexts,
+    analysisState
+  )
+}
+
+const analyzeWorkspaceBlock = (
+  block: PgmlRawBlock,
+  diagnostics: PgmlLanguageDiagnostic[],
+  contexts: PgmlContextRange[],
+  analysisState: PgmlAnalysisState
+) => {
+  if (block.header !== 'Workspace') {
+    createDiagnostic(
+      diagnostics,
+      'pgml/workspace-header',
+      'error',
+      'Workspace blocks must use `Workspace {`.',
+      block.headerLine
+    )
+    return
+  }
+
+  const nested = collectRawBlocks(block.body, diagnostics, contexts, {
+    topLevelContextKind: null
+  })
+
+  buildContexts(nested.blocks, contexts)
+
+  nested.topLevelLines.forEach((line) => {
+    const entry = parseMetadataEntry(line.trimmed)
+
+    if (!entry) {
+      createDiagnostic(
+        diagnostics,
+        'pgml/workspace-entry',
+        'error',
+        'Workspace only allows metadata entries and a nested Snapshot block.',
+        line
+      )
+      return
+    }
+
+    const normalizedKey = normalizeMetadataKey(entry.key)
+
+    if (normalizedKey !== 'based_on' && normalizedKey !== 'updated_at') {
+      createDiagnostic(
+        diagnostics,
+        'pgml/workspace-key',
+        'error',
+        'Workspace only supports `based_on` and `updated_at` metadata.',
+        line
+      )
     }
   })
 
-  const analysis: PgmlDocumentAnalysis = {
-    source: normalizedSource,
-    diagnostics,
-    blocks,
-    contexts,
-    lines,
+  const snapshotBlocks = nested.blocks.filter(nestedBlock => nestedBlock.kind === 'Snapshot')
+
+  if (snapshotBlocks.length === 0) {
+    createDiagnostic(
+      diagnostics,
+      'pgml/workspace-snapshot-missing',
+      'error',
+      'Workspace requires a Snapshot block.',
+      block.headerLine
+    )
+  }
+
+  if (snapshotBlocks.length > 1) {
+    snapshotBlocks.slice(1).forEach((snapshotBlock) => {
+      createDiagnostic(
+        diagnostics,
+        'pgml/workspace-snapshot-duplicate',
+        'error',
+        'Workspace only allows one Snapshot block.',
+        snapshotBlock.headerLine
+      )
+    })
+  }
+
+  nested.blocks.forEach((nestedBlock) => {
+    if (nestedBlock.kind !== 'Snapshot') {
+      createDiagnostic(
+        diagnostics,
+        'pgml/workspace-block-kind',
+        'error',
+        'Workspace only allows a nested Snapshot block.',
+        nestedBlock.headerLine
+      )
+    }
+  })
+
+  if (snapshotBlocks[0]) {
+    analyzeNestedSnapshotBlock(snapshotBlocks[0], diagnostics, contexts, analysisState, 'Workspace')
+  }
+}
+
+const analyzeVersionBlock = (
+  block: PgmlRawBlock,
+  diagnostics: PgmlLanguageDiagnostic[],
+  contexts: PgmlContextRange[],
+  analysisState: PgmlAnalysisState
+) => {
+  const versionId = getVersionIdFromHeader(block.header)
+
+  if (!versionId) {
+    createDiagnostic(
+      diagnostics,
+      'pgml/version-header',
+      'error',
+      'Version headers must use `Version id {`.',
+      block.headerLine
+    )
+    return
+  }
+
+  analysisState.versionIds.push(createNamedRange(versionId, block.headerLine, versionId))
+
+  const nested = collectRawBlocks(block.body, diagnostics, contexts, {
+    topLevelContextKind: null
+  })
+
+  buildContexts(nested.blocks, contexts)
+
+  nested.topLevelLines.forEach((line) => {
+    const entry = parseMetadataEntry(line.trimmed)
+
+    if (!entry) {
+      createDiagnostic(
+        diagnostics,
+        'pgml/version-entry',
+        'error',
+        'Version only allows metadata entries and a nested Snapshot block.',
+        line
+      )
+      return
+    }
+
+    const normalizedKey = normalizeMetadataKey(entry.key)
+
+    if (!['name', 'role', 'parent', 'created_at'].includes(normalizedKey)) {
+      createDiagnostic(
+        diagnostics,
+        'pgml/version-key',
+        'error',
+        'Version only supports `name`, `role`, `parent`, and `created_at` metadata.',
+        line
+      )
+      return
+    }
+
+    if (
+      normalizedKey === 'role'
+      && entry.value !== 'design'
+      && entry.value !== 'implementation'
+    ) {
+      createDiagnostic(
+        diagnostics,
+        'pgml/version-role',
+        'error',
+        'Version role must be `design` or `implementation`.',
+        line
+      )
+    }
+  })
+
+  const snapshotBlocks = nested.blocks.filter(nestedBlock => nestedBlock.kind === 'Snapshot')
+
+  if (snapshotBlocks.length === 0) {
+    createDiagnostic(
+      diagnostics,
+      'pgml/version-snapshot-missing',
+      'error',
+      `Version ${versionId} requires a Snapshot block.`,
+      block.headerLine
+    )
+  }
+
+  if (snapshotBlocks.length > 1) {
+    snapshotBlocks.slice(1).forEach((snapshotBlock) => {
+      createDiagnostic(
+        diagnostics,
+        'pgml/version-snapshot-duplicate',
+        'error',
+        `Version ${versionId} only allows one Snapshot block.`,
+        snapshotBlock.headerLine
+      )
+    })
+  }
+
+  nested.blocks.forEach((nestedBlock) => {
+    if (nestedBlock.kind !== 'Snapshot') {
+      createDiagnostic(
+        diagnostics,
+        'pgml/version-block-kind',
+        'error',
+        'Version only allows a nested Snapshot block.',
+        nestedBlock.headerLine
+      )
+    }
+  })
+
+  if (snapshotBlocks[0]) {
+    analyzeNestedSnapshotBlock(snapshotBlocks[0], diagnostics, contexts, analysisState, `Version ${versionId}`)
+  }
+}
+
+const analyzeVersionSetBlock = (
+  block: PgmlRawBlock,
+  diagnostics: PgmlLanguageDiagnostic[],
+  contexts: PgmlContextRange[],
+  analysisState: PgmlAnalysisState
+) => {
+  // VersionSet is the grammar boundary between document history and schema
+  // contents. Its direct children are structural history blocks only.
+  const documentName = getVersionSetNameFromHeader(block.header)
+
+  if (!documentName || documentName.trim().length === 0) {
+    createDiagnostic(
+      diagnostics,
+      'pgml/version-set-header',
+      'error',
+      'VersionSet headers must use `VersionSet "Name" {`.',
+      block.headerLine
+    )
+  }
+
+  const nested = collectRawBlocks(block.body, diagnostics, contexts, {
+    topLevelContextKind: null
+  })
+
+  buildContexts(nested.blocks, contexts)
+
+  nested.topLevelLines.forEach((line) => {
+    createDiagnostic(
+      diagnostics,
+      'pgml/version-set-entry',
+      'error',
+      'VersionSet only allows Workspace and Version blocks.',
+      line
+    )
+  })
+
+  const workspaceBlocks = nested.blocks.filter(nestedBlock => nestedBlock.kind === 'Workspace')
+  const versionBlocks = nested.blocks.filter(nestedBlock => nestedBlock.kind === 'Version')
+
+  if (workspaceBlocks.length === 0) {
+    createDiagnostic(
+      diagnostics,
+      'pgml/version-set-workspace-missing',
+      'error',
+      'VersionSet requires a Workspace block.',
+      block.headerLine
+    )
+  }
+
+  if (workspaceBlocks.length > 1) {
+    workspaceBlocks.slice(1).forEach((workspaceBlock) => {
+      createDiagnostic(
+        diagnostics,
+        'pgml/version-set-workspace-duplicate',
+        'error',
+        'VersionSet only allows one Workspace block.',
+        workspaceBlock.headerLine
+      )
+    })
+  }
+
+  nested.blocks.forEach((nestedBlock) => {
+    if (nestedBlock.kind !== 'Workspace' && nestedBlock.kind !== 'Version') {
+      createDiagnostic(
+        diagnostics,
+        'pgml/version-set-block-kind',
+        'error',
+        'VersionSet only allows Workspace and Version blocks.',
+        nestedBlock.headerLine
+      )
+    }
+  })
+
+  if (workspaceBlocks[0]) {
+    analyzeWorkspaceBlock(workspaceBlocks[0], diagnostics, contexts, analysisState)
+  }
+
+  versionBlocks.forEach(versionBlock => analyzeVersionBlock(versionBlock, diagnostics, contexts, analysisState))
+}
+
+export const analyzePgmlDocument = (source: string) => {
+  if (analysisCache && analysisCache.source === source) {
+    return analysisCache.analysis
+  }
+
+  const diagnostics: PgmlLanguageDiagnostic[] = []
+  const contexts: PgmlContextRange[] = []
+  const tables: PgmlTableSymbol[] = []
+  const groups: PgmlGroupSymbol[] = []
+  const customTypes: PgmlCustomTypeSymbol[] = []
+  const functions: PgmlNamedRange[] = []
+  const procedures: PgmlNamedRange[] = []
+  const triggers: PgmlNamedRange[] = []
+  const sequences: PgmlNamedRange[] = []
+  const references: PgmlReferenceSymbol[] = []
+  const propertyTargets: PgmlPropertyTarget[] = []
+  const versionIds: PgmlNamedRange[] = []
+  const { lines, normalizedSource } = createLineInfo(source)
+  const { blocks, topLevelLines } = collectRawBlocks(lines, diagnostics, contexts)
+  const analysisState: PgmlAnalysisState = {
     tables,
     groups,
     customTypes,
@@ -1702,10 +2176,82 @@ export const analyzePgmlDocument = (source: string) => {
     triggers,
     sequences,
     references,
-    propertyTargets
+    propertyTargets,
+    versionIds
+  }
+  const isVersionedDocument = blocks.some(block => block.kind === 'VersionSet')
+
+  buildContexts(blocks, contexts)
+
+  if (isVersionedDocument) {
+    // Versioned documents are parsed from the root downward so invalid root
+    // siblings can be flagged before nested Snapshot blocks reuse schema rules.
+    topLevelLines.forEach((line) => {
+      createDiagnostic(
+        diagnostics,
+        'pgml/versioned-top-level-entry',
+        'error',
+        'Versioned PGML only allows VersionSet at the top level.',
+        line
+      )
+    })
+
+    if (blocks.length !== 1 || blocks[0]?.kind !== 'VersionSet') {
+      blocks.forEach((block) => {
+        if (block.kind !== 'VersionSet') {
+          createDiagnostic(
+            diagnostics,
+            'pgml/versioned-root-block-kind',
+            'error',
+            'Versioned PGML only allows VersionSet at the top level.',
+            block.headerLine
+          )
+        }
+      })
+    }
+
+    blocks.forEach((block) => {
+      if (block.kind === 'VersionSet') {
+        analyzeVersionSetBlock(block, diagnostics, contexts, analysisState)
+        return
+      }
+
+      if (block.kind === 'Unknown') {
+        createDiagnostic(
+          diagnostics,
+          'pgml/block-kind',
+          'error',
+          'Unsupported block header.',
+          block.headerLine
+        )
+      }
+    })
+  } else {
+    analyzeSnapshotBlocks(blocks, topLevelLines, diagnostics, contexts, analysisState)
   }
 
-  runSemanticDiagnostics(analysis)
+  const analysis: PgmlDocumentAnalysis = {
+    source: normalizedSource,
+    diagnostics,
+    blocks,
+    contexts,
+    lines,
+    isVersionedDocument,
+    tables,
+    groups,
+    customTypes,
+    functions,
+    procedures,
+    triggers,
+    sequences,
+    references,
+    propertyTargets,
+    versionIds
+  }
+
+  if (!isVersionedDocument) {
+    runSemanticDiagnostics(analysis)
+  }
   diagnostics.sort((left, right) => left.from - right.from || left.severity.localeCompare(right.severity))
 
   analysisCache = {
@@ -1741,7 +2287,11 @@ const getInnermostContextAtOffset = (analysis: PgmlDocumentAnalysis, offset: num
       const leftSpan = left.to - left.from
       const rightSpan = right.to - right.from
 
-      return leftSpan - rightSpan
+      if (leftSpan !== rightSpan) {
+        return leftSpan - rightSpan
+      }
+
+      return Number(left.kind === 'top-level') - Number(right.kind === 'top-level')
     })
 
   return matches[0] || null
@@ -1902,6 +2452,17 @@ const getGroupTableEntryCompletions = (analysis: PgmlDocumentAnalysis, fragment:
   return buildSymbolCompletionItems(values, 'Defined table', 'symbol', fragment, from, to)
 }
 
+const getVersionIdCompletions = (analysis: PgmlDocumentAnalysis, fragment: string, from: number, to: number) => {
+  return buildSymbolCompletionItems(
+    analysis.versionIds.map(version => version.name),
+    'Locked version',
+    'symbol',
+    fragment,
+    from,
+    to
+  )
+}
+
 const getCompletionItemsForLine = (analysis: PgmlDocumentAnalysis, offset: number) => {
   const context = getInnermostContextAtOffset(analysis, offset)
   const line = getLineAtOffset(analysis, offset)
@@ -1918,7 +2479,61 @@ const getCompletionItemsForLine = (analysis: PgmlDocumentAnalysis, offset: numbe
       return getReferencePathCompletions(analysis, fragment, from, to)
     }
 
-    return filterCompletionTemplates(topLevelKeywordTemplates, 'keyword', fragment, from, to)
+    return filterCompletionTemplates(rootKeywordTemplates, 'keyword', fragment, from, to)
+  }
+
+  if (context.kind === 'version-set') {
+    if (/^\s*VersionSet\s+/.test(beforeCursor)) {
+      return []
+    }
+
+    return filterCompletionTemplates(versionSetKeywordTemplates, 'keyword', fragment, from, to)
+  }
+
+  if (context.kind === 'workspace') {
+    if (/^\s*Workspace\s*/.test(beforeCursor)) {
+      return []
+    }
+
+    if (/^\s*based_on:\s*[A-Za-z0-9_-]*$/i.test(beforeCursor)) {
+      return getVersionIdCompletions(analysis, fragment, from, to)
+    }
+
+    return [
+      ...filterCompletionTemplates(workspaceMetadataKeywordTemplates, 'property', fragment, from, to),
+      ...filterCompletionTemplates(snapshotKeywordTemplates, 'keyword', fragment, from, to)
+    ]
+  }
+
+  if (context.kind === 'version') {
+    if (/^\s*Version\s+[A-Za-z0-9_-]*$/i.test(beforeCursor)) {
+      return []
+    }
+
+    if (/^\s*role:\s*[A-Za-z]*$/i.test(beforeCursor)) {
+      return filterCompletionTemplates(versionRoleValueTemplates, 'value', fragment, from, to)
+    }
+
+    if (/^\s*parent:\s*[A-Za-z0-9_-]*$/i.test(beforeCursor)) {
+      return getVersionIdCompletions(analysis, fragment, from, to)
+    }
+
+    return [
+      ...filterCompletionTemplates(versionMetadataKeywordTemplates, 'property', fragment, from, to),
+      ...filterCompletionTemplates(snapshotKeywordTemplates, 'keyword', fragment, from, to)
+    ]
+  }
+
+  if (context.kind === 'snapshot') {
+    if (/^\s*Ref:\s*/.test(beforeCursor)) {
+      return getReferencePathCompletions(analysis, fragment, from, to)
+    }
+
+    if (/^\s*Snapshot\s*/.test(beforeCursor)) {
+      return []
+    }
+
+    return filterCompletionTemplates(snapshotTopLevelKeywordTemplates, 'keyword', fragment, from, to)
   }
 
   if (context.kind === 'properties') {

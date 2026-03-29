@@ -282,7 +282,7 @@ const readPgmlToken = (stream: StringStream, state: PgmlStreamState) => {
     return 'string'
   }
 
-  if (stream.match(/\b(?:TableGroup|Table|Enum|Domain|Composite|Function|Procedure|Trigger|Sequence|Properties|Ref:)\b/)) {
+  if (stream.match(/\b(?:VersionSet|Workspace|Version|Snapshot|TableGroup|Table|Enum|Domain|Composite|Function|Procedure|Trigger|Sequence|Properties|Ref:)\b/)) {
     state.lineAllowsColumnTypeHighlight = false
     state.lastNamedTokenType = 'keyword'
     state.lastPropertyName = null
@@ -296,13 +296,13 @@ const readPgmlToken = (stream: StringStream, state: PgmlStreamState) => {
     return 'keyword'
   }
 
-  if (stream.match(/\b(?:pk|unique|not|null|default|note|ref|language|volatility|security|timing|events|level|function|arguments|as|base|start|increment|min|max|cache|cycle|owned_by|summary|writes|sets|depends_on|reads|calls|uses|visible|collapsed|masonry|table_columns|table_width_scale|width|height|color|x|y)\b(?=\s|:|\])/)) {
+  if (stream.match(/\b(?:pk|unique|not|null|default|note|ref|language|volatility|security|timing|events|level|function|arguments|as|base|start|increment|min|max|cache|cycle|owned_by|summary|writes|sets|depends_on|reads|calls|uses|visible|collapsed|masonry|table_columns|table_width_scale|width|height|color|x|y|name|role|parent|created_at|based_on|updated_at)\b(?=\s|:|\])/)) {
     state.lastNamedTokenType = 'propertyName'
     state.lastPropertyName = stream.current()
     return 'propertyName'
   }
 
-  if (stream.match(/\b(?:true|false)\b/)) {
+  if (stream.match(/\b(?:true|false|design|implementation)\b/)) {
     return 'atom'
   }
 
@@ -346,6 +346,12 @@ const readPgmlToken = (stream: StringStream, state: PgmlStreamState) => {
       state.lastNamedTokenType = 'className'
       state.lastPropertyName = null
       return 'className'
+    }
+
+    if (state.lastPropertyName === 'parent' || state.lastPropertyName === 'based_on') {
+      state.lastNamedTokenType = 'typeName'
+      state.lastPropertyName = null
+      return 'typeName'
     }
 
     state.lastNamedTokenType = 'variableName'

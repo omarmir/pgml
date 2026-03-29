@@ -116,6 +116,10 @@ Enum public.language_preference {
 
     expect(items).toEqual(expect.arrayContaining([
       expect.objectContaining({
+        label: 'VersionSet',
+        kind: 'keyword'
+      }),
+      expect.objectContaining({
         label: 'Table',
         kind: 'keyword'
       }),
@@ -124,6 +128,55 @@ Enum public.language_preference {
         kind: 'keyword'
       })
     ]))
+  })
+
+  it('collects no diagnostics for a structurally valid versioned document', () => {
+    const source = `VersionSet "Billing" {
+  Workspace {
+    based_on: v2
+    updated_at: "2026-03-29T14:12:00.000Z"
+
+    Snapshot {
+      Table public.users {
+        id uuid [pk]
+        email text [unique, not null]
+      }
+
+      Ref: public.users.id > public.users.id
+    }
+  }
+
+  Version v1 {
+    name: "Initial implementation"
+    role: implementation
+    created_at: "2026-03-20T15:00:00.000Z"
+
+    Snapshot {
+      Table public.users {
+        id uuid [pk]
+      }
+    }
+  }
+
+  Version v2 {
+    name: "Workspace base"
+    role: design
+    parent: v1
+    created_at: "2026-03-24T10:30:00.000Z"
+
+    Snapshot {
+      Table public.users {
+        id uuid [pk]
+        email text [unique]
+      }
+    }
+  }
+}`
+
+    const analysis = analyzePgmlDocument(source)
+
+    expect(analysis.isVersionedDocument).toBe(true)
+    expect(analysis.diagnostics).toEqual([])
   })
 
   it('offers table width scale as a properties completion', () => {
@@ -207,6 +260,114 @@ Ref: public.users.id > public.u`
     expect(referenceCompletions).toEqual(expect.arrayContaining([
       expect.objectContaining({
         label: 'public.users.id'
+      })
+    ]))
+  })
+
+  it('offers version-set, workspace, and version-aware completions', () => {
+    const versionSetSource = `VersionSet "Billing" {
+  Wor
+}`
+    const workspaceSource = `VersionSet "Billing" {
+  Workspace {
+    ba
+  }
+
+  Version v1 {
+    role: implementation
+    created_at: "2026-03-20T15:00:00.000Z"
+
+    Snapshot {
+      Table public.users {
+        id uuid [pk]
+      }
+    }
+  }
+}`
+    const versionRoleSource = `VersionSet "Billing" {
+  Workspace {
+    based_on: v1
+
+    Snapshot {
+      Table public.users {
+        id uuid [pk]
+      }
+    }
+  }
+
+  Version v1 {
+    role: im
+    created_at: "2026-03-20T15:00:00.000Z"
+
+    Snapshot {
+      Table public.users {
+        id uuid [pk]
+      }
+    }
+  }
+}`
+    const versionParentSource = `VersionSet "Billing" {
+  Workspace {
+    based_on: v1
+
+    Snapshot {
+      Table public.users {
+        id uuid [pk]
+      }
+    }
+  }
+
+  Version v1 {
+    role: implementation
+    created_at: "2026-03-20T15:00:00.000Z"
+
+    Snapshot {
+      Table public.users {
+        id uuid [pk]
+      }
+    }
+  }
+
+  Version v2 {
+    parent: v
+    role: design
+    created_at: "2026-03-24T10:30:00.000Z"
+
+    Snapshot {
+      Table public.users {
+        id uuid [pk]
+      }
+    }
+  }
+}`
+
+    const versionSetItems = getPgmlCompletionItems(versionSetSource, versionSetSource.indexOf('Wor') + 'Wor'.length)
+    const workspaceItems = getPgmlCompletionItems(workspaceSource, workspaceSource.indexOf('ba') + 'ba'.length)
+    const versionRoleItems = getPgmlCompletionItems(versionRoleSource, versionRoleSource.indexOf('im') + 'im'.length)
+    const versionParentItems = getPgmlCompletionItems(versionParentSource, versionParentSource.indexOf('parent: v') + 'parent: v'.length)
+
+    expect(versionSetItems).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        label: 'Workspace',
+        kind: 'keyword'
+      })
+    ]))
+    expect(workspaceItems).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        label: 'based_on',
+        kind: 'property'
+      })
+    ]))
+    expect(versionRoleItems).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        label: 'implementation',
+        kind: 'value'
+      })
+    ]))
+    expect(versionParentItems).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        label: 'v1',
+        kind: 'symbol'
       })
     ]))
   })

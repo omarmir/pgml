@@ -154,4 +154,77 @@ Domain email_address {
       })
     ]))
   })
+
+  it('highlights version grammar keywords, metadata, and role values', () => {
+    const source = `VersionSet "Billing" {
+  Workspace {
+    based_on: v2
+    updated_at: "2026-03-29T14:12:00.000Z"
+
+    Snapshot {
+      Table public.users {
+        id uuid [pk]
+      }
+    }
+  }
+
+  Version v2 {
+    name: "Workspace base"
+    role: implementation
+    parent: v1
+    created_at: "2026-03-24T10:30:00.000Z"
+
+    Snapshot {
+      Table public.users {
+        id uuid [pk]
+      }
+    }
+  }
+}`
+
+    const tokens = tokenizePgmlSource(source).filter(token => token.value.trim().length > 0)
+
+    expect(tokens).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        value: 'VersionSet',
+        type: 'keyword'
+      }),
+      expect.objectContaining({
+        value: 'Workspace',
+        type: 'keyword'
+      }),
+      expect.objectContaining({
+        value: 'Snapshot',
+        type: 'keyword'
+      }),
+      expect.objectContaining({
+        value: 'Version',
+        type: 'keyword'
+      }),
+      expect.objectContaining({
+        value: 'based_on',
+        type: 'propertyName'
+      }),
+      expect.objectContaining({
+        value: 'updated_at',
+        type: 'propertyName'
+      }),
+      expect.objectContaining({
+        value: 'role',
+        type: 'propertyName'
+      }),
+      expect.objectContaining({
+        value: 'implementation',
+        type: 'atom'
+      }),
+      expect.objectContaining({
+        value: 'parent',
+        type: 'propertyName'
+      }),
+      expect.objectContaining({
+        value: 'v1',
+        type: 'typeName'
+      })
+    ]))
+  })
 })
