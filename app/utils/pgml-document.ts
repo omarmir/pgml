@@ -202,6 +202,10 @@ export const getPgmlLeafVersions = (document: PgmlVersionSetDocument) => {
   return document.versions.filter(version => !parentIds.has(version.id))
 }
 
+export const getPgmlLeafVersionCount = (document: PgmlVersionSetDocument) => {
+  return getPgmlLeafVersions(document).length
+}
+
 export const isPgmlLeafVersion = (
   document: PgmlVersionSetDocument,
   versionId: string | null
