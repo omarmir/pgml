@@ -5,7 +5,10 @@ import {
 } from '~/constants/ui'
 import {
   joinStudioClasses,
-  studioButtonClasses
+  studioButtonClasses,
+  studioCompactBodyCopyClass,
+  studioEmptyStateClass,
+  studioPanelSurfaceClass
 } from '~/utils/uiStyles'
 
 type PgmlVersionPanelItem = {
@@ -69,6 +72,9 @@ const copyState: Ref<'idle' | 'success' | 'error'> = ref('idle')
 const copyButtonClass = joinStudioClasses(studioButtonClasses.secondary, 'text-[0.65rem]')
 const primaryButtonClass = joinStudioClasses(studioButtonClasses.primary, 'text-[0.65rem]')
 const secondaryButtonClass = joinStudioClasses(studioButtonClasses.secondary, 'text-[0.65rem]')
+const hasDiffSections = computed(() => diffSections.length > 0 || layoutChanged > 0)
+const hasMigrationSql = computed(() => migrationSql.trim().length > 0)
+const hasVersions = computed(() => versions.length > 0)
 
 const handleCopyMigration = async () => {
   if (migrationSql.trim().length === 0) {
@@ -144,6 +150,12 @@ const updateCompareTargetId = (value: unknown) => {
       />
     </div>
 
+    <div :class="joinStudioClasses(studioPanelSurfaceClass, 'px-3 py-3')">
+      <p :class="studioCompactBodyCopyClass">
+        Lock workspace checkpoints, compare snapshots, and export forward SQL from the selected base to the selected target.
+      </p>
+    </div>
+
     <div class="grid gap-2 border border-[color:var(--studio-divider)] bg-[color:var(--studio-control-bg)] px-3 py-3">
       <div class="font-mono text-[0.6rem] uppercase tracking-[0.08em] text-[color:var(--studio-shell-label)]">
         Compare
@@ -179,7 +191,10 @@ const updateCompareTargetId = (value: unknown) => {
         />
       </label>
 
-      <div class="grid grid-cols-2 gap-2 text-[0.66rem] text-[color:var(--studio-shell-muted)]">
+      <div
+        v-if="hasDiffSections"
+        class="grid grid-cols-2 gap-2 text-[0.66rem] text-[color:var(--studio-shell-muted)]"
+      >
         <div
           v-for="section in diffSections"
           :key="section.label"
@@ -200,6 +215,13 @@ const updateCompareTargetId = (value: unknown) => {
             {{ layoutChanged }}
           </div>
         </div>
+      </div>
+
+      <div
+        v-else
+        :class="studioEmptyStateClass"
+      >
+        No schema or layout changes are visible for the selected compare pair.
       </div>
     </div>
 
@@ -222,6 +244,13 @@ const updateCompareTargetId = (value: unknown) => {
             Editable working draft
           </span>
         </button>
+
+        <div
+          v-if="!hasVersions"
+          :class="studioEmptyStateClass"
+        >
+          Create the first checkpoint to lock a baseline before you compare or restore history.
+        </div>
 
         <div
           v-for="version in versions"
@@ -288,6 +317,7 @@ const updateCompareTargetId = (value: unknown) => {
             variant="outline"
             size="xs"
             :class="copyButtonClass"
+            :disabled="!hasMigrationSql"
             @click="handleCopyMigration"
           />
           <UButton
@@ -296,6 +326,7 @@ const updateCompareTargetId = (value: unknown) => {
             variant="soft"
             size="xs"
             :class="primaryButtonClass"
+            :disabled="!hasMigrationSql"
             @click="handleDownloadMigration"
           />
         </div>
@@ -313,7 +344,17 @@ const updateCompareTargetId = (value: unknown) => {
         </div>
       </div>
 
-      <pre class="max-h-96 overflow-auto border border-[color:var(--studio-divider)] bg-[color:var(--studio-input-bg)] px-3 py-3 text-[0.68rem] leading-6 text-[color:var(--studio-shell-text)]">{{ migrationSql }}</pre>
+      <pre
+        v-if="hasMigrationSql"
+        class="max-h-96 overflow-auto border border-[color:var(--studio-divider)] bg-[color:var(--studio-input-bg)] px-3 py-3 text-[0.68rem] leading-6 text-[color:var(--studio-shell-text)]"
+      >{{ migrationSql }}</pre>
+
+      <div
+        v-else
+        :class="studioEmptyStateClass"
+      >
+        Choose a compare pair with schema changes to preview the forward migration SQL here.
+      </div>
     </div>
   </div>
 </template>
