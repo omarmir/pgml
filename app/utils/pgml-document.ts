@@ -455,6 +455,24 @@ export const getPgmlWorkspaceBaseVersion = (document: PgmlVersionSetDocument) =>
   return getPgmlVersionById(document, document.workspace.basedOnVersionId)
 }
 
+export const getPgmlVersionLineage = (
+  document: PgmlVersionSetDocument,
+  versionId: string | null
+) => {
+  const versionsById = getPgmlVersionMap(document)
+  const lineage: PgmlVersionDocumentBlock[] = []
+  let currentVersion = versionId ? versionsById.get(versionId) || null : null
+
+  while (currentVersion) {
+    lineage.unshift(currentVersion)
+    currentVersion = currentVersion.parentVersionId
+      ? versionsById.get(currentVersion.parentVersionId) || null
+      : null
+  }
+
+  return lineage
+}
+
 export const serializePgmlDocument = (document: PgmlVersionSetDocument) => {
   validateVersionSetDocument(document)
 

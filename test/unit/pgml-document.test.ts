@@ -4,6 +4,7 @@ import {
   createInitialPgmlDocument,
   createPgmlVersionFromWorkspace,
   getPgmlVersionById,
+  getPgmlVersionLineage,
   getPgmlVersionMap,
   getPgmlWorkspaceBaseVersion,
   parsePgmlDocument,
@@ -100,6 +101,38 @@ Table public.memberships {
     expect(workspaceBaseVersion?.id).toBe(document.workspace.basedOnVersionId)
     expect(getPgmlVersionById(document, workspaceBaseVersion?.id || null)?.name).toBe('Initial implementation')
     expect(getPgmlVersionById(document, 'missing-version')).toBeNull()
+  })
+
+  it('returns ordered lineage from the root version to the selected checkpoint', () => {
+    const initialDocument = createInitialPgmlDocument({
+      name: 'Billing',
+      workspaceSource: baseSnapshotSource
+    })
+    const firstVersion = createPgmlVersionFromWorkspace(initialDocument, {
+      createdAt: '2026-03-29T12:00:00.000Z',
+      name: 'Initial design',
+      role: 'design'
+    })
+    const secondVersion = createPgmlVersionFromWorkspace(replacePgmlWorkspaceFromSnapshot(firstVersion, {
+      basedOnVersionId: firstVersion.workspace.basedOnVersionId,
+      source: `${baseSnapshotSource}
+
+Table public.orders {
+  id uuid [pk]
+}`,
+      updatedAt: '2026-03-29T12:05:00.000Z'
+    }), {
+      createdAt: '2026-03-29T12:10:00.000Z',
+      name: 'Add orders',
+      role: 'design'
+    })
+    const targetVersion = secondVersion.versions[1]
+
+    expect(getPgmlVersionLineage(secondVersion, targetVersion?.id || null).map(version => version.name)).toEqual([
+      'Initial design',
+      'Add orders'
+    ])
+    expect(getPgmlVersionLineage(secondVersion, null)).toEqual([])
   })
 
   it('rejects invalid VersionSet documents that reference missing parent or base versions', () => {
