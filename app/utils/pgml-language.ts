@@ -161,6 +161,11 @@ type DuplicateEntry<T> = {
   values: T[]
 }
 
+type PgmlParsedMetadataLine = {
+  entry: ReturnType<typeof parseMetadataEntry>
+  line: PgmlLineInfo
+}
+
 const snapshotTopLevelKeywordTemplates = [
   { label: 'Table', detail: 'Start a table block.', apply: 'Table ' },
   { label: 'TableGroup', detail: 'Start a table group block.', apply: 'TableGroup ' },
@@ -1885,7 +1890,7 @@ const collectNestedHistoryBlocks = (
 }
 
 const validateMetadataOnlyLines = (
-  lines: PgmlLineInfo[],
+  metadataLines: PgmlParsedMetadataLine[],
   diagnostics: PgmlLanguageDiagnostic[],
   options: {
     allowedKeys: Set<string>
@@ -1895,9 +1900,7 @@ const validateMetadataOnlyLines = (
     keyMessage: string
   }
 ) => {
-  lines.forEach((line) => {
-    const entry = parseMetadataEntry(line.trimmed)
-
+  metadataLines.forEach(({ entry, line }) => {
     if (!entry) {
       createDiagnostic(
         diagnostics,
@@ -1918,6 +1921,15 @@ const validateMetadataOnlyLines = (
         line
       )
     }
+  })
+}
+
+const collectParsedMetadataLines = (lines: PgmlLineInfo[]) => {
+  return lines.map((line) => {
+    return {
+      entry: parseMetadataEntry(line.trimmed),
+      line
+    } satisfies PgmlParsedMetadataLine
   })
 }
 
@@ -1994,8 +2006,9 @@ const analyzeWorkspaceBlock = (
   }
 
   const nested = collectNestedHistoryBlocks(block, diagnostics, contexts)
+  const metadataLines = collectParsedMetadataLines(nested.topLevelLines)
 
-  validateMetadataOnlyLines(nested.topLevelLines, diagnostics, {
+  validateMetadataOnlyLines(metadataLines, diagnostics, {
     allowedKeys: workspaceMetadataKeys,
     entryCode: 'pgml/workspace-entry',
     entryMessage: 'Workspace only allows metadata entries and a nested Snapshot block.',
@@ -2040,8 +2053,9 @@ const analyzeVersionBlock = (
   analysisState.versionIds.push(createNamedRange(versionId, block.headerLine, versionId))
 
   const nested = collectNestedHistoryBlocks(block, diagnostics, contexts)
+  const metadataLines = collectParsedMetadataLines(nested.topLevelLines)
 
-  validateMetadataOnlyLines(nested.topLevelLines, diagnostics, {
+  validateMetadataOnlyLines(metadataLines, diagnostics, {
     allowedKeys: versionMetadataKeys,
     entryCode: 'pgml/version-entry',
     entryMessage: 'Version only allows metadata entries and a nested Snapshot block.',
@@ -2049,10 +2063,8 @@ const analyzeVersionBlock = (
     keyMessage: 'Version only supports `name`, `role`, `parent`, and `created_at` metadata.'
   })
 
-  nested.topLevelLines.forEach((line) => {
-    const entry = parseMetadataEntry(line.trimmed)
-
-    if (entry?.key !== 'role') {
+  metadataLines.forEach(({ entry, line }) => {
+    if (!entry || normalizeMetadataKey(entry.key) !== 'role') {
       return
     }
 
