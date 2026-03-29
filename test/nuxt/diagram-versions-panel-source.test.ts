@@ -27,5 +27,6 @@ describe('diagram versions panel source', () => {
     expect(file).toContain("isComparePresetActive({ baseId: latestDesignVersionId, targetId: 'workspace' })")
     expect(file).toContain('Latest impl to draft')
     expect(file).toContain('Latest design to draft')
+    expect(file).toContain(":disabled=\"previewTargetId === version.id\"")
   })
 })

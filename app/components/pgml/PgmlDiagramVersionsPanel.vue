@@ -656,6 +656,7 @@ const swapComparePair = () => {
                 variant="outline"
                 size="xs"
                 :class="secondaryButtonClass"
+                :disabled="previewTargetId === version.id"
                 @click="emit('view-target', version.id)"
               />
               <UButton
