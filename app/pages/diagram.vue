@@ -41,6 +41,10 @@ import { convertPgDumpToPgml } from '~/utils/pg-dump-import'
 import { analyzePgmlDocument } from '~/utils/pgml-language'
 import { buildPgmlMigrationDiffBundle } from '~/utils/pgml-migration-diff'
 import {
+  buildPgmlVersionDiffSections,
+  type PgmlVersionDiffSection
+} from '~/utils/pgml-version-summary'
+import {
   buildPgmlWithNodeProperties,
   parsePgml,
   pgmlExample,
@@ -109,16 +113,6 @@ type ReferenceTargetItem = {
 }
 
 type ReferenceActionField = 'referenceDeleteAction' | 'referenceUpdateAction'
-
-type VersionDiffSection = {
-  count: number
-  items: Array<{
-    id: string
-    kind: 'added' | 'modified' | 'removed'
-    label: string
-  }>
-  label: string
-}
 
 const defaultReferenceActionSelectValue = '__pgml_default_reference_action__'
 
@@ -675,66 +669,8 @@ const compareDiff = computed(() => {
     parsePgml(compareTargetSource.value)
   )
 })
-const versionDiffSections = computed<VersionDiffSection[]>(() => {
-  const sectionEntries = [
-    {
-      items: compareDiff.value.tables,
-      label: 'Tables'
-    },
-    {
-      items: compareDiff.value.columns,
-      label: 'Columns'
-    },
-    {
-      items: compareDiff.value.references,
-      label: 'References'
-    },
-    {
-      items: compareDiff.value.indexes,
-      label: 'Indexes'
-    },
-    {
-      items: compareDiff.value.constraints,
-      label: 'Constraints'
-    },
-    {
-      items: compareDiff.value.groups,
-      label: 'Groups'
-    },
-    {
-      items: [
-        ...compareDiff.value.functions,
-        ...compareDiff.value.procedures,
-        ...compareDiff.value.triggers,
-        ...compareDiff.value.sequences
-      ],
-      label: 'Routines'
-    },
-    {
-      items: compareDiff.value.customTypes,
-      label: 'Types'
-    }
-  ]
-
-  return sectionEntries.reduce<VersionDiffSection[]>((sections, entry) => {
-    if (entry.items.length === 0) {
-      return sections
-    }
-
-    sections.push({
-      count: entry.items.length,
-      items: entry.items.map((item) => {
-        return {
-          id: item.id,
-          kind: item.kind,
-          label: item.label
-        }
-      }),
-      label: entry.label
-    })
-
-    return sections
-  }, [])
+const versionDiffSections = computed<PgmlVersionDiffSection[]>(() => {
+  return buildPgmlVersionDiffSections(compareDiff.value)
 })
 const compareBaseLabel = computed(() => {
   if (versionCompareBaseId.value === null) {

@@ -1,0 +1,35 @@
+import { describe, expect, it } from 'vitest'
+
+import { parsePgml } from '../../app/utils/pgml'
+import { diffPgmlSchemaModels } from '../../app/utils/pgml-diff'
+import { buildPgmlVersionDiffSections } from '../../app/utils/pgml-version-summary'
+
+describe('PGML version summary helpers', () => {
+  it('groups schema diff entries into labeled compare sections', () => {
+    const diff = diffPgmlSchemaModels(
+      parsePgml(`Table public.users {
+  id uuid [pk]
+}`),
+      parsePgml(`Table public.users {
+  id uuid [pk]
+  email text
+}
+
+Table public.orders {
+  id uuid [pk]
+}`)
+    )
+    const sections = buildPgmlVersionDiffSections(diff)
+
+    expect(sections).toMatchObject([
+      {
+        count: 1,
+        label: 'Tables'
+      },
+      {
+        count: 2,
+        label: 'Columns'
+      }
+    ])
+  })
+})
