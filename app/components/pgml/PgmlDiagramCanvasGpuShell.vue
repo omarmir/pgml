@@ -3,9 +3,14 @@ import { useResizeObserver } from '@vueuse/core'
 import type { CSSProperties, Ref } from 'vue'
 import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
 import { studioSelectUi, studioSwitchUi } from '~/constants/ui'
+import PgmlDiagramComparePanel from '~/components/pgml/PgmlDiagramComparePanel.vue'
 import PgmlDiagramGpuScene from '~/components/pgml/PgmlDiagramGpuScene.vue'
 import PgmlDiagramVersionsPanel from '~/components/pgml/PgmlDiagramVersionsPanel.vue'
 import { buildTableGroupMasonryLayout, type TableAttachment, type TableAttachmentFlag, type TableAttachmentKind } from '~/utils/pgml-diagram-canvas'
+import {
+  getPgmlDiagramCompareChangeColor,
+  type PgmlDiagramCompareEntry
+} from '~/utils/pgml-diagram-compare'
 import {
   defaultPgmlTableWidthScale,
   normalizePgmlTableWidthScale,
@@ -82,6 +87,7 @@ import {
 
 type DiagramCanvasExposed = {
   getScale: () => number
+  focusBounds: (bounds: { height: number, width: number, x: number, y: number }, padding?: number) => void
   resetView: () => void
   zoomBy: (direction: 1 | -1) => void
 }
@@ -223,9 +229,26 @@ type DetailPopoverPlacement = {
   width: number
 }
 
+type DiagramCompareGhostOverlay = {
+  bounds: MeasuredBounds
+  color: string
+  entryId: string
+  label: string
+}
+
+type DiagramCompareNodeHighlight = {
+  active: boolean
+  color: string
+  entryIds: string[]
+}
+
 const {
   canCreateCheckpoint = true,
+  compareBaseLabel = 'Base',
+  compareBaseModel = null,
+  compareEntries = [],
   compareRelationshipSummary = '',
+  compareTargetLabel = 'Target',
   exportBaseName = 'pgml-schema',
   exportPreferenceKey = 'name:pgml-schema',
   hasBlockingSourceErrors = false,
@@ -251,7 +274,11 @@ const {
   viewportResetKey = 0
 } = defineProps<{
   canCreateCheckpoint?: boolean
+  compareBaseLabel?: string
+  compareBaseModel?: PgmlSchemaModel | null
+  compareEntries?: PgmlDiagramCompareEntry[]
   compareRelationshipSummary?: string
+  compareTargetLabel?: string
   exportBaseName?: string
   exportPreferenceKey?: string
   hasBlockingSourceErrors?: boolean
@@ -297,6 +324,7 @@ const sceneRef: Ref<DiagramCanvasExposed | null> = ref(null)
 const viewportRef: Ref<HTMLDivElement | null> = ref(null)
 const detailPopoverRef: Ref<HTMLDivElement | null> = ref(null)
 const selectedSelection: Ref<DiagramGpuSelection | null> = ref(null)
+const selectedCompareEntryId: Ref<string | null> = ref(null)
 const activePanelTab: Ref<DiagramPanelTab> = ref('inspector')
 const isDesktopSidePanelOpen: Ref<boolean> = ref(true)
 const showRelationshipLines: Ref<boolean> = ref(true)
@@ -1098,11 +1126,14 @@ const tableRowsByTableId = computed(() => {
             ? (objectLayoutStates.value[selectedSelection.value.id]?.color || '#14b8a6')
             : '#14b8a6')
         : null
+      const compareHighlightColor = isCompareDiagramActive.value
+        ? (compareRowHighlightByKey.value[rowKey]?.color || null)
+        : null
 
       return {
         badges: getColumnRowBadges(column),
         columnName: column.name,
-        highlightColor: relationalHighlightColor || objectImpactHighlightColor,
+        highlightColor: compareHighlightColor || relationalHighlightColor || objectImpactHighlightColor,
         key: `${table.fullName}.${column.name}`,
         kind: 'column' as const,
         subtitle: column.type,
@@ -1491,6 +1522,8 @@ const syncLayoutStates = () => {
     nextGroupStates[groupId] = {
       color: storedLayout?.color || previousState?.color || diagramPalette[index % diagramPalette.length] || '#8b5cf6',
       columnCount,
+      compareHighlightActive: compareNodeHighlightById.value[groupId]?.active || false,
+      compareHighlightColor: compareNodeHighlightById.value[groupId]?.color || null,
       height,
       id: groupId,
       masonry,
@@ -1514,6 +1547,8 @@ const syncLayoutStates = () => {
 
     nextTableStates[table.fullName] = {
       color: storedLayout?.color || previousState?.color || '#38bdf8',
+      compareHighlightActive: compareNodeHighlightById.value[table.fullName]?.active || false,
+      compareHighlightColor: compareNodeHighlightById.value[table.fullName]?.color || null,
       height,
       id: table.fullName,
       kind: 'table',
@@ -1654,6 +1689,8 @@ const syncLayoutStates = () => {
     nextObjectStates[item.id] = {
       collapsed,
       color: storedLayout?.color || previousState?.color || item.color,
+      compareHighlightActive: compareNodeHighlightById.value[item.id]?.active || false,
+      compareHighlightColor: compareNodeHighlightById.value[item.id]?.color || null,
       details: item.details,
       expandedHeight,
       height: collapsed ? previousState?.height ?? diagramObjectCollapsedHeight : expandedHeight,
@@ -1933,6 +1970,365 @@ const createBounds = (x: number, y: number, width: number, height: number): Meas
     top: y,
     width
   }
+}
+
+const isComparePanelActive = computed(() => activePanelTab.value === 'compare')
+const isCompareDiagramActive = computed(() => {
+  return isComparePanelActive.value
+    && previewTargetId === versionCompareTargetId
+    && compareEntries.length > 0
+})
+
+const compareEntryById = computed(() => {
+  return new Map(compareEntries.map((entry) => {
+    return [entry.id, entry]
+  }))
+})
+
+const getCompareChangeRank = (entryId: string) => {
+  const entry = compareEntryById.value.get(entryId)
+
+  if (!entry) {
+    return 0
+  }
+
+  if (entry.changeKind === 'removed') {
+    return 3
+  }
+
+  if (entry.changeKind === 'added') {
+    return 2
+  }
+
+  return 1
+}
+
+const pickCompareHighlight = (entryIds: string[]): DiagramCompareNodeHighlight | null => {
+  const activeEntry = selectedCompareEntryId.value
+    ? entryIds.find(entryId => entryId === selectedCompareEntryId.value) || null
+    : null
+  const rankedEntryId = activeEntry || entryIds.slice().sort((left, right) => {
+    return getCompareChangeRank(right) - getCompareChangeRank(left)
+  })[0]
+
+  if (!rankedEntryId) {
+    return null
+  }
+
+  const rankedEntry = compareEntryById.value.get(rankedEntryId)
+
+  if (!rankedEntry) {
+    return null
+  }
+
+  return {
+    active: activeEntry !== null,
+    color: getPgmlDiagramCompareChangeColor(rankedEntry.changeKind),
+    entryIds
+  }
+}
+
+const compareEntryIdsByNodeId = computed(() => {
+  const entries: Record<string, string[]> = {}
+
+  if (!isCompareDiagramActive.value) {
+    return entries
+  }
+
+  compareEntries.forEach((entry) => {
+    entry.targetNodeIds.forEach((nodeId) => {
+      entries[nodeId] = [...(entries[nodeId] || []), entry.id]
+    })
+  })
+
+  return entries
+})
+
+const compareNodeHighlightById = computed(() => {
+  return Object.entries(compareEntryIdsByNodeId.value).reduce<Record<string, DiagramCompareNodeHighlight>>((entries, [nodeId, entryIds]) => {
+    const highlight = pickCompareHighlight(entryIds)
+
+    if (highlight) {
+      entries[nodeId] = highlight
+    }
+
+    return entries
+  }, {})
+})
+
+const compareRowHighlightByKey = computed(() => {
+  const entries: Record<string, DiagramCompareNodeHighlight> = {}
+
+  if (!isCompareDiagramActive.value) {
+    return entries
+  }
+
+  compareEntries.forEach((entry) => {
+    if (!entry.rowKey) {
+      return
+    }
+
+    const rowEntryIds = [...(entries[entry.rowKey]?.entryIds || []), entry.id]
+    const highlight = pickCompareHighlight(rowEntryIds)
+
+    if (highlight) {
+      entries[entry.rowKey] = highlight
+    }
+  })
+
+  return entries
+})
+
+const getSelectionWorldBounds = (selection: DiagramGpuSelection | null) => {
+  if (!selection) {
+    return null
+  }
+
+  if (selection.kind === 'group') {
+    const group = groupNodes.value.find(entry => entry.id === selection.id)
+
+    return group ? createBounds(group.x, group.y, group.width, group.height) : null
+  }
+
+  if (selection.kind === 'object') {
+    const objectNode = objectNodes.value.find(entry => entry.id === selection.id)
+
+    return objectNode ? createBounds(objectNode.x, objectNode.y, objectNode.width, objectNode.height) : null
+  }
+
+  const table = tableCards.value.find(entry => entry.id === selection.tableId)
+
+  if (!table) {
+    return null
+  }
+
+  if (selection.kind === 'table') {
+    return createBounds(table.x, table.y, table.width, table.height)
+  }
+
+  const rowIndex = table.rows.findIndex((row) => {
+    if (selection.kind === 'column') {
+      return row.kind === 'column' && row.columnName === selection.columnName
+    }
+
+    return row.kind === 'attachment' && row.attachmentId === selection.attachmentId
+  })
+
+  if (rowIndex < 0) {
+    return createBounds(table.x, table.y, table.width, table.height)
+  }
+
+  return createBounds(
+    table.x,
+    table.y + table.headerHeight + rowIndex * diagramTableRowHeight,
+    table.width,
+    diagramTableRowHeight
+  )
+}
+
+const focusSelectionInScene = (selection: DiagramGpuSelection | null) => {
+  const bounds = getSelectionWorldBounds(selection)
+
+  if (!bounds) {
+    return
+  }
+
+  sceneRef.value?.focusBounds({
+    height: bounds.height,
+    width: bounds.width,
+    x: bounds.left,
+    y: bounds.top
+  })
+}
+
+const matchesBaseTableIdentity = (table: PgmlTable, candidate: string) => {
+  return candidate === table.fullName
+    || candidate === table.name
+    || candidate === `${table.schema}.${table.name}`
+}
+
+const getBaseTableAttachmentCount = (table: PgmlTable) => {
+  if (!compareBaseModel) {
+    return 0
+  }
+
+  const triggerCount = compareBaseModel.triggers.filter(trigger => matchesBaseTableIdentity(table, trigger.tableName)).length
+  const sequenceCount = compareBaseModel.sequences.filter((sequence) => {
+    return getSequenceAttachedTableIds(compareBaseModel.tables, sequence).includes(table.fullName)
+  }).length
+
+  return table.indexes.length + table.constraints.length + triggerCount + sequenceCount
+}
+
+const getBaseGhostBounds = (entry: PgmlDiagramCompareEntry) => {
+  if (!compareBaseModel || entry.targetNodeIds.length > 0 || entry.baseNodeIds.length === 0) {
+    return null
+  }
+
+  const topLevelKinds = new Set<PgmlDiagramCompareEntry['entityKind']>([
+    'custom-type',
+    'function',
+    'group',
+    'layout',
+    'procedure',
+    'sequence',
+    'table',
+    'trigger'
+  ])
+
+  if (!topLevelKinds.has(entry.entityKind)) {
+    return null
+  }
+
+  const nodeId = entry.baseNodeIds[0]
+
+  if (!nodeId) {
+    return null
+  }
+
+  const storedLayout = compareBaseModel.nodeProperties[nodeId]
+
+  if (typeof storedLayout?.x !== 'number' || typeof storedLayout?.y !== 'number') {
+    return null
+  }
+
+  if (nodeId.startsWith('group:')) {
+    return createBounds(
+      storedLayout.x,
+      storedLayout.y,
+      storedLayout.width || diagramGroupTableWidth + diagramGroupHorizontalPadding * 2,
+      storedLayout.height || diagramGroupHeaderHeight + 48
+    )
+  }
+
+  const table = compareBaseModel.tables.find(baseTable => baseTable.fullName === nodeId)
+
+  if (table) {
+    const rowCount = table.columns.length + getBaseTableAttachmentCount(table)
+
+    return createBounds(
+      storedLayout.x,
+      storedLayout.y,
+      storedLayout.width || diagramGroupTableWidth,
+      storedLayout.height || estimateDiagramTableHeight(rowCount)
+    )
+  }
+
+  return createBounds(
+    storedLayout.x,
+    storedLayout.y,
+    storedLayout.width || 320,
+    storedLayout.height || diagramObjectMinHeight
+  )
+}
+
+const compareGhostOverlays = computed<DiagramCompareGhostOverlay[]>(() => {
+  if (!isCompareDiagramActive.value) {
+    return []
+  }
+
+  return compareEntries.flatMap((entry) => {
+    const bounds = getBaseGhostBounds(entry)
+
+    if (!bounds) {
+      return []
+    }
+
+    return [{
+      bounds,
+      color: getPgmlDiagramCompareChangeColor(entry.changeKind),
+      entryId: entry.id,
+      label: entry.label
+    }]
+  })
+})
+
+const doesCompareEntryMatchSelection = (
+  entry: PgmlDiagramCompareEntry,
+  selection: DiagramGpuSelection | null
+) => {
+  if (!selection) {
+    return false
+  }
+
+  if (entry.selectionCandidates.some(candidate => diagramSelectionEquals(candidate, selection))) {
+    return true
+  }
+
+  if (selection.kind === 'group' || selection.kind === 'object') {
+    return entry.targetNodeIds.includes(selection.id)
+  }
+
+  if (selection.kind === 'table') {
+    return entry.targetNodeIds.includes(selection.tableId)
+  }
+
+  if (selection.kind === 'column') {
+    return entry.rowKey === `${selection.tableId}.${selection.columnName}`
+  }
+
+  return entry.rowKey === selection.attachmentId
+}
+
+const selectedDiagramCompareEntryIds = computed(() => {
+  if (!isCompareDiagramActive.value || !selectedSelection.value) {
+    return []
+  }
+
+  return compareEntries
+    .filter(entry => doesCompareEntryMatchSelection(entry, selectedSelection.value))
+    .map(entry => entry.id)
+})
+const selectedCompareEntry = computed(() => {
+  return selectedCompareEntryId.value
+    ? compareEntryById.value.get(selectedCompareEntryId.value) || null
+    : null
+})
+
+const syncComparePreviewTarget = () => {
+  if (previewTargetId === versionCompareTargetId) {
+    return
+  }
+
+  emit('viewVersionTarget', versionCompareTargetId)
+}
+
+const openComparator = () => {
+  activePanelTab.value = 'compare'
+  syncComparePreviewTarget()
+}
+
+const focusCompareEntry = (entryId: string) => {
+  const entry = compareEntryById.value.get(entryId)
+
+  if (!entry) {
+    return
+  }
+
+  syncComparePreviewTarget()
+  selectedCompareEntryId.value = entryId
+  activePanelTab.value = 'compare'
+
+  const nextSelection = entry.selectionCandidates[0] || null
+
+  if (nextSelection) {
+    selectedSelection.value = nextSelection
+    focusSelectionInScene(nextSelection)
+    return
+  }
+
+  const ghostOverlay = compareGhostOverlays.value.find(overlay => overlay.entryId === entryId)
+
+  if (!ghostOverlay) {
+    return
+  }
+
+  sceneRef.value?.focusBounds({
+    height: ghostOverlay.bounds.height,
+    width: ghostOverlay.bounds.width,
+    x: ghostOverlay.bounds.left,
+    y: ghostOverlay.bounds.top
+  })
 }
 
 const geometryRegistry = computed(() => {
@@ -2392,6 +2788,20 @@ const detailPopoverContainerStyle = computed<CSSProperties | undefined>(() => {
   }
 })
 
+const getCompareGhostOverlayStyle = (overlay: DiagramCompareGhostOverlay): CSSProperties => {
+  const transform = sceneTransform.value
+
+  return {
+    borderColor: `color-mix(in srgb, ${overlay.color} 66%, var(--studio-divider) 34%)`,
+    boxShadow: `0 0 0 1px color-mix(in srgb, ${overlay.color} 18%, transparent), inset 0 0 0 1px color-mix(in srgb, ${overlay.color} 18%, transparent)`,
+    color: `color-mix(in srgb, ${overlay.color} 82%, var(--studio-shell-text) 18%)`,
+    height: `${Math.max(22, Math.round(overlay.bounds.height * transform.scale))}px`,
+    left: `${Math.round(overlay.bounds.left * transform.scale + transform.panX)}px`,
+    top: `${Math.round(overlay.bounds.top * transform.scale + transform.panY)}px`,
+    width: `${Math.max(72, Math.round(overlay.bounds.width * transform.scale))}px`
+  }
+}
+
 const getDetailPopoverBadgeStyle = (color: string) => {
   return {
     backgroundColor: `color-mix(in srgb, ${color} 14%, transparent)`,
@@ -2408,7 +2818,7 @@ const closeDetailPopover = () => {
   selectedSelection.value = null
 }
 
-const browserItemSelectionEquals = (left: DiagramGpuSelection | null, right: DiagramGpuSelection) => {
+const diagramSelectionEquals = (left: DiagramGpuSelection | null, right: DiagramGpuSelection) => {
   if (!left || left.kind !== right.kind) {
     return false
   }
@@ -2433,7 +2843,7 @@ const browserItemSelectionEquals = (left: DiagramGpuSelection | null, right: Dia
 }
 
 const isBrowserItemSelected = (item: EntityBrowserItem) => {
-  return browserItemSelectionEquals(selectedSelection.value, item.selection)
+  return diagramSelectionEquals(selectedSelection.value, item.selection)
 }
 
 const browserItemSupportsVisibility = (item: EntityBrowserItem) => item.kind !== 'column'
@@ -2601,6 +3011,10 @@ const getBrowserItemVisibilityId = (item: EntityBrowserItem) => {
 }
 
 const diagramPanelTitle = computed(() => {
+  if (activePanelTab.value === 'compare') {
+    return selectedCompareEntry.value ? selectedCompareEntry.value.label : 'Comparator'
+  }
+
   if (activePanelTab.value === 'entities') {
     return 'Entities'
   }
@@ -2637,6 +3051,14 @@ const diagramPanelTitle = computed(() => {
 })
 
 const diagramPanelDescription = computed(() => {
+  if (activePanelTab.value === 'compare') {
+    if (selectedCompareEntry.value) {
+      return selectedCompareEntry.value.description
+    }
+
+    return `${compareEntries.length} highlighted change${compareEntries.length === 1 ? '' : 's'} between ${compareBaseLabel} and ${compareTargetLabel}.`
+  }
+
   if (activePanelTab.value === 'entities') {
     const entitySummaryLabel = normalizedEntitySearchQuery.value
       ? `${filteredEntityResultCount.value} matches`
@@ -2857,7 +3279,10 @@ const handleSceneTransformChange = (nextTransform: DiagramCanvasViewportTransfor
 
 const handleSceneSelect = (nextSelection: DiagramGpuSelection | null) => {
   selectedSelection.value = nextSelection
-  activePanelTab.value = 'inspector'
+
+  if (activePanelTab.value !== 'compare') {
+    activePanelTab.value = 'inspector'
+  }
 }
 
 const measureElementSize = (element: HTMLElement | null): MeasuredSize => {
@@ -3214,6 +3639,20 @@ watch(
 )
 
 watch(
+  () => [
+    compareEntries,
+    isCompareDiagramActive.value,
+    selectedCompareEntryId.value
+  ],
+  () => {
+    syncLayoutStates()
+  },
+  {
+    deep: true
+  }
+)
+
+watch(
   () => [groupNodes.value, tableCards.value, selectedTableId.value],
   () => {
     computeConnectionLines()
@@ -3229,12 +3668,15 @@ watch(
   async (nextTab) => {
     emit('panelTabChange', nextTab)
 
-    if (nextTab !== 'entities') {
+    if (nextTab === 'compare') {
+      syncComparePreviewTarget()
       return
     }
 
-    await nextTick()
-    entitySearchInputRef.value?.focus()
+    if (nextTab === 'entities') {
+      await nextTick()
+      entitySearchInputRef.value?.focus()
+    }
   }
 )
 
@@ -3257,6 +3699,50 @@ watch(
   },
   {
     deep: true
+  }
+)
+
+watch(
+  () => selectedDiagramCompareEntryIds.value,
+  (nextEntryIds) => {
+    if (activePanelTab.value !== 'compare' || nextEntryIds.length === 0) {
+      return
+    }
+
+    if (selectedCompareEntryId.value && nextEntryIds.includes(selectedCompareEntryId.value)) {
+      return
+    }
+
+    selectedCompareEntryId.value = nextEntryIds[0] || null
+  },
+  {
+    immediate: true
+  }
+)
+
+watch(
+  () => versionCompareTargetId,
+  () => {
+    if (activePanelTab.value !== 'compare') {
+      return
+    }
+
+    syncComparePreviewTarget()
+  }
+)
+
+watch(
+  () => compareEntries,
+  (nextEntries) => {
+    if (nextEntries.some(entry => entry.id === selectedCompareEntryId.value)) {
+      return
+    }
+
+    selectedCompareEntryId.value = nextEntries[0]?.id || null
+  },
+  {
+    deep: true,
+    immediate: true
   }
 )
 
@@ -3416,6 +3902,28 @@ defineExpose<{
       @transform-change="handleSceneTransformChange"
       @toggle-object-collapsed="handleSceneToggleObjectCollapsed"
     />
+
+    <div
+      v-if="isCompareDiagramActive && compareGhostOverlays.length > 0"
+      class="pointer-events-none absolute inset-0 z-[3]"
+    >
+      <button
+        v-for="overlay in compareGhostOverlays"
+        :key="overlay.entryId"
+        type="button"
+        :data-compare-ghost-entry="overlay.entryId"
+        class="pointer-events-auto absolute grid content-between gap-2 border border-dashed bg-[color:var(--studio-input-bg)]/70 px-2 py-2 text-left backdrop-blur-sm"
+        :style="getCompareGhostOverlayStyle(overlay)"
+        @click="focusCompareEntry(overlay.entryId)"
+      >
+        <span class="font-mono text-[0.5rem] uppercase tracking-[0.08em]">
+          Removed from target
+        </span>
+        <span class="text-[0.72rem] font-semibold leading-5">
+          {{ overlay.label }}
+        </span>
+      </button>
+    </div>
 
     <div
       v-if="shouldShowDetailPopover && selectedDetailPopover"
@@ -3628,6 +4136,17 @@ defineExpose<{
               />
 
               <UButton
+                v-if="activePanelTab === 'compare' && selectedCompareEntry"
+                data-compare-clear-selection="true"
+                label="Clear"
+                color="neutral"
+                variant="ghost"
+                size="xs"
+                :class="sidePanelActionButtonClass"
+                @click="selectedCompareEntryId = null"
+              />
+
+              <UButton
                 v-if="shouldShowDiagramPanelToggle"
                 icon="i-lucide-x"
                 color="neutral"
@@ -3665,7 +4184,7 @@ defineExpose<{
         </div>
       </div>
 
-      <div class="grid grid-cols-4 border-b border-[color:var(--studio-divider)]">
+      <div class="grid grid-cols-5 border-b border-[color:var(--studio-divider)]">
         <button
           type="button"
           data-diagram-panel-tab="inspector"
@@ -3681,6 +4200,14 @@ defineExpose<{
           @click="activePanelTab = 'entities'"
         >
           Entities
+        </button>
+        <button
+          type="button"
+          data-diagram-panel-tab="compare"
+          :class="getStudioTabButtonClass({ active: activePanelTab === 'compare', withTrailingBorder: true })"
+          @click="openComparator"
+        >
+          Compare
         </button>
         <button
           type="button"
@@ -4523,6 +5050,24 @@ defineExpose<{
       </div>
 
       <div
+        v-else-if="activePanelTab === 'compare'"
+        data-studio-scrollable="true"
+        class="min-h-0 overflow-auto"
+      >
+        <PgmlDiagramComparePanel
+          :base-label="compareBaseLabel"
+          :entries="compareEntries"
+          :relationship-summary="compareRelationshipSummary"
+          :selected-diagram-context-ids="selectedDiagramCompareEntryIds"
+          :selected-entry-id="selectedCompareEntryId"
+          :target-label="compareTargetLabel"
+          @focus-source="focusSourceRange"
+          @focus-target="focusCompareEntry"
+          @select-entry="selectedCompareEntryId = $event"
+        />
+      </div>
+
+      <div
         v-else-if="activePanelTab === 'export'"
         data-studio-scrollable="true"
         class="grid content-start gap-3 overflow-auto px-3 py-3"
@@ -4578,6 +5123,7 @@ defineExpose<{
         :workspace-status="workspaceStatus"
         @create-checkpoint="emit('versionCheckpoint')"
         @import-dump="emit('versionImportDump')"
+        @open-comparator="openComparator"
         @restore-version="emit('restoreVersion', $event)"
         @update:compare-base-id="emit('updateVersionCompareBaseId', $event)"
         @update:compare-target-id="emit('updateVersionCompareTargetId', $event)"

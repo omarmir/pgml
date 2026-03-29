@@ -114,6 +114,7 @@ const {
 const emit = defineEmits<{
   'create-checkpoint': []
   'import-dump': []
+  'open-comparator': []
   'restore-version': [versionId: string]
   'update:compareBaseId': [value: string | null]
   'update:compareTargetId': [value: string]
@@ -374,6 +375,14 @@ const applyComparePreset = (input: {
   emit('update:compareTargetId', input.targetId)
 }
 
+const openComparatorWithPreset = (input: {
+  baseId: string | null
+  targetId: string
+}) => {
+  applyComparePreset(input)
+  emit('open-comparator')
+}
+
 const isComparePresetActive = (input: {
   baseId: string | null
   targetId: string
@@ -514,6 +523,15 @@ const swapComparePair = () => {
 
       <div class="flex flex-wrap gap-2">
         <UButton
+          data-version-open-comparator="true"
+          label="Open comparator"
+          color="neutral"
+          variant="soft"
+          size="xs"
+          :class="primaryButtonClass"
+          @click="emit('open-comparator')"
+        />
+        <UButton
           v-for="preset in comparePresetButtons"
           :key="preset.label"
           :label="preset.label"
@@ -522,7 +540,7 @@ const swapComparePair = () => {
           size="xs"
           :class="secondaryButtonClass"
           :disabled="preset.disabled"
-          @click="applyComparePreset({ baseId: preset.baseId, targetId: preset.targetId })"
+          @click="openComparatorWithPreset({ baseId: preset.baseId, targetId: preset.targetId })"
         />
         <UButton
           label="Swap"

@@ -29,6 +29,11 @@ export type PgmlVersionSetDocument = {
   workspace: PgmlWorkspaceDocumentBlock
 }
 
+export type PgmlDocumentEditorScope
+  = | 'all'
+    | 'workspace-block'
+    | `version:${string}`
+
 type PgmlNamedBlock = {
   body: string[]
   header: string
@@ -658,41 +663,47 @@ const pushMetadataSpacer = (lines: string[]) => {
   }
 }
 
-const buildWorkspaceBlock = (workspace: PgmlWorkspaceDocumentBlock) => {
-  const lines = ['  Workspace {']
+const buildWorkspaceBlock = (
+  workspace: PgmlWorkspaceDocumentBlock,
+  level = 1
+) => {
+  const lines = [`${'  '.repeat(level)}Workspace {`]
 
   if (workspace.basedOnVersionId) {
-    lines.push(buildMetadataLine('based_on', workspace.basedOnVersionId, 2))
+    lines.push(buildMetadataLine('based_on', workspace.basedOnVersionId, level + 1))
   }
 
   if (workspace.updatedAt) {
-    lines.push(buildMetadataLine('updated_at', workspace.updatedAt, 2, true))
+    lines.push(buildMetadataLine('updated_at', workspace.updatedAt, level + 1, true))
   }
 
   pushMetadataSpacer(lines)
-  lines.push(buildSnapshotBlock(workspace.snapshot, 2))
-  lines.push('  }')
+  lines.push(buildSnapshotBlock(workspace.snapshot, level + 1))
+  lines.push(`${'  '.repeat(level)}}`)
 
   return lines.join('\n')
 }
 
-const buildVersionBlock = (version: PgmlVersionDocumentBlock) => {
-  const lines = [`  Version ${version.id} {`]
+const buildVersionBlock = (
+  version: PgmlVersionDocumentBlock,
+  level = 1
+) => {
+  const lines = [`${'  '.repeat(level)}Version ${version.id} {`]
 
   if (version.name) {
-    lines.push(buildMetadataLine('name', version.name, 2, true))
+    lines.push(buildMetadataLine('name', version.name, level + 1, true))
   }
 
-  lines.push(buildMetadataLine('role', version.role, 2))
+  lines.push(buildMetadataLine('role', version.role, level + 1))
 
   if (version.parentVersionId) {
-    lines.push(buildMetadataLine('parent', version.parentVersionId, 2))
+    lines.push(buildMetadataLine('parent', version.parentVersionId, level + 1))
   }
 
-  lines.push(buildMetadataLine('created_at', version.createdAt, 2, true))
+  lines.push(buildMetadataLine('created_at', version.createdAt, level + 1, true))
   lines.push('')
-  lines.push(buildSnapshotBlock(version.snapshot, 2))
-  lines.push('  }')
+  lines.push(buildSnapshotBlock(version.snapshot, level + 1))
+  lines.push(`${'  '.repeat(level)}}`)
 
   return lines.join('\n')
 }
@@ -1016,6 +1027,47 @@ export const serializePgmlDocument = (document: PgmlVersionSetDocument) => {
   ]
 
   return sections.join('\n\n')
+}
+
+export const serializePgmlWorkspaceBlock = (workspace: PgmlWorkspaceDocumentBlock) => {
+  return buildWorkspaceBlock(workspace, 0)
+}
+
+export const serializePgmlVersionBlock = (version: PgmlVersionDocumentBlock) => {
+  return buildVersionBlock(version, 0)
+}
+
+export const normalizePgmlDocumentEditorScope = (
+  document: PgmlVersionSetDocument,
+  scope: PgmlDocumentEditorScope
+) => {
+  if (scope === 'all' || scope === 'workspace-block') {
+    return scope
+  }
+
+  const versionId = scope.replace(/^version:/, '')
+
+  return getPgmlVersionById(document, versionId) ? scope : 'all'
+}
+
+export const serializePgmlDocumentScope = (
+  document: PgmlVersionSetDocument,
+  scope: PgmlDocumentEditorScope
+) => {
+  const normalizedScope = normalizePgmlDocumentEditorScope(document, scope)
+
+  if (normalizedScope === 'all') {
+    return serializePgmlDocument(document)
+  }
+
+  if (normalizedScope === 'workspace-block') {
+    return serializePgmlWorkspaceBlock(document.workspace)
+  }
+
+  const versionId = normalizedScope.replace(/^version:/, '')
+  const version = getPgmlVersionById(document, versionId)
+
+  return version ? serializePgmlVersionBlock(version) : serializePgmlDocument(document)
 }
 
 export const createInitialPgmlDocument = (input?: {

@@ -2,6 +2,7 @@
 import type { Ref } from 'vue'
 import { ref } from 'vue'
 import PgmlDiagramCanvasGpuShell from '~/components/pgml/PgmlDiagramCanvasGpuShell.vue'
+import type { PgmlDiagramCompareEntry } from '~/utils/pgml-diagram-compare'
 import type { PgmlNodeProperties, PgmlSchemaModel, PgmlSourceRange } from '~/utils/pgml'
 import type { DiagramPanelTab, StudioMobileCanvasView } from '~/utils/studio-workspace'
 
@@ -54,7 +55,11 @@ type VersionPanelItem = {
 
 const {
   canCreateCheckpoint = true,
+  compareBaseLabel = 'Base',
+  compareBaseModel = null,
+  compareEntries = [],
   compareRelationshipSummary = '',
+  compareTargetLabel = 'Target',
   exportBaseName = 'pgml-schema',
   exportPreferenceKey = 'name:pgml-schema',
   hasBlockingSourceErrors = false,
@@ -80,7 +85,11 @@ const {
   viewportResetKey = 0
 } = defineProps<{
   canCreateCheckpoint?: boolean
+  compareBaseLabel?: string
+  compareBaseModel?: PgmlSchemaModel | null
+  compareEntries?: PgmlDiagramCompareEntry[]
   compareRelationshipSummary?: string
+  compareTargetLabel?: string
   exportBaseName?: string
   exportPreferenceKey?: string
   hasBlockingSourceErrors?: boolean
@@ -144,7 +153,11 @@ defineExpose<CanvasHandle>({
   <PgmlDiagramCanvasGpuShell
     ref="shellRef"
     :can-create-checkpoint="canCreateCheckpoint"
+    :compare-base-label="compareBaseLabel"
+    :compare-base-model="compareBaseModel"
+    :compare-entries="compareEntries"
     :compare-relationship-summary="compareRelationshipSummary"
+    :compare-target-label="compareTargetLabel"
     :export-base-name="exportBaseName"
     :export-preference-key="exportPreferenceKey"
     :has-blocking-source-errors="hasBlockingSourceErrors"

@@ -1,12 +1,15 @@
 <script setup lang="ts">
 import type { PgmlLanguageDiagnostic } from '~/utils/pgml-language'
 import PgmlSourceCodeEditor from '~/components/pgml/PgmlSourceCodeEditor.vue'
+import { studioSelectUi } from '~/constants/ui'
 
 const source = defineModel<string>({
   required: true
 })
 
 const {
+  documentScope = 'all',
+  documentScopeItems = [],
   editorMode,
   editorModeItems = [],
   editorRefSetter,
@@ -19,6 +22,11 @@ const {
   sourceWarningCount,
   visibleSourceDiagnostics
 } = defineProps<{
+  documentScope?: string
+  documentScopeItems?: Array<{
+    label: string
+    value: string
+  }>
   editorMode?: string
   editorModeItems?: Array<{
     label: string
@@ -36,6 +44,7 @@ const {
 }>()
 
 const emit = defineEmits<{
+  'update:documentScope': [value: string]
   'update:editorMode': [value: string]
 }>()
 const formatDiagnosticLineLabel = (diagnostic: PgmlLanguageDiagnostic) => {
@@ -49,6 +58,18 @@ const hiddenDiagnosticCount = computed(() => {
   return Math.max(0, sourceDiagnostics.length - visibleSourceDiagnostics.length)
 })
 const hasDiagnostics = computed(() => sourceDiagnostics.length > 0)
+const showDocumentScopeSelect = computed(() => {
+  return editorMode === 'document' && documentScopeItems.length > 0
+})
+const updateDocumentScope = (value: unknown) => {
+  if (typeof value !== 'string' || value.trim().length === 0) {
+    emit('update:documentScope', 'all')
+
+    return
+  }
+
+  emit('update:documentScope', value)
+}
 </script>
 
 <template>
@@ -76,12 +97,29 @@ const hasDiagnostics = computed(() => sourceDiagnostics.length > 0)
           </button>
         </div>
 
-        <span
-          v-if="readOnly"
-          class="border border-[color:var(--studio-shell-border)] px-2 py-1 font-mono text-[0.58rem] uppercase tracking-[0.08em] text-[color:var(--studio-shell-muted)]"
-        >
-          {{ readOnlyLabel }}
-        </span>
+        <div class="flex flex-col items-end gap-2">
+          <USelect
+            v-if="showDocumentScopeSelect"
+            data-document-scope-select="true"
+            class="min-w-[14rem]"
+            :items="documentScopeItems"
+            :model-value="documentScope"
+            value-key="value"
+            label-key="label"
+            color="neutral"
+            variant="outline"
+            size="xs"
+            :ui="studioSelectUi"
+            @update:model-value="updateDocumentScope"
+          />
+
+          <span
+            v-if="readOnly"
+            class="border border-[color:var(--studio-shell-border)] px-2 py-1 font-mono text-[0.58rem] uppercase tracking-[0.08em] text-[color:var(--studio-shell-muted)]"
+          >
+            {{ readOnlyLabel }}
+          </span>
+        </div>
       </div>
 
       <p

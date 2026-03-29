@@ -15,6 +15,10 @@ const getVersionsPanel = (page: Page) => {
   return page.locator('[data-diagram-versions-panel="true"]')
 }
 
+const getComparePanel = (page: Page) => {
+  return page.locator('[data-diagram-compare-panel="true"]')
+}
+
 const openVersionsPanel = async (page: Page) => {
   await page.locator('[data-diagram-panel-tab="versions"]').click()
   await expect(getVersionsPanel(page)).toBeVisible()
@@ -54,6 +58,12 @@ const compareFromVersion = async (
   await getVersionCardByLabel(page, versionLabel).locator('[data-version-compare]').click()
 }
 
+const openComparator = async (page: Page) => {
+  await openVersionsPanel(page)
+  await page.locator('[data-version-open-comparator="true"]').click()
+  await expect(getComparePanel(page)).toBeVisible()
+}
+
 const viewVersion = async (
   page: Page,
   versionLabel: string
@@ -61,6 +71,77 @@ const viewVersion = async (
   await openVersionsPanel(page)
   await getVersionCardByLabel(page, versionLabel).locator('[data-version-view]').click()
   await expect(getVersionCardByLabel(page, versionLabel)).toContainText('Previewing now')
+}
+
+const clickDiagramRow = async (
+  page: Page,
+  input: {
+    rowKey: string
+    tableId: string
+  }
+) => {
+  const viewport = page.locator('[data-diagram-viewport="true"]')
+  const viewportBox = await viewport.boundingBox()
+
+  expect(viewportBox).not.toBeNull()
+
+  const point = await page.evaluate((selection) => {
+    const sceneDebug = (window as Window & {
+      __pgmlSceneDebug?: {
+        tableCards: Array<{
+          headerHeight: number
+          height: number
+          id: string
+          rows: Array<{
+            attachmentId?: string
+            columnName?: string
+            key: string
+            kind: 'attachment' | 'column'
+          }>
+          width: number
+          x: number
+          y: number
+        }>
+      }
+      __pgmlSceneRendererDebug?: {
+        panX: number
+        panY: number
+        scale: number
+      }
+    }).__pgmlSceneDebug
+    const rendererDebug = (window as Window & {
+      __pgmlSceneRendererDebug?: {
+        panX: number
+        panY: number
+        scale: number
+      }
+    }).__pgmlSceneRendererDebug
+    const table = sceneDebug?.tableCards.find(entry => entry.id === selection.tableId)
+
+    if (!table || !rendererDebug) {
+      return null
+    }
+
+    const rowIndex = table.rows.findIndex(row => row.key === selection.rowKey)
+
+    if (rowIndex < 0) {
+      return null
+    }
+
+    return {
+      x: rendererDebug.panX + (table.x + table.width / 2) * rendererDebug.scale,
+      y: rendererDebug.panY + (table.y + table.headerHeight + rowIndex * 31 + 15.5) * rendererDebug.scale
+    }
+  }, input)
+
+  expect(point).not.toBeNull()
+
+  await viewport.click({
+    position: {
+      x: point!.x,
+      y: point!.y
+    }
+  })
 }
 
 test('versions panel generates history-aware SQL and Kysely migrations across checkpoint lineage', async ({ goto, page }) => {
@@ -225,6 +306,47 @@ Table public.audit_log {
   await expect(migrationArtifact).toContainText('CREATE TABLE "public"."audit_log"')
 })
 
+test('visual comparator highlights changed rows on the diagram and inspects them in the compare panel', async ({ goto, page }) => {
+  await goto('/diagram')
+  const editor = getPgmlEditor(page)
+
+  await setPgmlEditorValue(editor, `Table public.users {
+  id uuid [pk]
+  email text
+}`)
+  await createCheckpoint(page, 'Users baseline')
+
+  await setPgmlEditorValue(editor, `Table public.users {
+  id uuid [pk]
+  email varchar [not null]
+}
+
+Table public.orders {
+  id uuid [pk]
+  user_id uuid [not null]
+}
+
+Ref: public.orders.user_id > public.users.id`)
+  await expect.poll(async () => readPgmlEditorValue(editor)).toContain('Table public.orders')
+
+  await compareFromVersion(page, 'Users baseline')
+  await openComparator(page)
+  await clickDiagramRow(page, {
+    rowKey: 'public.users.email',
+    tableId: 'public.users'
+  })
+
+  const comparePanel = getComparePanel(page)
+  const detail = comparePanel.locator('[data-compare-entry-detail="true"]')
+
+  await expect(comparePanel.locator('[data-compare-context-entry]').filter({ hasText: 'public.users.email' })).toBeVisible()
+  await expect(detail).toContainText('public.users.email')
+  await expect(detail).toContainText('Before snapshot')
+  await expect(detail).toContainText('"type": "text"')
+  await expect(detail).toContainText('"type": "varchar"')
+  await expect(detail).toContainText('modifiers')
+})
+
 test('importing a pg_dump onto a selected base version replaces the workspace and generates direct history-aware migrations from that base', async ({ goto, page }) => {
   await goto('/diagram')
   const editor = getPgmlEditor(page)
@@ -351,4 +473,34 @@ Ref: public.memberships.team_id > public.teams.id`)
 
   await expect(getVersionsPanel(page)).toContainText('No visible delta in the selected comparison.')
   await expect(getVersionsPanel(page)).toContainText('No schema or layout changes are visible for the selected compare pair.')
+})
+
+test('versioned document mode can scope the editor to the full document, workspace block, or a selected version block', async ({ goto, page }) => {
+  await goto('/diagram')
+  const editor = getPgmlEditor(page)
+
+  await setPgmlEditorValue(editor, `Table public.users {
+  id uuid [pk]
+}`)
+  await createCheckpoint(page, 'Scope baseline')
+
+  await page.getByRole('button', { name: 'Versioned document' }).click()
+  await expect(page.locator('[data-document-scope-select="true"]')).toBeVisible()
+  await expect.poll(async () => readPgmlEditorValue(editor)).toContain('VersionSet ')
+
+  await page.locator('[data-document-scope-select="true"]').click()
+  await page.getByText('Workspace block', { exact: true }).click()
+  await expect.poll(async () => readPgmlEditorValue(editor)).toContain('Workspace {')
+  await expect.poll(async () => readPgmlEditorValue(editor)).not.toContain('VersionSet ')
+
+  await page.locator('[data-document-scope-select="true"]').click()
+  await page.getByText('Design · Scope baseline', { exact: true }).click()
+  await expect.poll(async () => readPgmlEditorValue(editor)).toContain('name: "Scope baseline"')
+  await expect.poll(async () => readPgmlEditorValue(editor)).toContain('Version v_')
+  await expect.poll(async () => readPgmlEditorValue(editor)).not.toContain('Workspace {')
+
+  await page.locator('[data-document-scope-select="true"]').click()
+  await page.getByText('All VersionSet blocks', { exact: true }).click()
+  await expect.poll(async () => readPgmlEditorValue(editor)).toContain('VersionSet ')
+  await expect.poll(async () => readPgmlEditorValue(editor)).toContain('Workspace {')
 })

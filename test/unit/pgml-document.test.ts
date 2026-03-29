@@ -54,8 +54,10 @@ import {
   hasPgmlVersions,
   isPgmlWorkspaceDirty,
   normalizePgmlSnapshotSource,
+  normalizePgmlDocumentEditorScope,
   parsePgmlDocument,
   replacePgmlWorkspaceFromSnapshot,
+  serializePgmlDocumentScope,
   serializePgmlDocument
 } from '../../app/utils/pgml-document'
 
@@ -95,6 +97,35 @@ Table public.orders {
     expect(reparsed.workspace.basedOnVersionId).toBe(reparsed.versions[0]?.id)
     expect(reparsed.versions[0]?.role).toBe('implementation')
     expect(reparsed.workspace.snapshot.source).toContain('Table public.orders')
+  })
+
+  it('serializes document editor scopes for the full VersionSet, workspace block, and selected version block', () => {
+    const document = createInitialPgmlDocument({
+      initialVersion: {
+        createdAt: '2026-03-29T12:00:00.000Z',
+        name: 'Initial implementation',
+        parentVersionId: null,
+        role: 'implementation',
+        snapshot: {
+          source: baseSnapshotSource
+        }
+      },
+      name: 'Billing',
+      workspaceSource: `${baseSnapshotSource}
+
+Table public.orders {
+  id uuid [pk]
+}`
+    })
+    const versionId = document.versions[0]?.id || ''
+
+    expect(serializePgmlDocumentScope(document, 'all')).toContain('VersionSet "Billing" {')
+    expect(serializePgmlDocumentScope(document, 'workspace-block')).toContain('Workspace {')
+    expect(serializePgmlDocumentScope(document, 'workspace-block')).not.toContain('VersionSet "Billing" {')
+    expect(serializePgmlDocumentScope(document, `version:${versionId}`)).toContain(`Version ${versionId} {`)
+    expect(serializePgmlDocumentScope(document, `version:${versionId}`)).not.toContain('Workspace {')
+    expect(normalizePgmlDocumentEditorScope(document, `version:${versionId}`)).toBe(`version:${versionId}`)
+    expect(normalizePgmlDocumentEditorScope(document, 'version:missing-version')).toBe('all')
   })
 
   it('creates new versions from the workspace and keeps parent lineage intact', () => {

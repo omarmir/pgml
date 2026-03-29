@@ -95,6 +95,13 @@ type ViewTransform = {
   scale: number
 }
 
+type FocusBounds = {
+  height: number
+  width: number
+  x: number
+  y: number
+}
+
 type HitTarget = {
   attachmentId?: string
   columnName?: string
@@ -780,6 +787,8 @@ const getGroupRenderSignature = (group: DiagramGpuGroupNode) => {
   return [
     group.color,
     group.columnCount,
+    group.compareHighlightActive ? 'compare-active' : 'compare-idle',
+    group.compareHighlightColor || '',
     group.masonry ? 'masonry' : 'grid',
     group.note || '',
     group.tableCount,
@@ -792,6 +801,8 @@ const getGroupRenderSignature = (group: DiagramGpuGroupNode) => {
 const getTableRenderSignature = (card: DiagramGpuTableCard) => {
   return [
     card.color,
+    card.compareHighlightActive ? 'compare-active' : 'compare-idle',
+    card.compareHighlightColor || '',
     card.groupId || '',
     card.headerHeight,
     card.schema,
@@ -817,6 +828,8 @@ const getObjectRenderSignature = (node: DiagramGpuObjectNode) => {
   return [
     node.collapsed ? 'collapsed' : 'expanded',
     node.color,
+    node.compareHighlightActive ? 'compare-active' : 'compare-idle',
+    node.compareHighlightColor || '',
     node.details.join('|'),
     node.impactTargets.map(target => `${target.tableId}:${target.columnName || '*'}`).join(','),
     node.kindLabel,
@@ -894,6 +907,9 @@ const buildTableCanvas = (card: DiagramGpuTableCard, resolution: number) => {
   const backgroundColor = isGroupedTable
     ? sceneTheme.tableSurface
     : mixColors(card.color, sceneTheme.tableSurface, 0.08)
+  const compareAccentColor = card.compareHighlightColor
+    ? mixColors(card.compareHighlightColor, sceneTheme.surface, 0.14)
+    : null
   const dividerColor = sceneTheme.divider
   const rowSelectedColor = withAlpha(card.color, 0.16)
   const shellTextColor = sceneTheme.shellText
@@ -919,6 +935,20 @@ const buildTableCanvas = (card: DiagramGpuTableCard, resolution: number) => {
   } else {
     roundRect(context, 0.5, 0.5, card.width - 1, card.height - 1, 2.5)
     context.fill()
+  }
+
+  if (compareAccentColor) {
+    context.save()
+    context.fillStyle = withAlpha(compareAccentColor, card.compareHighlightActive ? 0.16 : 0.08)
+
+    if (isGroupedTable) {
+      context.fillRect(0.5, 0.5, card.width - 1, card.height - 1)
+    } else {
+      roundRect(context, 1, 1, card.width - 2, card.height - 2, 2)
+      context.fill()
+    }
+
+    context.restore()
   }
 
   context.save()
@@ -1035,6 +1065,18 @@ const buildTableCanvas = (card: DiagramGpuTableCard, resolution: number) => {
 
   context.restore()
 
+  if (compareAccentColor) {
+    context.strokeStyle = withAlpha(compareAccentColor, card.compareHighlightActive ? 0.94 : 0.7)
+    context.lineWidth = card.compareHighlightActive ? 2.25 : 1.5
+
+    if (isGroupedTable) {
+      context.strokeRect(0.5, 0.5, card.width - 1, card.height - 1)
+    } else {
+      roundRect(context, 0.5, 0.5, card.width - 1, card.height - 1, 2.5)
+      context.stroke()
+    }
+  }
+
   context.strokeStyle = selectionKey.startsWith('selected') ? accentColor : shellStrokeColor
   context.lineWidth = selectionKey.startsWith('selected') ? 1.5 : 1
 
@@ -1053,6 +1095,9 @@ const buildGroupCanvas = (group: DiagramGpuGroupNode, resolution: number) => {
   const selectionKey = getSelectionStateKey(group.id)
   const accentColor = getNodeAccentColor(group.color)
   const borderColor = getNodeBorderColor(group.color, 'group')
+  const compareAccentColor = group.compareHighlightColor
+    ? mixColors(group.compareHighlightColor, sceneTheme.surface, 0.2)
+    : null
   const shellFill = sceneTheme.groupSurface
   const bodyOverlayFill = withAlpha(group.color, 0.02)
 
@@ -1065,7 +1110,20 @@ const buildGroupCanvas = (group: DiagramGpuGroupNode, resolution: number) => {
   context.clip()
   context.fillStyle = bodyOverlayFill
   context.fillRect(1, 1, Math.max(0, group.width - 2), Math.max(0, group.height - 2))
+
+  if (compareAccentColor) {
+    context.fillStyle = withAlpha(compareAccentColor, group.compareHighlightActive ? 0.12 : 0.06)
+    context.fillRect(1, 1, Math.max(0, group.width - 2), Math.max(0, group.height - 2))
+  }
+
   context.restore()
+
+  if (compareAccentColor) {
+    context.strokeStyle = withAlpha(compareAccentColor, group.compareHighlightActive ? 0.9 : 0.64)
+    context.lineWidth = group.compareHighlightActive ? 2.25 : 1.5
+    roundRect(context, 0.5, 0.5, group.width - 1, group.height - 1, 2.5)
+    context.stroke()
+  }
 
   context.strokeStyle = selectionKey === 'selected-group' ? accentColor : borderColor
   context.lineWidth = selectionKey === 'selected-group' ? 1.5 : 1
@@ -1137,6 +1195,15 @@ const buildObjectCanvas = (node: DiagramGpuObjectNode, resolution: number) => {
   const accentColor = getNodeAccentColor(node.color)
   const borderColor = getNodeBorderColor(node.color, 'object')
   const backgroundColor = mixColors(node.color, sceneTheme.surface, 0.08)
+  const compareAccentColor = node.compareHighlightColor
+    ? mixColors(node.compareHighlightColor, sceneTheme.surface, 0.16)
+    : null
+
+  if (compareAccentColor) {
+    context.fillStyle = withAlpha(compareAccentColor, node.compareHighlightActive ? 0.16 : 0.08)
+    roundRect(context, 0.5, 0.5, node.width - 1, node.height - 1, 2.5)
+    context.fill()
+  }
 
   context.fillStyle = backgroundColor
   context.strokeStyle = selectionKey === 'selected-object' ? accentColor : borderColor
@@ -1144,6 +1211,13 @@ const buildObjectCanvas = (node: DiagramGpuObjectNode, resolution: number) => {
   roundRect(context, 0.5, 0.5, node.width - 1, node.height - 1, 2.5)
   context.fill()
   context.stroke()
+
+  if (compareAccentColor) {
+    context.strokeStyle = withAlpha(compareAccentColor, node.compareHighlightActive ? 0.94 : 0.7)
+    context.lineWidth = node.compareHighlightActive ? 2.25 : 1.5
+    roundRect(context, 1.5, 1.5, node.width - 3, node.height - 3, 2)
+    context.stroke()
+  }
 
   context.font = fontMonoSmall
   context.fillStyle = accentColor
@@ -1861,6 +1935,28 @@ const resetView = () => {
   scheduleFullRender()
 }
 
+const focusBounds = (bounds: FocusBounds, padding = 72) => {
+  if (bounds.width <= 0 || bounds.height <= 0 || viewportWidth.value <= 0 || viewportHeight.value <= 0) {
+    return
+  }
+
+  const availableWidth = Math.max(1, viewportWidth.value - Math.max(0, viewportInsetRight) - padding * 2)
+  const availableHeight = Math.max(1, viewportHeight.value - padding * 2)
+  const fittedScale = clamp(
+    Math.min(availableWidth / Math.max(1, bounds.width), availableHeight / Math.max(1, bounds.height)),
+    diagramMinScale,
+    diagramMaxScale
+  )
+  const centeredLeft = padding + (availableWidth - bounds.width * fittedScale) / 2
+  const centeredTop = padding + (availableHeight - bounds.height * fittedScale) / 2
+
+  worldScale = fittedScale
+  worldPanX = centeredLeft - bounds.x * fittedScale
+  worldPanY = centeredTop - bounds.y * fittedScale
+  hasViewportInteraction = true
+  scheduleFullRender()
+}
+
 const zoomToScale = (nextScale: number, clientX: number, clientY: number) => {
   const bounds = hostRef.value?.getBoundingClientRect()
 
@@ -2388,10 +2484,12 @@ onBeforeUnmount(() => {
 })
 
 defineExpose<{
+  focusBounds: (bounds: FocusBounds, padding?: number) => void
   getScale: () => number
   resetView: () => void
   zoomBy: (direction: 1 | -1) => void
 }>({
+  focusBounds,
   getScale: () => worldScale,
   resetView,
   zoomBy

@@ -142,6 +142,49 @@ describe('usePgmlStudioVersionHistory', () => {
     expect(api.compareTargetId.value).toBe('workspace')
   })
 
+  it('exposes document scope options and serializes the selected document slice', async () => {
+    const { api } = await mountVersionHistoryComposable()
+    const initialVersion = api.createCheckpoint({
+      createdAt: '2026-03-29T12:00:00.000Z',
+      includeLayout: true,
+      name: 'Initial design',
+      role: 'design'
+    })
+
+    if (!initialVersion) {
+      throw new Error('Expected the checkpoint to be created.')
+    }
+
+    expect(api.versionedDocumentScopeItems.value).toEqual(expect.arrayContaining([
+      {
+        label: 'All VersionSet blocks',
+        value: 'all'
+      },
+      {
+        label: 'Workspace block',
+        value: 'workspace-block'
+      },
+      {
+        label: 'Design · Initial design',
+        value: `version:${initialVersion.id}`
+      }
+    ]))
+
+    api.setDocumentEditorScope('workspace-block')
+    expect(api.documentEditorScope.value).toBe('workspace-block')
+    expect(api.versionedDocumentScopeSource.value).toContain('Workspace {')
+    expect(api.versionedDocumentScopeSource.value).not.toContain('VersionSet "Billing" {')
+
+    api.setDocumentEditorScope(`version:${initialVersion.id}`)
+    expect(api.documentEditorScope.value).toBe(`version:${initialVersion.id}`)
+    expect(api.versionedDocumentScopeSource.value).toContain(`Version ${initialVersion.id} {`)
+    expect(api.versionedDocumentScopeSource.value).not.toContain('Workspace {')
+
+    api.setDocumentEditorScope('version:missing-version')
+    expect(api.documentEditorScope.value).toBe('all')
+    expect(api.versionedDocumentScopeSource.value).toContain('VersionSet "Billing" {')
+  })
+
   it('can serialize without layout properties and reset back to an empty workspace document', async () => {
     const { api, source } = await mountVersionHistoryComposable({
       source: `Table public.users {

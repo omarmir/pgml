@@ -19,7 +19,8 @@ import { usePgmlColumnDefaultSuggestions } from '~/composables/usePgmlColumnDefa
 import { usePgmlStudioComputerFiles } from '~/composables/usePgmlStudioComputerFiles'
 import {
   usePgmlStudioVersionHistory,
-  type PgmlVersionedDocumentEditorMode
+  type PgmlVersionedDocumentEditorMode,
+  type PgmlVersionedDocumentScopeItem
 } from '~/composables/usePgmlStudioVersionHistory'
 import type { PgmlSourceEditorHandle } from '~/composables/usePgmlSourceEditor'
 import { useStudioHeaderActions } from '~/composables/useStudioHeaderActions'
@@ -37,6 +38,10 @@ import {
   parseStudioLaunchQuery
 } from '~/utils/studio-launch'
 import { diffPgmlSchemaModels } from '~/utils/pgml-diff'
+import {
+  buildPgmlDiagramCompareEntries,
+  type PgmlDiagramCompareEntry
+} from '~/utils/pgml-diagram-compare'
 import { convertPgDumpToPgml } from '~/utils/pg-dump-import'
 import { analyzePgmlDocument } from '~/utils/pgml-language'
 import {
@@ -277,6 +282,7 @@ const {
   compareRelationshipSummary,
   createCheckpoint: createVersionCheckpoint,
   document: versionDocument,
+  documentEditorScope,
   editorMode: versionedEditorMode,
   isWorkspacePreview,
   latestImplementationVersion,
@@ -287,9 +293,11 @@ const {
   replaceWorkspaceFromVersion,
   serializeCurrentDocument,
   setCompareTargets,
+  setDocumentEditorScope,
   setPreviewTarget,
   versionItems: versionHistoryItems,
-  versionedDocumentSource,
+  versionedDocumentScopeItems,
+  versionedDocumentScopeSource,
   versions
 } = usePgmlStudioVersionHistory({
   documentName: computed(() => versionDocumentName.value),
@@ -322,6 +330,9 @@ const versionedEditorModeItems = [
   label: string
   value: PgmlVersionedDocumentEditorMode
 }>
+const documentEditorScopeItems = computed<PgmlVersionedDocumentScopeItem[]>(() => {
+  return versionedDocumentScopeItems.value
+})
 const checkpointRoleItems = [
   {
     description: 'Lock a draft checkpoint that represents the next intended PGML design.',
@@ -370,7 +381,25 @@ const editorReadOnlyLabel = computed(() => {
 })
 const editorModeDescription = computed(() => {
   if (versionedEditorMode.value === 'document') {
-    return buildPgmlDocumentEditorModeDescription()
+    if (documentEditorScope.value === 'workspace-block') {
+      return buildPgmlDocumentEditorModeDescription({
+        scope: 'workspace'
+      })
+    }
+
+    if (documentEditorScope.value.startsWith('version:')) {
+      const scopedVersionId = documentEditorScope.value.replace(/^version:/, '')
+      const scopedVersion = versions.value.find(version => version.id === scopedVersionId) || null
+
+      return buildPgmlDocumentEditorModeDescription({
+        scope: 'version',
+        scopeLabel: scopedVersion ? getVersionLabel(scopedVersion) : null
+      })
+    }
+
+    return buildPgmlDocumentEditorModeDescription({
+      scope: 'all'
+    })
   }
 
   if (!isWorkspacePreview.value) {
@@ -384,7 +413,7 @@ const editorModeDescription = computed(() => {
 })
 const displayedEditorSource = computed(() => {
   return versionedEditorMode.value === 'document'
-    ? versionedDocumentSource.value
+    ? versionedDocumentScopeSource.value
     : previewSource.value
 })
 const importDumpSelectedFileName = computed(() => importDumpSelectedFile.value?.name || '')
@@ -704,10 +733,20 @@ const versionCompareOptions = computed(() => {
 const importDumpBaseVersionItems = computed<ReferenceTargetItem[]>(() => {
   return buildPgmlImportBaseVersionItems(versionPanelItems.value)
 })
+const compareBaseModel = computed(() => {
+  return parsePgml(compareBaseSource.value)
+})
+const compareTargetModel = computed(() => {
+  return parsePgml(compareTargetSource.value)
+})
 const compareDiff = computed(() => {
-  return diffPgmlSchemaModels(
-    parsePgml(compareBaseSource.value),
-    parsePgml(compareTargetSource.value)
+  return diffPgmlSchemaModels(compareBaseModel.value, compareTargetModel.value)
+})
+const compareEntries = computed<PgmlDiagramCompareEntry[]>(() => {
+  return buildPgmlDiagramCompareEntries(
+    compareDiff.value,
+    compareBaseModel.value,
+    compareTargetModel.value
   )
 })
 const versionDiffSections = computed<PgmlVersionDiffSection[]>(() => {
@@ -1131,6 +1170,13 @@ const updateVersionCompareTargetId = (value: string) => {
 }
 const updateVersionedEditorMode = (value: string) => {
   versionedEditorMode.value = value === 'document' ? 'document' : 'head'
+}
+const updateDocumentEditorScope = (value: unknown) => {
+  if (typeof value !== 'string' || value.trim().length === 0) {
+    return
+  }
+
+  setDocumentEditorScope(value as Parameters<typeof setDocumentEditorScope>[0])
 }
 
 const actionMenus = computed<StudioHeaderMenu[]>(() => {
@@ -1740,7 +1786,11 @@ onBeforeUnmount(() => {
         <PgmlDiagramCanvas
           ref="canvasRef"
           :can-create-checkpoint="canCheckpoint"
+          :compare-base-label="compareBaseLabel"
+          :compare-base-model="compareBaseModel"
+          :compare-entries="compareEntries"
           :compare-relationship-summary="compareRelationshipSummary"
+          :compare-target-label="compareTargetLabel"
           :model="parsedModel"
           :export-base-name="exportBaseName"
           :export-preference-key="exportPreferenceKey"
@@ -1783,6 +1833,8 @@ onBeforeUnmount(() => {
       <template #pgml>
         <StudioEditorSurface
           v-model="editorDisplaySource"
+          :document-scope="documentEditorScope"
+          :document-scope-items="documentEditorScopeItems"
           :editor-mode="versionedEditorMode"
           :editor-mode-items="versionedEditorModeItems"
           :editor-ref-setter="assignEditorRef"
@@ -1794,6 +1846,7 @@ onBeforeUnmount(() => {
           :source-error-count="sourceErrorDiagnostics.length"
           :source-warning-count="sourceWarningDiagnostics.length"
           :visible-source-diagnostics="visibleSourceDiagnostics"
+          @update:document-scope="updateDocumentEditorScope"
           @update:editor-mode="updateVersionedEditorMode"
         />
       </template>
@@ -1811,6 +1864,8 @@ onBeforeUnmount(() => {
       <template #editor>
         <StudioEditorSurface
           v-model="editorDisplaySource"
+          :document-scope="documentEditorScope"
+          :document-scope-items="documentEditorScopeItems"
           :editor-mode="versionedEditorMode"
           :editor-mode-items="versionedEditorModeItems"
           :editor-ref-setter="assignEditorRef"
@@ -1822,6 +1877,7 @@ onBeforeUnmount(() => {
           :source-error-count="sourceErrorDiagnostics.length"
           :source-warning-count="sourceWarningDiagnostics.length"
           :visible-source-diagnostics="visibleSourceDiagnostics"
+          @update:document-scope="updateDocumentEditorScope"
           @update:editor-mode="updateVersionedEditorMode"
         />
       </template>
@@ -1830,7 +1886,11 @@ onBeforeUnmount(() => {
         <PgmlDiagramCanvas
           ref="canvasRef"
           :can-create-checkpoint="canCheckpoint"
+          :compare-base-label="compareBaseLabel"
+          :compare-base-model="compareBaseModel"
+          :compare-entries="compareEntries"
           :compare-relationship-summary="compareRelationshipSummary"
+          :compare-target-label="compareTargetLabel"
           :model="parsedModel"
           :export-base-name="exportBaseName"
           :export-preference-key="exportPreferenceKey"

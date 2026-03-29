@@ -42,8 +42,12 @@ import {
   isPgmlWorkspaceDirty,
   parsePgmlDocument,
   replacePgmlWorkspaceFromSnapshot,
+  serializePgmlDocumentScope,
   serializePgmlDocument,
+  normalizePgmlDocumentEditorScope,
+  getPgmlVersionRoleDisplayLabel,
   type PgmlVersionDocumentBlock,
+  type PgmlDocumentEditorScope,
   type PgmlVersionRole,
   type PgmlVersionSetDocument
 } from '~/utils/pgml-document'
@@ -54,6 +58,11 @@ export type PgmlVersionPreviewTarget = 'workspace' | string
 export const versionedDocumentEditorModeValues = ['head', 'document'] as const
 
 export type PgmlVersionedDocumentEditorMode = typeof versionedDocumentEditorModeValues[number]
+
+export type PgmlVersionedDocumentScopeItem = {
+  label: string
+  value: PgmlDocumentEditorScope
+}
 
 const normalizeSnapshotSource = (value: string, includeLayout: boolean) => {
   return includeLayout ? value.trim() : stripPgmlPropertiesBlocks(value).trim()
@@ -231,6 +240,7 @@ export const usePgmlStudioVersionHistory = (
   }))
   const previewTargetId: Ref<PgmlVersionPreviewTarget> = ref('workspace')
   const editorMode: Ref<PgmlVersionedDocumentEditorMode> = ref('head')
+  const documentEditorScope: Ref<PgmlDocumentEditorScope> = ref('all')
   const compareBaseId: Ref<string | null> = ref(null)
   const compareTargetId: Ref<string> = ref('workspace')
 
@@ -245,6 +255,7 @@ export const usePgmlStudioVersionHistory = (
     }
     input.source.value = nextDocument.workspace.snapshot.source
     previewTargetId.value = 'workspace'
+    documentEditorScope.value = normalizePgmlDocumentEditorScope(nextDocument, documentEditorScope.value)
     compareBaseId.value = buildDefaultCompareBaseId(nextDocument)
     compareTargetId.value = buildDefaultCompareTargetId(nextDocument)
   }
@@ -253,6 +264,7 @@ export const usePgmlStudioVersionHistory = (
     // File loads, restores, and imports can invalidate UI selections; clamp
     // every derived id back onto the current document before the UI renders it.
     previewTargetId.value = normalizePreviewTargetId(document.value, previewTargetId.value)
+    documentEditorScope.value = normalizePgmlDocumentEditorScope(document.value, documentEditorScope.value)
     compareBaseId.value = normalizeCompareBaseSelection(document.value, compareBaseId.value)
     compareTargetId.value = normalizeCompareTargetSelection(document.value, compareTargetId.value)
   }
@@ -322,6 +334,31 @@ export const usePgmlStudioVersionHistory = (
     workingDocument.name = input.documentName.value
 
     return serializePgmlDocument(workingDocument)
+  })
+  const versionedDocumentScopeItems = computed<PgmlVersionedDocumentScopeItem[]>(() => {
+    return [
+      {
+        label: 'All VersionSet blocks',
+        value: 'all'
+      },
+      {
+        label: 'Workspace block',
+        value: 'workspace-block'
+      },
+      ...document.value.versions.map((version) => {
+        return {
+          label: `${getPgmlVersionRoleDisplayLabel(version.role)} · ${version.name || version.id}`,
+          value: `version:${version.id}`
+        } satisfies PgmlVersionedDocumentScopeItem
+      })
+    ]
+  })
+  const versionedDocumentScopeSource = computed(() => {
+    const workingDocument = buildWorkspaceSyncedDocument(document.value, input.source.value)
+
+    workingDocument.name = input.documentName.value
+
+    return serializePgmlDocumentScope(workingDocument, documentEditorScope.value)
   })
   const isWorkspacePreview = computed(() => previewTargetId.value === 'workspace')
   const compareBaseVersion = computed(() => {
@@ -469,6 +506,10 @@ export const usePgmlStudioVersionHistory = (
     compareTargetId.value = normalizeCompareTargetSelection(document.value, inputOptions.targetId)
   }
 
+  const setDocumentEditorScope = (nextScope: PgmlDocumentEditorScope) => {
+    documentEditorScope.value = normalizePgmlDocumentEditorScope(document.value, nextScope)
+  }
+
   return {
     compareBaseId,
     compareBaseSource,
@@ -480,6 +521,7 @@ export const usePgmlStudioVersionHistory = (
     canCheckpoint,
     createCheckpoint,
     document,
+    documentEditorScope,
     editorMode,
     hasDesignVersions,
     hasImplementationVersions,
@@ -495,6 +537,7 @@ export const usePgmlStudioVersionHistory = (
     rootVersions,
     serializeCurrentDocument,
     setCompareTargets,
+    setDocumentEditorScope,
     setPreviewTarget,
     latestDesignVersion,
     latestLeafDesignVersion,
@@ -503,6 +546,8 @@ export const usePgmlStudioVersionHistory = (
     latestImplementationVersion,
     versionItems,
     versionedDocumentSource,
+    versionedDocumentScopeItems,
+    versionedDocumentScopeSource,
     versions,
     workspaceBaseVersion,
     workspaceDirty

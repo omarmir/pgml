@@ -47,6 +47,8 @@ export type DiagramGpuRow = {
 export type DiagramGpuGroupNode = {
   color: string
   columnCount: number
+  compareHighlightActive?: boolean
+  compareHighlightColor?: string | null
   height: number
   id: string
   masonry: boolean
@@ -64,6 +66,8 @@ export type DiagramGpuGroupNode = {
 
 export type DiagramGpuTableCard = {
   color: string
+  compareHighlightActive?: boolean
+  compareHighlightColor?: string | null
   groupId: string | null
   headerHeight: number
   height: number
@@ -81,6 +85,8 @@ export type DiagramGpuTableCard = {
 export type DiagramGpuObjectNode = {
   collapsed: boolean
   color: string
+  compareHighlightActive?: boolean
+  compareHighlightColor?: string | null
   details: string[]
   expandedHeight: number
   height: number
@@ -139,6 +145,8 @@ export type DiagramGpuSceneSnapshot = {
 export type DiagramGpuNodeLayoutState = {
   collapsed?: boolean
   color: string
+  compareHighlightActive?: boolean
+  compareHighlightColor?: string | null
   height: number
   id: string
   kind: 'group' | 'object' | 'table'
