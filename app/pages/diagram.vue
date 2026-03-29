@@ -1018,11 +1018,16 @@ const submitImportDump = async () => {
       sql: importedSql
     })
 
-    replaceWorkspaceFromImportedSnapshot({
+    const didReplaceWorkspace = replaceWorkspaceFromImportedSnapshot({
       basedOnVersionId: importDumpBaseVersionId.value,
       includeLayout: true,
       source: importedSchema.pgml
     })
+
+    if (!didReplaceWorkspace) {
+      throw new Error('The selected base version no longer exists.')
+    }
+
     requestCanvasViewportReset()
     resetImportDumpDialog()
     toast.add({

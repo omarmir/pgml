@@ -66,11 +66,11 @@ describe('usePgmlStudioVersionHistory', () => {
     expect(api.versionedDocumentSource.value).toContain('VersionSet "Billing"')
     expect(api.versionedDocumentSource.value).toContain(`Version ${initialVersion.id}`)
 
-    api.replaceWorkspaceFromImportedSnapshot({
+    expect(api.replaceWorkspaceFromImportedSnapshot({
       basedOnVersionId: initialVersion.id,
       includeLayout: true,
       source: importedWorkspaceSource
-    })
+    })).toBe(true)
 
     expect(source.value).toContain('status text')
     expect(api.compareBaseId.value).toBe(initialVersion.id)
@@ -275,5 +275,17 @@ Properties "public.users" {
     })
 
     expect(api.compareRelationshipSummary.value).toContain('increments directly from')
+  })
+
+  it('rejects imported snapshots when the selected base version is missing', async () => {
+    const { api, source } = await mountVersionHistoryComposable()
+    const originalSource = source.value
+
+    expect(api.replaceWorkspaceFromImportedSnapshot({
+      basedOnVersionId: 'missing-version',
+      includeLayout: true,
+      source: importedWorkspaceSource
+    })).toBe(false)
+    expect(source.value).toBe(originalSource)
   })
 })

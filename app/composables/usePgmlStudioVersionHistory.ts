@@ -309,6 +309,10 @@ export const usePgmlStudioVersionHistory = (
     includeLayout: boolean
     source: string
   }) => {
+    if (!getPgmlVersionById(document.value, inputOptions.basedOnVersionId)) {
+      return false
+    }
+
     document.value = replacePgmlWorkspaceFromSnapshot(document.value, {
       basedOnVersionId: inputOptions.basedOnVersionId,
       source: normalizeSnapshotSource(inputOptions.source, inputOptions.includeLayout),
@@ -318,6 +322,8 @@ export const usePgmlStudioVersionHistory = (
     previewTargetId.value = 'workspace'
     compareBaseId.value = inputOptions.basedOnVersionId
     compareTargetId.value = 'workspace'
+
+    return true
   }
 
   const setPreviewTarget = (nextTargetId: PgmlVersionPreviewTarget) => {
