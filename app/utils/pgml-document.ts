@@ -190,6 +190,13 @@ export const getPgmlLeafVersions = (document: PgmlVersionSetDocument) => {
   return document.versions.filter(version => !parentIds.has(version.id))
 }
 
+export const isPgmlLeafVersion = (
+  document: PgmlVersionSetDocument,
+  versionId: string | null
+) => {
+  return getPgmlLeafVersions(document).some(version => version.id === versionId)
+}
+
 const trimQuotedValue = (value: string) => {
   const trimmed = value.trim()
   const doubleQuotedMatch = trimmed.match(/^"(.*)"$/u)

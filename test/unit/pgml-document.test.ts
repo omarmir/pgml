@@ -17,6 +17,7 @@ import {
   getPgmlBranchRootLabel,
   getPgmlVersionDisplayLabel,
   getPgmlLeafVersions,
+  isPgmlLeafVersion,
   getPgmlRootVersions,
   isPgmlVersionDescendant,
   isPgmlVersionAncestor,
@@ -747,6 +748,8 @@ Table public.memberships {
 }`)
 
     expect(getPgmlLeafVersions(parsed).map(version => version.id)).toEqual(['v2', 'v3'])
+    expect(isPgmlLeafVersion(parsed, 'v2')).toBe(true)
+    expect(isPgmlLeafVersion(parsed, 'v1')).toBe(false)
   })
 
   it('returns the latest version for a specific role', () => {
