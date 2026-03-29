@@ -103,6 +103,33 @@ const buildWorkspaceSyncedDocument = (
   })
 }
 
+const normalizePreviewTargetId = (
+  document: PgmlVersionSetDocument,
+  previewTargetId: PgmlVersionPreviewTarget
+) => {
+  return isValidVersionTargetId(document, previewTargetId) ? previewTargetId : 'workspace'
+}
+
+const normalizeCompareBaseSelection = (
+  document: PgmlVersionSetDocument,
+  baseId: string | null
+) => {
+  if (baseId && !getPgmlVersionById(document, baseId)) {
+    return buildDefaultCompareBaseId(document)
+  }
+
+  return baseId
+}
+
+const normalizeCompareTargetSelection = (
+  document: PgmlVersionSetDocument,
+  targetId: string
+) => {
+  return isValidVersionTargetId(document, targetId)
+    ? targetId
+    : buildDefaultCompareTargetId(document)
+}
+
 export const usePgmlStudioVersionHistory = (
   input: {
     documentName: ComputedRef<string>
@@ -134,17 +161,9 @@ export const usePgmlStudioVersionHistory = (
   }
 
   const normalizeSelectionState = () => {
-    if (!isValidVersionTargetId(document.value, previewTargetId.value)) {
-      previewTargetId.value = 'workspace'
-    }
-
-    if (compareBaseId.value && !getPgmlVersionById(document.value, compareBaseId.value)) {
-      compareBaseId.value = buildDefaultCompareBaseId(document.value)
-    }
-
-    if (!isValidVersionTargetId(document.value, compareTargetId.value)) {
-      compareTargetId.value = buildDefaultCompareTargetId(document.value)
-    }
+    previewTargetId.value = normalizePreviewTargetId(document.value, previewTargetId.value)
+    compareBaseId.value = normalizeCompareBaseSelection(document.value, compareBaseId.value)
+    compareTargetId.value = normalizeCompareTargetSelection(document.value, compareTargetId.value)
   }
 
   const resetDocument = (workspaceSource = '') => {
@@ -394,7 +413,7 @@ export const usePgmlStudioVersionHistory = (
   }
 
   const setPreviewTarget = (nextTargetId: PgmlVersionPreviewTarget) => {
-    previewTargetId.value = isValidVersionTargetId(document.value, nextTargetId) ? nextTargetId : 'workspace'
+    previewTargetId.value = normalizePreviewTargetId(document.value, nextTargetId)
   }
 
   const setCompareTargets = (inputOptions: {
@@ -403,10 +422,8 @@ export const usePgmlStudioVersionHistory = (
   }) => {
     compareBaseId.value = inputOptions.baseId === null
       ? null
-      : (getPgmlVersionById(document.value, inputOptions.baseId) ? inputOptions.baseId : buildDefaultCompareBaseId(document.value))
-    compareTargetId.value = isValidVersionTargetId(document.value, inputOptions.targetId)
-      ? inputOptions.targetId
-      : buildDefaultCompareTargetId(document.value)
+      : normalizeCompareBaseSelection(document.value, inputOptions.baseId)
+    compareTargetId.value = normalizeCompareTargetSelection(document.value, inputOptions.targetId)
   }
 
   return {
