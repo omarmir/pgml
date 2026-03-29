@@ -19,3 +19,7 @@ export const buildPgmlRestoreVersionDescription = (hasPendingChanges: boolean) =
 export const buildPgmlImportDumpDialogDescription = (baseVersionLabel: string) => {
   return `Paste a text pg_dump or upload a text dump file. PGML will convert the dump into schema objects, replace the current workspace snapshot, and set the workspace to increment from ${baseVersionLabel}.`
 }
+
+export const buildPgmlImportDumpInputDescription = () => {
+  return 'Choose exactly one input method. This replaces the current draft workspace but does not create a locked version until you checkpoint it.'
+}

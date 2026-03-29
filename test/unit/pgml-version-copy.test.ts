@@ -4,6 +4,7 @@ import {
   buildPgmlCheckpointRoleDescription,
   buildPgmlCheckpointTargetLabel,
   buildPgmlImportDumpDialogDescription,
+  buildPgmlImportDumpInputDescription,
   buildPgmlRestoreVersionDescription
 } from '../../app/utils/pgml-version-copy'
 
@@ -25,5 +26,9 @@ describe('PGML version copy helpers', () => {
 
   it('builds import dialog copy from the selected base version label', () => {
     expect(buildPgmlImportDumpDialogDescription('Implementation sync')).toContain('increment from Implementation sync')
+  })
+
+  it('builds the import dialog input instructions', () => {
+    expect(buildPgmlImportDumpInputDescription()).toContain('Choose exactly one input method')
   })
 })
