@@ -672,6 +672,7 @@ const versionPanelItems = computed(() => {
       branchRootLabel: version.branchRootLabel,
       childCount: version.childCount,
       createdAt: formatSavedPgmlSchemaTime(version.createdAt),
+      descendantCount: version.descendantCount,
       depth: version.depth,
       id: version.id,
       isLeaf: version.isLeaf,
