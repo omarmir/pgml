@@ -11,6 +11,7 @@ import {
   getPgmlChildVersions,
   getPgmlDescendantVersions,
   getLatestPgmlVersion,
+  getLatestPgmlVersionByRole,
   getPgmlLeafVersions,
   getPgmlRootVersions,
   getPgmlNearestCommonAncestor,
@@ -739,6 +740,63 @@ Table public.memberships {
 }`)
 
     expect(getPgmlLeafVersions(parsed).map(version => version.id)).toEqual(['v2', 'v3'])
+  })
+
+  it('returns the latest version for a specific role', () => {
+    const parsed = parsePgmlDocument(`VersionSet "Billing" {
+  Workspace {
+    based_on: v3
+
+    Snapshot {
+      Table public.users {
+        id uuid [pk]
+      }
+    }
+  }
+
+  Version v1 {
+    name: "Implementation root"
+    role: implementation
+    created_at: "2026-03-29T12:00:00.000Z"
+
+    Snapshot {
+      Table public.users {
+        id uuid [pk]
+      }
+    }
+  }
+
+  Version v2 {
+    name: "Design branch"
+    role: design
+    parent: v1
+    created_at: "2026-03-30T12:00:00.000Z"
+
+    Snapshot {
+      Table public.users {
+        id uuid [pk]
+        email text
+      }
+    }
+  }
+
+  Version v3 {
+    name: "Implementation sync"
+    role: implementation
+    parent: v2
+    created_at: "2026-03-31T12:00:00.000Z"
+
+    Snapshot {
+      Table public.users {
+        id uuid [pk]
+        email text
+      }
+    }
+  }
+}`)
+
+    expect(getLatestPgmlVersionByRole(parsed, 'design')?.id).toBe('v2')
+    expect(getLatestPgmlVersionByRole(parsed, 'implementation')?.id).toBe('v3')
   })
 
   it('rejects invalid VersionSet documents that reference missing parent or base versions', () => {
