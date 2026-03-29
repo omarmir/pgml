@@ -34,6 +34,7 @@ import {
   getPgmlVersionCount,
   getPgmlVersionDepth,
   getPgmlVersionLineage,
+  getPgmlVersionLineageIds,
   getPgmlVersionMap,
   getPgmlVersionsInTopologicalOrder,
   getPgmlSiblingVersions,
@@ -173,6 +174,7 @@ Table public.orders {
       'Initial design',
       'Add orders'
     ])
+    expect(getPgmlVersionLineageIds(secondVersion, targetVersion?.id || null)).toHaveLength(2)
     expect(getPgmlVersionLineage(secondVersion, null)).toEqual([])
   })
 

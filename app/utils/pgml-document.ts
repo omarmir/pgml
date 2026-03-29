@@ -686,6 +686,13 @@ export const getPgmlVersionLineage = (
   return lineage
 }
 
+export const getPgmlVersionLineageIds = (
+  document: PgmlVersionSetDocument,
+  versionId: string | null
+) => {
+  return getPgmlVersionLineage(document, versionId).map(version => version.id)
+}
+
 export const buildPgmlVersionLineageLabel = (
   document: PgmlVersionSetDocument,
   versionId: string | null
