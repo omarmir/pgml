@@ -118,3 +118,11 @@ export const buildPgmlWorkspaceBaseLabel = (input: {
 
   return `Incrementing from ${input.fallbackVersionId || input.basedOnVersionId}.`
 }
+
+export const buildPgmlWorkspaceStatus = (input: {
+  canCheckpoint: boolean
+}) => {
+  return input.canCheckpoint
+    ? 'Draft changes are waiting to be checkpointed.'
+    : 'Draft matches the current locked base version.'
+}

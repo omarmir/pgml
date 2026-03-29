@@ -6,7 +6,8 @@ import {
   buildPgmlPreviewTargetLabel,
   buildPgmlVersionCompareSummary,
   buildPgmlVersionDiffSections,
-  buildPgmlWorkspaceBaseLabel
+  buildPgmlWorkspaceBaseLabel,
+  buildPgmlWorkspaceStatus
 } from '../../app/utils/pgml-version-summary'
 
 describe('PGML version summary helpers', () => {
@@ -79,5 +80,14 @@ Table public.orders {
       fallbackVersionId: 'v2',
       versionLabel: 'Implementation sync'
     })).toBe('Incrementing from Implementation sync.')
+  })
+
+  it('builds workspace status text from checkpoint availability', () => {
+    expect(buildPgmlWorkspaceStatus({
+      canCheckpoint: true
+    })).toBe('Draft changes are waiting to be checkpointed.')
+    expect(buildPgmlWorkspaceStatus({
+      canCheckpoint: false
+    })).toBe('Draft matches the current locked base version.')
   })
 })

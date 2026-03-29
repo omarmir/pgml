@@ -42,6 +42,7 @@ import { analyzePgmlDocument } from '~/utils/pgml-language'
 import {
   buildPgmlVersionDiffSections,
   buildPgmlWorkspaceBaseLabel,
+  buildPgmlWorkspaceStatus,
   type PgmlVersionDiffSection
 } from '~/utils/pgml-version-summary'
 import {
@@ -724,11 +725,9 @@ const workspaceBaseLabel = computed(() => {
   })
 })
 const workspaceStatus = computed(() => {
-  if (!canCheckpoint.value) {
-    return 'Draft matches the current locked base version.'
-  }
-
-  return 'Draft changes are waiting to be checkpointed.'
+  return buildPgmlWorkspaceStatus({
+    canCheckpoint: canCheckpoint.value
+  })
 })
 const compareMigrationBundle = computed(() => {
   return buildPgmlVersionMigrationBundle({
