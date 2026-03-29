@@ -49,6 +49,10 @@ export const normalizePgmlSnapshotSource = (value: string) => {
   return normalizeLineEndings(value).trim()
 }
 
+export const getPgmlVersionRoleDisplayLabel = (role: PgmlVersionRole) => {
+  return role === 'implementation' ? 'Implementation' : 'Design'
+}
+
 export const getPgmlVersionDisplayLabel = (version: PgmlVersionDocumentBlock) => {
   return version.name && version.name.trim().length > 0 ? version.name : version.id
 }
@@ -109,7 +113,7 @@ export const buildPgmlCheckpointName = (
     role: PgmlVersionRole
   }
 ) => {
-  const roleLabel = input.role === 'implementation' ? 'Implementation' : 'Design'
+  const roleLabel = getPgmlVersionRoleDisplayLabel(input.role)
   const roleVersionCount = getPgmlVersionRoleCount(document, input.role) + 1
   const normalizedDate = input.createdAt.slice(0, 10)
 

@@ -25,6 +25,7 @@ import {
   getPgmlBranchRootId,
   getPgmlBranchRootLabel,
   getPgmlVersionDisplayLabel,
+  getPgmlVersionRoleDisplayLabel,
   getPgmlLeafVersions,
   getPgmlLeafVersionCount,
   getPgmlVersionRoleCount,
@@ -912,6 +913,7 @@ Table public.memberships {
         source: baseSnapshotSource
       }
     })).toBe('v2')
+    expect(getPgmlVersionRoleDisplayLabel('implementation')).toBe('Implementation')
   })
 
   it('detects whether one version is an ancestor of another', () => {
