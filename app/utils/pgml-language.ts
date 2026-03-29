@@ -2489,6 +2489,97 @@ const getVersionIdCompletions = (analysis: PgmlDocumentAnalysis, fragment: strin
   )
 }
 
+const getRootCompletionItems = (
+  analysis: PgmlDocumentAnalysis,
+  beforeCursor: string,
+  fragment: string,
+  from: number,
+  to: number
+) => {
+  if (/^\s*Ref:\s*/.test(beforeCursor)) {
+    return getReferencePathCompletions(analysis, fragment, from, to)
+  }
+
+  return filterCompletionTemplates(rootKeywordTemplates, 'keyword', fragment, from, to)
+}
+
+const getVersionSetCompletionItems = (
+  fragment: string,
+  from: number,
+  to: number,
+  beforeCursor: string
+) => {
+  if (/^\s*VersionSet\s+/.test(beforeCursor)) {
+    return [] as PgmlLanguageCompletionItem[]
+  }
+
+  return filterCompletionTemplates(versionSetKeywordTemplates, 'keyword', fragment, from, to)
+}
+
+const getWorkspaceCompletionItems = (
+  analysis: PgmlDocumentAnalysis,
+  beforeCursor: string,
+  fragment: string,
+  from: number,
+  to: number
+) => {
+  if (/^\s*Workspace\s*/.test(beforeCursor)) {
+    return [] as PgmlLanguageCompletionItem[]
+  }
+
+  if (/^\s*based_on:\s*[A-Za-z0-9_-]*$/i.test(beforeCursor)) {
+    return getVersionIdCompletions(analysis, fragment, from, to)
+  }
+
+  return [
+    ...filterCompletionTemplates(workspaceMetadataKeywordTemplates, 'property', fragment, from, to),
+    ...filterCompletionTemplates(snapshotKeywordTemplates, 'keyword', fragment, from, to)
+  ]
+}
+
+const getVersionCompletionItems = (
+  analysis: PgmlDocumentAnalysis,
+  beforeCursor: string,
+  fragment: string,
+  from: number,
+  to: number
+) => {
+  if (/^\s*Version\s+[A-Za-z0-9_-]*$/i.test(beforeCursor)) {
+    return [] as PgmlLanguageCompletionItem[]
+  }
+
+  if (/^\s*role:\s*[A-Za-z]*$/i.test(beforeCursor)) {
+    return filterCompletionTemplates(versionRoleValueTemplates, 'value', fragment, from, to)
+  }
+
+  if (/^\s*parent:\s*[A-Za-z0-9_-]*$/i.test(beforeCursor)) {
+    return getVersionIdCompletions(analysis, fragment, from, to)
+  }
+
+  return [
+    ...filterCompletionTemplates(versionMetadataKeywordTemplates, 'property', fragment, from, to),
+    ...filterCompletionTemplates(snapshotKeywordTemplates, 'keyword', fragment, from, to)
+  ]
+}
+
+const getSnapshotCompletionItems = (
+  analysis: PgmlDocumentAnalysis,
+  beforeCursor: string,
+  fragment: string,
+  from: number,
+  to: number
+) => {
+  if (/^\s*Ref:\s*/.test(beforeCursor)) {
+    return getReferencePathCompletions(analysis, fragment, from, to)
+  }
+
+  if (/^\s*Snapshot\s*/.test(beforeCursor)) {
+    return [] as PgmlLanguageCompletionItem[]
+  }
+
+  return filterCompletionTemplates(snapshotTopLevelKeywordTemplates, 'keyword', fragment, from, to)
+}
+
 const getCompletionItemsForLine = (analysis: PgmlDocumentAnalysis, offset: number) => {
   const context = getInnermostContextAtOffset(analysis, offset)
   const line = getLineAtOffset(analysis, offset)
@@ -2501,65 +2592,23 @@ const getCompletionItemsForLine = (analysis: PgmlDocumentAnalysis, offset: numbe
   }
 
   if (context?.kind === 'top-level' || context === null) {
-    if (/^\s*Ref:\s*/.test(beforeCursor)) {
-      return getReferencePathCompletions(analysis, fragment, from, to)
-    }
-
-    return filterCompletionTemplates(rootKeywordTemplates, 'keyword', fragment, from, to)
+    return getRootCompletionItems(analysis, beforeCursor, fragment, from, to)
   }
 
   if (context.kind === 'version-set') {
-    if (/^\s*VersionSet\s+/.test(beforeCursor)) {
-      return []
-    }
-
-    return filterCompletionTemplates(versionSetKeywordTemplates, 'keyword', fragment, from, to)
+    return getVersionSetCompletionItems(fragment, from, to, beforeCursor)
   }
 
   if (context.kind === 'workspace') {
-    if (/^\s*Workspace\s*/.test(beforeCursor)) {
-      return []
-    }
-
-    if (/^\s*based_on:\s*[A-Za-z0-9_-]*$/i.test(beforeCursor)) {
-      return getVersionIdCompletions(analysis, fragment, from, to)
-    }
-
-    return [
-      ...filterCompletionTemplates(workspaceMetadataKeywordTemplates, 'property', fragment, from, to),
-      ...filterCompletionTemplates(snapshotKeywordTemplates, 'keyword', fragment, from, to)
-    ]
+    return getWorkspaceCompletionItems(analysis, beforeCursor, fragment, from, to)
   }
 
   if (context.kind === 'version') {
-    if (/^\s*Version\s+[A-Za-z0-9_-]*$/i.test(beforeCursor)) {
-      return []
-    }
-
-    if (/^\s*role:\s*[A-Za-z]*$/i.test(beforeCursor)) {
-      return filterCompletionTemplates(versionRoleValueTemplates, 'value', fragment, from, to)
-    }
-
-    if (/^\s*parent:\s*[A-Za-z0-9_-]*$/i.test(beforeCursor)) {
-      return getVersionIdCompletions(analysis, fragment, from, to)
-    }
-
-    return [
-      ...filterCompletionTemplates(versionMetadataKeywordTemplates, 'property', fragment, from, to),
-      ...filterCompletionTemplates(snapshotKeywordTemplates, 'keyword', fragment, from, to)
-    ]
+    return getVersionCompletionItems(analysis, beforeCursor, fragment, from, to)
   }
 
   if (context.kind === 'snapshot') {
-    if (/^\s*Ref:\s*/.test(beforeCursor)) {
-      return getReferencePathCompletions(analysis, fragment, from, to)
-    }
-
-    if (/^\s*Snapshot\s*/.test(beforeCursor)) {
-      return []
-    }
-
-    return filterCompletionTemplates(snapshotTopLevelKeywordTemplates, 'keyword', fragment, from, to)
+    return getSnapshotCompletionItems(analysis, beforeCursor, fragment, from, to)
   }
 
   if (context.kind === 'properties') {
