@@ -63,6 +63,7 @@ describe('usePgmlStudioVersionHistory', () => {
 
     expect(api.document.value.workspace.basedOnVersionId).toBe(initialVersion.id)
     expect(api.workspaceBaseVersion.value?.id).toBe(initialVersion.id)
+    expect(api.rootVersions.value).toHaveLength(1)
     expect(api.versionedDocumentSource.value).toContain('VersionSet "Billing"')
     expect(api.versionedDocumentSource.value).toContain(`Version ${initialVersion.id}`)
 
