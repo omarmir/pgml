@@ -86,6 +86,23 @@ const isValidVersionTargetId = (
   return targetId === 'workspace' || getPgmlVersionById(document, targetId) !== null
 }
 
+const buildWorkspaceSyncedDocument = (
+  document: PgmlVersionSetDocument,
+  source: string,
+  options?: {
+    includeLayout?: boolean
+    updatedAt?: string | null
+  }
+) => {
+  return replacePgmlWorkspaceFromSnapshot(document, {
+    basedOnVersionId: document.workspace.basedOnVersionId,
+    source: normalizeSnapshotSource(source, options?.includeLayout ?? true),
+    updatedAt: options?.updatedAt === undefined
+      ? document.workspace.updatedAt
+      : options.updatedAt
+  })
+}
+
 export const usePgmlStudioVersionHistory = (
   input: {
     documentName: ComputedRef<string>
@@ -102,11 +119,7 @@ export const usePgmlStudioVersionHistory = (
   const compareTargetId: Ref<string> = ref('workspace')
 
   const syncWorkspaceSource = () => {
-    document.value = replacePgmlWorkspaceFromSnapshot(document.value, {
-      basedOnVersionId: document.value.workspace.basedOnVersionId,
-      source: input.source.value,
-      updatedAt: document.value.workspace.updatedAt
-    })
+    document.value = buildWorkspaceSyncedDocument(document.value, input.source.value)
   }
 
   const setDocument = (nextDocument: PgmlVersionSetDocument) => {
@@ -215,11 +228,7 @@ export const usePgmlStudioVersionHistory = (
     })
   })
   const versionedDocumentSource = computed(() => {
-    const workingDocument = replacePgmlWorkspaceFromSnapshot(document.value, {
-      basedOnVersionId: document.value.workspace.basedOnVersionId,
-      source: input.source.value,
-      updatedAt: document.value.workspace.updatedAt
-    })
+    const workingDocument = buildWorkspaceSyncedDocument(document.value, input.source.value)
 
     workingDocument.name = input.documentName.value
 
@@ -296,10 +305,13 @@ export const usePgmlStudioVersionHistory = (
   })
 
   const serializeCurrentDocument = (includeLayout: boolean) => {
-    const workingDocument = clonePgmlVersionSetDocument(document.value)
+    const workingDocument = clonePgmlVersionSetDocument(
+      buildWorkspaceSyncedDocument(document.value, input.source.value, {
+        includeLayout
+      })
+    )
 
     workingDocument.name = input.documentName.value
-    workingDocument.workspace.snapshot.source = normalizeSnapshotSource(input.source.value, includeLayout)
     workingDocument.versions = workingDocument.versions.map((version) => {
       return {
         ...version,
@@ -319,9 +331,8 @@ export const usePgmlStudioVersionHistory = (
     role: PgmlVersionRole
   }) => {
     const createdAt = inputOptions.createdAt || new Date().toISOString()
-    const workingDocument = replacePgmlWorkspaceFromSnapshot(document.value, {
-      basedOnVersionId: document.value.workspace.basedOnVersionId,
-      source: normalizeSnapshotSource(input.source.value, inputOptions.includeLayout),
+    const workingDocument = buildWorkspaceSyncedDocument(document.value, input.source.value, {
+      includeLayout: inputOptions.includeLayout,
       updatedAt: createdAt
     })
     const nextDocument = createPgmlVersionFromWorkspace(workingDocument, {
