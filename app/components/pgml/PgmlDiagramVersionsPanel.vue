@@ -67,6 +67,10 @@ type PgmlVersionStatCard = {
   value: number
 }
 
+type PgmlVersionMetricBadge = {
+  label: string
+}
+
 const {
   canCreateCheckpoint = true,
   compareBaseId = null,
@@ -121,6 +125,7 @@ const activeMigrationFormat: Ref<'sql' | 'kysely'> = ref('sql')
 const copyButtonClass = joinStudioClasses(studioButtonClasses.secondary, 'text-[0.65rem]')
 const primaryButtonClass = joinStudioClasses(studioButtonClasses.primary, 'text-[0.65rem]')
 const secondaryButtonClass = joinStudioClasses(studioButtonClasses.secondary, 'text-[0.65rem]')
+const mutedVersionBadgeClass = 'border border-[color:var(--studio-divider)] px-1.5 py-0.5 font-mono text-[0.52rem] uppercase tracking-[0.08em] text-[color:var(--studio-shell-muted)]'
 const getDiffKindClass = (kind: 'added' | 'modified' | 'removed') => {
   if (kind === 'added') {
     return 'border-[color:var(--studio-shell-label)] text-[color:var(--studio-shell-text)]'
@@ -131,6 +136,58 @@ const getDiffKindClass = (kind: 'added' | 'modified' | 'removed') => {
   }
 
   return 'border-[color:var(--studio-divider)] text-[color:var(--studio-shell-muted)]'
+}
+const buildCountLabel = (count: number, singularLabel: string, pluralLabel?: string) => {
+  return `${count} ${count === 1 ? singularLabel : pluralLabel || `${singularLabel}s`}`
+}
+const buildVersionMetricBadges = (version: PgmlVersionPanelItem) => {
+  const badges: PgmlVersionMetricBadge[] = [{
+    label: `Level ${version.depth}`
+  }]
+
+  if (version.childCount > 0) {
+    badges.push({
+      label: buildCountLabel(version.childCount, 'branch', 'branches')
+    })
+  }
+
+  if (version.siblingCount > 0) {
+    badges.push({
+      label: buildCountLabel(version.siblingCount, 'sibling')
+    })
+  }
+
+  if (version.descendantCount > 0) {
+    badges.push({
+      label: buildCountLabel(version.descendantCount, 'descendant')
+    })
+  }
+
+  if (version.ancestorCount > 0) {
+    badges.push({
+      label: buildCountLabel(version.ancestorCount, 'ancestor')
+    })
+  }
+
+  if (version.branchVersionCount > 1) {
+    badges.push({
+      label: `Branch size ${version.branchVersionCount}`
+    })
+  }
+
+  if (version.branchLeafCount > 0) {
+    badges.push({
+      label: `Branch leaves ${version.branchLeafCount}`
+    })
+  }
+
+  if (version.branchMaxDepth > version.depth) {
+    badges.push({
+      label: `Branch depth ${version.branchMaxDepth}`
+    })
+  }
+
+  return badges
 }
 const compareBaseOption = computed(() => {
   return compareBaseId ? compareOptions.find(option => option.value === compareBaseId) || null : null
@@ -633,50 +690,12 @@ const swapComparePair = () => {
                 >
                   Leaf
                 </span>
-                <span class="border border-[color:var(--studio-divider)] px-1.5 py-0.5 font-mono text-[0.52rem] uppercase tracking-[0.08em] text-[color:var(--studio-shell-muted)]">
-                  Level {{ version.depth }}
-                </span>
                 <span
-                  v-if="version.childCount > 0"
-                  class="border border-[color:var(--studio-divider)] px-1.5 py-0.5 font-mono text-[0.52rem] uppercase tracking-[0.08em] text-[color:var(--studio-shell-muted)]"
+                  v-for="badge in buildVersionMetricBadges(version)"
+                  :key="badge.label"
+                  :class="mutedVersionBadgeClass"
                 >
-                  {{ version.childCount }} branch{{ version.childCount === 1 ? '' : 'es' }}
-                </span>
-                <span
-                  v-if="version.siblingCount > 0"
-                  class="border border-[color:var(--studio-divider)] px-1.5 py-0.5 font-mono text-[0.52rem] uppercase tracking-[0.08em] text-[color:var(--studio-shell-muted)]"
-                >
-                  {{ version.siblingCount }} sibling{{ version.siblingCount === 1 ? '' : 's' }}
-                </span>
-                <span
-                  v-if="version.descendantCount > 0"
-                  class="border border-[color:var(--studio-divider)] px-1.5 py-0.5 font-mono text-[0.52rem] uppercase tracking-[0.08em] text-[color:var(--studio-shell-muted)]"
-                >
-                  {{ version.descendantCount }} descendant{{ version.descendantCount === 1 ? '' : 's' }}
-                </span>
-                <span
-                  v-if="version.ancestorCount > 0"
-                  class="border border-[color:var(--studio-divider)] px-1.5 py-0.5 font-mono text-[0.52rem] uppercase tracking-[0.08em] text-[color:var(--studio-shell-muted)]"
-                >
-                  {{ version.ancestorCount }} ancestor{{ version.ancestorCount === 1 ? '' : 's' }}
-                </span>
-                <span
-                  v-if="version.branchVersionCount > 1"
-                  class="border border-[color:var(--studio-divider)] px-1.5 py-0.5 font-mono text-[0.52rem] uppercase tracking-[0.08em] text-[color:var(--studio-shell-muted)]"
-                >
-                  Branch size {{ version.branchVersionCount }}
-                </span>
-                <span
-                  v-if="version.branchLeafCount > 0"
-                  class="border border-[color:var(--studio-divider)] px-1.5 py-0.5 font-mono text-[0.52rem] uppercase tracking-[0.08em] text-[color:var(--studio-shell-muted)]"
-                >
-                  Branch leaves {{ version.branchLeafCount }}
-                </span>
-                <span
-                  v-if="version.branchMaxDepth > version.depth"
-                  class="border border-[color:var(--studio-divider)] px-1.5 py-0.5 font-mono text-[0.52rem] uppercase tracking-[0.08em] text-[color:var(--studio-shell-muted)]"
-                >
-                  Branch depth {{ version.branchMaxDepth }}
+                  {{ badge.label }}
                 </span>
                 <span
                   v-if="version.isWorkspaceBase"
