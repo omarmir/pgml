@@ -9,3 +9,9 @@ export const buildPgmlCheckpointRoleDescription = (role: 'design' | 'implementat
     ? 'Use an implementation checkpoint when the workspace reflects imported database state you want to preserve as a baseline.'
     : 'Use a design checkpoint when the workspace captures the intended next PGML revision.'
 }
+
+export const buildPgmlRestoreVersionDescription = (hasPendingChanges: boolean) => {
+  return hasPendingChanges
+    ? 'The current workspace has unsaved changes. Restoring will replace the draft before the next checkpoint.'
+    : 'This will replace the current workspace draft and point future changes at the restored base version.'
+}

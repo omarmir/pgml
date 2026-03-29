@@ -2,7 +2,8 @@ import { describe, expect, it } from 'vitest'
 
 import {
   buildPgmlCheckpointRoleDescription,
-  buildPgmlCheckpointTargetLabel
+  buildPgmlCheckpointTargetLabel,
+  buildPgmlRestoreVersionDescription
 } from '../../app/utils/pgml-version-copy'
 
 describe('PGML version copy helpers', () => {
@@ -14,5 +15,10 @@ describe('PGML version copy helpers', () => {
   it('builds checkpoint role descriptions for design and implementation versions', () => {
     expect(buildPgmlCheckpointRoleDescription('design')).toContain('design checkpoint')
     expect(buildPgmlCheckpointRoleDescription('implementation')).toContain('implementation checkpoint')
+  })
+
+  it('builds restore copy from workspace pending-change state', () => {
+    expect(buildPgmlRestoreVersionDescription(true)).toContain('unsaved changes')
+    expect(buildPgmlRestoreVersionDescription(false)).toContain('restored base version')
   })
 })

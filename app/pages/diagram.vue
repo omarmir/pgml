@@ -53,7 +53,8 @@ import {
 import { buildPgmlVersionMigrationBundle } from '~/utils/pgml-version-migration'
 import {
   buildPgmlCheckpointRoleDescription,
-  buildPgmlCheckpointTargetLabel
+  buildPgmlCheckpointTargetLabel,
+  buildPgmlRestoreVersionDescription
 } from '~/utils/pgml-version-copy'
 import {
   buildPgmlImportBaseVersionItems,
@@ -1934,9 +1935,7 @@ onBeforeUnmount(() => {
             </div>
             <p class="mt-2 text-[0.74rem] leading-6 text-[color:var(--studio-shell-muted)]">
               {{
-                activeHasPendingChanges
-                  ? 'The current workspace has unsaved changes. Restoring will replace the draft before the next checkpoint.'
-                  : 'This will replace the current workspace draft and point future changes at the restored base version.'
+                buildPgmlRestoreVersionDescription(activeHasPendingChanges)
               }}
             </p>
           </div>
