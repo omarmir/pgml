@@ -213,6 +213,7 @@ const swapComparePair = () => {
         color="neutral"
         variant="outline"
         :class="secondaryButtonClass"
+        :disabled="!hasVersions"
         @click="emit('import-dump')"
       />
     </div>
@@ -220,6 +221,12 @@ const swapComparePair = () => {
     <div :class="joinStudioClasses(studioPanelSurfaceClass, 'px-3 py-3')">
       <p :class="studioCompactBodyCopyClass">
         Lock workspace checkpoints, compare snapshots, and export forward SQL from the selected base to the selected target.
+      </p>
+      <p
+        v-if="!hasVersions"
+        class="mt-2 text-[0.66rem] text-[color:var(--studio-shell-muted)]"
+      >
+        Import stays locked until you create the first checkpointed base version.
       </p>
     </div>
 
