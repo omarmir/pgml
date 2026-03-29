@@ -404,6 +404,28 @@ const buildLayoutMap = (properties: Record<string, PgmlNodeProperties>) => {
   return new Map(Object.entries(properties))
 }
 
+const buildDiffSummary = (
+  entries: PgmlDiffEntry<unknown>[],
+  layoutEntries: PgmlLayoutDiffEntry[]
+): PgmlSchemaDiffSummary => {
+  return entries.reduce<PgmlSchemaDiffSummary>((totals, entry) => {
+    if (entry.kind === 'added') {
+      totals.added += 1
+    } else if (entry.kind === 'removed') {
+      totals.removed += 1
+    } else {
+      totals.modified += 1
+    }
+
+    return totals
+  }, {
+    added: 0,
+    layoutChanged: layoutEntries.length,
+    modified: 0,
+    removed: 0
+  })
+}
+
 export const diffPgmlSchemaModels = (
   beforeModel: PgmlSchemaModel,
   afterModel: PgmlSchemaModel
@@ -480,7 +502,7 @@ export const diffPgmlSchemaModels = (
     id => id,
     normalizeLayoutValue
   )
-  const summary = [
+  const schemaEntries = [
     ...tables,
     ...groups,
     ...functions,
@@ -492,22 +514,8 @@ export const diffPgmlSchemaModels = (
     ...columns,
     ...indexes,
     ...constraints
-  ].reduce<PgmlSchemaDiffSummary>((totals, entry) => {
-    if (entry.kind === 'added') {
-      totals.added += 1
-    } else if (entry.kind === 'removed') {
-      totals.removed += 1
-    } else {
-      totals.modified += 1
-    }
-
-    return totals
-  }, {
-    added: 0,
-    layoutChanged: layout.length,
-    modified: 0,
-    removed: 0
-  })
+  ]
+  const summary = buildDiffSummary(schemaEntries, layout)
 
   return {
     columns,
