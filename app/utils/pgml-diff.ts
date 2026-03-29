@@ -252,6 +252,16 @@ const normalizeLayoutValue = (value: PgmlNodeProperties) => {
   return value
 }
 
+// Diffing is only as stable as the identity keys that feed it. These helpers
+// centralize how top-level schema entities are keyed so compare views and
+// migration planning stay aligned.
+const buildEntityMap = <T>(
+  values: T[],
+  getId: (value: T) => string
+) => {
+  return new Map(values.map(value => [getId(value), value] as const))
+}
+
 const buildDiffEntries = <T>(
   beforeValues: Map<string, T>,
   afterValues: Map<string, T>,
@@ -314,31 +324,31 @@ const buildDiffEntries = <T>(
 }
 
 const buildTableMap = (tables: PgmlTable[]) => {
-  return new Map(tables.map(table => [table.fullName, table] as const))
+  return buildEntityMap(tables, table => table.fullName)
 }
 
 const buildGroupMap = (groups: PgmlGroup[]) => {
-  return new Map(groups.map(group => [group.name, group] as const))
+  return buildEntityMap(groups, group => group.name)
 }
 
 const buildRoutineMap = (routines: PgmlRoutine[]) => {
-  return new Map(routines.map(routine => [routine.name, routine] as const))
+  return buildEntityMap(routines, routine => routine.name)
 }
 
 const buildTriggerMap = (triggers: PgmlTrigger[]) => {
-  return new Map(triggers.map(trigger => [`${trigger.tableName}::${trigger.name}`, trigger] as const))
+  return buildEntityMap(triggers, trigger => `${trigger.tableName}::${trigger.name}`)
 }
 
 const buildSequenceMap = (sequences: PgmlSequence[]) => {
-  return new Map(sequences.map(sequence => [sequence.name, sequence] as const))
+  return buildEntityMap(sequences, sequence => sequence.name)
 }
 
 const buildCustomTypeMap = (customTypes: PgmlCustomType[]) => {
-  return new Map(customTypes.map(customType => [`${customType.kind}::${customType.name}`, customType] as const))
+  return buildEntityMap(customTypes, customType => `${customType.kind}::${customType.name}`)
 }
 
 const buildReferenceMap = (references: PgmlReference[]) => {
-  return new Map(references.map(reference => [normalizeReferenceKey(reference), reference] as const))
+  return buildEntityMap(references, normalizeReferenceKey)
 }
 
 const buildColumnMap = (tables: PgmlTable[]) => {
