@@ -23,3 +23,7 @@ export const buildPgmlImportDumpDialogDescription = (baseVersionLabel: string) =
 export const buildPgmlImportDumpInputDescription = () => {
   return 'Choose exactly one input method. This replaces the current draft workspace but does not create a locked version until you checkpoint it.'
 }
+
+export const buildPgmlImportDumpDialogTitle = () => {
+  return 'Import pg_dump onto a version'
+}

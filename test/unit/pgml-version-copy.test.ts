@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest'
 import {
   buildPgmlCheckpointRoleDescription,
   buildPgmlCheckpointTargetLabel,
+  buildPgmlImportDumpDialogTitle,
   buildPgmlImportDumpDialogDescription,
   buildPgmlImportDumpInputDescription,
   buildPgmlRestoreVersionDescription
@@ -30,5 +31,9 @@ describe('PGML version copy helpers', () => {
 
   it('builds the import dialog input instructions', () => {
     expect(buildPgmlImportDumpInputDescription()).toContain('Choose exactly one input method')
+  })
+
+  it('builds the import dialog title', () => {
+    expect(buildPgmlImportDumpDialogTitle()).toBe('Import pg_dump onto a version')
   })
 })

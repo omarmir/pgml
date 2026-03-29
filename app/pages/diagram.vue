@@ -56,6 +56,7 @@ import {
   buildPgmlCheckpointTargetLabel,
   buildPgmlImportDumpDialogDescription,
   buildPgmlImportDumpInputDescription,
+  buildPgmlImportDumpDialogTitle,
   buildPgmlRestoreVersionDescription
 } from '~/utils/pgml-version-copy'
 import {
@@ -755,7 +756,7 @@ const importDumpDialogCopy = computed(() => {
     confirmLabel: 'Replace workspace with import',
     description: buildPgmlImportDumpDialogDescription(baseLabel),
     inputDescription: buildPgmlImportDumpInputDescription(),
-    title: 'Import pg_dump onto a version'
+    title: buildPgmlImportDumpDialogTitle()
   }
 })
 const checkpointBaseVersion = computed(() => {
