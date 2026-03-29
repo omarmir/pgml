@@ -351,37 +351,53 @@ const buildReferenceMap = (references: PgmlReference[]) => {
   return buildEntityMap(references, normalizeReferenceKey)
 }
 
-const buildColumnMap = (tables: PgmlTable[]) => {
+const buildTableChildMap = <T, TEntry>(
+  tables: PgmlTable[],
+  getValues: (table: PgmlTable) => T[],
+  getId: (table: PgmlTable, value: T) => string,
+  buildEntry: (table: PgmlTable, value: T) => TEntry
+) => {
   return new Map(tables.flatMap((table) => {
-    return table.columns.map((column) => {
-      return [`${table.fullName}::${column.name}`, {
-        column,
-        tableId: table.fullName
-      }] as const
+    return getValues(table).map((value) => {
+      return [getId(table, value), buildEntry(table, value)] as const
     })
   }))
+}
+
+const buildColumnMap = (tables: PgmlTable[]) => {
+  return buildTableChildMap(
+    tables,
+    table => table.columns,
+    (table, column) => `${table.fullName}::${column.name}`,
+    (table, column) => ({
+      column,
+      tableId: table.fullName
+    })
+  )
 }
 
 const buildIndexMap = (tables: PgmlTable[]) => {
-  return new Map(tables.flatMap((table) => {
-    return table.indexes.map((index) => {
-      return [`${table.fullName}::${index.name}`, {
-        index,
-        tableId: table.fullName
-      }] as const
+  return buildTableChildMap(
+    tables,
+    table => table.indexes,
+    (table, index) => `${table.fullName}::${index.name}`,
+    (table, index) => ({
+      index,
+      tableId: table.fullName
     })
-  }))
+  )
 }
 
 const buildConstraintMap = (tables: PgmlTable[]) => {
-  return new Map(tables.flatMap((table) => {
-    return table.constraints.map((constraint) => {
-      return [`${table.fullName}::${constraint.name}`, {
-        constraint,
-        tableId: table.fullName
-      }] as const
+  return buildTableChildMap(
+    tables,
+    table => table.constraints,
+    (table, constraint) => `${table.fullName}::${constraint.name}`,
+    (table, constraint) => ({
+      constraint,
+      tableId: table.fullName
     })
-  }))
+  )
 }
 
 const buildLayoutMap = (properties: Record<string, PgmlNodeProperties>) => {
