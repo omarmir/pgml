@@ -216,6 +216,7 @@ const {
   exportPreferenceKey = 'name:pgml-schema',
   hasBlockingSourceErrors = false,
   layoutChanged = 0,
+  latestVersionId = null,
   mobileActiveView = null,
   mobilePanelTab = null,
   migrationFileName = 'pgml-version.migration.sql',
@@ -238,6 +239,7 @@ const {
   exportPreferenceKey?: string
   hasBlockingSourceErrors?: boolean
   layoutChanged?: number
+  latestVersionId?: string | null
   mobileActiveView?: StudioMobileCanvasView | null
   mobilePanelTab?: DiagramPanelTab | null
   migrationFileName?: string
@@ -4543,6 +4545,7 @@ defineExpose<{
         :compare-target-id="versionCompareTargetId"
         :diff-sections="versionDiffSections"
         :layout-changed="layoutChanged"
+        :latest-version-id="latestVersionId"
         :migration-file-name="migrationFileName"
         :migration-has-changes="migrationHasChanges"
         :migration-sql="migrationSql"

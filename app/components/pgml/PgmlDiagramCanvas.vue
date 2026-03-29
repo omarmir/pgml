@@ -45,6 +45,7 @@ const {
   exportPreferenceKey = 'name:pgml-schema',
   hasBlockingSourceErrors = false,
   layoutChanged = 0,
+  latestVersionId = null,
   mobileActiveView = null,
   mobilePanelTab = null,
   model,
@@ -67,6 +68,7 @@ const {
   exportPreferenceKey?: string
   hasBlockingSourceErrors?: boolean
   layoutChanged?: number
+  latestVersionId?: string | null
   mobileActiveView?: StudioMobileCanvasView | null
   mobilePanelTab?: DiagramPanelTab | null
   migrationFileName?: string
@@ -127,6 +129,7 @@ defineExpose<CanvasHandle>({
     :export-preference-key="exportPreferenceKey"
     :has-blocking-source-errors="hasBlockingSourceErrors"
     :layout-changed="layoutChanged"
+    :latest-version-id="latestVersionId"
     :mobile-active-view="mobileActiveView"
     :mobile-panel-tab="mobilePanelTab"
     :migration-file-name="migrationFileName"

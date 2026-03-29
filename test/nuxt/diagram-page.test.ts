@@ -25,5 +25,6 @@ describe('diagram page source', () => {
     expect(file).toContain('buildPgmlCheckpointName(versionDocument.value')
     expect(file).toContain('checkpointNameIsSuggested')
     expect(file).toContain(':can-create-checkpoint="canCheckpoint"')
+    expect(file).toContain(':latest-version-id="latestVersionId"')
   })
 })

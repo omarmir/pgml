@@ -6,6 +6,7 @@ import {
   createInitialPgmlDocument,
   createPgmlVersionFromWorkspace,
   getPgmlChildVersions,
+  getLatestPgmlVersion,
   getPgmlVersionById,
   getPgmlVersionDepth,
   getPgmlWorkspaceBaseVersion,
@@ -35,7 +36,7 @@ const buildDefaultCompareBaseId = (document: PgmlVersionSetDocument) => {
     return document.workspace.basedOnVersionId
   }
 
-  return document.versions.at(-1)?.id || null
+  return getLatestPgmlVersion(document)?.id || null
 }
 
 const buildDefaultCompareTargetId = (document: PgmlVersionSetDocument) => {

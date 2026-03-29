@@ -147,6 +147,16 @@ export const getPgmlNearestCommonAncestor = (
   return null
 }
 
+export const getLatestPgmlVersion = (document: PgmlVersionSetDocument) => {
+  return [...document.versions].sort((left, right) => {
+    if (left.createdAt !== right.createdAt) {
+      return right.createdAt.localeCompare(left.createdAt)
+    }
+
+    return right.id.localeCompare(left.id)
+  })[0] || null
+}
+
 const trimQuotedValue = (value: string) => {
   const trimmed = value.trim()
   const doubleQuotedMatch = trimmed.match(/^"(.*)"$/u)

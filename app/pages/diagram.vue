@@ -43,7 +43,10 @@ import {
   buildPgmlVersionDiffSections,
   type PgmlVersionDiffSection
 } from '~/utils/pgml-version-summary'
-import { buildPgmlCheckpointName } from '~/utils/pgml-document'
+import {
+  buildPgmlCheckpointName,
+  getLatestPgmlVersion
+} from '~/utils/pgml-document'
 import { buildPgmlVersionMigrationBundle } from '~/utils/pgml-version-migration'
 import {
   buildPgmlImportBaseVersionItems,
@@ -649,6 +652,9 @@ const versionPanelItems = computed(() => {
     }
   })
 })
+const latestVersionId = computed(() => {
+  return getLatestPgmlVersion(versionDocument.value)?.id || null
+})
 const versionCompareOptions = computed(() => {
   return buildPgmlVersionCompareOptions(versionPanelItems.value)
 })
@@ -953,7 +959,7 @@ const openImportDumpDialog = () => {
   importDumpSelectedFile.value = null
   importDumpText.value = ''
   importDumpBaseVersionId.value = versionHistoryItems.value.find(version => version.isWorkspaceBase)?.id
-    || versions.value.at(-1)?.id
+    || latestVersionId.value
     || null
 }
 const closeImportDumpDialog = () => {
@@ -1695,6 +1701,7 @@ onBeforeUnmount(() => {
           :migration-has-changes="compareMigrationBundle.meta.hasChanges"
           :migration-sql="compareMigrationBundle.sql.migration.content"
           :migration-warnings="compareMigrationBundle.sql.migration.warnings"
+          :latest-version-id="latestVersionId"
           :mobile-active-view="mobileCanvasView"
           :mobile-panel-tab="mobilePanelTab"
           :preview-target-id="previewTargetId"
@@ -1781,6 +1788,7 @@ onBeforeUnmount(() => {
           :migration-has-changes="compareMigrationBundle.meta.hasChanges"
           :migration-sql="compareMigrationBundle.sql.migration.content"
           :migration-warnings="compareMigrationBundle.sql.migration.warnings"
+          :latest-version-id="latestVersionId"
           :preview-target-id="previewTargetId"
           :version-compare-base-id="versionCompareBaseId"
           :version-compare-options="versionCompareOptions"

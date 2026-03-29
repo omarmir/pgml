@@ -10,6 +10,7 @@ import {
   getPgmlDocumentVersionStats,
   getPgmlChildVersions,
   getPgmlDescendantVersions,
+  getLatestPgmlVersion,
   getPgmlNearestCommonAncestor,
   getPgmlVersionById,
   getPgmlVersionDepth,
@@ -597,8 +598,49 @@ Table public.memberships {
         id uuid [pk]
       }
     }
-  }
+    }
 }`)).toThrow('Version v1 created_at requires a valid ISO timestamp.')
+  })
+
+  it('returns the latest version by timestamp instead of document order', () => {
+    const parsed = parsePgmlDocument(`VersionSet "Billing" {
+  Workspace {
+    based_on: v1
+
+    Snapshot {
+      Table public.users {
+        id uuid [pk]
+      }
+    }
+  }
+
+  Version v1 {
+    name: "Older"
+    role: design
+    created_at: "2026-03-29T12:00:00.000Z"
+
+    Snapshot {
+      Table public.users {
+        id uuid [pk]
+      }
+    }
+  }
+
+  Version v2 {
+    name: "Newest"
+    role: design
+    parent: v1
+    created_at: "2026-03-30T12:00:00.000Z"
+
+    Snapshot {
+      Table public.users {
+        id uuid [pk]
+      }
+    }
+  }
+}`)
+
+    expect(getLatestPgmlVersion(parsed)?.id).toBe('v2')
   })
 
   it('rejects invalid VersionSet documents that reference missing parent or base versions', () => {

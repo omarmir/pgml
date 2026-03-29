@@ -45,6 +45,7 @@ const {
   compareTargetId,
   diffSections,
   layoutChanged = 0,
+  latestVersionId = null,
   migrationFileName = 'pgml-version.migration.sql',
   migrationHasChanges = false,
   migrationSql = '',
@@ -60,6 +61,7 @@ const {
   compareTargetId: string
   diffSections: PgmlVersionDiffSection[]
   layoutChanged?: number
+  latestVersionId?: string | null
   migrationFileName?: string
   migrationHasChanges?: boolean
   migrationSql?: string
@@ -103,7 +105,6 @@ const compareTargetOption = computed(() => {
 const hasDiffSections = computed(() => diffSections.length > 0 || layoutChanged > 0)
 const hasMigrationSql = computed(() => migrationHasChanges && migrationSql.trim().length > 0)
 const hasVersions = computed(() => versions.length > 0)
-const latestVersionId = computed(() => versions.at(-1)?.id || null)
 const designVersionCount = computed(() => {
   return versions.filter(version => version.role === 'design').length
 })
