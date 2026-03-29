@@ -176,6 +176,16 @@ export const getLatestPgmlVersionByRole = (
     })[0] || null
 }
 
+export const getLatestPgmlLeafVersion = (document: PgmlVersionSetDocument) => {
+  return [...getPgmlLeafVersions(document)].sort((left, right) => {
+    if (left.createdAt !== right.createdAt) {
+      return right.createdAt.localeCompare(left.createdAt)
+    }
+
+    return right.id.localeCompare(left.id)
+  })[0] || null
+}
+
 export const getPgmlRootVersions = (document: PgmlVersionSetDocument) => {
   return document.versions.filter(version => version.parentVersionId === null)
 }

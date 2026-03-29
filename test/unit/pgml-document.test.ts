@@ -14,6 +14,7 @@ import {
   getPgmlDescendantVersionCount,
   getLatestPgmlVersion,
   getLatestPgmlVersionByRole,
+  getLatestPgmlLeafVersion,
   getPgmlBranchRootVersion,
   getPgmlBranchRootId,
   getPgmlBranchRootLabel,
@@ -774,6 +775,7 @@ Table public.memberships {
 
     expect(getPgmlLeafVersions(parsed).map(version => version.id)).toEqual(['v2', 'v3'])
     expect(getPgmlLeafVersionCount(parsed)).toBe(2)
+    expect(getLatestPgmlLeafVersion(parsed)?.id).toBe('v3')
     expect(isPgmlLeafVersion(parsed, 'v2')).toBe(true)
     expect(isPgmlLeafVersion(parsed, 'v1')).toBe(false)
   })
