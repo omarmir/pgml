@@ -715,7 +715,7 @@ export const buildPgmlMigrationDiffBundle = (
     const afterTrigger = afterTriggers.get(triggerId) || null
 
     if (beforeTrigger && !afterTrigger) {
-      postTableStatements.push(buildTriggerDropStatement(beforeTrigger))
+      preTableStatements.push(buildTriggerDropStatement(beforeTrigger))
       return
     }
 
@@ -728,7 +728,7 @@ export const buildPgmlMigrationDiffBundle = (
       || toStableJson(normalizeTriggerForCompare(beforeTrigger)) !== toStableJson(normalizeTriggerForCompare(afterTrigger))
     ) {
       if (beforeTrigger) {
-        postTableStatements.push(buildTriggerDropStatement(beforeTrigger))
+        preTableStatements.push(buildTriggerDropStatement(beforeTrigger))
       }
 
       const statement = buildTriggerCreateStatement(afterTrigger, warnings)

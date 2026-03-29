@@ -176,6 +176,34 @@ Table public.orders {
     expect(referenceDropIndex).toBeLessThan(tableDropIndex)
   })
 
+  it('drops triggers before dropping their table snapshot', () => {
+    const migrationBundle = buildPgmlMigrationDiffBundle(
+      parsePgml(`Table public.users {
+  id uuid [pk]
+}
+
+Trigger trg_touch_users on public.users {
+  source: $sql$
+    CREATE TRIGGER trg_touch_users
+      AFTER UPDATE ON public.users
+      FOR EACH ROW
+      EXECUTE FUNCTION public.touch_users();
+  $sql$
+}`),
+      parsePgml('')
+    )
+    const triggerDropIndex = migrationBundle.sql.migration.content.indexOf(
+      'DROP TRIGGER IF EXISTS "trg_touch_users" ON "public"."users";'
+    )
+    const tableDropIndex = migrationBundle.sql.migration.content.indexOf(
+      'DROP TABLE IF EXISTS "public"."users";'
+    )
+
+    expect(triggerDropIndex).toBeGreaterThan(-1)
+    expect(tableDropIndex).toBeGreaterThan(-1)
+    expect(triggerDropIndex).toBeLessThan(tableDropIndex)
+  })
+
   it('handles removed references, replaced custom types and omitted routines with warnings', () => {
     const baseSource = `Enum order_status {
   draft
