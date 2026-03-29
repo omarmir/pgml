@@ -110,6 +110,7 @@ type WorkerConnectionLine = {
 type WorkerRouteRequest = {
   descriptors: WorkerConnectionDescriptor[]
   groupHeaderBands: DiagramRect[]
+  groupGeometries: WorkerConnectionGeometry[]
   nodeOrders: Record<string, number>
   planeBounds: WorkerMeasuredBounds
   requestId: number
@@ -121,9 +122,8 @@ type WorkerRouteResponse = {
   requestId: number
 }
 
-const groupLaneInnerBaseOffset = 14
-const groupLaneInnerBorderClearance = 18
-const groupLaneInnerGap = 18
+const groupLaneSameGroupBaseOffset = 8
+const groupLaneSameGroupGap = 10
 const groupLaneOuterBaseOffset = 18
 const groupLaneOuterGap = 18
 const groupHeaderLaneClearance = 16
@@ -770,6 +770,7 @@ const buildPathPointsFromLegs = (
 
 const buildConnectionLines = (input: WorkerRouteRequest) => {
   const geometryMaps = input.descriptors.reduce<{
+    groupById: Map<string, WorkerConnectionGeometry>
     nodeById: Map<string, WorkerConnectionGeometry>
     rowByKey: Map<string, WorkerConnectionGeometry>
     tableById: Map<string, WorkerConnectionGeometry>
@@ -806,6 +807,13 @@ const buildConnectionLines = (input: WorkerRouteRequest) => {
 
     return maps
   }, {
+    groupById: input.groupGeometries.reduce<Map<string, WorkerConnectionGeometry>>((entries, geometry) => {
+      if (geometry.nodeAnchorId) {
+        entries.set(geometry.nodeAnchorId, geometry)
+      }
+
+      return entries
+    }, new Map<string, WorkerConnectionGeometry>()),
     nodeById: new Map<string, WorkerConnectionGeometry>(),
     rowByKey: new Map<string, WorkerConnectionGeometry>(),
     tableById: new Map<string, WorkerConnectionGeometry>()
@@ -820,8 +828,8 @@ const buildConnectionLines = (input: WorkerRouteRequest) => {
     verticalUsage: VerticalSegmentUsage,
     headerBands: DiagramRect[]
   ) => {
-    const sharedGroupGeometry = !dashed && fromGeometry.groupNodeId && fromGeometry.groupNodeId === toGeometry.groupNodeId
-      ? geometryMaps.nodeById.get(fromGeometry.groupNodeId) || null
+    const sharedGroupGeometry = fromGeometry.groupNodeId && fromGeometry.groupNodeId === toGeometry.groupNodeId
+      ? geometryMaps.groupById.get(fromGeometry.groupNodeId) || null
       : null
 
     if (sharedGroupGeometry) {
@@ -833,18 +841,7 @@ const buildConnectionLines = (input: WorkerRouteRequest) => {
       const sourceCenterY = fromBounds.top + fromBounds.height / 2
       const targetCenterX = toBounds.left + toBounds.width / 2
       const targetCenterY = toBounds.top + toBounds.height / 2
-      const laneSide = isFieldEndpointGeometry(fromGeometry) || isFieldEndpointGeometry(toGeometry)
-        ? getHorizontalGroupLaneSide(fromBounds, toBounds, groupBounds)
-        : getHeaderSafeGroupLaneSide(
-            { x: sourceCenterX, y: sourceCenterY },
-            { x: targetCenterX, y: targetCenterY },
-            {
-              left: groupBounds.left,
-              right: groupBounds.right,
-              top: groupBounds.top,
-              bottom: groupBounds.bottom
-            }
-          )
+      const laneSide = getHorizontalGroupLaneSide(fromBounds, toBounds, groupBounds)
       const fromTableGeometry = isFieldEndpointGeometry(fromGeometry) && fromGeometry.tableId
         ? geometryMaps.tableById.get(fromGeometry.tableId) || null
         : null
@@ -900,34 +897,22 @@ const buildConnectionLines = (input: WorkerRouteRequest) => {
           : getExactAnchorPoint(toAnchorHost.bounds, laneSide, toRatio, input.planeBounds, input.scale)
         : reserveAnchorPoint(toAnchorHost, laneSide, toRatio, input.planeBounds, input.scale, usage, reservations)
       const laneKey = `group-lane:${sharedGroupGeometry.nodeAnchorId}:${laneSide}`
-      const laneOffset = reserveLaneOffset(laneKey, usage, groupLaneInnerBaseOffset, groupLaneInnerGap)
+      const laneOffset = reserveLaneOffset(laneKey, usage, groupLaneSameGroupBaseOffset, groupLaneSameGroupGap)
 
       reservations.push({ key: laneKey, slot: 0, count: 1 })
       const points: LayoutPoint[] = []
       const groupLeft = (groupBounds.left - input.planeBounds.left) / input.scale
       const groupRight = (groupBounds.right - input.planeBounds.left) / input.scale
-      const groupBottom = (groupBounds.bottom - input.planeBounds.top) / input.scale
 
       appendRoutePoint(points, { x: fromAnchor.x, y: fromAnchor.y })
 
-      if (laneSide === 'left' || laneSide === 'right') {
-        const preferredLaneX = laneSide === 'left'
-          ? Math.min(fromAnchor.x, toAnchor.x) - laneOffset
-          : Math.max(fromAnchor.x, toAnchor.x) + laneOffset
-        const laneX = laneSide === 'left'
-          ? Math.max(groupLeft + groupLaneInnerBorderClearance, preferredLaneX)
-          : Math.min(groupRight - groupLaneInnerBorderClearance, preferredLaneX)
+      const laneX = laneSide === 'left'
+        ? groupLeft - laneOffset
+        : groupRight + laneOffset
 
-        appendRoutePoint(points, { x: laneX, y: fromAnchor.y })
-        appendRoutePoint(points, { x: laneX, y: toAnchor.y })
-        appendRoutePoint(points, { x: toAnchor.x, y: toAnchor.y })
-      } else {
-        const laneY = Math.min(groupBottom - groupLaneInnerBorderClearance, Math.max(fromAnchor.y, toAnchor.y) + laneOffset)
-
-        appendRoutePoint(points, { x: fromAnchor.x, y: laneY })
-        appendRoutePoint(points, { x: toAnchor.x, y: laneY })
-        appendRoutePoint(points, { x: toAnchor.x, y: toAnchor.y })
-      }
+      appendRoutePoint(points, { x: laneX, y: fromAnchor.y })
+      appendRoutePoint(points, { x: laneX, y: toAnchor.y })
+      appendRoutePoint(points, { x: toAnchor.x, y: toAnchor.y })
 
       const adjustedPoints = offsetOverlappingVerticalSegments(points, verticalUsage, headerBands)
 
@@ -938,7 +923,7 @@ const buildConnectionLines = (input: WorkerRouteRequest) => {
       }
     }
 
-    const defaultSides = (() => {
+    const defaultSides: { from: AnchorSide, to: AnchorSide } = (() => {
       const fromBounds = fromGeometry.bounds
       const toBounds = toGeometry.bounds
       const fromCenterX = fromBounds.left + fromBounds.width / 2
@@ -974,7 +959,7 @@ const buildConnectionLines = (input: WorkerRouteRequest) => {
           : null
         const anchorHost = tableGeometry || geometry
         const anchorBounds = anchorHost.bounds
-        const groupGeometry = anchorHost.groupNodeId ? geometryMaps.nodeById.get(anchorHost.groupNodeId) || null : null
+        const groupGeometry = anchorHost.groupNodeId ? geometryMaps.groupById.get(anchorHost.groupNodeId) || null : null
         const groupBounds = groupGeometry?.bounds
         let side: AnchorSide = forcedSide || fallbackSide
 

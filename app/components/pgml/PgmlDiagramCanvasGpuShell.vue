@@ -2024,6 +2024,24 @@ const computeConnectionLines = async () => {
       worker.postMessage({
         descriptors,
         groupHeaderBands: geometryRegistry.value.groupHeaderBands,
+        groupGeometries: groupNodes.value.map((group) => {
+          return {
+            bounds: createBounds(group.x, group.y, group.width, group.height),
+            groupNodeId: null,
+            identity: `group:${group.id}`,
+            isColumnAnchor: false,
+            isColumnLabelAnchor: false,
+            locator: {
+              attribute: 'data-node-anchor',
+              value: group.id
+            },
+            nodeAnchorId: group.id,
+            ownerNodeId: group.id,
+            rowKey: null,
+            tableBounds: null,
+            tableId: null
+          } satisfies RoutingWorkerGeometryInput
+        }),
         nodeOrders: nodeOrderById.value,
         planeBounds: createBounds(0, 0, Math.max(worldBounds.value.maxX + 200, 1), Math.max(worldBounds.value.maxY + 200, 1)),
         requestId,
@@ -3116,6 +3134,7 @@ watch(
         connectionCount: number
         firstConnection: DiagramGpuConnectionLine | null
         groupCount: number
+        groupCards: Array<{ height: number, id: string, width: number, x: number, y: number }>
         objectCount: number
         objectCards: Array<{ height: number, id: string, width: number, x: number, y: number }>
         selectedSelection: DiagramGpuSelection | null
@@ -3140,6 +3159,15 @@ watch(
       connectionCount: connectionLines.value.length,
       firstConnection: connectionLines.value[0] || null,
       groupCount: groupNodes.value.length,
+      groupCards: groupNodes.value.map((node) => {
+        return {
+          height: node.height,
+          id: node.id,
+          width: node.width,
+          x: node.x,
+          y: node.y
+        }
+      }),
       objectCount: objectNodes.value.length,
       objectCards: objectNodes.value.map((node) => {
         return {

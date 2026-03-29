@@ -965,6 +965,284 @@ Table public.orders in Commerce {
   expect(diagnostics?.tableFitsWithinGroup).toBe(true)
 })
 
+test('same-group table references keep their vertical lane outside the table group shell', async ({ goto, page }) => {
+  await goto('/diagram')
+
+  const editor = getPgmlEditor(page)
+  const source = `TableGroup Core {
+  tenants
+  users
+}
+
+Table public.tenants in Core {
+  id uuid [pk]
+}
+
+Table public.users in Core {
+  id uuid [pk]
+  tenant_id uuid [ref: > public.tenants.id]
+}
+
+Properties "group:Core" {
+  x: 180
+  y: 120
+  table_columns: 1
+}`
+
+  await setPgmlEditorValue(editor, source)
+  await page.waitForFunction(() => {
+    const debugWindow = window as Window & {
+      __pgmlSceneDebug?: {
+        connectionCount: number
+        groupCards: Array<{ height: number, id: string, width: number, x: number, y: number }>
+        groupCount: number
+        firstConnection: {
+          points: Array<{ x: number, y: number }>
+        } | null
+      }
+    }
+    const sceneDebug = debugWindow.__pgmlSceneDebug
+
+    return sceneDebug?.groupCount === 1
+      && sceneDebug.groupCards.some(card => card.id === 'group:Core')
+      && sceneDebug.connectionCount === 1
+      && (sceneDebug.firstConnection?.points.length || 0) > 1
+  })
+
+  const diagnostics = await page.evaluate(() => {
+    const debugWindow = window as Window & {
+      __pgmlSceneDebug?: {
+        connectionCount: number
+        groupCards: Array<{ height: number, id: string, width: number, x: number, y: number }>
+        firstConnection: {
+          points: Array<{ x: number, y: number }>
+        } | null
+      }
+    }
+
+    const group = debugWindow.__pgmlSceneDebug?.groupCards.find(card => card.id === 'group:Core')
+
+    if (!group || !debugWindow.__pgmlSceneDebug?.firstConnection) {
+      return null
+    }
+    const groupBounds = {
+      bottom: group.y + group.height,
+      left: group.x,
+      right: group.x + group.width,
+      top: group.y
+    }
+    const borderTolerance = 1.5
+    const points = debugWindow.__pgmlSceneDebug.firstConnection.points
+    const sharedLaneSegments = points.slice(1).flatMap((point, index) => {
+      const previous = points[index]
+
+      if (
+        !previous
+        || Math.abs(previous.x - point.x) >= 0.5
+        || Math.abs(previous.y - point.y) <= 0.5
+      ) {
+        return []
+      }
+
+      const top = Math.min(previous.y, point.y)
+      const bottom = Math.max(previous.y, point.y)
+      const overlapsGroupY = bottom > groupBounds.top + borderTolerance && top < groupBounds.bottom - borderTolerance
+
+      return overlapsGroupY
+        ? [{
+            bottom,
+            outsideGroup: point.x <= groupBounds.left - borderTolerance || point.x >= groupBounds.right + borderTolerance,
+            top,
+            x: point.x
+          }]
+        : []
+    })
+
+    return {
+      connectionCount: debugWindow.__pgmlSceneDebug.connectionCount,
+      groupBounds,
+      points,
+      sharedLaneSegments
+    }
+  })
+
+  expect(diagnostics).not.toBeNull()
+  expect(diagnostics?.connectionCount).toBe(1)
+  expect(diagnostics?.sharedLaneSegments.length).toBeGreaterThan(0)
+  expect(diagnostics?.sharedLaneSegments.every(segment => segment.outsideGroup)).toBe(true)
+})
+
+test('selecting a grouped table keeps its animated same-group references on the same outside lane side', async ({ goto, page }) => {
+  await goto('/diagram')
+
+  const editor = getPgmlEditor(page)
+  const source = `TableGroup Core {
+  tenants
+  users
+}
+
+Table public.tenants in Core {
+  id uuid [pk]
+}
+
+Table public.users in Core {
+  id uuid [pk]
+  tenant_id uuid [ref: > public.tenants.id]
+}
+
+Properties "group:Core" {
+  x: 180
+  y: 120
+  table_columns: 1
+}`
+
+  await setPgmlEditorValue(editor, source)
+  await page.waitForFunction(() => {
+    const debugWindow = window as Window & {
+      __pgmlSceneDebug?: {
+        connectionCount: number
+        firstConnection: {
+          animated: boolean
+          points: Array<{ x: number, y: number }>
+        } | null
+        groupCards: Array<{ height: number, id: string, width: number, x: number, y: number }>
+        selectedSelection: {
+          id: string
+          kind: string
+        } | null
+      }
+    }
+    const sceneDebug = debugWindow.__pgmlSceneDebug
+
+    return sceneDebug?.connectionCount === 1
+      && sceneDebug.groupCards.some(card => card.id === 'group:Core')
+      && (sceneDebug.firstConnection?.points.length || 0) > 1
+  })
+
+  const readLaneDiagnostics = async () => {
+    return page.evaluate(() => {
+      const debugWindow = window as Window & {
+        __pgmlSceneDebug?: {
+          connectionCount: number
+          firstConnection: {
+            animated: boolean
+            points: Array<{ x: number, y: number }>
+          } | null
+          groupCards: Array<{ height: number, id: string, width: number, x: number, y: number }>
+          selectedSelection: {
+            id: string
+            kind: string
+          } | null
+        }
+      }
+
+      const sceneDebug = debugWindow.__pgmlSceneDebug
+      const group = sceneDebug?.groupCards.find(card => card.id === 'group:Core')
+      const points = sceneDebug?.firstConnection?.points || []
+
+      if (!group || points.length < 2) {
+        return null
+      }
+
+      const groupBounds = {
+        bottom: group.y + group.height,
+        left: group.x,
+        right: group.x + group.width,
+        top: group.y
+      }
+      const borderTolerance = 1.5
+      const verticalLaneSegment = points.slice(1).reduce<null | { side: 'left' | 'right', x: number }>((selectedSegment, point, index) => {
+        const previous = points[index]
+
+        if (
+          !previous
+          || Math.abs(previous.x - point.x) >= 0.5
+          || Math.abs(previous.y - point.y) <= 0.5
+        ) {
+          return selectedSegment
+        }
+
+        const top = Math.min(previous.y, point.y)
+        const bottom = Math.max(previous.y, point.y)
+        const overlapsGroupY = bottom > groupBounds.top + borderTolerance && top < groupBounds.bottom - borderTolerance
+
+        if (!overlapsGroupY) {
+          return selectedSegment
+        }
+
+        if (point.x <= groupBounds.left - borderTolerance) {
+          return {
+            side: 'left',
+            x: point.x
+          }
+        }
+
+        if (point.x >= groupBounds.right + borderTolerance) {
+          return {
+            side: 'right',
+            x: point.x
+          }
+        }
+
+        return {
+          side: point.x < (groupBounds.left + groupBounds.right) / 2 ? 'left' : 'right',
+          x: point.x
+        }
+      }, null)
+
+      return {
+        animated: sceneDebug?.firstConnection?.animated || false,
+        selectedSelection: sceneDebug?.selectedSelection || null,
+        verticalLaneSegment
+      }
+    })
+  }
+
+  const beforeSelection = await readLaneDiagnostics()
+
+  expect(beforeSelection).not.toBeNull()
+  expect(beforeSelection?.animated).toBe(false)
+  expect(beforeSelection?.verticalLaneSegment).not.toBeNull()
+
+  await page.locator('[data-diagram-panel-tab="entities"]').click()
+  await expect(page.locator('[data-browser-entity-row="public.users"]')).toBeVisible()
+  await page.locator('[data-browser-entity-row="public.users"] button').first().click()
+
+  await expect.poll(async () => {
+    return page.evaluate(() => {
+      const debugWindow = window as Window & {
+        __pgmlSceneDebug?: {
+          firstConnection: {
+            animated: boolean
+          } | null
+          selectedSelection:
+            | {
+                kind: 'table'
+                tableId: string
+              }
+            | {
+                id: string
+                kind: string
+              }
+            | null
+        }
+      }
+
+      return debugWindow.__pgmlSceneDebug?.selectedSelection?.kind === 'table'
+        && debugWindow.__pgmlSceneDebug?.selectedSelection?.tableId === 'public.users'
+        && debugWindow.__pgmlSceneDebug?.firstConnection?.animated === true
+    })
+  }).toBe(true)
+
+  const afterSelection = await readLaneDiagnostics()
+
+  expect(afterSelection).not.toBeNull()
+  expect(afterSelection?.animated).toBe(true)
+  expect(afterSelection?.verticalLaneSegment).not.toBeNull()
+  expect(afterSelection?.verticalLaneSegment?.side).toBe(beforeSelection?.verticalLaneSegment?.side)
+  expect(afterSelection?.verticalLaneSegment?.x).toBe(beforeSelection?.verticalLaneSegment?.x)
+})
+
 test('field rows expose multiple side anchors and prefer unused points on the same row', async ({ goto, page }) => {
   await goto('/diagram')
 
@@ -1494,7 +1772,9 @@ Properties "group:Programs" {
 
 test('connection lines stay out of every table group header and do not run along group borders', async ({ goto, page }) => {
   await goto('/diagram')
-  await expect(page.locator('[data-node-anchor="group:Core"]')).toBeVisible()
+  await page.waitForFunction(() => {
+    return document.querySelector('[data-node-anchor="group:Core"]') instanceof HTMLElement
+  })
 
   let diagnostics: { headerHits: Array<{ groupId: string, pathIndex: number }>, borderHits: Array<{ groupId: string, pathIndex: number }> } | null = null
 
