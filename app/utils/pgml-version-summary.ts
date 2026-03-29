@@ -149,3 +149,7 @@ export const buildPgmlDocumentEditorModeDescription = () => {
 export const buildPgmlVersionPreviewDescription = (previewLabel: string) => {
   return `Showing ${previewLabel} as a locked snapshot preview. Restore it to the workspace if you want to edit from it.`
 }
+
+export const buildPgmlWorkspaceEditorDescription = () => {
+  return 'Editing the current workspace snapshot. Checkpoint it when you want to lock a version into the history.'
+}

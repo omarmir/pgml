@@ -45,6 +45,7 @@ import {
   buildPgmlVersionPreviewDescription,
   buildPgmlVersionDiffSections,
   buildPgmlWorkspaceBaseLabel,
+  buildPgmlWorkspaceEditorDescription,
   buildPgmlWorkspaceStatus,
   type PgmlVersionDiffSection
 } from '~/utils/pgml-version-summary'
@@ -377,7 +378,7 @@ const editorModeDescription = computed(() => {
     return buildPgmlVersionPreviewDescription(previewLabel)
   }
 
-  return 'Editing the current workspace snapshot. Checkpoint it when you want to lock a version into the history.'
+  return buildPgmlWorkspaceEditorDescription()
 })
 const displayedEditorSource = computed(() => {
   return versionedEditorMode.value === 'document'

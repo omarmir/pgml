@@ -10,6 +10,7 @@ import {
   buildPgmlVersionCompareSummary,
   buildPgmlVersionDiffSections,
   buildPgmlWorkspaceBaseLabel,
+  buildPgmlWorkspaceEditorDescription,
   buildPgmlWorkspaceStatus
 } from '../../app/utils/pgml-version-summary'
 
@@ -111,5 +112,9 @@ Table public.orders {
 
   it('builds the version preview editor description', () => {
     expect(buildPgmlVersionPreviewDescription('Initial design')).toContain('Initial design')
+  })
+
+  it('builds the workspace editor description', () => {
+    expect(buildPgmlWorkspaceEditorDescription()).toContain('current workspace snapshot')
   })
 })
