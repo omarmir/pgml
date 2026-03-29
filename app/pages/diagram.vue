@@ -797,6 +797,11 @@ const importDumpDialogCopy = computed(() => {
     title: 'Import pg_dump onto a version'
   }
 })
+const selectedImportDumpBaseVersion = computed(() => {
+  return importDumpBaseVersionId.value
+    ? versions.value.find(version => version.id === importDumpBaseVersionId.value) || null
+    : null
+})
 const restoreVersionCandidate = computed(() => {
   return restoreVersionId.value
     ? versions.value.find(version => version.id === restoreVersionId.value) || null
@@ -1954,22 +1959,48 @@ onBeforeUnmount(() => {
         @submit="submitImportDump"
       >
         <template #before-inputs>
-          <label class="grid gap-1">
-            <span :class="studioFieldKickerClass">
-              Increment from version
-            </span>
-            <USelect
-              :items="importDumpBaseVersionItems"
-              :model-value="importDumpBaseVersionId || undefined"
-              value-key="value"
-              label-key="label"
-              color="neutral"
-              variant="outline"
-              size="sm"
-              :ui="studioSelectUi"
-              @update:model-value="importDumpBaseVersionId = typeof $event === 'string' ? $event : null"
-            />
-          </label>
+          <div class="grid gap-3">
+            <label class="grid gap-1">
+              <span :class="studioFieldKickerClass">
+                Increment from version
+              </span>
+              <USelect
+                :items="importDumpBaseVersionItems"
+                :model-value="importDumpBaseVersionId || undefined"
+                value-key="value"
+                label-key="label"
+                color="neutral"
+                variant="outline"
+                size="sm"
+                :ui="studioSelectUi"
+                @update:model-value="importDumpBaseVersionId = typeof $event === 'string' ? $event : null"
+              />
+            </label>
+
+            <div
+              v-if="selectedImportDumpBaseVersion"
+              class="border border-[color:var(--studio-shell-border)] bg-[color:var(--studio-control-bg)] px-3 py-3"
+            >
+              <div :class="studioFieldKickerClass">
+                Selected base
+              </div>
+              <div class="mt-2 flex flex-wrap items-center gap-2">
+                <span class="text-[0.82rem] font-semibold text-[color:var(--studio-shell-text)]">
+                  {{ getVersionLabel(selectedImportDumpBaseVersion) }}
+                </span>
+                <span class="border border-[color:var(--studio-divider)] px-1.5 py-0.5 font-mono text-[0.52rem] uppercase tracking-[0.08em] text-[color:var(--studio-shell-muted)]">
+                  {{ selectedImportDumpBaseVersion.role }}
+                </span>
+              </div>
+              <p class="mt-2 text-[0.72rem] leading-6 text-[color:var(--studio-shell-muted)]">
+                {{
+                  activeHasPendingChanges
+                    ? 'Importing now will replace the current workspace draft before you checkpoint the new state.'
+                    : 'The imported dump will replace the current workspace and continue forward from this base version.'
+                }}
+              </p>
+            </div>
+          </div>
         </template>
       </AppPgDumpImportModal>
 
