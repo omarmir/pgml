@@ -9,6 +9,7 @@ import {
   buildPgmlImportDumpDialogTitle,
   buildPgmlImportDumpDialogDescription,
   buildPgmlImportDumpInputDescription,
+  buildPgmlImportSuccessDescription,
   buildPgmlRestoreVersionDescription
 } from '../../app/utils/pgml-version-copy'
 
@@ -50,5 +51,9 @@ describe('PGML version copy helpers', () => {
 
   it('builds the import base selection requirement message', () => {
     expect(buildPgmlImportBaseRequiredMessage()).toContain('increment from')
+  })
+
+  it('builds the import success description', () => {
+    expect(buildPgmlImportSuccessDescription()).toContain('current workspace draft')
   })
 })

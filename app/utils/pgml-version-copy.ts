@@ -39,3 +39,7 @@ export const buildPgmlImportCheckpointRequiredDescription = () => {
 export const buildPgmlImportBaseRequiredMessage = () => {
   return 'Choose the version this import should increment from.'
 }
+
+export const buildPgmlImportSuccessDescription = () => {
+  return 'The imported dump is now the current workspace draft. Create a checkpoint when you want to lock it.'
+}

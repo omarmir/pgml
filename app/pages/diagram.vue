@@ -60,6 +60,7 @@ import {
   buildPgmlImportDumpDialogTitle,
   buildPgmlImportBaseRequiredMessage,
   buildPgmlImportCheckpointRequiredDescription,
+  buildPgmlImportSuccessDescription,
   buildPgmlRestoreVersionDescription
 } from '~/utils/pgml-version-copy'
 import {
@@ -1057,7 +1058,7 @@ const submitImportDump = async () => {
     resetImportDumpDialog()
     toast.add({
       title: 'Workspace replaced',
-      description: 'The imported dump is now the current workspace draft. Create a checkpoint when you want to lock it.',
+      description: buildPgmlImportSuccessDescription(),
       color: 'success',
       icon: 'i-lucide-check'
     })
