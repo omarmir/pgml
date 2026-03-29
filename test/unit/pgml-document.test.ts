@@ -31,6 +31,7 @@ import {
   getPgmlVersionsInTopologicalOrder,
   getPgmlSiblingVersions,
   getPgmlWorkspaceBaseVersion,
+  hasPgmlVersions,
   isPgmlWorkspaceDirty,
   normalizePgmlSnapshotSource,
   parsePgmlDocument,
@@ -129,6 +130,7 @@ Table public.memberships {
     expect(getPgmlVersionById(document, workspaceBaseVersion?.id || null)?.name).toBe('Initial implementation')
     expect(getPgmlVersionById(document, 'missing-version')).toBeNull()
     expect(getPgmlVersionCount(document)).toBe(1)
+    expect(hasPgmlVersions(document)).toBe(true)
   })
 
   it('returns ordered lineage from the root version to the selected checkpoint', () => {
