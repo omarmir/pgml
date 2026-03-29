@@ -12,6 +12,7 @@ import {
   getPgmlDescendantVersions,
   getLatestPgmlVersion,
   getLatestPgmlVersionByRole,
+  getPgmlBranchRootVersion,
   getPgmlLeafVersions,
   getPgmlRootVersions,
   isPgmlVersionDescendant,
@@ -945,6 +946,64 @@ Table public.memberships {
 
     expect(isPgmlVersionDescendant(parsed, 'v2', 'v1')).toBe(true)
     expect(isPgmlVersionDescendant(parsed, 'v1', 'v2')).toBe(false)
+  })
+
+  it('returns the root version for any branch member', () => {
+    const parsed = parsePgmlDocument(`VersionSet "Billing" {
+  Workspace {
+    based_on: v3
+
+    Snapshot {
+      Table public.users {
+        id uuid [pk]
+      }
+    }
+  }
+
+  Version v1 {
+    name: "Root"
+    role: implementation
+    created_at: "2026-03-29T12:00:00.000Z"
+
+    Snapshot {
+      Table public.users {
+        id uuid [pk]
+      }
+    }
+  }
+
+  Version v2 {
+    name: "Middle"
+    role: design
+    parent: v1
+    created_at: "2026-03-30T12:00:00.000Z"
+
+    Snapshot {
+      Table public.users {
+        id uuid [pk]
+        email text
+      }
+    }
+  }
+
+  Version v3 {
+    name: "Leaf"
+    role: design
+    parent: v2
+    created_at: "2026-03-31T12:00:00.000Z"
+
+    Snapshot {
+      Table public.users {
+        id uuid [pk]
+        email text
+        status text
+      }
+    }
+  }
+}`)
+
+    expect(getPgmlBranchRootVersion(parsed, 'v3')?.id).toBe('v1')
+    expect(getPgmlBranchRootVersion(parsed, 'v1')?.id).toBe('v1')
   })
 
   it('rejects invalid VersionSet documents that reference missing parent or base versions', () => {

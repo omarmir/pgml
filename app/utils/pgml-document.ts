@@ -669,6 +669,13 @@ export const isPgmlVersionDescendant = (
   return isPgmlVersionAncestor(document, ancestorVersionId, descendantVersionId)
 }
 
+export const getPgmlBranchRootVersion = (
+  document: PgmlVersionSetDocument,
+  versionId: string | null
+) => {
+  return getPgmlVersionLineage(document, versionId)[0] || null
+}
+
 export const getPgmlChildVersions = (
   document: PgmlVersionSetDocument,
   versionId: string | null
