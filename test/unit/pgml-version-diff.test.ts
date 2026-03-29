@@ -204,6 +204,41 @@ Trigger trg_touch_users on public.users {
     expect(triggerDropIndex).toBeLessThan(tableDropIndex)
   })
 
+  it('emits drop statements for removed functions and procedures when signatures are available', () => {
+    const migrationBundle = buildPgmlMigrationDiffBundle(
+      parsePgml(`Function public.refresh_orders(user_id uuid) returns void {
+  source: $sql$
+    CREATE OR REPLACE FUNCTION public.refresh_orders(user_id uuid)
+    RETURNS void AS $$
+    BEGIN
+      RETURN;
+    END;
+    $$ LANGUAGE plpgsql;
+  $sql$
+}
+
+Procedure public.archive_orders(retention_days integer) {
+  source: $sql$
+    CREATE OR REPLACE PROCEDURE public.archive_orders(retention_days integer)
+    LANGUAGE plpgsql
+    AS $$
+    BEGIN
+      RETURN;
+    END;
+    $$;
+  $sql$
+}`),
+      parsePgml('')
+    )
+
+    expect(migrationBundle.sql.migration.content).toContain(
+      'DROP FUNCTION IF EXISTS "public"."refresh_orders"(uuid);'
+    )
+    expect(migrationBundle.sql.migration.content).toContain(
+      'DROP PROCEDURE IF EXISTS "public"."archive_orders"(integer);'
+    )
+  })
+
   it('handles removed references, replaced custom types and omitted routines with warnings', () => {
     const baseSource = `Enum order_status {
   draft
@@ -278,9 +313,9 @@ Function orphan_report() {
     expect(migrationBundle.sql.migration.content).toContain('CREATE TYPE "public"."order_status" AS ENUM (\'draft\', \'paid\');')
     expect(migrationBundle.sql.migration.content).toContain('DROP SEQUENCE IF EXISTS "public"."order_number_seq";')
     expect(migrationBundle.sql.migration.content).toContain('ALTER TABLE "public"."orders" DROP CONSTRAINT IF EXISTS "orders_user_id_fkey";')
+    expect(migrationBundle.sql.migration.content).toContain('DROP FUNCTION IF EXISTS "public"."refresh_orders"();')
     expect(migrationBundle.sql.migration.warnings).toEqual(expect.arrayContaining([
       expect.stringContaining('Column uniqueness changed for public.users.email'),
-      expect.stringContaining('Function refresh_orders was removed'),
       expect.stringContaining('Function orphan_report has no source block')
     ]))
   })

@@ -405,6 +405,59 @@ const buildRoutineCreateStatement = (kind: 'Function' | 'Procedure', routine: Pg
   return ensureSqlStatement(routine.source)
 }
 
+const parseRoutineDropSignature = (routine: PgmlRoutine) => {
+  const normalizedSignature = routine.signature
+    .replace(/\[[^\]]+\]\s*$/u, '')
+    .replace(/\s+returns\s+.+$/iu, '')
+    .trim()
+  const signatureMatch = normalizedSignature.match(/^(.+?)\((.*)\)$/u)
+
+  if (!signatureMatch) {
+    return null
+  }
+
+  const routineName = (signatureMatch[1] || '').trim()
+  const parameterList = (signatureMatch[2] || '').trim()
+  const parameterTypes = parameterList.length === 0
+    ? []
+    : parameterList.split(',').map((entry) => {
+        const normalizedEntry = entry
+          .trim()
+          .replace(/^(?:inout|in|out|variadic)\s+/iu, '')
+        const parts = normalizedEntry.split(/\s+/u)
+
+        if (parts.length <= 1) {
+          return normalizedEntry
+        }
+
+        return parts.slice(1).join(' ')
+      })
+
+  if (routineName.length === 0 || parameterTypes.some(parameterType => parameterType.length === 0)) {
+    return null
+  }
+
+  return {
+    parameterTypes,
+    routineName
+  }
+}
+
+const buildRoutineDropStatement = (
+  kind: 'Function' | 'Procedure',
+  routine: PgmlRoutine,
+  warnings: Set<string>
+) => {
+  const parsedSignature = parseRoutineDropSignature(routine)
+
+  if (!parsedSignature) {
+    warnings.add(`${kind} ${routine.name} was removed, but its signature could not be converted into DROP ${kind.toUpperCase()} SQL.`)
+    return null
+  }
+
+  return `DROP ${kind.toUpperCase()} IF EXISTS ${formatQualifiedSqlName(parsedSignature.routineName)}(${parsedSignature.parameterTypes.join(', ')});`
+}
+
 const buildTriggerCreateStatement = (trigger: PgmlTrigger, warnings: Set<string>) => {
   if (!trigger.source) {
     warnings.add(`Trigger ${trigger.name} has no source block and was omitted from the migration diff.`)
@@ -685,7 +738,12 @@ export const buildPgmlMigrationDiffBundle = (
       const afterRoutine = afterRoutines.get(routineId) || null
 
       if (beforeRoutine && !afterRoutine) {
-        warnings.add(`${kind} ${beforeRoutine.name} was removed; the diff migration does not emit DROP ${kind.toUpperCase()} automatically.`)
+        const dropStatement = buildRoutineDropStatement(kind, beforeRoutine, warnings)
+
+        if (dropStatement) {
+          preTableStatements.push(dropStatement)
+        }
+
         return
       }
 
