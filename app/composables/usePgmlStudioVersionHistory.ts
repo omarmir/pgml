@@ -1,5 +1,6 @@
 import type { ComputedRef, Ref } from 'vue'
 import {
+  buildPgmlCheckpointName,
   canCreatePgmlCheckpoint,
   clonePgmlVersionSetDocument,
   createInitialPgmlDocument,
@@ -222,14 +223,20 @@ export const usePgmlStudioVersionHistory = (
     name: string
     role: PgmlVersionRole
   }) => {
+    const createdAt = inputOptions.createdAt || new Date().toISOString()
     const workingDocument = replacePgmlWorkspaceFromSnapshot(document.value, {
       basedOnVersionId: document.value.workspace.basedOnVersionId,
       source: normalizeSnapshotSource(input.source.value, inputOptions.includeLayout),
-      updatedAt: inputOptions.createdAt || new Date().toISOString()
+      updatedAt: createdAt
     })
     const nextDocument = createPgmlVersionFromWorkspace(workingDocument, {
-      createdAt: inputOptions.createdAt || new Date().toISOString(),
-      name: inputOptions.name,
+      createdAt,
+      name: inputOptions.name.trim().length > 0
+        ? inputOptions.name
+        : buildPgmlCheckpointName(workingDocument, {
+            createdAt,
+            role: inputOptions.role
+          }),
       role: inputOptions.role
     })
 

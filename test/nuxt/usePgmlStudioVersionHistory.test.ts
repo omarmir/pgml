@@ -229,4 +229,16 @@ Properties "public.users" {
       isRoot: false
     }))
   })
+
+  it('builds a fallback checkpoint name when the caller passes an empty one', async () => {
+    const { api } = await mountVersionHistoryComposable()
+    const checkpoint = api.createCheckpoint({
+      createdAt: '2026-03-29T12:00:00.000Z',
+      includeLayout: true,
+      name: '   ',
+      role: 'design'
+    })
+
+    expect(checkpoint?.name).toBe('Design checkpoint 1 · 2026-03-29')
+  })
 })
