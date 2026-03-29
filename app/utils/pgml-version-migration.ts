@@ -296,6 +296,27 @@ const buildFallbackMigrationWarnings = (
   return warnings
 }
 
+const buildCombinedHistoryArtifacts = (
+  normalizedBaseName: string,
+  prefixedWarnings: string[],
+  stepDescriptors: PgmlPlannedVersionMigrationStep[]
+) => {
+  return {
+    kysely: {
+      content: buildVersionHistoryKyselyContent(normalizedBaseName, stepDescriptors),
+      fileName: `${normalizedBaseName}.migration.ts`,
+      label: 'Version Migration',
+      warnings: prefixedWarnings
+    },
+    sql: {
+      content: buildVersionHistorySqlContent(stepDescriptors),
+      fileName: `${normalizedBaseName}.migration.sql`,
+      label: 'Version Migration SQL',
+      warnings: prefixedWarnings
+    }
+  }
+}
+
 const buildFallbackVersionMigrationBundle = (
   input: {
     baseSource: string
@@ -403,22 +424,15 @@ export const buildPgmlVersionMigrationBundle = (
     )
   })
   const combinedStatements = stepBundles.flatMap(step => step.plan.statements)
-  const combinedSqlArtifact = {
-    content: buildVersionHistorySqlContent(stepDescriptors),
-    fileName: `${normalizedBaseName}.migration.sql`,
-    label: 'Version Migration SQL',
-    warnings: prefixedWarnings
-  }
-  const combinedKyselyArtifact = {
-    content: buildVersionHistoryKyselyContent(normalizedBaseName, stepDescriptors),
-    fileName: `${normalizedBaseName}.migration.ts`,
-    label: 'Version Migration',
-    warnings: prefixedWarnings
-  }
+  const combinedArtifacts = buildCombinedHistoryArtifacts(
+    normalizedBaseName,
+    prefixedWarnings,
+    stepDescriptors
+  )
 
   return {
     kysely: {
-      migration: combinedKyselyArtifact
+      migration: combinedArtifacts.kysely
     },
     meta: {
       hasChanges: combinedStatements.length > 0,
@@ -428,7 +442,7 @@ export const buildPgmlVersionMigrationBundle = (
       warningCount: prefixedWarnings.length
     },
     sql: {
-      migration: combinedSqlArtifact
+      migration: combinedArtifacts.sql
     },
     steps: stepBundles.map((step) => {
       const { plan: _plan, ...bundle } = step
