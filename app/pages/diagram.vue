@@ -58,6 +58,7 @@ import {
   buildPgmlImportDumpDialogDescription,
   buildPgmlImportDumpInputDescription,
   buildPgmlImportDumpDialogTitle,
+  buildPgmlImportCheckpointRequiredDescription,
   buildPgmlRestoreVersionDescription
 } from '~/utils/pgml-version-copy'
 import {
@@ -971,7 +972,7 @@ const openImportDumpDialog = () => {
   if (versions.value.length === 0) {
     toast.add({
       title: 'Checkpoint required',
-      description: 'Create a version checkpoint before importing a dump onto this document.',
+      description: buildPgmlImportCheckpointRequiredDescription(),
       color: 'error',
       icon: 'i-lucide-circle-alert'
     })

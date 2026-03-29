@@ -31,3 +31,7 @@ export const buildPgmlImportDumpDialogTitle = () => {
 export const buildPgmlImportDumpConfirmLabel = () => {
   return 'Replace workspace with import'
 }
+
+export const buildPgmlImportCheckpointRequiredDescription = () => {
+  return 'Create a version checkpoint before importing a dump onto this document.'
+}
