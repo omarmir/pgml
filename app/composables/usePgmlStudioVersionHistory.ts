@@ -5,6 +5,7 @@ import {
   clonePgmlVersionSetDocument,
   createInitialPgmlDocument,
   createPgmlVersionFromWorkspace,
+  buildPgmlVersionLineageLabel,
   getPgmlChildVersions,
   getLatestPgmlVersion,
   getPgmlNearestCommonAncestor,
@@ -148,7 +149,8 @@ export const usePgmlStudioVersionHistory = (
         ...version,
         isRoot: version.parentVersionId === null,
         isWorkspaceBase: document.value.workspace.basedOnVersionId === version.id,
-        lineageIds: lineage.map(entry => entry.id)
+        lineageIds: lineage.map(entry => entry.id),
+        lineageLabel: buildPgmlVersionLineageLabel(document.value, version.id)
       }
     })
   })

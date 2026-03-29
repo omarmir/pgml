@@ -227,7 +227,8 @@ Properties "public.users" {
       childCount: 0,
       depth: 1,
       isRoot: false,
-      lineageIds: expect.arrayContaining([rootVersion.id])
+      lineageIds: expect.arrayContaining([rootVersion.id]),
+      lineageLabel: 'Initial design -> Add status'
     }))
   })
 

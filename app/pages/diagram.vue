@@ -648,7 +648,7 @@ const versionPanelItems = computed(() => {
       isRoot: version.isRoot,
       isWorkspaceBase: version.isWorkspaceBase,
       label: getVersionLabel(version),
-      lineageLabel: version.lineageIds.join(' -> '),
+      lineageLabel: version.lineageLabel,
       parentVersionId: version.parentVersionId,
       role: version.role
     }
