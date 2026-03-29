@@ -22,6 +22,7 @@ import {
   getLatestPgmlVersionByRole,
   getPgmlLeafVersions,
   getPgmlRootVersions,
+  getLatestPgmlLeafVersion,
   hasPgmlVersions,
   hasPgmlVersionRole,
   getPgmlNearestCommonAncestor,
@@ -157,6 +158,7 @@ export const usePgmlStudioVersionHistory = (
   const hasVersions = computed(() => hasPgmlVersions(document.value))
   const hasDesignVersions = computed(() => hasPgmlVersionRole(document.value, 'design'))
   const hasImplementationVersions = computed(() => hasPgmlVersionRole(document.value, 'implementation'))
+  const latestLeafVersion = computed(() => getLatestPgmlLeafVersion(document.value))
   const rootVersions = computed(() => getPgmlRootVersions(document.value))
   const leafVersions = computed(() => getPgmlLeafVersions(document.value))
   const workspaceBaseVersion = computed(() => getPgmlWorkspaceBaseVersion(document.value))
@@ -412,6 +414,7 @@ export const usePgmlStudioVersionHistory = (
     setCompareTargets,
     setPreviewTarget,
     latestDesignVersion,
+    latestLeafVersion,
     latestImplementationVersion,
     versionItems,
     versionedDocumentSource,
