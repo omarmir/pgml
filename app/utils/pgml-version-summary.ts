@@ -16,8 +16,8 @@ export type PgmlVersionCompareSummary = {
   targetLabel: string
 }
 
-export const buildPgmlVersionDiffSections = (diff: PgmlSchemaDiff) => {
-  const sectionEntries = [
+const buildDiffSectionEntries = (diff: PgmlSchemaDiff) => {
+  return [
     {
       items: diff.tables,
       label: 'Tables'
@@ -56,23 +56,36 @@ export const buildPgmlVersionDiffSections = (diff: PgmlSchemaDiff) => {
       label: 'Types'
     }
   ]
+}
 
-  return sectionEntries.reduce<PgmlVersionDiffSection[]>((sections, entry) => {
+const buildVersionDiffSection = (entry: {
+  items: Array<{
+    id: string
+    kind: 'added' | 'modified' | 'removed'
+    label: string
+  }>
+  label: string
+}) => {
+  return {
+    count: entry.items.length,
+    items: entry.items.map((item) => {
+      return {
+        id: item.id,
+        kind: item.kind,
+        label: item.label
+      }
+    }),
+    label: entry.label
+  } satisfies PgmlVersionDiffSection
+}
+
+export const buildPgmlVersionDiffSections = (diff: PgmlSchemaDiff) => {
+  return buildDiffSectionEntries(diff).reduce<PgmlVersionDiffSection[]>((sections, entry) => {
     if (entry.items.length === 0) {
       return sections
     }
 
-    sections.push({
-      count: entry.items.length,
-      items: entry.items.map((item) => {
-        return {
-          id: item.id,
-          kind: item.kind,
-          label: item.label
-        }
-      }),
-      label: entry.label
-    })
+    sections.push(buildVersionDiffSection(entry))
 
     return sections
   }, [])
