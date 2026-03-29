@@ -205,6 +205,26 @@ const buildSelectionCandidates = (
   return entries.filter(hasValue)
 }
 
+// Child changes should still focus the owning table when the specific row or
+// attachment is unavailable in the rendered diagram, so we always append the
+// table-level fallback after any more specific selection.
+const buildTableSelectionCandidates = (input: {
+  childSelection?: DiagramGpuSelection | null
+  extraSelections?: Array<DiagramGpuSelection | null | undefined>
+  targetTable: { fullName: string } | null
+}) => {
+  return buildSelectionCandidates([
+    input.childSelection || null,
+    ...(input.extraSelections || []),
+    input.targetTable
+      ? {
+          kind: 'table',
+          tableId: input.targetTable.fullName
+        }
+      : null
+  ])
+}
+
 const buildLayoutSelectionCandidates = (
   nodeId: string,
   baseModel: PgmlSchemaModel,
@@ -356,8 +376,8 @@ export const buildPgmlDiagramCompareEntries = (
         id: `column:${entry.id}`,
         label: entry.label,
         rowKey: entry.after ? `${entry.after.tableId}.${entry.after.column.name}` : null,
-        selectionCandidates: buildSelectionCandidates([
-          targetTable && columnName && entry.after
+        selectionCandidates: buildTableSelectionCandidates({
+          childSelection: targetTable && columnName && entry.after
             ? {
                 columnName,
                 kind: 'column',
@@ -365,12 +385,7 @@ export const buildPgmlDiagramCompareEntries = (
               }
             : null,
           targetTable
-            ? {
-                kind: 'table',
-                tableId: targetTable.fullName
-              }
-            : null
-        ]),
+        }),
         sourceRange: pickSourceRange(targetTable?.sourceRange, findTableById(baseModel, tableId)?.sourceRange),
         targetNodeIds: buildNodeIds(entry.after?.tableId, targetTable?.fullName)
       } satisfies PgmlDiagramCompareEntry
@@ -396,8 +411,8 @@ export const buildPgmlDiagramCompareEntries = (
         id: `index:${entry.id}`,
         label: entry.label,
         rowKey: entry.after && attachmentId ? `index:${attachmentId}` : null,
-        selectionCandidates: buildSelectionCandidates([
-          targetTable && attachmentId && entry.after
+        selectionCandidates: buildTableSelectionCandidates({
+          childSelection: targetTable && attachmentId && entry.after
             ? {
                 attachmentId: `index:${attachmentId}`,
                 kind: 'attachment',
@@ -405,12 +420,7 @@ export const buildPgmlDiagramCompareEntries = (
               }
             : null,
           targetTable
-            ? {
-                kind: 'table',
-                tableId: targetTable.fullName
-              }
-            : null
-        ]),
+        }),
         sourceRange: pickSourceRange(entry.after?.index.sourceRange, entry.before?.index.sourceRange, targetTable?.sourceRange),
         targetNodeIds: buildNodeIds(entry.after?.tableId)
       } satisfies PgmlDiagramCompareEntry
@@ -436,8 +446,8 @@ export const buildPgmlDiagramCompareEntries = (
         id: `constraint:${entry.id}`,
         label: entry.label,
         rowKey: entry.after && attachmentId ? `constraint:${attachmentId}` : null,
-        selectionCandidates: buildSelectionCandidates([
-          targetTable && attachmentId && entry.after
+        selectionCandidates: buildTableSelectionCandidates({
+          childSelection: targetTable && attachmentId && entry.after
             ? {
                 attachmentId: `constraint:${attachmentId}`,
                 kind: 'attachment',
@@ -445,12 +455,7 @@ export const buildPgmlDiagramCompareEntries = (
               }
             : null,
           targetTable
-            ? {
-                kind: 'table',
-                tableId: targetTable.fullName
-              }
-            : null
-        ]),
+        }),
         sourceRange: pickSourceRange(entry.after?.constraint.sourceRange, entry.before?.constraint.sourceRange, targetTable?.sourceRange),
         targetNodeIds: buildNodeIds(entry.after?.tableId)
       } satisfies PgmlDiagramCompareEntry
@@ -477,27 +482,24 @@ export const buildPgmlDiagramCompareEntries = (
         id: `reference:${entry.id}`,
         label: entry.label,
         rowKey: entry.after ? `${entry.after.fromTable}.${entry.after.fromColumn}` : null,
-        selectionCandidates: buildSelectionCandidates([
-          targetFromTable && entry.after
+        selectionCandidates: buildTableSelectionCandidates({
+          childSelection: targetFromTable && entry.after
             ? {
                 columnName: entry.after.fromColumn,
                 kind: 'column',
                 tableId: targetFromTable.fullName
               }
             : null,
-          targetFromTable
-            ? {
-                kind: 'table',
-                tableId: targetFromTable.fullName
-              }
-            : null,
-          targetToTable
-            ? {
-                kind: 'table',
-                tableId: targetToTable.fullName
-              }
-            : null
-        ]),
+          extraSelections: [
+            targetToTable
+              ? {
+                  kind: 'table',
+                  tableId: targetToTable.fullName
+                }
+              : null
+          ],
+          targetTable: targetFromTable
+        }),
         sourceRange: pickSourceRange(targetFromTable?.sourceRange, baseFromTable?.sourceRange),
         targetNodeIds: buildNodeIds(entry.after?.fromTable, entry.after?.toTable)
       } satisfies PgmlDiagramCompareEntry
@@ -567,27 +569,24 @@ export const buildPgmlDiagramCompareEntries = (
         id: `trigger:${entry.id}`,
         label: entry.label,
         rowKey: entry.after && trigger ? buildRoutineObjectId('trigger', trigger.name) : null,
-        selectionCandidates: buildSelectionCandidates([
-          targetTable && trigger && entry.after
+        selectionCandidates: buildTableSelectionCandidates({
+          childSelection: targetTable && trigger && entry.after
             ? {
                 attachmentId: buildRoutineObjectId('trigger', trigger.name),
                 kind: 'attachment',
                 tableId: targetTable.fullName
               }
             : null,
-          entry.after && objectId
-            ? {
-                id: objectId,
-                kind: 'object'
-              }
-            : null,
+          extraSelections: [
+            entry.after && objectId
+              ? {
+                  id: objectId,
+                  kind: 'object'
+                }
+              : null
+          ],
           targetTable
-            ? {
-                kind: 'table',
-                tableId: targetTable.fullName
-              }
-            : null
-        ]),
+        }),
         sourceRange: pickSourceRange(entry.after?.sourceRange, entry.before?.sourceRange, targetTable?.sourceRange),
         targetNodeIds: buildNodeIds(entry.after?.tableName, entry.after ? objectId : null)
       } satisfies PgmlDiagramCompareEntry
