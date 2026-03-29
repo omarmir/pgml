@@ -167,8 +167,9 @@ export const getPgmlNearestCommonAncestor = (
   leftVersionId: string | null,
   rightVersionId: string | null
 ) => {
-  const leftLineageIds = new Set(getPgmlVersionLineage(document, leftVersionId).map(version => version.id))
-  const rightLineage = getPgmlVersionLineage(document, rightVersionId)
+  const versionsById = getPgmlVersionMap(document)
+  const leftLineageIds = new Set(getPgmlVersionLineageFromMap(versionsById, leftVersionId).map(version => version.id))
+  const rightLineage = getPgmlVersionLineageFromMap(versionsById, rightVersionId)
 
   for (let index = rightLineage.length - 1; index >= 0; index -= 1) {
     const candidateVersion = rightLineage[index]
@@ -673,6 +674,25 @@ export const getPgmlVersionMap = (document: PgmlVersionSetDocument) => {
   return new Map(document.versions.map(version => [version.id, version] as const))
 }
 
+// Lineage reads happen throughout compare, restore, and migration flows. Keep
+// the parent walk in one helper so ancestry semantics stay consistent.
+const getPgmlVersionLineageFromMap = (
+  versionsById: Map<string, PgmlVersionDocumentBlock>,
+  versionId: string | null
+) => {
+  const lineage: PgmlVersionDocumentBlock[] = []
+  let currentVersion = versionId ? versionsById.get(versionId) || null : null
+
+  while (currentVersion) {
+    lineage.unshift(currentVersion)
+    currentVersion = currentVersion.parentVersionId
+      ? versionsById.get(currentVersion.parentVersionId) || null
+      : null
+  }
+
+  return lineage
+}
+
 export const clonePgmlVersionSetDocument = (document: PgmlVersionSetDocument) => {
   return {
     ...document,
@@ -716,18 +736,7 @@ export const getPgmlVersionLineage = (
   document: PgmlVersionSetDocument,
   versionId: string | null
 ) => {
-  const versionsById = getPgmlVersionMap(document)
-  const lineage: PgmlVersionDocumentBlock[] = []
-  let currentVersion = versionId ? versionsById.get(versionId) || null : null
-
-  while (currentVersion) {
-    lineage.unshift(currentVersion)
-    currentVersion = currentVersion.parentVersionId
-      ? versionsById.get(currentVersion.parentVersionId) || null
-      : null
-  }
-
-  return lineage
+  return getPgmlVersionLineageFromMap(getPgmlVersionMap(document), versionId)
 }
 
 export const getPgmlVersionLineageIds = (
