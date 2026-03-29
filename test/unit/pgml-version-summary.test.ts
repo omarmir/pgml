@@ -7,6 +7,7 @@ import {
   buildPgmlCompareDeltaDescription,
   buildPgmlDocumentEditorModeDescription,
   buildPgmlEditorReadOnlyLabel,
+  buildPgmlInvalidCompareRelationshipSummary,
   buildPgmlPreviewTargetLabel,
   buildPgmlVersionPreviewDescription,
   buildPgmlVersionCompareSummary,
@@ -137,5 +138,9 @@ Table public.orders {
 
   it('builds the workspace compare relationship summary', () => {
     expect(buildPgmlWorkspaceCompareRelationshipSummary('Implementation sync')).toBe('Comparing the current workspace against Implementation sync.')
+  })
+
+  it('builds the invalid compare relationship summary', () => {
+    expect(buildPgmlInvalidCompareRelationshipSummary()).toBe('Select a valid base and target to compare version history.')
   })
 })

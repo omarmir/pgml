@@ -171,3 +171,7 @@ export const buildPgmlWorkspaceBaseCompareRelationshipSummary = (baseLabel: stri
 export const buildPgmlWorkspaceCompareRelationshipSummary = (baseLabel: string) => {
   return `Comparing the current workspace against ${baseLabel}.`
 }
+
+export const buildPgmlInvalidCompareRelationshipSummary = () => {
+  return 'Select a valid base and target to compare version history.'
+}
