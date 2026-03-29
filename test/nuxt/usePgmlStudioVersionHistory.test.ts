@@ -227,6 +227,7 @@ Properties "public.users" {
 
     expect(branchVersion?.id).toBeTruthy()
     expect(api.versionItems.value[0]).toEqual(expect.objectContaining({
+      branchLeafCount: 1,
       branchVersionCount: 2,
       childCount: 1,
       descendantCount: 1,
