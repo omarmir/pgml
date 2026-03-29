@@ -88,6 +88,20 @@ export const canCreatePgmlCheckpoint = (
   return isPgmlWorkspaceDirty(document, includeLayout)
 }
 
+export const buildPgmlCheckpointName = (
+  document: PgmlVersionSetDocument,
+  input: {
+    createdAt: string
+    role: PgmlVersionRole
+  }
+) => {
+  const roleLabel = input.role === 'implementation' ? 'Implementation' : 'Design'
+  const roleVersionCount = document.versions.filter(version => version.role === input.role).length + 1
+  const normalizedDate = input.createdAt.slice(0, 10)
+
+  return `${roleLabel} checkpoint ${roleVersionCount} · ${normalizedDate}`
+}
+
 const trimQuotedValue = (value: string) => {
   const trimmed = value.trim()
   const doubleQuotedMatch = trimmed.match(/^"(.*)"$/u)

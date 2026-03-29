@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 
 import {
   arePgmlSnapshotsEquivalent,
+  buildPgmlCheckpointName,
   canCreatePgmlCheckpoint,
   clonePgmlVersionSetDocument,
   createInitialPgmlDocument,
@@ -437,6 +438,30 @@ Table public.orders {
 
     expect(canCreatePgmlCheckpoint(cleanDocument)).toBe(false)
     expect(canCreatePgmlCheckpoint(dirtyDocument)).toBe(true)
+  })
+
+  it('builds consistent fallback checkpoint names from role and timestamp', () => {
+    const document = createInitialPgmlDocument({
+      initialVersion: {
+        createdAt: '2026-03-29T12:00:00.000Z',
+        name: 'Initial implementation',
+        parentVersionId: null,
+        role: 'implementation',
+        snapshot: {
+          source: baseSnapshotSource
+        }
+      },
+      name: 'Billing'
+    })
+
+    expect(buildPgmlCheckpointName(document, {
+      createdAt: '2026-03-30T09:30:00.000Z',
+      role: 'design'
+    })).toBe('Design checkpoint 1 · 2026-03-30')
+    expect(buildPgmlCheckpointName(document, {
+      createdAt: '2026-03-30T09:30:00.000Z',
+      role: 'implementation'
+    })).toBe('Implementation checkpoint 2 · 2026-03-30')
   })
 
   it('rejects invalid VersionSet documents that reference missing parent or base versions', () => {
