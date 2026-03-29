@@ -156,6 +156,7 @@ export const usePgmlStudioVersionHistory = (
   const versions = computed(() => document.value.versions)
   const hasVersions = computed(() => hasPgmlVersions(document.value))
   const hasDesignVersions = computed(() => hasPgmlVersionRole(document.value, 'design'))
+  const hasImplementationVersions = computed(() => hasPgmlVersionRole(document.value, 'implementation'))
   const rootVersions = computed(() => getPgmlRootVersions(document.value))
   const leafVersions = computed(() => getPgmlLeafVersions(document.value))
   const workspaceBaseVersion = computed(() => getPgmlWorkspaceBaseVersion(document.value))
@@ -396,6 +397,7 @@ export const usePgmlStudioVersionHistory = (
     document,
     editorMode,
     hasDesignVersions,
+    hasImplementationVersions,
     hasVersions,
     isWorkspacePreview,
     loadDocument,
