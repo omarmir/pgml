@@ -701,6 +701,12 @@ export const getPgmlVersionMap = (document: PgmlVersionSetDocument) => {
   return new Map(document.versions.map(version => [version.id, version] as const))
 }
 
+const cloneDocumentSnapshot = (snapshot: PgmlDocumentSnapshot) => {
+  return {
+    source: snapshot.source
+  } satisfies PgmlDocumentSnapshot
+}
+
 // Lineage reads happen throughout compare, restore, and migration flows. Keep
 // the parent walk in one helper so ancestry semantics stay consistent.
 const getPgmlVersionLineageFromMap = (
@@ -726,16 +732,12 @@ export const clonePgmlVersionSetDocument = (document: PgmlVersionSetDocument) =>
     versions: document.versions.map((version) => {
       return {
         ...version,
-        snapshot: {
-          source: version.snapshot.source
-        }
+        snapshot: cloneDocumentSnapshot(version.snapshot)
       }
     }),
     workspace: {
       ...document.workspace,
-      snapshot: {
-        source: document.workspace.snapshot.source
-      }
+      snapshot: cloneDocumentSnapshot(document.workspace.snapshot)
     }
   } satisfies PgmlVersionSetDocument
 }
@@ -1029,7 +1031,8 @@ export const createInitialPgmlDocument = (input?: {
     versions.push({
       ...initialVersion,
       createdAt: normalizePgmlTimestamp(initialVersion.createdAt, 'Initial version created_at'),
-      id: createPgmlVersionId()
+      id: createPgmlVersionId(),
+      snapshot: cloneDocumentSnapshot(initialVersion.snapshot)
     })
   }
 
@@ -1055,15 +1058,16 @@ export const createPgmlVersionFromWorkspace = (
     role: PgmlVersionRole
   }
 ) => {
+  // Versions are immutable checkpoints. When locking one from the workspace,
+  // always copy the current snapshot so future draft edits cannot mutate
+  // already-recorded history by reference.
   const nextVersion: PgmlVersionDocumentBlock = {
     createdAt: normalizePgmlTimestamp(input.createdAt, 'Version created_at'),
     id: createPgmlVersionId(),
     name: input.name,
     parentVersionId: document.workspace.basedOnVersionId,
     role: input.role,
-    snapshot: {
-      source: document.workspace.snapshot.source
-    }
+    snapshot: cloneDocumentSnapshot(document.workspace.snapshot)
   }
 
   return {
