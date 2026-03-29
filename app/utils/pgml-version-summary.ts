@@ -16,6 +16,10 @@ export type PgmlVersionCompareSummary = {
   targetLabel: string
 }
 
+const buildCountLabel = (count: number, singularLabel: string, pluralLabel?: string) => {
+  return `${count} ${count === 1 ? singularLabel : pluralLabel || `${singularLabel}s`}`
+}
+
 const buildDiffSectionEntries = (diff: PgmlSchemaDiff) => {
   return [
     {
@@ -169,7 +173,7 @@ export const buildPgmlWorkspaceEditorDescription = () => {
 
 export const buildPgmlCompareDeltaDescription = (changedSectionCount: number) => {
   return changedSectionCount > 0
-    ? `${changedSectionCount} changed area${changedSectionCount === 1 ? '' : 's'} in the selected comparison.`
+    ? `${buildCountLabel(changedSectionCount, 'changed area')} in the selected comparison.`
     : 'No visible delta in the selected comparison.'
 }
 
