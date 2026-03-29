@@ -45,6 +45,13 @@ type PgmlVersionCompareOption = {
   value: string
 }
 
+type PgmlComparePresetButton = {
+  baseId: string | null
+  disabled: boolean
+  label: string
+  targetId: string
+}
+
 type PgmlVersionDiffSection = {
   count: number
   items: Array<{
@@ -144,6 +151,46 @@ const latestImplementationVersionId = computed(() => {
 })
 const latestDesignVersionId = computed(() => {
   return versions.find(version => version.role === 'design' && version.isLatestByRole)?.id || null
+})
+const comparePresetButtons = computed(() => {
+  return [
+    {
+      baseId: workspaceBaseVersionId.value,
+      disabled: workspaceBaseVersionId.value === null || isComparePresetActive({
+        baseId: workspaceBaseVersionId.value,
+        targetId: 'workspace'
+      }),
+      label: 'Workspace base to draft',
+      targetId: 'workspace'
+    },
+    {
+      baseId: latestVersionId,
+      disabled: latestVersionId === null || isComparePresetActive({
+        baseId: latestVersionId,
+        targetId: 'workspace'
+      }),
+      label: 'Latest to draft',
+      targetId: 'workspace'
+    },
+    {
+      baseId: latestImplementationVersionId.value,
+      disabled: latestImplementationVersionId.value === null || isComparePresetActive({
+        baseId: latestImplementationVersionId.value,
+        targetId: 'workspace'
+      }),
+      label: 'Latest impl to draft',
+      targetId: 'workspace'
+    },
+    {
+      baseId: latestDesignVersionId.value,
+      disabled: latestDesignVersionId.value === null || isComparePresetActive({
+        baseId: latestDesignVersionId.value,
+        targetId: 'workspace'
+      }),
+      label: 'Latest design to draft',
+      targetId: 'workspace'
+    }
+  ] satisfies PgmlComparePresetButton[]
 })
 const migrationLineCount = computed(() => {
   const migrationContent = activeMigrationFormat.value === 'sql'
@@ -401,40 +448,15 @@ const swapComparePair = () => {
 
       <div class="flex flex-wrap gap-2">
         <UButton
-          label="Workspace base to draft"
+          v-for="preset in comparePresetButtons"
+          :key="preset.label"
+          :label="preset.label"
           color="neutral"
           variant="outline"
           size="xs"
           :class="secondaryButtonClass"
-          :disabled="workspaceBaseVersionId === null || isComparePresetActive({ baseId: workspaceBaseVersionId, targetId: 'workspace' })"
-          @click="applyComparePreset({ baseId: workspaceBaseVersionId, targetId: 'workspace' })"
-        />
-        <UButton
-          label="Latest to draft"
-          color="neutral"
-          variant="outline"
-          size="xs"
-          :class="secondaryButtonClass"
-          :disabled="latestVersionId === null || isComparePresetActive({ baseId: latestVersionId, targetId: 'workspace' })"
-          @click="applyComparePreset({ baseId: latestVersionId, targetId: 'workspace' })"
-        />
-        <UButton
-          label="Latest impl to draft"
-          color="neutral"
-          variant="outline"
-          size="xs"
-          :class="secondaryButtonClass"
-          :disabled="latestImplementationVersionId === null || isComparePresetActive({ baseId: latestImplementationVersionId, targetId: 'workspace' })"
-          @click="applyComparePreset({ baseId: latestImplementationVersionId, targetId: 'workspace' })"
-        />
-        <UButton
-          label="Latest design to draft"
-          color="neutral"
-          variant="outline"
-          size="xs"
-          :class="secondaryButtonClass"
-          :disabled="latestDesignVersionId === null || isComparePresetActive({ baseId: latestDesignVersionId, targetId: 'workspace' })"
-          @click="applyComparePreset({ baseId: latestDesignVersionId, targetId: 'workspace' })"
+          :disabled="preset.disabled"
+          @click="applyComparePreset({ baseId: preset.baseId, targetId: preset.targetId })"
         />
         <UButton
           label="Swap"
