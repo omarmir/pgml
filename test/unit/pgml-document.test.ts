@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 
 import {
+  clonePgmlVersionSetDocument,
   createInitialPgmlDocument,
   createPgmlVersionFromWorkspace,
   getPgmlChildVersions,
@@ -12,6 +13,7 @@ import {
   getPgmlVersionsInTopologicalOrder,
   getPgmlSiblingVersions,
   getPgmlWorkspaceBaseVersion,
+  normalizePgmlSnapshotSource,
   parsePgmlDocument,
   replacePgmlWorkspaceFromSnapshot,
   serializePgmlDocument
@@ -351,6 +353,19 @@ Table public.memberships {
 
     expect(getPgmlVersionsInTopologicalOrder(parsed).map(version => version.id)).toEqual(['v1', 'v2'])
     expect(serializePgmlDocument(parsed).indexOf('Version v1')).toBeLessThan(serializePgmlDocument(parsed).indexOf('Version v2'))
+  })
+
+  it('clones document state and normalizes snapshot source text', () => {
+    const document = createInitialPgmlDocument({
+      name: 'Billing',
+      workspaceSource: `\r\n${baseSnapshotSource}\r\n`
+    })
+    const clonedDocument = clonePgmlVersionSetDocument(document)
+
+    clonedDocument.workspace.snapshot.source = 'Table public.accounts {\n  id uuid [pk]\n}'
+
+    expect(document.workspace.snapshot.source).toContain('Table public.users')
+    expect(normalizePgmlSnapshotSource(`\r\n${baseSnapshotSource}\r\n`)).toBe(baseSnapshotSource)
   })
 
   it('rejects invalid VersionSet documents that reference missing parent or base versions', () => {

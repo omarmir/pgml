@@ -44,6 +44,10 @@ const normalizeLineEndings = (value: string) => {
   return value.replaceAll('\r\n', '\n')
 }
 
+export const normalizePgmlSnapshotSource = (value: string) => {
+  return normalizeLineEndings(value).trim()
+}
+
 const trimQuotedValue = (value: string) => {
   const trimmed = value.trim()
   const doubleQuotedMatch = trimmed.match(/^"(.*)"$/u)
@@ -198,7 +202,7 @@ const parseSnapshotBlock = (block: PgmlNamedBlock, context: string) => {
   }
 
   return {
-    source: normalizeLineEndings(block.body.join('\n')).trim()
+    source: normalizePgmlSnapshotSource(block.body.join('\n'))
   } satisfies PgmlDocumentSnapshot
 }
 
@@ -382,7 +386,7 @@ export const parsePgmlDocument = (source: string): PgmlVersionSetDocument => {
 }
 
 const buildSnapshotBlock = (snapshot: PgmlDocumentSnapshot, level: number) => {
-  const normalizedSource = normalizeLineEndings(snapshot.source).trim()
+  const normalizedSource = normalizePgmlSnapshotSource(snapshot.source)
   const lines = [`${'  '.repeat(level)}Snapshot {`]
 
   if (normalizedSource.length > 0) {
@@ -438,6 +442,26 @@ const buildVersionBlock = (version: PgmlVersionDocumentBlock) => {
 
 export const getPgmlVersionMap = (document: PgmlVersionSetDocument) => {
   return new Map(document.versions.map(version => [version.id, version] as const))
+}
+
+export const clonePgmlVersionSetDocument = (document: PgmlVersionSetDocument) => {
+  return {
+    ...document,
+    versions: document.versions.map((version) => {
+      return {
+        ...version,
+        snapshot: {
+          source: version.snapshot.source
+        }
+      }
+    }),
+    workspace: {
+      ...document.workspace,
+      snapshot: {
+        source: document.workspace.snapshot.source
+      }
+    }
+  } satisfies PgmlVersionSetDocument
 }
 
 export const getPgmlVersionById = (
@@ -642,7 +666,7 @@ export const replacePgmlWorkspaceFromSnapshot = (
     workspace: {
       basedOnVersionId: input.basedOnVersionId,
       snapshot: {
-        source: normalizeLineEndings(input.source).trim()
+        source: normalizePgmlSnapshotSource(input.source)
       },
       updatedAt: input.updatedAt ?? document.workspace.updatedAt
     }
