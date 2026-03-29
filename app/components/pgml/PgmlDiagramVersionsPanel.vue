@@ -62,6 +62,11 @@ type PgmlVersionDiffSection = {
   label: string
 }
 
+type PgmlVersionStatCard = {
+  label: string
+  value: number
+}
+
 const {
   canCreateCheckpoint = true,
   compareBaseId = null,
@@ -142,6 +147,22 @@ const designVersionCount = computed(() => {
 })
 const implementationVersionCount = computed(() => {
   return versions.filter(version => version.role === 'implementation').length
+})
+const versionStatCards = computed(() => {
+  return [
+    {
+      label: 'Locked',
+      value: versions.length
+    },
+    {
+      label: 'Design',
+      value: designVersionCount.value
+    },
+    {
+      label: 'Impl',
+      value: implementationVersionCount.value
+    }
+  ] satisfies PgmlVersionStatCard[]
 })
 const workspaceBaseVersionId = computed(() => {
   return versions.find(version => version.isWorkspaceBase)?.id || null
@@ -361,28 +382,16 @@ const swapComparePair = () => {
       </div>
 
       <div class="grid grid-cols-3 gap-2 text-[0.66rem] text-[color:var(--studio-shell-muted)]">
-        <div class="border border-[color:var(--studio-divider)] bg-[color:var(--studio-input-bg)] px-3 py-3">
+        <div
+          v-for="stat in versionStatCards"
+          :key="stat.label"
+          class="border border-[color:var(--studio-divider)] bg-[color:var(--studio-input-bg)] px-3 py-3"
+        >
           <div class="font-mono uppercase tracking-[0.08em] text-[color:var(--studio-shell-label)]">
-            Locked
+            {{ stat.label }}
           </div>
           <div class="mt-1 text-[0.9rem] font-semibold text-[color:var(--studio-shell-text)]">
-            {{ versions.length }}
-          </div>
-        </div>
-        <div class="border border-[color:var(--studio-divider)] bg-[color:var(--studio-input-bg)] px-3 py-3">
-          <div class="font-mono uppercase tracking-[0.08em] text-[color:var(--studio-shell-label)]">
-            Design
-          </div>
-          <div class="mt-1 text-[0.9rem] font-semibold text-[color:var(--studio-shell-text)]">
-            {{ designVersionCount }}
-          </div>
-        </div>
-        <div class="border border-[color:var(--studio-divider)] bg-[color:var(--studio-input-bg)] px-3 py-3">
-          <div class="font-mono uppercase tracking-[0.08em] text-[color:var(--studio-shell-label)]">
-            Impl
-          </div>
-          <div class="mt-1 text-[0.9rem] font-semibold text-[color:var(--studio-shell-text)]">
-            {{ implementationVersionCount }}
+            {{ stat.value }}
           </div>
         </div>
       </div>
