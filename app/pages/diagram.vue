@@ -797,6 +797,9 @@ const importDumpDialogCopy = computed(() => {
     title: 'Import pg_dump onto a version'
   }
 })
+const checkpointBaseVersion = computed(() => {
+  return versions.value.find(version => version.id === document.value.workspace.basedOnVersionId) || null
+})
 const selectedImportDumpBaseVersion = computed(() => {
   return importDumpBaseVersionId.value
     ? versions.value.find(version => version.id === importDumpBaseVersionId.value) || null
@@ -1848,6 +1851,22 @@ onBeforeUnmount(() => {
         body-class="grid gap-4 px-4 py-3"
       >
         <div class="grid gap-4">
+          <div class="border border-[color:var(--studio-shell-border)] bg-[color:var(--studio-control-bg)] px-3 py-3">
+            <div :class="studioFieldKickerClass">
+              Checkpoint target
+            </div>
+            <div class="mt-2 text-[0.84rem] font-semibold text-[color:var(--studio-shell-text)]">
+              {{ checkpointBaseVersion ? `Branches from ${getVersionLabel(checkpointBaseVersion)}` : 'Creates the first locked version from the workspace draft' }}
+            </div>
+            <p class="mt-2 text-[0.72rem] leading-6 text-[color:var(--studio-shell-muted)]">
+              {{
+                checkpointRole === 'implementation'
+                  ? 'Use an implementation checkpoint when the workspace reflects imported database state you want to preserve as a baseline.'
+                  : 'Use a design checkpoint when the workspace captures the intended next PGML revision.'
+              }}
+            </p>
+          </div>
+
           <label class="grid gap-1">
             <span :class="studioFieldKickerClass">
               Version name
@@ -1889,7 +1908,7 @@ onBeforeUnmount(() => {
             @click="closeCheckpointDialog"
           />
           <UButton
-            label="Create checkpoint"
+            :label="checkpointRole === 'implementation' ? 'Create implementation checkpoint' : 'Create design checkpoint'"
             color="neutral"
             variant="soft"
             :class="primaryModalButtonClass"
