@@ -52,6 +52,7 @@ import {
 } from '~/utils/pgml-document'
 import { buildPgmlVersionMigrationBundle } from '~/utils/pgml-version-migration'
 import {
+  buildPgmlCheckpointCreatedDescription,
   buildPgmlCheckpointRoleDescription,
   buildPgmlCheckpointTargetLabel,
   buildPgmlImportDumpConfirmLabel,
@@ -934,7 +935,7 @@ const saveCheckpoint = () => {
   requestCanvasViewportReset()
   toast.add({
     title: 'Checkpoint created',
-    description: `${getVersionLabel(createdVersion)} is now locked as a ${createdVersion.role} version.`,
+    description: buildPgmlCheckpointCreatedDescription(getVersionLabel(createdVersion), createdVersion.role),
     color: 'success',
     icon: 'i-lucide-check'
   })

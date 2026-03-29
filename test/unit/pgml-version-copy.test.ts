@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 
 import {
+  buildPgmlCheckpointCreatedDescription,
   buildPgmlCheckpointRoleDescription,
   buildPgmlCheckpointTargetLabel,
   buildPgmlImportBaseRequiredMessage,
@@ -18,6 +19,10 @@ import {
 } from '../../app/utils/pgml-version-copy'
 
 describe('PGML version copy helpers', () => {
+  it('builds checkpoint creation success copy from version metadata', () => {
+    expect(buildPgmlCheckpointCreatedDescription('Initial design', 'design')).toBe('Initial design is now locked as a design version.')
+  })
+
   it('builds checkpoint target labels for rooted and first-checkpoint states', () => {
     expect(buildPgmlCheckpointTargetLabel('Initial implementation')).toBe('Branches from Initial implementation')
     expect(buildPgmlCheckpointTargetLabel(null)).toBe('Creates the first locked version from the workspace draft')

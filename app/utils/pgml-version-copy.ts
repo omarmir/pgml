@@ -59,3 +59,10 @@ export const buildPgmlImportMissingInputMessage = () => {
 export const buildPgmlRestoreSuccessDescription = () => {
   return 'The selected version is now the active workspace draft.'
 }
+
+export const buildPgmlCheckpointCreatedDescription = (
+  versionLabel: string,
+  role: 'design' | 'implementation'
+) => {
+  return `${versionLabel} is now locked as a ${role} version.`
+}
