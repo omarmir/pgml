@@ -14,6 +14,7 @@ import {
   getPgmlVersionsInTopologicalOrder,
   getPgmlSiblingVersions,
   getPgmlWorkspaceBaseVersion,
+  isPgmlWorkspaceDirty,
   normalizePgmlSnapshotSource,
   parsePgmlDocument,
   replacePgmlWorkspaceFromSnapshot,
@@ -381,6 +382,33 @@ Properties "public.users" {
 
     expect(arePgmlSnapshotsEquivalent(layoutSource, baseSnapshotSource, true)).toBe(false)
     expect(arePgmlSnapshotsEquivalent(layoutSource, baseSnapshotSource, false)).toBe(true)
+  })
+
+  it('reports whether the workspace differs from its selected base version', () => {
+    const document = createInitialPgmlDocument({
+      initialVersion: {
+        createdAt: '2026-03-29T12:00:00.000Z',
+        name: 'Initial implementation',
+        parentVersionId: null,
+        role: 'implementation',
+        snapshot: {
+          source: baseSnapshotSource
+        }
+      },
+      name: 'Billing',
+      workspaceSource: baseSnapshotSource
+    })
+    const dirtyDocument = replacePgmlWorkspaceFromSnapshot(document, {
+      basedOnVersionId: document.workspace.basedOnVersionId,
+      source: `${baseSnapshotSource}
+
+Table public.orders {
+  id uuid [pk]
+}`
+    })
+
+    expect(isPgmlWorkspaceDirty(document)).toBe(false)
+    expect(isPgmlWorkspaceDirty(dirtyDocument)).toBe(true)
   })
 
   it('rejects invalid VersionSet documents that reference missing parent or base versions', () => {

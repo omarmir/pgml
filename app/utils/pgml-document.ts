@@ -64,6 +64,23 @@ export const arePgmlSnapshotsEquivalent = (
   return normalizedLeftSource === normalizedRightSource
 }
 
+export const isPgmlWorkspaceDirty = (
+  document: PgmlVersionSetDocument,
+  includeLayout = true
+) => {
+  const baseVersion = getPgmlWorkspaceBaseVersion(document)
+
+  if (!baseVersion) {
+    return normalizePgmlSnapshotSource(document.workspace.snapshot.source).length > 0
+  }
+
+  return !arePgmlSnapshotsEquivalent(
+    document.workspace.snapshot.source,
+    baseVersion.snapshot.source,
+    includeLayout
+  )
+}
+
 const trimQuotedValue = (value: string) => {
   const trimmed = value.trim()
   const doubleQuotedMatch = trimmed.match(/^"(.*)"$/u)
