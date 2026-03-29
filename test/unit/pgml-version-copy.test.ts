@@ -9,6 +9,7 @@ import {
   buildPgmlImportDumpDialogTitle,
   buildPgmlImportDumpDialogDescription,
   buildPgmlImportDumpInputDescription,
+  buildPgmlImportFailureMessage,
   buildPgmlImportSuccessDescription,
   buildPgmlRestoreVersionDescription
 } from '../../app/utils/pgml-version-copy'
@@ -55,5 +56,9 @@ describe('PGML version copy helpers', () => {
 
   it('builds the import success description', () => {
     expect(buildPgmlImportSuccessDescription()).toContain('current workspace draft')
+  })
+
+  it('builds the generic import failure message', () => {
+    expect(buildPgmlImportFailureMessage()).toBe('Unable to import that pg_dump.')
   })
 })

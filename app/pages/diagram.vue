@@ -59,6 +59,7 @@ import {
   buildPgmlImportDumpInputDescription,
   buildPgmlImportDumpDialogTitle,
   buildPgmlImportBaseRequiredMessage,
+  buildPgmlImportFailureMessage,
   buildPgmlImportCheckpointRequiredDescription,
   buildPgmlImportSuccessDescription,
   buildPgmlRestoreVersionDescription
@@ -1068,7 +1069,7 @@ const submitImportDump = async () => {
     } else if (typeof error === 'string' && error.trim().length > 0) {
       importDumpError.value = error
     } else {
-      importDumpError.value = 'Unable to import that pg_dump.'
+      importDumpError.value = buildPgmlImportFailureMessage()
     }
   } finally {
     isSubmittingImportDump.value = false

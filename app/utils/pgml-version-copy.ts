@@ -43,3 +43,7 @@ export const buildPgmlImportBaseRequiredMessage = () => {
 export const buildPgmlImportSuccessDescription = () => {
   return 'The imported dump is now the current workspace draft. Create a checkpoint when you want to lock it.'
 }
+
+export const buildPgmlImportFailureMessage = () => {
+  return 'Unable to import that pg_dump.'
+}
