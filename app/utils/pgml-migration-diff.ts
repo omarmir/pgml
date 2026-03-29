@@ -605,6 +605,33 @@ const buildTableAlterStatements = (
   return statements
 }
 
+const buildTableFingerprint = (table: PgmlTable) => {
+  return table.columns
+    .map((column) => `${column.name}:${column.type}`)
+    .sort((left, right) => left.localeCompare(right))
+    .join('|')
+}
+
+const addRenameLikeTableWarnings = (
+  beforeTables: Map<string, PgmlTable>,
+  afterTables: Map<string, PgmlTable>,
+  warnings: Set<string>
+) => {
+  const removedTables = Array.from(beforeTables.values()).filter(table => !afterTables.has(table.fullName))
+  const addedTables = Array.from(afterTables.values()).filter(table => !beforeTables.has(table.fullName))
+
+  removedTables.forEach((removedTable) => {
+    const removedFingerprint = buildTableFingerprint(removedTable)
+    const renameCandidate = addedTables.find((addedTable) => {
+      return buildTableFingerprint(addedTable) === removedFingerprint
+    })
+
+    if (renameCandidate) {
+      warnings.add(`Table ${removedTable.fullName} was removed while ${renameCandidate.fullName} was added with the same column signature; review for a possible rename that the migration emitted as DROP plus CREATE.`)
+    }
+  })
+}
+
 export const buildPgmlMigrationDiffBundle = (
   baseModel: PgmlSchemaModel,
   targetModel: PgmlSchemaModel,
@@ -676,6 +703,7 @@ export const buildPgmlMigrationDiffBundle = (
 
   const beforeTables = buildTableMap(baseModel.tables)
   const afterTables = buildTableMap(targetModel.tables)
+  addRenameLikeTableWarnings(beforeTables, afterTables, warnings)
   const tableIds = Array.from(new Set([...beforeTables.keys(), ...afterTables.keys()])).sort((left, right) => left.localeCompare(right))
 
   tableIds.forEach((tableId) => {

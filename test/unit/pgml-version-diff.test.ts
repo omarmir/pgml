@@ -239,6 +239,23 @@ Procedure public.archive_orders(retention_days integer) {
     )
   })
 
+  it('warns when a removed table looks like a rename to a newly added table', () => {
+    const migrationBundle = buildPgmlMigrationDiffBundle(
+      parsePgml(`Table public.users {
+  id uuid [pk]
+  email text
+}`),
+      parsePgml(`Table public.accounts {
+  id uuid [pk]
+  email text
+}`)
+    )
+
+    expect(migrationBundle.sql.migration.warnings).toEqual(expect.arrayContaining([
+      expect.stringContaining('possible rename')
+    ]))
+  })
+
   it('handles removed references, replaced custom types and omitted routines with warnings', () => {
     const baseSource = `Enum order_status {
   draft
