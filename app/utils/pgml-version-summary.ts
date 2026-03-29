@@ -145,3 +145,7 @@ export const buildPgmlEditorReadOnlyLabel = (input: {
 export const buildPgmlDocumentEditorModeDescription = () => {
   return 'Showing the full VersionSet document, including locked checkpoints and workspace metadata.'
 }
+
+export const buildPgmlVersionPreviewDescription = (previewLabel: string) => {
+  return `Showing ${previewLabel} as a locked snapshot preview. Restore it to the workspace if you want to edit from it.`
+}

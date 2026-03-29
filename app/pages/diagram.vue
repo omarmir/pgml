@@ -42,6 +42,7 @@ import { analyzePgmlDocument } from '~/utils/pgml-language'
 import {
   buildPgmlDocumentEditorModeDescription,
   buildPgmlEditorReadOnlyLabel,
+  buildPgmlVersionPreviewDescription,
   buildPgmlVersionDiffSections,
   buildPgmlWorkspaceBaseLabel,
   buildPgmlWorkspaceStatus,
@@ -373,7 +374,7 @@ const editorModeDescription = computed(() => {
     const previewVersion = versions.value.find(version => version.id === previewTargetId.value) || null
     const previewLabel = previewVersion ? getVersionLabel(previewVersion) : 'the selected version'
 
-    return `Showing ${previewLabel} as a locked snapshot preview. Restore it to the workspace if you want to edit from it.`
+    return buildPgmlVersionPreviewDescription(previewLabel)
   }
 
   return 'Editing the current workspace snapshot. Checkpoint it when you want to lock a version into the history.'

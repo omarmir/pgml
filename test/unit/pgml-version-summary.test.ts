@@ -6,6 +6,7 @@ import {
   buildPgmlDocumentEditorModeDescription,
   buildPgmlEditorReadOnlyLabel,
   buildPgmlPreviewTargetLabel,
+  buildPgmlVersionPreviewDescription,
   buildPgmlVersionCompareSummary,
   buildPgmlVersionDiffSections,
   buildPgmlWorkspaceBaseLabel,
@@ -106,5 +107,9 @@ Table public.orders {
 
   it('builds the document editor mode description', () => {
     expect(buildPgmlDocumentEditorModeDescription()).toContain('full VersionSet document')
+  })
+
+  it('builds the version preview editor description', () => {
+    expect(buildPgmlVersionPreviewDescription('Initial design')).toContain('Initial design')
   })
 })
