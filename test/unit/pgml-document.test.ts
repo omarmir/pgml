@@ -24,6 +24,7 @@ import {
   buildPgmlVersionLineageLabel,
   getPgmlNearestCommonAncestor,
   getPgmlVersionById,
+  getPgmlVersionCount,
   getPgmlVersionDepth,
   getPgmlVersionLineage,
   getPgmlVersionMap,
@@ -127,6 +128,7 @@ Table public.memberships {
     expect(workspaceBaseVersion?.id).toBe(document.workspace.basedOnVersionId)
     expect(getPgmlVersionById(document, workspaceBaseVersion?.id || null)?.name).toBe('Initial implementation')
     expect(getPgmlVersionById(document, 'missing-version')).toBeNull()
+    expect(getPgmlVersionCount(document)).toBe(1)
   })
 
   it('returns ordered lineage from the root version to the selected checkpoint', () => {

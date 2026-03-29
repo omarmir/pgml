@@ -127,7 +127,7 @@ export const getPgmlDocumentVersionStats = (
     designVersionCount: document.versions.filter(version => version.role === 'design').length,
     implementationVersionCount: document.versions.filter(version => version.role === 'implementation').length,
     rootVersionCount: document.versions.filter(version => version.parentVersionId === null).length,
-    versionCount: document.versions.length,
+    versionCount: getPgmlVersionCount(document),
     workspaceDirty: isPgmlWorkspaceDirty(document, includeLayout)
   }
 }
@@ -178,6 +178,10 @@ export const getLatestPgmlVersionByRole = (
 
 export const getPgmlRootVersions = (document: PgmlVersionSetDocument) => {
   return document.versions.filter(version => version.parentVersionId === null)
+}
+
+export const getPgmlVersionCount = (document: PgmlVersionSetDocument) => {
+  return document.versions.length
 }
 
 export const getPgmlLeafVersions = (document: PgmlVersionSetDocument) => {
