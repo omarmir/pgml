@@ -670,6 +670,7 @@ const versionPanelItems = computed(() => {
     return {
       ancestorCount: version.ancestorCount,
       branchLeafCount: version.branchLeafCount,
+      branchMaxDepth: version.branchMaxDepth,
       branchVersionCount: version.branchVersionCount,
       branchRootId: version.branchRootId,
       branchRootLabel: version.branchRootLabel,

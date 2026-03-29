@@ -21,6 +21,7 @@ import {
   getLatestPgmlVersion,
   getLatestPgmlVersionByRole,
   getPgmlBranchLeafVersionCount,
+  getPgmlBranchMaxDepth,
   getPgmlBranchVersionCount,
   getPgmlDescendantVersionCount,
   getPgmlLeafVersions,
@@ -181,6 +182,7 @@ export const usePgmlStudioVersionHistory = (
       return {
         ancestorCount: getPgmlVersionAncestorCount(document.value, version.id),
         branchLeafCount: getPgmlBranchLeafVersionCount(document.value, version.id),
+        branchMaxDepth: getPgmlBranchMaxDepth(document.value, version.id),
         branchVersionCount: getPgmlBranchVersionCount(document.value, version.id),
         childCount: getPgmlChildVersions(document.value, version.id).length,
         branchRootId: getPgmlBranchRootId(document.value, version.id),
