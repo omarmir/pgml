@@ -29,6 +29,7 @@ type VersionDiffSection = {
 
 type VersionPanelItem = {
   branchRootId: string | null
+  branchRootLabel: string | null
   childCount: number
   createdAt: string
   depth: number

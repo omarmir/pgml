@@ -642,6 +642,7 @@ const versionPanelItems = computed(() => {
   return versionHistoryItems.value.map((version) => {
     return {
       branchRootId: version.branchRootId,
+      branchRootLabel: version.branchRootLabel,
       childCount: version.childCount,
       createdAt: formatSavedPgmlSchemaTime(version.createdAt),
       depth: version.depth,

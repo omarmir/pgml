@@ -14,6 +14,7 @@ import {
   getLatestPgmlVersionByRole,
   getPgmlBranchRootVersion,
   getPgmlBranchRootId,
+  getPgmlBranchRootLabel,
   getPgmlLeafVersions,
   getPgmlRootVersions,
   isPgmlVersionDescendant,
@@ -1006,6 +1007,7 @@ Table public.memberships {
     expect(getPgmlBranchRootVersion(parsed, 'v3')?.id).toBe('v1')
     expect(getPgmlBranchRootVersion(parsed, 'v1')?.id).toBe('v1')
     expect(getPgmlBranchRootId(parsed, 'v3')).toBe('v1')
+    expect(getPgmlBranchRootLabel(parsed, 'v3')).toBe('Root')
   })
 
   it('rejects invalid VersionSet documents that reference missing parent or base versions', () => {

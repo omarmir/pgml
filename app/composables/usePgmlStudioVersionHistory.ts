@@ -7,6 +7,7 @@ import {
   createPgmlVersionFromWorkspace,
   buildPgmlVersionLineageLabel,
   getPgmlChildVersions,
+  getPgmlBranchRootLabel,
   getPgmlBranchRootId,
   getLatestPgmlVersion,
   getPgmlNearestCommonAncestor,
@@ -147,6 +148,7 @@ export const usePgmlStudioVersionHistory = (
       return {
         childCount: getPgmlChildVersions(document.value, version.id).length,
         branchRootId: getPgmlBranchRootId(document.value, version.id),
+        branchRootLabel: getPgmlBranchRootLabel(document.value, version.id),
         depth: getPgmlVersionDepth(document.value, version.id),
         ...version,
         isRoot: version.parentVersionId === null,

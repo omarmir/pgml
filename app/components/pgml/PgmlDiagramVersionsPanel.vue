@@ -13,6 +13,7 @@ import {
 
 type PgmlVersionPanelItem = {
   branchRootId: string | null
+  branchRootLabel: string | null
   childCount: number
   createdAt: string
   depth: number
@@ -539,6 +540,12 @@ const swapComparePair = () => {
               </div>
               <div class="mt-1 text-[0.62rem] text-[color:var(--studio-shell-muted)]">
                 Path: {{ version.lineageLabel }}
+              </div>
+              <div
+                v-if="version.branchRootLabel"
+                class="mt-1 text-[0.62rem] text-[color:var(--studio-shell-muted)]"
+              >
+                Branch root: {{ version.branchRootLabel }}
               </div>
             </div>
 
