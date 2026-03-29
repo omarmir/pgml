@@ -21,6 +21,7 @@ describe('diagram versions panel source', () => {
     expect(file).toContain('Branch depth {{ version.branchMaxDepth }}')
     expect(file).toContain('Latest overall')
     expect(file).toContain('Latest {{ version.role }}')
+    expect(file).toContain("isComparePresetActive({ baseId: workspaceBaseVersionId, targetId: 'workspace' })")
     expect(file).toContain('Latest impl to draft')
     expect(file).toContain('Latest design to draft')
   })

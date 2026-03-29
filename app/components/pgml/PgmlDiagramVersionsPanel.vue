@@ -217,6 +217,13 @@ const applyComparePreset = (input: {
   emit('update:compareTargetId', input.targetId)
 }
 
+const isComparePresetActive = (input: {
+  baseId: string | null
+  targetId: string
+}) => {
+  return compareBaseId === input.baseId && compareTargetId === input.targetId
+}
+
 const swapComparePair = () => {
   if (compareBaseId === null) {
     return
@@ -365,7 +372,7 @@ const swapComparePair = () => {
           variant="outline"
           size="xs"
           :class="secondaryButtonClass"
-          :disabled="workspaceBaseVersionId === null"
+          :disabled="workspaceBaseVersionId === null || isComparePresetActive({ baseId: workspaceBaseVersionId, targetId: 'workspace' })"
           @click="applyComparePreset({ baseId: workspaceBaseVersionId, targetId: 'workspace' })"
         />
         <UButton
