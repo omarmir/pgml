@@ -96,6 +96,9 @@ const latestVersionId = computed(() => versions.at(-1)?.id || null)
 const workspaceBaseVersionId = computed(() => {
   return versions.find(version => version.isWorkspaceBase)?.id || null
 })
+const migrationLineCount = computed(() => {
+  return hasMigrationSql.value ? migrationSql.trim().split('\n').length : 0
+})
 const compareSummary = computed(() => {
   const baseLabel = compareBaseOption.value?.label || 'Empty schema'
   const targetLabel = compareTargetOption.value?.label || 'Current workspace'
@@ -461,8 +464,13 @@ const swapComparePair = () => {
 
     <div class="grid gap-2 border border-[color:var(--studio-divider)] bg-[color:var(--studio-control-bg)] px-3 py-3">
       <div class="flex items-center justify-between gap-3">
-        <div class="font-mono text-[0.6rem] uppercase tracking-[0.08em] text-[color:var(--studio-shell-label)]">
-          Migration SQL
+        <div>
+          <div class="font-mono text-[0.6rem] uppercase tracking-[0.08em] text-[color:var(--studio-shell-label)]">
+            Migration SQL
+          </div>
+          <div class="mt-1 text-[0.66rem] text-[color:var(--studio-shell-muted)]">
+            {{ hasMigrationSql ? `${migrationLineCount} line${migrationLineCount === 1 ? '' : 's'} ready · ${migrationFileName}` : 'No forward migration generated yet.' }}
+          </div>
         </div>
         <div class="flex flex-wrap gap-1">
           <UButton
@@ -488,8 +496,11 @@ const swapComparePair = () => {
 
       <div
         v-if="migrationWarnings.length > 0"
-        class="grid gap-1 border border-[color:var(--studio-divider)] bg-[color:var(--studio-input-bg)] px-3 py-3 text-[0.68rem] text-[color:var(--studio-shell-muted)]"
+        class="grid gap-1 border border-[color:var(--studio-shell-error)]/30 bg-[color:var(--studio-shell-error)]/8 px-3 py-3 text-[0.68rem] text-[color:var(--studio-shell-text)]"
       >
+        <div class="font-mono text-[0.58rem] uppercase tracking-[0.08em] text-[color:var(--studio-shell-error)]">
+          Warnings
+        </div>
         <div
           v-for="warning in migrationWarnings"
           :key="warning"
