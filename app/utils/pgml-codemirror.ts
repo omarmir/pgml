@@ -17,12 +17,19 @@ import { tags } from '@lezer/highlight'
 import { getPgmlCompletionItems, getPgmlDiagnostics } from './pgml-language'
 
 type PgmlStreamState = {
+  // The current innermost block drives contextual styling such as column type
+  // highlighting inside tables and composites.
   blockKind: string | null
+  // StreamLanguage only sees one token at a time, so block nesting is tracked
+  // manually to keep token decisions aligned with nested PGML blocks.
   blockStack: string[]
+  // Table-like rows need different styling for identifier vs type positions.
   lineIdentifierIndex: number
   lineAllowsColumnTypeHighlight: boolean
   lineIsBlockDeclaration: boolean
   lastNamedTokenType: string | null
+  // Property-aware tokens such as `base`, `based_on`, and `parent` influence
+  // how the next identifier should be colored.
   lastPropertyName: string | null
   sourceDelimiter: string | null
 }
@@ -232,6 +239,8 @@ const syncPgmlLineState = (lineText: string, state: PgmlStreamState) => {
   const trimmedLine = lineText.trimStart()
   let closingIndex = 0
 
+  // Closing braces on the current line end blocks before any new tokens on the
+  // same line are considered, which keeps `}` + sibling block headers aligned.
   while (trimmedLine[closingIndex] === '}') {
     state.blockStack.pop()
     closingIndex += 1
@@ -263,6 +272,9 @@ const readPgmlToken = (stream: StringStream, state: PgmlStreamState) => {
     if (delimiter !== null && delimiter.length > 0) {
       state.sourceDelimiter = delimiter
     }
+
+    // Source blocks are treated as opaque string content until their matching
+    // delimiter closes, so SQL bodies do not confuse the PGML tokenizer.
     if (state.sourceDelimiter && stream.string.includes(state.sourceDelimiter) && !stream.string.trim().startsWith('source:') && !stream.string.trim().startsWith('definition:')) {
       stream.skipToEnd()
       state.sourceDelimiter = null
