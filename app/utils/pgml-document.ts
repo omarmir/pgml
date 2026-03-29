@@ -279,6 +279,7 @@ const parseVersionBlock = (block: PgmlNamedBlock): PgmlVersionDocumentBlock => {
 
 const validateVersionSetDocument = (document: PgmlVersionSetDocument) => {
   const versionIds = new Set<string>()
+  const versionsById = new Map(document.versions.map(version => [version.id, version] as const))
   let rootVersionCount = 0
 
   document.versions.forEach((version) => {
@@ -288,12 +289,16 @@ const validateVersionSetDocument = (document: PgmlVersionSetDocument) => {
 
     versionIds.add(version.id)
 
+    if (version.parentVersionId === version.id) {
+      throw new Error(`Version ${version.id} cannot reference itself as parent.`)
+    }
+
     if (version.parentVersionId === null) {
       rootVersionCount += 1
       return
     }
 
-    if (!document.versions.some(candidate => candidate.id === version.parentVersionId)) {
+    if (!versionsById.has(version.parentVersionId)) {
       throw new Error(`Version ${version.id} references missing parent ${version.parentVersionId}.`)
     }
   })
@@ -312,6 +317,20 @@ const validateVersionSetDocument = (document: PgmlVersionSetDocument) => {
   ) {
     throw new Error(`Workspace based_on references missing version ${document.workspace.basedOnVersionId}.`)
   }
+
+  document.versions.forEach((version) => {
+    const ancestry = new Set<string>([version.id])
+    let currentParentId = version.parentVersionId
+
+    while (currentParentId) {
+      if (ancestry.has(currentParentId)) {
+        throw new Error(`Version ${version.id} forms a parent cycle through ${currentParentId}.`)
+      }
+
+      ancestry.add(currentParentId)
+      currentParentId = versionsById.get(currentParentId)?.parentVersionId || null
+    }
+  })
 }
 
 export const parsePgmlDocument = (source: string): PgmlVersionSetDocument => {

@@ -106,4 +106,61 @@ Table public.memberships {
       'Workspace based_on references missing version v2.'
     )
   })
+
+  it('rejects parent cycles in version graphs', () => {
+    const invalidDocumentSource = `VersionSet "Broken cycle" {
+  Workspace {
+    based_on: v0
+
+    Snapshot {
+      Table public.users {
+        id uuid [pk]
+      }
+    }
+  }
+
+  Version v0 {
+    name: "Root"
+    role: implementation
+    created_at: "2026-03-29T11:55:00.000Z"
+
+    Snapshot {
+      Table public.users {
+        id uuid [pk]
+      }
+    }
+  }
+
+  Version v1 {
+    name: "Initial"
+    role: design
+    parent: v2
+    created_at: "2026-03-29T12:00:00.000Z"
+
+    Snapshot {
+      Table public.users {
+        id uuid [pk]
+      }
+    }
+  }
+
+  Version v2 {
+    name: "Follow-up"
+    role: design
+    parent: v1
+    created_at: "2026-03-29T12:05:00.000Z"
+
+    Snapshot {
+      Table public.users {
+        id uuid [pk]
+        email text
+      }
+    }
+  }
+}`
+
+    expect(() => parsePgmlDocument(invalidDocumentSource)).toThrow(
+      'Version v1 forms a parent cycle through v1.'
+    )
+  })
 })
