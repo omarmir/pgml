@@ -130,6 +130,44 @@ const normalizeCompareTargetSelection = (
     : buildDefaultCompareTargetId(document)
 }
 
+const buildVersionHistoryItem = (
+  document: PgmlVersionSetDocument,
+  version: PgmlVersionDocumentBlock,
+  options: {
+    latestDesignVersionId: string | null
+    latestImplementationVersionId: string | null
+    latestOverallVersionId: string | null
+  }
+) => {
+  return {
+    ancestorCount: getPgmlVersionAncestorCount(document, version.id),
+    branchLeafCount: getPgmlBranchLeafVersionCount(document, version.id),
+    branchMaxDepth: getPgmlBranchMaxDepth(document, version.id),
+    branchVersionCount: getPgmlBranchVersionCount(document, version.id),
+    childCount: getPgmlChildVersions(document, version.id).length,
+    branchRootId: getPgmlBranchRootId(document, version.id),
+    branchRootLabel: getPgmlBranchRootLabel(document, version.id),
+    descendantCount: getPgmlDescendantVersionCount(document, version.id),
+    depth: getPgmlVersionDepth(document, version.id),
+    ...version,
+    parentVersionLabel: version.parentVersionId
+      ? (getPgmlVersionById(document, version.parentVersionId)?.name || version.parentVersionId)
+      : null,
+    isLeaf: isPgmlLeafVersion(document, version.id),
+    isLatestByRole: version.id === (
+      version.role === 'design'
+        ? options.latestDesignVersionId
+        : options.latestImplementationVersionId
+    ),
+    isLatestOverall: version.id === options.latestOverallVersionId,
+    isRoot: version.parentVersionId === null,
+    siblingCount: getPgmlSiblingVersionCount(document, version.id),
+    isWorkspaceBase: document.workspace.basedOnVersionId === version.id,
+    lineageIds: getPgmlVersionLineageIds(document, version.id),
+    lineageLabel: buildPgmlVersionLineageLabel(document, version.id)
+  }
+}
+
 export const usePgmlStudioVersionHistory = (
   input: {
     documentName: ComputedRef<string>
@@ -206,35 +244,14 @@ export const usePgmlStudioVersionHistory = (
   const canCheckpoint = computed(() => canCreatePgmlCheckpoint(document.value))
   const latestDesignVersion = computed(() => getLatestPgmlVersionByRole(document.value, 'design'))
   const latestImplementationVersion = computed(() => getLatestPgmlVersionByRole(document.value, 'implementation'))
+  const latestOverallVersion = computed(() => getLatestPgmlVersion(document.value))
   const versionItems = computed(() => {
     return document.value.versions.map((version) => {
-      return {
-        ancestorCount: getPgmlVersionAncestorCount(document.value, version.id),
-        branchLeafCount: getPgmlBranchLeafVersionCount(document.value, version.id),
-        branchMaxDepth: getPgmlBranchMaxDepth(document.value, version.id),
-        branchVersionCount: getPgmlBranchVersionCount(document.value, version.id),
-        childCount: getPgmlChildVersions(document.value, version.id).length,
-        branchRootId: getPgmlBranchRootId(document.value, version.id),
-        branchRootLabel: getPgmlBranchRootLabel(document.value, version.id),
-        descendantCount: getPgmlDescendantVersionCount(document.value, version.id),
-        depth: getPgmlVersionDepth(document.value, version.id),
-        ...version,
-        parentVersionLabel: version.parentVersionId
-          ? (getPgmlVersionById(document.value, version.parentVersionId)?.name || version.parentVersionId)
-          : null,
-        isLeaf: isPgmlLeafVersion(document.value, version.id),
-        isLatestByRole: version.id === (
-          version.role === 'design'
-            ? latestDesignVersion.value?.id
-            : latestImplementationVersion.value?.id
-        ),
-        isLatestOverall: version.id === getLatestPgmlVersion(document.value)?.id,
-        isRoot: version.parentVersionId === null,
-        siblingCount: getPgmlSiblingVersionCount(document.value, version.id),
-        isWorkspaceBase: document.value.workspace.basedOnVersionId === version.id,
-        lineageIds: getPgmlVersionLineageIds(document.value, version.id),
-        lineageLabel: buildPgmlVersionLineageLabel(document.value, version.id)
-      }
+      return buildVersionHistoryItem(document.value, version, {
+        latestDesignVersionId: latestDesignVersion.value?.id || null,
+        latestImplementationVersionId: latestImplementationVersion.value?.id || null,
+        latestOverallVersionId: latestOverallVersion.value?.id || null
+      })
     })
   })
   const previewSource = computed(() => {
