@@ -100,6 +100,25 @@ describe('PGML version diffing', () => {
     expect(diff.summary.modified).toBe(0)
   })
 
+  it('reports changed fields for modified diff entries', () => {
+    const diff = diffPgmlSchemaModels(
+      parsePgml(`Table public.users {
+  id uuid [pk]
+  email text
+}`),
+      parsePgml(`Table public.users {
+  id uuid [pk]
+  email varchar [not null]
+}`)
+    )
+
+    expect(diff.columns[0]).toEqual(expect.objectContaining({
+      changes: expect.arrayContaining(['modifiers', 'type']),
+      id: 'public.users::email',
+      kind: 'modified'
+    }))
+  })
+
   it('handles removed references, replaced custom types and omitted routines with warnings', () => {
     const baseSource = `Enum order_status {
   draft

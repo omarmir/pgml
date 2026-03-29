@@ -17,6 +17,7 @@ export type PgmlDiffChangeKind = 'added' | 'modified' | 'removed'
 export type PgmlDiffEntry<T> = {
   after: T | null
   before: T | null
+  changes?: string[]
   id: string
   kind: PgmlDiffChangeKind
   label: string
@@ -71,6 +72,30 @@ const toStableJson = (value: unknown): string => {
   }
 
   return JSON.stringify(value)
+}
+
+const buildChangedFields = (beforeValue: unknown, afterValue: unknown) => {
+  if (
+    beforeValue === null
+    || afterValue === null
+    || Array.isArray(beforeValue)
+    || Array.isArray(afterValue)
+    || typeof beforeValue !== 'object'
+    || typeof afterValue !== 'object'
+  ) {
+    return []
+  }
+
+  const beforeRecord = beforeValue as Record<string, unknown>
+  const afterRecord = afterValue as Record<string, unknown>
+  const fieldNames = Array.from(new Set([
+    ...Object.keys(beforeRecord),
+    ...Object.keys(afterRecord)
+  ])).sort((left, right) => left.localeCompare(right))
+
+  return fieldNames.filter((fieldName) => {
+    return toStableJson(beforeRecord[fieldName]) !== toStableJson(afterRecord[fieldName])
+  })
 }
 
 const normalizeReferenceKey = (reference: PgmlReference) => {
@@ -269,10 +294,15 @@ const buildDiffEntries = <T>(
       return entries
     }
 
-    if (toStableJson(normalizeValue(beforeValue)) !== toStableJson(normalizeValue(afterValue))) {
+    const normalizedBeforeValue = normalizeValue(beforeValue)
+    const normalizedAfterValue = normalizeValue(afterValue)
+
+    if (toStableJson(normalizedBeforeValue) !== toStableJson(normalizedAfterValue)) {
+
       entries.push({
         after: afterValue,
         before: beforeValue,
+        changes: buildChangedFields(normalizedBeforeValue, normalizedAfterValue),
         id,
         kind: 'modified',
         label: buildLabel(id, afterValue)
