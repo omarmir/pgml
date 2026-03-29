@@ -10,6 +10,7 @@ import {
   buildPgmlDocumentEditorModeDescription,
   buildPgmlEditorReadOnlyLabel,
   buildPgmlInvalidCompareRelationshipSummary,
+  buildPgmlNoCommonAncestorCompareRelationshipSummary,
   buildPgmlPreviewTargetLabel,
   buildPgmlVersionPreviewDescription,
   buildPgmlVersionCompareSummary,
@@ -152,5 +153,9 @@ Table public.orders {
 
   it('builds diverged compare relationship summaries', () => {
     expect(buildPgmlDivergedCompareRelationshipSummary('Initial design')).toBe('Selected versions diverge from Initial design.')
+  })
+
+  it('builds no-common-ancestor compare relationship summaries', () => {
+    expect(buildPgmlNoCommonAncestorCompareRelationshipSummary()).toBe('Selected versions do not share a common recorded ancestor.')
   })
 })

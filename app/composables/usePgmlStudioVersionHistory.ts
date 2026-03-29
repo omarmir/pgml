@@ -4,6 +4,7 @@ import {
   buildPgmlDivergedCompareRelationshipSummary,
   buildPgmlEmptyBaseCompareRelationshipSummary,
   buildPgmlInvalidCompareRelationshipSummary,
+  buildPgmlNoCommonAncestorCompareRelationshipSummary,
   buildPgmlWorkspaceCompareRelationshipSummary,
   buildPgmlWorkspaceBaseCompareRelationshipSummary
 } from '~/utils/pgml-version-summary'
@@ -251,7 +252,7 @@ export const usePgmlStudioVersionHistory = (
       return buildPgmlDivergedCompareRelationshipSummary(commonAncestor.name || commonAncestor.id)
     }
 
-    return 'Selected versions do not share a common recorded ancestor.'
+    return buildPgmlNoCommonAncestorCompareRelationshipSummary()
   })
 
   watch(() => input.documentName.value, (nextName) => {

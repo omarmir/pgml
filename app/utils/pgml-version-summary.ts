@@ -186,3 +186,7 @@ export const buildPgmlDirectIncrementCompareRelationshipSummary = (
 export const buildPgmlDivergedCompareRelationshipSummary = (commonAncestorLabel: string) => {
   return `Selected versions diverge from ${commonAncestorLabel}.`
 }
+
+export const buildPgmlNoCommonAncestorCompareRelationshipSummary = () => {
+  return 'Selected versions do not share a common recorded ancestor.'
+}
