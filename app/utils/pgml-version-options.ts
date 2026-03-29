@@ -1,7 +1,19 @@
 export type PgmlVersionOptionItem = {
   id: string
   label: string
+  parentVersionLabel?: string | null
   parentVersionId: string | null
+}
+
+export const buildPgmlImportBaseVersionDescription = (input: {
+  parentVersionId: string | null
+  parentVersionLabel?: string | null
+}) => {
+  if (!input.parentVersionId) {
+    return 'Root version'
+  }
+
+  return `Continues from ${input.parentVersionLabel || input.parentVersionId}`
 }
 
 export const buildPgmlVersionCompareOptions = (versions: PgmlVersionOptionItem[]) => {
@@ -22,9 +34,10 @@ export const buildPgmlVersionCompareOptions = (versions: PgmlVersionOptionItem[]
 export const buildPgmlImportBaseVersionItems = (versions: PgmlVersionOptionItem[]) => {
   return versions.map((version) => {
     return {
-      description: version.parentVersionId
-        ? `Continues from ${version.parentVersionId}`
-        : 'Root version',
+      description: buildPgmlImportBaseVersionDescription({
+        parentVersionId: version.parentVersionId,
+        parentVersionLabel: version.parentVersionLabel
+      }),
       label: version.label,
       value: version.id
     }

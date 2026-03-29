@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 
 import {
+  buildPgmlImportBaseVersionDescription,
   buildPgmlImportBaseVersionItems,
   buildPgmlVersionCompareOptions
 } from '../../app/utils/pgml-version-options'
@@ -46,5 +47,16 @@ describe('PGML version option helpers', () => {
         value: 'v2'
       }
     ])
+  })
+
+  it('builds import base descriptions from root and labeled parent versions', () => {
+    expect(buildPgmlImportBaseVersionDescription({
+      parentVersionId: null,
+      parentVersionLabel: null
+    })).toBe('Root version')
+    expect(buildPgmlImportBaseVersionDescription({
+      parentVersionId: 'v1',
+      parentVersionLabel: 'Initial design'
+    })).toBe('Continues from Initial design')
   })
 })
