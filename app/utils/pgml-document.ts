@@ -649,6 +649,18 @@ export const buildPgmlVersionLineageLabel = (
     .join(' -> ')
 }
 
+export const isPgmlVersionAncestor = (
+  document: PgmlVersionSetDocument,
+  ancestorVersionId: string | null,
+  descendantVersionId: string | null
+) => {
+  if (!ancestorVersionId || !descendantVersionId || ancestorVersionId === descendantVersionId) {
+    return false
+  }
+
+  return getPgmlVersionLineage(document, descendantVersionId).some(version => version.id === ancestorVersionId)
+}
+
 export const getPgmlChildVersions = (
   document: PgmlVersionSetDocument,
   versionId: string | null

@@ -14,6 +14,7 @@ import {
   getLatestPgmlVersionByRole,
   getPgmlLeafVersions,
   getPgmlRootVersions,
+  isPgmlVersionAncestor,
   buildPgmlVersionLineageLabel,
   getPgmlNearestCommonAncestor,
   getPgmlVersionById,
@@ -840,6 +841,66 @@ Table public.memberships {
 }`)
 
     expect(buildPgmlVersionLineageLabel(parsed, 'v2')).toBe('Implementation root -> Design branch')
+  })
+
+  it('detects whether one version is an ancestor of another', () => {
+    const parsed = parsePgmlDocument(`VersionSet "Billing" {
+  Workspace {
+    based_on: v3
+
+    Snapshot {
+      Table public.users {
+        id uuid [pk]
+      }
+    }
+  }
+
+  Version v1 {
+    name: "Root"
+    role: implementation
+    created_at: "2026-03-29T12:00:00.000Z"
+
+    Snapshot {
+      Table public.users {
+        id uuid [pk]
+      }
+    }
+  }
+
+  Version v2 {
+    name: "Branch"
+    role: design
+    parent: v1
+    created_at: "2026-03-30T12:00:00.000Z"
+
+    Snapshot {
+      Table public.users {
+        id uuid [pk]
+        email text
+      }
+    }
+  }
+
+  Version v3 {
+    name: "Leaf"
+    role: design
+    parent: v2
+    created_at: "2026-03-31T12:00:00.000Z"
+
+    Snapshot {
+      Table public.users {
+        id uuid [pk]
+        email text
+        status text
+      }
+    }
+  }
+}`)
+
+    expect(isPgmlVersionAncestor(parsed, 'v1', 'v3')).toBe(true)
+    expect(isPgmlVersionAncestor(parsed, 'v2', 'v3')).toBe(true)
+    expect(isPgmlVersionAncestor(parsed, 'v3', 'v1')).toBe(false)
+    expect(isPgmlVersionAncestor(parsed, 'v2', 'v2')).toBe(false)
   })
 
   it('rejects invalid VersionSet documents that reference missing parent or base versions', () => {
