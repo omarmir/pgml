@@ -36,6 +36,7 @@ type PgmlVersionDiffSection = {
 }
 
 const {
+  canCreateCheckpoint = true,
   compareBaseId = null,
   compareOptions,
   compareTargetId,
@@ -49,6 +50,7 @@ const {
   workspaceBaseLabel = 'No base version yet',
   workspaceStatus = 'Draft is ready to checkpoint.'
 } = defineProps<{
+  canCreateCheckpoint?: boolean
   compareBaseId?: string | null
   compareOptions: PgmlVersionCompareOption[]
   compareTargetId: string
@@ -211,6 +213,7 @@ const swapComparePair = () => {
           color="neutral"
           variant="soft"
           :class="primaryButtonClass"
+          :disabled="!canCreateCheckpoint"
           @click="emit('create-checkpoint')"
         />
         <UButton
@@ -226,6 +229,12 @@ const swapComparePair = () => {
       <div :class="joinStudioClasses(studioPanelSurfaceClass, 'px-3 py-3')">
         <p :class="studioCompactBodyCopyClass">
           Lock workspace checkpoints, compare snapshots, and export forward SQL from the selected base to the selected target.
+        </p>
+        <p
+          v-if="!canCreateCheckpoint"
+          class="mt-2 text-[0.66rem] text-[color:var(--studio-shell-muted)]"
+        >
+          The current workspace still matches its base version, so there is no new checkpoint to lock yet.
         </p>
         <p
           v-if="!hasVersions"

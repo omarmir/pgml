@@ -243,6 +243,7 @@ const {
   compareBaseSource,
   compareTargetId: versionCompareTargetId,
   compareTargetSource,
+  canCheckpoint,
   createCheckpoint: createVersionCheckpoint,
   document: versionDocument,
   editorMode: versionedEditorMode,
@@ -713,9 +714,11 @@ const workspaceBaseLabel = computed(() => {
     : `Incrementing from ${versionDocument.value.workspace.basedOnVersionId}.`
 })
 const workspaceStatus = computed(() => {
-  return activeHasPendingChanges.value
-    ? 'Draft changes are waiting to be checkpointed.'
-    : 'Draft matches the current saved workspace state.'
+  if (!canCheckpoint.value) {
+    return 'Draft matches the current locked base version.'
+  }
+
+  return 'Draft changes are waiting to be checkpointed.'
 })
 const compareMigrationBundle = computed(() => {
   const migrationBundle = buildPgmlMigrationDiffBundle(
@@ -1710,6 +1713,7 @@ onBeforeUnmount(() => {
       <template #canvas>
         <PgmlDiagramCanvas
           ref="canvasRef"
+          :can-create-checkpoint="canCheckpoint"
           :model="parsedModel"
           :export-base-name="exportBaseName"
           :export-preference-key="exportPreferenceKey"
@@ -1794,6 +1798,7 @@ onBeforeUnmount(() => {
       <template #canvas>
         <PgmlDiagramCanvas
           ref="canvasRef"
+          :can-create-checkpoint="canCheckpoint"
           :model="parsedModel"
           :export-base-name="exportBaseName"
           :export-preference-key="exportPreferenceKey"
@@ -1899,7 +1904,7 @@ onBeforeUnmount(() => {
             color="neutral"
             variant="soft"
             :class="primaryModalButtonClass"
-            :disabled="checkpointName.trim().length === 0"
+            :disabled="checkpointName.trim().length === 0 || !canCheckpoint"
             @click="saveCheckpoint"
           />
         </template>

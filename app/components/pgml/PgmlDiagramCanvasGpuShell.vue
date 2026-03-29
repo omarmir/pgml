@@ -208,6 +208,7 @@ type DetailPopoverPlacement = {
 }
 
 const {
+  canCreateCheckpoint = true,
   exportBaseName = 'pgml-schema',
   exportPreferenceKey = 'name:pgml-schema',
   hasBlockingSourceErrors = false,
@@ -228,6 +229,7 @@ const {
   workspaceStatus = 'Draft is ready to checkpoint.',
   viewportResetKey = 0
 } = defineProps<{
+  canCreateCheckpoint?: boolean
   exportBaseName?: string
   exportPreferenceKey?: string
   hasBlockingSourceErrors?: boolean
@@ -4531,6 +4533,7 @@ defineExpose<{
       <PgmlDiagramVersionsPanel
         v-else
         :compare-base-id="versionCompareBaseId"
+        :can-create-checkpoint="canCreateCheckpoint"
         :compare-options="versionCompareOptions"
         :compare-target-id="versionCompareTargetId"
         :diff-sections="versionDiffSections"

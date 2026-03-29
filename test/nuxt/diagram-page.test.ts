@@ -24,5 +24,6 @@ describe('diagram page source', () => {
     expect(file).toContain('@version-import-dump="openImportDumpDialog"')
     expect(file).toContain('buildPgmlCheckpointName(versionDocument.value')
     expect(file).toContain('checkpointNameIsSuggested')
+    expect(file).toContain(':can-create-checkpoint="canCheckpoint"')
   })
 })

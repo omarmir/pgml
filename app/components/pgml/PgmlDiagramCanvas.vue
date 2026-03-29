@@ -37,6 +37,7 @@ type VersionPanelItem = {
 }
 
 const {
+  canCreateCheckpoint = true,
   exportBaseName = 'pgml-schema',
   exportPreferenceKey = 'name:pgml-schema',
   hasBlockingSourceErrors = false,
@@ -57,6 +58,7 @@ const {
   workspaceStatus = 'Draft is ready to checkpoint.',
   viewportResetKey = 0
 } = defineProps<{
+  canCreateCheckpoint?: boolean
   exportBaseName?: string
   exportPreferenceKey?: string
   hasBlockingSourceErrors?: boolean
@@ -115,6 +117,7 @@ defineExpose<CanvasHandle>({
 <template>
   <PgmlDiagramCanvasGpuShell
     ref="shellRef"
+    :can-create-checkpoint="canCreateCheckpoint"
     :export-base-name="exportBaseName"
     :export-preference-key="exportPreferenceKey"
     :has-blocking-source-errors="hasBlockingSourceErrors"
