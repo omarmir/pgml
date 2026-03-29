@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest'
 import { parsePgml } from '../../app/utils/pgml'
 import { diffPgmlSchemaModels } from '../../app/utils/pgml-diff'
 import {
+  buildPgmlCompareDeltaDescription,
   buildPgmlDocumentEditorModeDescription,
   buildPgmlEditorReadOnlyLabel,
   buildPgmlPreviewTargetLabel,
@@ -116,5 +117,10 @@ Table public.orders {
 
   it('builds the workspace editor description', () => {
     expect(buildPgmlWorkspaceEditorDescription()).toContain('current workspace snapshot')
+  })
+
+  it('builds compare delta descriptions from changed section counts', () => {
+    expect(buildPgmlCompareDeltaDescription(2)).toContain('2 changed areas')
+    expect(buildPgmlCompareDeltaDescription(0)).toBe('No visible delta in the selected comparison.')
   })
 })

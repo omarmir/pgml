@@ -153,3 +153,9 @@ export const buildPgmlVersionPreviewDescription = (previewLabel: string) => {
 export const buildPgmlWorkspaceEditorDescription = () => {
   return 'Editing the current workspace snapshot. Checkpoint it when you want to lock a version into the history.'
 }
+
+export const buildPgmlCompareDeltaDescription = (changedSectionCount: number) => {
+  return changedSectionCount > 0
+    ? `${changedSectionCount} changed area${changedSectionCount === 1 ? '' : 's'} in the selected comparison.`
+    : 'No visible delta in the selected comparison.'
+}

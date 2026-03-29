@@ -4,6 +4,7 @@ import {
   studioSelectUi
 } from '~/constants/ui'
 import {
+  buildPgmlCompareDeltaDescription,
   buildPgmlPreviewTargetLabel,
   buildPgmlVersionCompareSummary
 } from '~/utils/pgml-version-summary'
@@ -310,11 +311,7 @@ const swapComparePair = () => {
           </span>
         </div>
         <p :class="studioCompactBodyCopyClass">
-          {{
-            compareSummary.changedSectionCount > 0
-              ? `${compareSummary.changedSectionCount} changed area${compareSummary.changedSectionCount === 1 ? '' : 's'} in the selected comparison.`
-              : 'No visible delta in the selected comparison.'
-          }}
+          {{ buildPgmlCompareDeltaDescription(compareSummary.changedSectionCount) }}
         </p>
         <p
           v-if="compareRelationshipSummary.length > 0"
