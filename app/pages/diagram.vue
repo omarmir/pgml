@@ -668,6 +668,7 @@ const getVersionLabel = (input: {
 const versionPanelItems = computed(() => {
   return versionHistoryItems.value.map((version) => {
     return {
+      ancestorCount: version.ancestorCount,
       branchRootId: version.branchRootId,
       branchRootLabel: version.branchRootLabel,
       childCount: version.childCount,
