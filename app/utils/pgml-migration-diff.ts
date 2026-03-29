@@ -34,10 +34,16 @@ export type PgmlMigrationDiffPlan = {
 }
 
 type PgmlMigrationStatementPhases = {
+  // Cleanup that must happen after new schema objects exist, such as re-adding
+  // dependents or finalizing dependency-sensitive statements.
   postDependencyCleanup: string[]
+  // Follow-up statements that rely on table bodies already being in place.
   postTableStatements: string[]
+  // Dependency removals must happen before destructive table edits.
   preDependencyDrops: string[]
+  // Preparations such as creating prerequisite types or sequences happen here.
   preTablePreparations: string[]
+  // Direct table create/alter/drop operations are grouped in the middle phase.
   tableStatements: string[]
 }
 
@@ -131,6 +137,8 @@ const isSubsequence = (candidate: string[], target: string[]) => {
   return true
 }
 const finalizeMigrationStatements = (phases: PgmlMigrationStatementPhases) => {
+  // The final order keeps destructive dependency drops ahead of table changes
+  // and reintroduces dependent objects only after their prerequisites exist.
   const orderedStatements = [
     ...phases.preDependencyDrops,
     ...phases.preTablePreparations,
