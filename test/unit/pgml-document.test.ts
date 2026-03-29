@@ -11,6 +11,7 @@ import {
   getPgmlChildVersions,
   hasPgmlChildVersions,
   getPgmlDescendantVersions,
+  getPgmlDescendantVersionCount,
   getLatestPgmlVersion,
   getLatestPgmlVersionByRole,
   getPgmlBranchRootVersion,
@@ -270,6 +271,7 @@ Table public.order_items {
       'Orders branch',
       'Order items'
     ])
+    expect(getPgmlDescendantVersionCount(finalDocument, rootVersionId)).toBe(2)
   })
 
   it('calculates branch depth from the selected version lineage', () => {
