@@ -7,6 +7,7 @@ import {
   clonePgmlVersionSetDocument,
   createInitialPgmlDocument,
   createPgmlVersionFromWorkspace,
+  getPgmlDocumentVersionStats,
   getPgmlChildVersions,
   getPgmlDescendantVersions,
   getPgmlVersionById,
@@ -462,6 +463,55 @@ Table public.orders {
       createdAt: '2026-03-30T09:30:00.000Z',
       role: 'implementation'
     })).toBe('Implementation checkpoint 2 · 2026-03-30')
+  })
+
+  it('summarizes version counts, branch counts, and workspace drift', () => {
+    const initialDocument = createInitialPgmlDocument({
+      name: 'Billing',
+      workspaceSource: baseSnapshotSource
+    })
+    const rootDocument = createPgmlVersionFromWorkspace(initialDocument, {
+      createdAt: '2026-03-29T12:00:00.000Z',
+      name: 'Initial design',
+      role: 'design'
+    })
+    const rootVersionId = rootDocument.workspace.basedOnVersionId
+    const branchADocument = createPgmlVersionFromWorkspace(replacePgmlWorkspaceFromSnapshot(rootDocument, {
+      basedOnVersionId: rootVersionId,
+      source: `${baseSnapshotSource}
+
+Table public.orders {
+  id uuid [pk]
+}`,
+      updatedAt: '2026-03-29T12:05:00.000Z'
+    }), {
+      createdAt: '2026-03-29T12:10:00.000Z',
+      name: 'Orders branch',
+      role: 'design'
+    })
+    const branchBDocument = createPgmlVersionFromWorkspace(replacePgmlWorkspaceFromSnapshot(branchADocument, {
+      basedOnVersionId: rootVersionId,
+      source: `${baseSnapshotSource}
+
+Table public.memberships {
+  id uuid [pk]
+}`,
+      updatedAt: '2026-03-29T12:15:00.000Z'
+    }), {
+      createdAt: '2026-03-29T12:20:00.000Z',
+      name: 'Memberships branch',
+      role: 'implementation'
+    })
+    const stats = getPgmlDocumentVersionStats(branchBDocument)
+
+    expect(stats).toEqual({
+      branchVersionCount: 2,
+      designVersionCount: 2,
+      implementationVersionCount: 1,
+      rootVersionCount: 1,
+      versionCount: 3,
+      workspaceDirty: false
+    })
   })
 
   it('rejects invalid VersionSet documents that reference missing parent or base versions', () => {

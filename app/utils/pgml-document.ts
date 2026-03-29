@@ -102,6 +102,22 @@ export const buildPgmlCheckpointName = (
   return `${roleLabel} checkpoint ${roleVersionCount} · ${normalizedDate}`
 }
 
+export const getPgmlDocumentVersionStats = (
+  document: PgmlVersionSetDocument,
+  includeLayout = true
+) => {
+  return {
+    branchVersionCount: document.versions.filter(version => {
+      return getPgmlChildVersions(document, version.parentVersionId).length > 1
+    }).length,
+    designVersionCount: document.versions.filter(version => version.role === 'design').length,
+    implementationVersionCount: document.versions.filter(version => version.role === 'implementation').length,
+    rootVersionCount: document.versions.filter(version => version.parentVersionId === null).length,
+    versionCount: document.versions.length,
+    workspaceDirty: isPgmlWorkspaceDirty(document, includeLayout)
+  }
+}
+
 const trimQuotedValue = (value: string) => {
   const trimmed = value.trim()
   const doubleQuotedMatch = trimmed.match(/^"(.*)"$/u)
