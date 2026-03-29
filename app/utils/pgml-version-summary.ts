@@ -167,3 +167,7 @@ export const buildPgmlEmptyBaseCompareRelationshipSummary = () => {
 export const buildPgmlWorkspaceBaseCompareRelationshipSummary = (baseLabel: string) => {
   return `Comparing the current workspace against its locked base ${baseLabel}.`
 }
+
+export const buildPgmlWorkspaceCompareRelationshipSummary = (baseLabel: string) => {
+  return `Comparing the current workspace against ${baseLabel}.`
+}

@@ -1,6 +1,7 @@
 import type { ComputedRef, Ref } from 'vue'
 import {
   buildPgmlEmptyBaseCompareRelationshipSummary,
+  buildPgmlWorkspaceCompareRelationshipSummary,
   buildPgmlWorkspaceBaseCompareRelationshipSummary
 } from '~/utils/pgml-version-summary'
 import {
@@ -223,7 +224,7 @@ export const usePgmlStudioVersionHistory = (
         return buildPgmlWorkspaceBaseCompareRelationshipSummary(compareBaseVersion.value.name || compareBaseVersion.value.id)
       }
 
-      return `Comparing the current workspace against ${compareBaseVersion.value.name || compareBaseVersion.value.id}.`
+      return buildPgmlWorkspaceCompareRelationshipSummary(compareBaseVersion.value.name || compareBaseVersion.value.id)
     }
 
     if (!compareBaseVersion.value || !compareTargetVersion.value) {
