@@ -11,6 +11,7 @@ import {
   getPgmlChildVersions,
   getPgmlDescendantVersions,
   getLatestPgmlVersion,
+  getPgmlRootVersions,
   getPgmlNearestCommonAncestor,
   getPgmlVersionById,
   getPgmlVersionDepth,
@@ -641,6 +642,48 @@ Table public.memberships {
 }`)
 
     expect(getLatestPgmlVersion(parsed)?.id).toBe('v2')
+  })
+
+  it('returns all root versions in a branched document', () => {
+    const parsed = parsePgmlDocument(`VersionSet "Billing" {
+  Workspace {
+    based_on: v2
+
+    Snapshot {
+      Table public.users {
+        id uuid [pk]
+      }
+    }
+  }
+
+  Version v1 {
+    name: "Implementation root"
+    role: implementation
+    created_at: "2026-03-29T12:00:00.000Z"
+
+    Snapshot {
+      Table public.users {
+        id uuid [pk]
+      }
+    }
+  }
+
+  Version v2 {
+    name: "Design branch"
+    role: design
+    parent: v1
+    created_at: "2026-03-30T12:00:00.000Z"
+
+    Snapshot {
+      Table public.users {
+        id uuid [pk]
+        email text
+      }
+    }
+  }
+}`)
+
+    expect(getPgmlRootVersions(parsed).map(version => version.id)).toEqual(['v1'])
   })
 
   it('rejects invalid VersionSet documents that reference missing parent or base versions', () => {

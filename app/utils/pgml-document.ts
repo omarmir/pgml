@@ -157,6 +157,10 @@ export const getLatestPgmlVersion = (document: PgmlVersionSetDocument) => {
   })[0] || null
 }
 
+export const getPgmlRootVersions = (document: PgmlVersionSetDocument) => {
+  return document.versions.filter(version => version.parentVersionId === null)
+}
+
 const trimQuotedValue = (value: string) => {
   const trimmed = value.trim()
   const doubleQuotedMatch = trimmed.match(/^"(.*)"$/u)
