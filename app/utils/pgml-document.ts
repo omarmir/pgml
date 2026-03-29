@@ -851,26 +851,31 @@ export const getPgmlDescendantVersionCount = (
   return getPgmlDescendantVersions(document, versionId).length
 }
 
-export const getPgmlBranchVersionCount = (
-  document: PgmlVersionSetDocument,
-  versionId: string | null
-) => {
-  return getPgmlVersionById(document, versionId)
-    ? getPgmlDescendantVersionCount(document, versionId) + 1
-    : 0
-}
-
-export const getPgmlBranchLeafVersionCount = (
+const getPgmlBranchVersions = (
   document: PgmlVersionSetDocument,
   versionId: string | null
 ) => {
   const branchRoot = getPgmlVersionById(document, versionId)
 
   if (!branchRoot) {
-    return 0
+    return [] as PgmlVersionDocumentBlock[]
   }
 
   return [branchRoot, ...getPgmlDescendantVersions(document, versionId)]
+}
+
+export const getPgmlBranchVersionCount = (
+  document: PgmlVersionSetDocument,
+  versionId: string | null
+) => {
+  return getPgmlBranchVersions(document, versionId).length
+}
+
+export const getPgmlBranchLeafVersionCount = (
+  document: PgmlVersionSetDocument,
+  versionId: string | null
+) => {
+  return getPgmlBranchVersions(document, versionId)
     .filter(version => !hasPgmlChildVersions(document, version.id))
     .length
 }
@@ -879,13 +884,14 @@ export const getPgmlBranchMaxDepth = (
   document: PgmlVersionSetDocument,
   versionId: string | null
 ) => {
-  const branchRoot = getPgmlVersionById(document, versionId)
+  const branchVersions = getPgmlBranchVersions(document, versionId)
+  const branchRoot = branchVersions[0]
 
   if (!branchRoot) {
     return 0
   }
 
-  return [branchRoot, ...getPgmlDescendantVersions(document, versionId)]
+  return branchVersions
     .reduce((maxDepth, version) => {
       return Math.max(maxDepth, getPgmlVersionDepth(document, version.id))
     }, getPgmlVersionDepth(document, branchRoot.id))
