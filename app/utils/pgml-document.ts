@@ -722,6 +722,10 @@ export const getPgmlWorkspaceBaseVersion = (document: PgmlVersionSetDocument) =>
   return getPgmlVersionById(document, document.workspace.basedOnVersionId)
 }
 
+export const hasPgmlWorkspaceBaseVersion = (document: PgmlVersionSetDocument) => {
+  return getPgmlWorkspaceBaseVersion(document) !== null
+}
+
 export const getPgmlVersionLineage = (
   document: PgmlVersionSetDocument,
   versionId: string | null

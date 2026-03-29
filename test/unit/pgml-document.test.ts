@@ -50,6 +50,7 @@ import {
   getPgmlSiblingVersionCount,
   hasPgmlSiblingVersions,
   getPgmlWorkspaceBaseVersion,
+  hasPgmlWorkspaceBaseVersion,
   hasPgmlVersions,
   isPgmlWorkspaceDirty,
   normalizePgmlSnapshotSource,
@@ -148,6 +149,7 @@ Table public.memberships {
     expect(workspaceBaseVersion?.id).toBe(document.workspace.basedOnVersionId)
     expect(getPgmlVersionById(document, workspaceBaseVersion?.id || null)?.name).toBe('Initial implementation')
     expect(getPgmlVersionById(document, 'missing-version')).toBeNull()
+    expect(hasPgmlWorkspaceBaseVersion(document)).toBe(true)
     expect(getPgmlVersionCount(document)).toBe(1)
     expect(hasPgmlVersions(document)).toBe(true)
     expect(getPgmlVersionRoleCount(document, 'implementation')).toBe(1)
