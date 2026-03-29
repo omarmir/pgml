@@ -15,3 +15,7 @@ export const buildPgmlRestoreVersionDescription = (hasPendingChanges: boolean) =
     ? 'The current workspace has unsaved changes. Restoring will replace the draft before the next checkpoint.'
     : 'This will replace the current workspace draft and point future changes at the restored base version.'
 }
+
+export const buildPgmlImportDumpDialogDescription = (baseVersionLabel: string) => {
+  return `Paste a text pg_dump or upload a text dump file. PGML will convert the dump into schema objects, replace the current workspace snapshot, and set the workspace to increment from ${baseVersionLabel}.`
+}

@@ -54,6 +54,7 @@ import { buildPgmlVersionMigrationBundle } from '~/utils/pgml-version-migration'
 import {
   buildPgmlCheckpointRoleDescription,
   buildPgmlCheckpointTargetLabel,
+  buildPgmlImportDumpDialogDescription,
   buildPgmlRestoreVersionDescription
 } from '~/utils/pgml-version-copy'
 import {
@@ -751,7 +752,7 @@ const importDumpDialogCopy = computed(() => {
 
   return {
     confirmLabel: 'Replace workspace with import',
-    description: `Paste a text pg_dump or upload a text dump file. PGML will convert the dump into schema objects, replace the current workspace snapshot, and set the workspace to increment from ${baseLabel}.`,
+    description: buildPgmlImportDumpDialogDescription(baseLabel),
     inputDescription: 'Choose exactly one input method. This replaces the current draft workspace but does not create a locked version until you checkpoint it.',
     title: 'Import pg_dump onto a version'
   }
