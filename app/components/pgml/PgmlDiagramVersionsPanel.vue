@@ -72,6 +72,17 @@ const copyState: Ref<'idle' | 'success' | 'error'> = ref('idle')
 const copyButtonClass = joinStudioClasses(studioButtonClasses.secondary, 'text-[0.65rem]')
 const primaryButtonClass = joinStudioClasses(studioButtonClasses.primary, 'text-[0.65rem]')
 const secondaryButtonClass = joinStudioClasses(studioButtonClasses.secondary, 'text-[0.65rem]')
+const getDiffKindClass = (kind: 'added' | 'modified' | 'removed') => {
+  if (kind === 'added') {
+    return 'border-[color:var(--studio-shell-label)] text-[color:var(--studio-shell-text)]'
+  }
+
+  if (kind === 'removed') {
+    return 'border-[color:var(--studio-shell-error)]/50 text-[color:var(--studio-shell-error)]'
+  }
+
+  return 'border-[color:var(--studio-divider)] text-[color:var(--studio-shell-muted)]'
+}
 const compareBaseOption = computed(() => {
   return compareBaseId ? compareOptions.find(option => option.value === compareBaseId) || null : null
 })
@@ -250,6 +261,29 @@ const updateCompareTargetId = (value: unknown) => {
           </div>
           <div class="mt-1 text-[0.8rem] font-semibold text-[color:var(--studio-shell-text)]">
             {{ section.count }}
+          </div>
+          <div class="mt-2 grid gap-1">
+            <div
+              v-for="item in section.items.slice(0, 3)"
+              :key="item.id"
+              class="flex items-start justify-between gap-2 text-[0.62rem]"
+            >
+              <span class="min-w-0 truncate text-[color:var(--studio-shell-text)]">
+                {{ item.label }}
+              </span>
+              <span
+                class="shrink-0 border px-1 py-0.5 font-mono uppercase tracking-[0.08em]"
+                :class="getDiffKindClass(item.kind)"
+              >
+                {{ item.kind }}
+              </span>
+            </div>
+            <div
+              v-if="section.items.length > 3"
+              class="text-[0.6rem] text-[color:var(--studio-shell-muted)]"
+            >
+              +{{ section.items.length - 3 }} more
+            </div>
           </div>
         </div>
         <div class="border border-[color:var(--studio-divider)] bg-[color:var(--studio-input-bg)] px-2 py-2">
