@@ -57,6 +57,9 @@ export type PgmlSchemaDiff = {
   triggers: PgmlDiffEntry<PgmlTrigger>[]
 }
 
+// We compare normalized objects via stable JSON so different field ordering does
+// not create false-positive diffs. That keeps formatting noise out of compare
+// views and migration planning.
 const toStableJson = (value: unknown): string => {
   if (Array.isArray(value)) {
     return `[${value.map(entry => toStableJson(entry)).join(',')}]`
@@ -114,6 +117,15 @@ const buildChangedFields = (beforeValue: unknown, afterValue: unknown) => {
 
   return fieldNames.filter((fieldName) => {
     return toStableJson(beforeRecord[fieldName]) !== toStableJson(afterRecord[fieldName])
+  })
+}
+
+const buildSortedDiffIds = <T>(
+  beforeValues: Map<string, T>,
+  afterValues: Map<string, T>
+) => {
+  return Array.from(new Set([...beforeValues.keys(), ...afterValues.keys()])).sort((left, right) => {
+    return left.localeCompare(right)
   })
 }
 
@@ -273,9 +285,7 @@ const buildDiffEntries = <T>(
   buildLabel: (id: string, value: T) => string,
   normalizeValue: (value: T) => unknown
 ) => {
-  const ids = Array.from(new Set([...beforeValues.keys(), ...afterValues.keys()])).sort((left, right) => {
-    return left.localeCompare(right)
-  })
+  const ids = buildSortedDiffIds(beforeValues, afterValues)
 
   return ids.reduce<PgmlDiffEntry<T>[]>((entries, id) => {
     const beforeValue = beforeValues.get(id) || null
