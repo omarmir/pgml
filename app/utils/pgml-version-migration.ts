@@ -276,6 +276,26 @@ const buildResolvedVersionMigrationSteps = (
   return resolvedSteps
 }
 
+const buildFallbackMigrationWarnings = (
+  planWarnings: string[],
+  input: {
+    hasSelectedBase: boolean
+    historyWarning?: string | null
+  }
+) => {
+  const warnings = [...planWarnings]
+
+  if (!input.hasSelectedBase) {
+    warnings.unshift('No base version is selected. The migration is being generated from an empty schema.')
+  }
+
+  if (input.historyWarning) {
+    warnings.unshift(input.historyWarning)
+  }
+
+  return warnings
+}
+
 const buildFallbackVersionMigrationBundle = (
   input: {
     baseSource: string
@@ -291,15 +311,10 @@ const buildFallbackVersionMigrationBundle = (
     parsePgml(input.baseSource),
     parsePgml(input.targetSource)
   )
-  const warnings = [...plan.warnings]
-
-  if (!input.hasSelectedBase) {
-    warnings.unshift('No base version is selected. The migration is being generated from an empty schema.')
-  }
-
-  if (options.historyWarning) {
-    warnings.unshift(options.historyWarning)
-  }
+  const warnings = buildFallbackMigrationWarnings(plan.warnings, {
+    hasSelectedBase: input.hasSelectedBase,
+    historyWarning: options.historyWarning
+  })
 
   const artifactBundle = buildPgmlMigrationArtifactsFromPlan({
     statements: plan.statements,
