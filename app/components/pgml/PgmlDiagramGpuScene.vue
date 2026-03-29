@@ -364,6 +364,13 @@ const withAlpha = (value: string, alpha: number) => {
   })
 }
 
+const getReadableTextColor = (background: string) => {
+  const color = parseColor(background)
+  const brightness = (color.r * 299 + color.g * 587 + color.b * 114) / 1000
+
+  return brightness >= 156 ? '#0f172a' : '#f8fafc'
+}
+
 const readCssColorVariable = (name: string, fallback: string) => {
   if (!import.meta.client) {
     return fallback
@@ -647,15 +654,20 @@ const drawHeaderChip = (
   y: number,
   width: number,
   label: string,
-  font = fontMonoSmall
+  font = fontMonoSmall,
+  colors: {
+    fill?: string
+    stroke?: string
+    text?: string
+  } = {}
 ) => {
-  context.fillStyle = 'rgba(255, 255, 255, 0.014)'
-  context.strokeStyle = 'rgba(255, 255, 255, 0.05)'
+  context.fillStyle = colors.fill || 'rgba(255, 255, 255, 0.014)'
+  context.strokeStyle = colors.stroke || 'rgba(255, 255, 255, 0.05)'
   context.lineWidth = 1
   context.strokeRect(x, y, width, 17)
   context.fillRect(x, y, width, 17)
   context.font = font
-  context.fillStyle = sceneTheme.muted
+  context.fillStyle = colors.text || sceneTheme.muted
   context.textBaseline = 'top'
   context.fillText(label, x + 6, y + 4.5)
 }
@@ -881,28 +893,22 @@ const buildTableCanvas = (card: DiagramGpuTableCard, resolution: number) => {
   const borderColor = getNodeBorderColor(card.color, 'table')
   const backgroundColor = isGroupedTable
     ? sceneTheme.tableSurface
-    : mixColors(card.color, sceneTheme.tableSurface, 0.06)
-  const headerBaseColor = isGroupedTable
-    ? sceneTheme.tableSurface
-    : mixColors(sceneTheme.surface, sceneTheme.tableSurface, 0.52)
-  const headerMidColor = isGroupedTable
-    ? withAlpha(card.color, 0.04)
-    : withAlpha(card.color, 0.1)
-  const headerTopColor = isGroupedTable
-    ? withAlpha(card.color, 0.08)
-    : withAlpha(card.color, 0.2)
-  const headerBottomColor = isGroupedTable
-    ? withAlpha(card.color, 0.015)
-    : withAlpha(card.color, 0.05)
-  const headerFinalColor = isGroupedTable ? 'rgba(0, 0, 0, 0)' : headerBottomColor
+    : mixColors(card.color, sceneTheme.tableSurface, 0.08)
   const dividerColor = sceneTheme.divider
   const rowSelectedColor = withAlpha(card.color, 0.16)
   const shellTextColor = sceneTheme.shellText
+  const headerFillColor = isGroupedTable
+    ? sceneTheme.tableSurface
+    : compositeColors(withAlpha(card.color, 0.2), sceneTheme.tableSurface)
+  const headerTextColor = isGroupedTable ? shellTextColor : getReadableTextColor(headerFillColor)
+  const headerMetaColor = isGroupedTable ? accentColor : withAlpha(headerTextColor, 0.82)
+  const headerChipColors = isGroupedTable ? undefined : {
+    fill: withAlpha(headerTextColor, 0.08),
+    stroke: withAlpha(headerTextColor, 0.22),
+    text: withAlpha(headerTextColor, 0.82)
+  }
   const mutedTextColor = sceneTheme.muted
-  const shellInsetX = isGroupedTable ? 0 : 0.5
-  const shellInsetY = isGroupedTable ? 0 : 0.5
-  const shellWidth = isGroupedTable ? card.width : card.width - 1
-  const shellHeight = isGroupedTable ? card.height : card.height - 1
+  const shellStrokeColor = isGroupedTable ? dividerColor : borderColor
   const shellClipInset = isGroupedTable ? 0 : 1
   const shellClipWidth = isGroupedTable ? card.width : card.width - 2
   const shellClipHeight = isGroupedTable ? card.height : card.height - 2
@@ -925,29 +931,21 @@ const buildTableCanvas = (card: DiagramGpuTableCard, resolution: number) => {
     context.clip()
   }
 
-  context.fillStyle = headerBaseColor
-  context.fillRect(1, 1, Math.max(0, card.width - 2), Math.max(0, card.headerHeight - 1))
-  const headerGradient = context.createLinearGradient(0, 0, 0, card.headerHeight)
-  headerGradient.addColorStop(0, headerTopColor)
-  headerGradient.addColorStop(isGroupedTable ? 0.2 : 0.64, headerMidColor)
-  headerGradient.addColorStop(isGroupedTable ? 0.48 : 1, headerBottomColor)
-  headerGradient.addColorStop(1, headerFinalColor)
-  context.fillStyle = headerGradient
+  context.fillStyle = headerFillColor
   context.fillRect(1, 1, Math.max(0, card.width - 2), Math.max(0, card.headerHeight - 1))
 
-  context.strokeStyle = dividerColor
-  context.beginPath()
-  context.moveTo(1, card.headerHeight + 0.5)
-  context.lineTo(card.width - 1, card.headerHeight + 0.5)
-  context.stroke()
+  if (card.rows.length > 1) {
+    context.fillStyle = dividerColor
+    context.fillRect(1, card.headerHeight, Math.max(0, card.width - 2), Math.max(0, card.height - card.headerHeight - 1))
+  }
 
   context.font = fontMonoSmallRegular
-  context.fillStyle = accentColor
+  context.fillStyle = headerMetaColor
   context.textBaseline = 'top'
   context.fillText('TABLE', 10, 8)
 
   context.font = fontSansTitle
-  context.fillStyle = shellTextColor
+  context.fillStyle = headerTextColor
   const rowCountLabel = `${card.rows.length} ROWS`
   context.font = fontMonoSmall
   const rowCountWidth = Math.max(52, context.measureText(rowCountLabel).width + 12)
@@ -955,14 +953,14 @@ const buildTableCanvas = (card: DiagramGpuTableCard, resolution: number) => {
   context.fillText(fitText(context, card.title, card.width - 20), 10, 29)
 
   context.font = fontMonoSmall
-  drawHeaderChip(context, card.width - rowCountWidth - 10, 8, rowCountWidth, rowCountLabel)
+  drawHeaderChip(context, card.width - rowCountWidth - 10, 8, rowCountWidth, rowCountLabel, fontMonoSmall, headerChipColors)
 
   drawBadge(
     context,
     card.schema,
     getDiagramSchemaBadgeColor(card.schema),
     10,
-    card.headerHeight - 13,
+    card.headerHeight - 19,
     Math.min(78, card.width - 20)
   )
 
@@ -974,24 +972,17 @@ const buildTableCanvas = (card: DiagramGpuTableCard, resolution: number) => {
     const rowBackground = row.kind === 'attachment' && row.accentColor
       ? mixColors(row.accentColor, sceneTheme.rowSurface, 0.08)
       : (row.highlightColor ? mixColors(row.highlightColor, sceneTheme.rowSurface, 0.12) : sceneTheme.rowSurface)
+    const rowFillHeight = index < card.rows.length - 1 ? diagramTableRowHeight - 1 : diagramTableRowHeight
 
     context.fillStyle = rowSelected ? rowSelectedColor : rowBackground
-    context.fillRect(1, rowY, Math.max(0, card.width - 2), diagramTableRowHeight)
+    context.fillRect(1, rowY, Math.max(0, card.width - 2), rowFillHeight)
 
     if (row.kind === 'attachment' && row.accentColor) {
       context.fillStyle = withAlpha(row.accentColor, 0.58)
-      context.fillRect(1, rowY, 3, diagramTableRowHeight)
+      context.fillRect(1, rowY, 3, rowFillHeight)
     } else if (row.highlightColor) {
       context.fillStyle = withAlpha(row.highlightColor, 0.62)
-      context.fillRect(1, rowY, 3, diagramTableRowHeight)
-    }
-
-    if (index < card.rows.length - 1) {
-      context.strokeStyle = dividerColor
-      context.beginPath()
-      context.moveTo(1, rowY + diagramTableRowHeight + 0.5)
-      context.lineTo(card.width - 1, rowY + diagramTableRowHeight + 0.5)
-      context.stroke()
+      context.fillRect(1, rowY, 3, rowFillHeight)
     }
 
     const badgeGap = 4
@@ -1036,18 +1027,22 @@ const buildTableCanvas = (card: DiagramGpuTableCard, resolution: number) => {
     rowY += diagramTableRowHeight
   })
 
+  context.strokeStyle = dividerColor
+  context.beginPath()
+  context.moveTo(1, card.headerHeight + 0.5)
+  context.lineTo(card.width - 1, card.headerHeight + 0.5)
+  context.stroke()
+
   context.restore()
 
-  if (selectionKey.startsWith('selected') || !isGroupedTable) {
-    context.strokeStyle = selectionKey.startsWith('selected') ? accentColor : borderColor
-    context.lineWidth = selectionKey.startsWith('selected') ? 1.5 : 1
+  context.strokeStyle = selectionKey.startsWith('selected') ? accentColor : shellStrokeColor
+  context.lineWidth = selectionKey.startsWith('selected') ? 1.5 : 1
 
-    if (isGroupedTable) {
-      context.strokeRect(shellInsetX, shellInsetY, shellWidth, shellHeight)
-    } else {
-      roundRect(context, 0.5, 0.5, card.width - 1, card.height - 1, 2.5)
-      context.stroke()
-    }
+  if (isGroupedTable) {
+    context.strokeRect(0.5, 0.5, card.width - 1, card.height - 1)
+  } else {
+    roundRect(context, 0.5, 0.5, card.width - 1, card.height - 1, 2.5)
+    context.stroke()
   }
 
   return canvas

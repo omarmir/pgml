@@ -6,6 +6,10 @@ describe('diagram GPU shell entities source', () => {
     const shellFile = readSourceFile('app/components/pgml/PgmlDiagramCanvasGpuShell.vue')
 
     expect(shellFile).toContain('const entitySearchQuery: Ref<string> = ref(\'\')')
+    expect(shellFile).toContain('const browserItemActionButtonBaseClass = \'inline-flex shrink-0 items-center justify-center px-2 leading-none\'')
+    expect(shellFile).toContain('const browserItemActionRailClass = \'grid w-[3.5rem] shrink-0 content-start justify-items-stretch gap-1\'')
+    expect(shellFile).toContain('const browserItemRowGridClass = \'grid grid-cols-[minmax(0,1fr)_3.5rem] items-start gap-2\'')
+    expect(shellFile).toContain('const browserItemCompactRowGridClass = \'grid grid-cols-[minmax(0,1fr)_6.25rem] items-start gap-2\'')
     expect(shellFile).toContain('const buildBrowserTableItem = (table: PgmlSchemaModel[\'tables\'][number]): EntityBrowserItem => {')
     expect(shellFile).toContain('const filteredGroupedBrowserItems = computed(() => {')
     expect(shellFile).toContain('const toggleBrowserItemVisibility = (item: EntityBrowserItem) => {')
@@ -13,6 +17,7 @@ describe('diagram GPU shell entities source', () => {
     expect(shellFile).toContain('data-entity-search="true"')
     expect(shellFile).toContain('data-browser-entity-row="groupItem.id"')
     expect(shellFile).toContain('data-browser-visibility-toggle="tableItem.id"')
+    expect(shellFile).toContain('class="break-words text-[0.72rem] font-medium leading-5"')
     expect(shellFile).toContain('Standalone Objects')
     expect(shellFile).toContain('No entities match the current search.')
     expect(shellFile).toContain('.pgml-browser-search-match-row')

@@ -51,6 +51,35 @@ test('entities header can restore all hidden rows', async ({ goto, page }) => {
   await expect(page.locator('[data-browser-visibility-toggle="public.users"]')).toContainText('Hide')
 })
 
+test('entities rows keep a fixed action rail so button sizing stays consistent', async ({ goto, page }) => {
+  await goto('/diagram')
+  await page.locator('[data-diagram-panel-tab="entities"]').click()
+
+  const row = page.locator('[data-browser-entity-row="public.users"]')
+  const labelButton = row.locator('button').first()
+  const focusButton = row.locator('[data-browser-focus-source="public.users"]')
+  const visibilityButton = row.locator('[data-browser-visibility-toggle="public.users"]')
+
+  const [labelBox, focusBox, visibilityBox] = await Promise.all([
+    labelButton.boundingBox(),
+    focusButton.boundingBox(),
+    visibilityButton.boundingBox()
+  ])
+
+  expect(labelBox).not.toBeNull()
+  expect(focusBox).not.toBeNull()
+  expect(visibilityBox).not.toBeNull()
+
+  if (!labelBox || !focusBox || !visibilityBox) {
+    throw new Error('Expected entities row action layout to be measurable.')
+  }
+
+  expect(Math.abs(focusBox.height - visibilityBox.height)).toBeLessThanOrEqual(1)
+  expect(Math.abs(focusBox.width - visibilityBox.width)).toBeLessThanOrEqual(1)
+  expect(Math.abs(focusBox.x - visibilityBox.x)).toBeLessThanOrEqual(1)
+  expect(labelBox.x + labelBox.width).toBeLessThanOrEqual(focusBox.x + 1)
+})
+
 test('entities empty state can clear a search with no matches', async ({ goto, page }) => {
   await goto('/diagram')
   await page.locator('[data-diagram-panel-tab="entities"]').click()

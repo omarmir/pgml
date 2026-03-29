@@ -252,7 +252,18 @@ const sidePanelActionButtonClass = joinStudioClasses(studioButtonClasses.seconda
 const sidePanelCloseButtonClass = joinStudioClasses(studioButtonClasses.iconGhost, 'h-7 w-7 justify-center px-0')
 const detailPopoverKindBadgeClass = 'inline-flex items-center border px-1.5 font-mono text-[0.56rem] uppercase tracking-[0.08em]'
 const detailPopoverFlagBadgeClass = 'inline-flex items-center border px-1.5 py-0.5 font-mono text-[0.54rem] uppercase tracking-[0.06em]'
-const browserItemActionButtonClass = 'inline-flex h-7 min-w-[2rem] items-center justify-center border px-2 font-mono text-[0.54rem] uppercase tracking-[0.08em] text-[color:var(--studio-shell-text)] transition-colors duration-150 hover:bg-[color:var(--studio-surface-hover)] disabled:cursor-default disabled:text-[color:var(--studio-shell-muted)]'
+const browserItemActionButtonBaseClass = 'inline-flex shrink-0 items-center justify-center px-2 leading-none'
+const browserItemActionButtonClass = getStudioStateButtonClass({
+  extraClass: joinStudioClasses(browserItemActionButtonBaseClass, 'h-7 min-w-[3.5rem]')
+})
+const browserItemCompactActionButtonClass = getStudioStateButtonClass({
+  compact: true,
+  extraClass: joinStudioClasses(browserItemActionButtonBaseClass, 'h-6 min-w-[3rem]')
+})
+const browserItemActionRailClass = 'grid w-[3.5rem] shrink-0 content-start justify-items-stretch gap-1'
+const browserItemCompactActionRailClass = 'flex w-[6.25rem] shrink-0 flex-wrap items-start justify-end gap-1'
+const browserItemRowGridClass = 'grid grid-cols-[minmax(0,1fr)_3.5rem] items-start gap-2'
+const browserItemCompactRowGridClass = 'grid grid-cols-[minmax(0,1fr)_6.25rem] items-start gap-2'
 const tableWidthScaleItems = pgmlTableWidthScaleValues.map((value) => {
   return {
     label: `${value}x`,
@@ -2401,7 +2412,10 @@ const getBrowserItemVisibilityButtonClass = (item: EntityBrowserItem, compact = 
     compact,
     disabled: isBrowserItemHiddenByAncestor(item),
     emphasized: !isBrowserItemDirectlyVisible(item),
-    extraClass: 'shrink-0'
+    extraClass: joinStudioClasses(
+      browserItemActionButtonBaseClass,
+      compact ? 'h-6 min-w-[3rem]' : 'h-7 min-w-[3.5rem]'
+    )
   })
 }
 
@@ -2992,7 +3006,6 @@ const buildExportSvg = () => {
   tableCards.value.forEach((card) => {
     parts.push(
       `<rect x="${card.x + offsetX}" y="${card.y + offsetY}" width="${card.width}" height="${card.height}" rx="2" ry="2" ${buildSvgPaintAttributes('fill', exportTheme.tableSurface, diagramTableSurfaceColor)} stroke="${card.color}" stroke-opacity="0.48" />`,
-      `<line x1="${card.x + offsetX}" y1="${card.y + offsetY + card.headerHeight}" x2="${card.x + offsetX + card.width}" y2="${card.y + offsetY + card.headerHeight}" ${buildSvgPaintAttributes('stroke', exportTheme.divider, diagramDividerColor)} />`,
       `<text x="${card.x + offsetX + 10}" y="${card.y + offsetY + 16}" fill="${card.color}" font-size="8" font-family="ui-monospace, monospace">TABLE</text>`,
       `<text x="${card.x + offsetX + card.width - 10}" y="${card.y + offsetY + 16}" ${buildSvgPaintAttributes('fill', exportTheme.muted, diagramMutedTextColor)} font-size="8" text-anchor="end" font-family="ui-monospace, monospace">${card.rows.length} ROWS</text>`,
       `<text x="${card.x + offsetX + 10}" y="${card.y + offsetY + 42}" ${buildSvgPaintAttributes('fill', exportTheme.shellText, diagramTextColor)} font-size="14" font-weight="600" font-family="ui-sans-serif, system-ui">${escapeXml(card.title)}</text>`
@@ -3006,7 +3019,17 @@ const buildExportSvg = () => {
         `<text x="${card.x + offsetX + 10}" y="${rowY + 14}" ${buildSvgPaintAttributes('fill', exportTheme.shellText, diagramTextColor)} font-size="9" font-family="ui-monospace, monospace">${escapeXml(row.title)}</text>`,
         `<text x="${card.x + offsetX + 10}" y="${rowY + 25}" ${buildSvgPaintAttributes('fill', exportTheme.muted, diagramMutedTextColor)} font-size="8" font-family="ui-sans-serif, system-ui">${escapeXml(row.subtitle)}</text>`
       )
+
+      if (index < card.rows.length - 1) {
+        parts.push(
+          `<line x1="${card.x + offsetX}" y1="${rowY + diagramTableRowHeight}" x2="${card.x + offsetX + card.width}" y2="${rowY + diagramTableRowHeight}" ${buildSvgPaintAttributes('stroke', exportTheme.divider, diagramDividerColor)} />`
+        )
+      }
     })
+
+    parts.push(
+      `<line x1="${card.x + offsetX}" y1="${card.y + offsetY + card.headerHeight}" x2="${card.x + offsetX + card.width}" y2="${card.y + offsetY + card.headerHeight}" ${buildSvgPaintAttributes('stroke', exportTheme.divider, diagramDividerColor)} />`
+    )
   })
 
   objectNodes.value.forEach((node) => {
@@ -3646,6 +3669,7 @@ defineExpose<{
               color="neutral"
               variant="outline"
               size="xs"
+              :class="sidePanelActionButtonClass"
               @click="emit('createTable', selectedGroup.title)"
             />
             <UButton
@@ -3654,6 +3678,7 @@ defineExpose<{
               color="neutral"
               variant="outline"
               size="xs"
+              :class="sidePanelActionButtonClass"
               @click="emit('editGroup', selectedGroup.title)"
             />
             <UButton
@@ -3663,6 +3688,7 @@ defineExpose<{
               color="neutral"
               variant="outline"
               size="xs"
+              :class="sidePanelActionButtonClass"
               @click="focusSourceRange(groupSourceRangeById[selectedGroup.id])"
             />
           </div>
@@ -3693,6 +3719,7 @@ defineExpose<{
             color="neutral"
             variant="outline"
             size="xs"
+            :class="sidePanelActionButtonClass"
             @click="focusSourceRange(selectedTable.sourceRange)"
           />
         </div>
@@ -3725,6 +3752,7 @@ defineExpose<{
             color="neutral"
             variant="outline"
             size="xs"
+            :class="sidePanelActionButtonClass"
             @click="focusSourceRange(selectedAttachment.sourceRange)"
           />
         </div>
@@ -3761,6 +3789,7 @@ defineExpose<{
               color="neutral"
               variant="outline"
               size="xs"
+              :class="sidePanelActionButtonClass"
               @click="emit('editTable', selectedTable.id)"
             />
             <UButton
@@ -3770,6 +3799,7 @@ defineExpose<{
               color="neutral"
               variant="outline"
               size="xs"
+              :class="sidePanelActionButtonClass"
               @click="focusSourceRange(selectedTable.sourceRange)"
             />
           </div>
@@ -3803,6 +3833,7 @@ defineExpose<{
             color="neutral"
             variant="outline"
             size="xs"
+            :class="sidePanelActionButtonClass"
             @click="focusSourceRange(selectedObject.sourceRange)"
           />
         </div>
@@ -3854,6 +3885,7 @@ defineExpose<{
               color="neutral"
               variant="outline"
               size="xs"
+              :class="sidePanelActionButtonClass"
               @click="activePanelTab = 'entities'"
             />
             <UButton
@@ -3863,6 +3895,7 @@ defineExpose<{
               color="neutral"
               variant="outline"
               size="xs"
+              :class="sidePanelActionButtonClass"
               @click="sceneRef?.resetView()"
             />
           </div>
@@ -3943,7 +3976,7 @@ defineExpose<{
                 isBrowserItemSelected(groupItem) ? 'border-[color:var(--studio-ring)] bg-[color:var(--studio-input-bg)]' : 'border-[color:var(--studio-divider)] bg-[color:var(--studio-control-bg)]'
               ]"
             >
-              <div class="grid grid-cols-[minmax(0,1fr)_auto] items-start gap-2">
+              <div :class="browserItemRowGridClass">
                 <button
                   type="button"
                   class="min-w-0 flex-1 text-left"
@@ -3960,12 +3993,12 @@ defineExpose<{
                       {{ groupItem.label }}
                     </span>
                   </div>
-                  <div class="text-[0.64rem] text-[color:var(--studio-shell-muted)]">
+                  <div class="break-words text-[0.64rem] text-[color:var(--studio-shell-muted)]">
                     {{ groupItem.subtitle }}
                   </div>
                 </button>
 
-                <div class="grid shrink-0 content-start gap-1">
+                <div :class="browserItemActionRailClass">
                   <button
                     v-if="groupItem.sourceRange"
                     type="button"
@@ -4015,7 +4048,7 @@ defineExpose<{
                     isBrowserItemSearchMatch(tableItem) ? 'pgml-browser-search-match-row' : ''
                   ]"
                 >
-                  <div class="grid grid-cols-[minmax(0,1fr)_auto] items-start gap-2">
+                  <div :class="browserItemRowGridClass">
                     <button
                       type="button"
                       class="min-w-0 flex-1 text-left"
@@ -4037,7 +4070,7 @@ defineExpose<{
                       </div>
                     </button>
 
-                    <div class="grid shrink-0 content-start gap-1">
+                    <div :class="browserItemActionRailClass">
                       <button
                         v-if="tableItem.sourceRange"
                         type="button"
@@ -4076,7 +4109,8 @@ defineExpose<{
                       :data-browser-search-match="isBrowserItemSearchMatch(childItem) ? 'true' : undefined"
                       :style="getBrowserItemSearchMatchStyle(childItem)"
                       :class="[
-                        'grid grid-cols-[minmax(0,1fr)_auto] items-center gap-2 border-l border-[color:var(--studio-divider)] pl-3 py-0.5',
+                        'grid border-l border-[color:var(--studio-divider)] pl-3 py-0.5',
+                        browserItemCompactRowGridClass,
                         isBrowserItemSearchMatch(childItem) ? 'pgml-browser-search-match-row' : ''
                       ]"
                     >
@@ -4103,12 +4137,12 @@ defineExpose<{
                         </span>
                       </button>
 
-                      <div class="flex items-center gap-1">
+                      <div :class="browserItemCompactActionRailClass">
                         <button
                           v-if="childItem.sourceRange"
                           type="button"
                           :data-browser-focus-source="childItem.id"
-                          :class="browserItemActionButtonClass"
+                          :class="browserItemCompactActionButtonClass"
                           :aria-label="getBrowserItemFocusSourceLabel(childItem)"
                           :title="getBrowserItemFocusSourceLabel(childItem)"
                           @click="focusBrowserItemSource(childItem)"
@@ -4160,7 +4194,7 @@ defineExpose<{
                 isBrowserItemSelected(tableItem) ? 'border-[color:var(--studio-ring)] bg-[color:var(--studio-input-bg)]' : 'border-[color:var(--studio-divider)] bg-[color:var(--studio-control-bg)]'
               ]"
             >
-              <div class="grid grid-cols-[minmax(0,1fr)_auto] items-start gap-2">
+              <div :class="browserItemRowGridClass">
                 <button
                   type="button"
                   class="min-w-0 flex-1 text-left"
@@ -4182,7 +4216,7 @@ defineExpose<{
                   </div>
                 </button>
 
-                <div class="grid shrink-0 content-start gap-1">
+                <div :class="browserItemActionRailClass">
                   <button
                     v-if="tableItem.sourceRange"
                     type="button"
@@ -4220,7 +4254,8 @@ defineExpose<{
                   :data-browser-search-match="isBrowserItemSearchMatch(childItem) ? 'true' : undefined"
                   :style="getBrowserItemSearchMatchStyle(childItem)"
                   :class="[
-                    'grid grid-cols-[minmax(0,1fr)_auto] items-center gap-2 border-l border-[color:var(--studio-divider)] pl-3 py-0.5',
+                    'grid border-l border-[color:var(--studio-divider)] pl-3 py-0.5',
+                    browserItemCompactRowGridClass,
                     isBrowserItemSearchMatch(childItem) ? 'pgml-browser-search-match-row' : ''
                   ]"
                 >
@@ -4247,12 +4282,12 @@ defineExpose<{
                     </span>
                   </button>
 
-                  <div class="flex items-center gap-1">
+                  <div :class="browserItemCompactActionRailClass">
                     <button
                       v-if="childItem.sourceRange"
                       type="button"
                       :data-browser-focus-source="childItem.id"
-                      :class="browserItemActionButtonClass"
+                      :class="browserItemCompactActionButtonClass"
                       :aria-label="getBrowserItemFocusSourceLabel(childItem)"
                       :title="getBrowserItemFocusSourceLabel(childItem)"
                       @click="focusBrowserItemSource(childItem)"
@@ -4296,7 +4331,8 @@ defineExpose<{
               :data-browser-search-match="isBrowserItemSearchMatch(item) ? 'true' : undefined"
               :style="getBrowserItemSearchMatchStyle(item)"
               :class="[
-                'flex items-start justify-between gap-2 border px-2 py-2 transition-colors duration-150',
+                'grid border px-2 py-2 transition-colors duration-150',
+                browserItemRowGridClass,
                 isBrowserItemSearchMatch(item) ? 'pgml-browser-search-match-row' : '',
                 isBrowserItemSelected(item) ? 'border-[color:var(--studio-ring)] bg-[color:var(--studio-input-bg)]' : 'border-[color:var(--studio-divider)] bg-[color:var(--studio-control-bg)]'
               ]"
@@ -4313,7 +4349,7 @@ defineExpose<{
                   </span>
                 </div>
                 <div
-                  class="truncate text-[0.72rem] font-medium"
+                  class="break-words text-[0.72rem] font-medium leading-5"
                   :class="isBrowserItemEffectivelyVisible(item) ? 'text-[color:var(--studio-shell-text)]' : 'text-[color:var(--studio-shell-muted)]'"
                 >
                   <span :class="isBrowserItemSearchMatch(item) ? 'pgml-browser-search-match-text' : ''">
@@ -4328,7 +4364,7 @@ defineExpose<{
                 </div>
               </button>
 
-              <div class="grid shrink-0 content-start gap-1">
+              <div :class="browserItemActionRailClass">
                 <button
                   v-if="item.sourceRange"
                   type="button"
