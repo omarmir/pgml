@@ -2174,6 +2174,55 @@ const analyzeVersionSetBlock = (
   versionBlocks.forEach(versionBlock => analyzeVersionBlock(versionBlock, diagnostics, contexts, analysisState))
 }
 
+const analyzeVersionedDocumentBlocks = (
+  blocks: PgmlRawBlock[],
+  topLevelLines: PgmlLineInfo[],
+  diagnostics: PgmlLanguageDiagnostic[],
+  contexts: PgmlContextRange[],
+  analysisState: PgmlAnalysisState
+) => {
+  topLevelLines.forEach((line) => {
+    createDiagnostic(
+      diagnostics,
+      'pgml/versioned-top-level-entry',
+      'error',
+      'Versioned PGML only allows VersionSet at the top level.',
+      line
+    )
+  })
+
+  if (blocks.length !== 1 || blocks[0]?.kind !== 'VersionSet') {
+    blocks.forEach((block) => {
+      if (block.kind !== 'VersionSet') {
+        createDiagnostic(
+          diagnostics,
+          'pgml/versioned-root-block-kind',
+          'error',
+          'Versioned PGML only allows VersionSet at the top level.',
+          block.headerLine
+        )
+      }
+    })
+  }
+
+  blocks.forEach((block) => {
+    if (block.kind === 'VersionSet') {
+      analyzeVersionSetBlock(block, diagnostics, contexts, analysisState)
+      return
+    }
+
+    if (block.kind === 'Unknown') {
+      createDiagnostic(
+        diagnostics,
+        'pgml/block-kind',
+        'error',
+        'Unsupported block header.',
+        block.headerLine
+      )
+    }
+  })
+}
+
 export const analyzePgmlDocument = (source: string) => {
   if (analysisCache && analysisCache.source === source) {
     return analysisCache.analysis
@@ -2212,46 +2261,7 @@ export const analyzePgmlDocument = (source: string) => {
   if (isVersionedDocument) {
     // Versioned documents are parsed from the root downward so invalid root
     // siblings can be flagged before nested Snapshot blocks reuse schema rules.
-    topLevelLines.forEach((line) => {
-      createDiagnostic(
-        diagnostics,
-        'pgml/versioned-top-level-entry',
-        'error',
-        'Versioned PGML only allows VersionSet at the top level.',
-        line
-      )
-    })
-
-    if (blocks.length !== 1 || blocks[0]?.kind !== 'VersionSet') {
-      blocks.forEach((block) => {
-        if (block.kind !== 'VersionSet') {
-          createDiagnostic(
-            diagnostics,
-            'pgml/versioned-root-block-kind',
-            'error',
-            'Versioned PGML only allows VersionSet at the top level.',
-            block.headerLine
-          )
-        }
-      })
-    }
-
-    blocks.forEach((block) => {
-      if (block.kind === 'VersionSet') {
-        analyzeVersionSetBlock(block, diagnostics, contexts, analysisState)
-        return
-      }
-
-      if (block.kind === 'Unknown') {
-        createDiagnostic(
-          diagnostics,
-          'pgml/block-kind',
-          'error',
-          'Unsupported block header.',
-          block.headerLine
-        )
-      }
-    })
+    analyzeVersionedDocumentBlocks(blocks, topLevelLines, diagnostics, contexts, analysisState)
   } else {
     analyzeSnapshotBlocks(blocks, topLevelLines, diagnostics, contexts, analysisState)
   }
