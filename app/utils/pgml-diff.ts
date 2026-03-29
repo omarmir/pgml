@@ -74,6 +74,25 @@ const toStableJson = (value: unknown): string => {
   return JSON.stringify(value)
 }
 
+const sortStringValues = (values: string[]) => {
+  return [...values].sort((left, right) => left.localeCompare(right))
+}
+
+const sortKeyValueEntries = (
+  entries: Array<{
+    key: string
+    value: string
+  }>
+) => {
+  return [...entries].sort((left, right) => {
+    if (left.key !== right.key) {
+      return left.key.localeCompare(right.key)
+    }
+
+    return left.value.localeCompare(right.value)
+  })
+}
+
 const buildChangedFields = (beforeValue: unknown, afterValue: unknown) => {
   if (
     beforeValue === null
@@ -130,20 +149,12 @@ const normalizeMetadataEntries = (
     value: string
   }>
 ) => {
-  return [...entries]
-    .map((entry) => {
-      return {
-        key: entry.key,
-        value: entry.value
-      }
-    })
-    .sort((left, right) => {
-      if (left.key !== right.key) {
-        return left.key.localeCompare(right.key)
-      }
-
-      return left.value.localeCompare(right.value)
-    })
+  return sortKeyValueEntries(entries.map((entry) => {
+    return {
+      key: entry.key,
+      value: entry.value
+    }
+  }))
 }
 
 const normalizeDocumentationValue = (
@@ -154,13 +165,7 @@ const normalizeDocumentationValue = (
   }
 
   return {
-    entries: [...documentation.entries].sort((left, right) => {
-      if (left.key !== right.key) {
-        return left.key.localeCompare(right.key)
-      }
-
-      return left.value.localeCompare(right.value)
-    }),
+    entries: sortKeyValueEntries(documentation.entries),
     summary: documentation.summary
   }
 }
@@ -171,19 +176,19 @@ const normalizeAffectsValue = (affects: PgmlRoutine['affects'] | PgmlTrigger['af
   }
 
   return {
-    calls: [...affects.calls].sort((left, right) => left.localeCompare(right)),
-    dependsOn: [...affects.dependsOn].sort((left, right) => left.localeCompare(right)),
+    calls: sortStringValues(affects.calls),
+    dependsOn: sortStringValues(affects.dependsOn),
     extras: [...affects.extras].map((entry) => {
       return {
         key: entry.key,
-        values: [...entry.values].sort((left, right) => left.localeCompare(right))
+        values: sortStringValues(entry.values)
       }
     }).sort((left, right) => left.key.localeCompare(right.key)),
-    ownedBy: [...affects.ownedBy].sort((left, right) => left.localeCompare(right)),
-    reads: [...affects.reads].sort((left, right) => left.localeCompare(right)),
-    sets: [...affects.sets].sort((left, right) => left.localeCompare(right)),
-    uses: [...affects.uses].sort((left, right) => left.localeCompare(right)),
-    writes: [...affects.writes].sort((left, right) => left.localeCompare(right))
+    ownedBy: sortStringValues(affects.ownedBy),
+    reads: sortStringValues(affects.reads),
+    sets: sortStringValues(affects.sets),
+    uses: sortStringValues(affects.uses),
+    writes: sortStringValues(affects.writes)
   }
 }
 
@@ -225,7 +230,7 @@ const normalizeCustomTypeValue = (customType: PgmlCustomType) => {
 
 const normalizeColumnValue = (column: PgmlTable['columns'][number]) => {
   return {
-    modifiers: [...column.modifiers].sort((left, right) => left.localeCompare(right)),
+    modifiers: sortStringValues(column.modifiers),
     name: column.name,
     note: column.note,
     reference: column.reference,
