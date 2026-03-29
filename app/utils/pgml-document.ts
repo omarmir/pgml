@@ -810,6 +810,13 @@ export const hasPgmlSiblingVersions = (
   return getPgmlSiblingVersions(document, versionId).length > 0
 }
 
+export const getPgmlSiblingVersionCount = (
+  document: PgmlVersionSetDocument,
+  versionId: string | null
+) => {
+  return getPgmlSiblingVersions(document, versionId).length
+}
+
 const sortVersionSiblings = (versions: PgmlVersionDocumentBlock[]) => {
   return [...versions].sort((left, right) => {
     if (left.createdAt !== right.createdAt) {

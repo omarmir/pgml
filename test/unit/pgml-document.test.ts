@@ -36,6 +36,7 @@ import {
   getPgmlVersionMap,
   getPgmlVersionsInTopologicalOrder,
   getPgmlSiblingVersions,
+  getPgmlSiblingVersionCount,
   hasPgmlSiblingVersions,
   getPgmlWorkspaceBaseVersion,
   hasPgmlVersions,
@@ -345,6 +346,7 @@ Table public.memberships {
       'Orders branch'
     ])
     expect(hasPgmlSiblingVersions(branchBDocument, branchBDocument.versions[1]?.id || null)).toBe(true)
+    expect(getPgmlSiblingVersionCount(branchBDocument, branchBDocument.versions[1]?.id || null)).toBe(1)
   })
 
   it('serializes versions in deterministic topological order', () => {
