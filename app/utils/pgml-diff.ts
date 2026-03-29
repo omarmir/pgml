@@ -323,7 +323,6 @@ const buildDiffEntries = <T>(
     const normalizedAfterValue = normalizeValue(afterValue)
 
     if (toStableJson(normalizedBeforeValue) !== toStableJson(normalizedAfterValue)) {
-
       entries.push({
         after: afterValue,
         before: beforeValue,

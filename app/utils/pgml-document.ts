@@ -151,7 +151,7 @@ export const getPgmlDocumentVersionStats = (
   includeLayout = true
 ) => {
   return {
-    branchVersionCount: document.versions.filter(version => {
+    branchVersionCount: document.versions.filter((version) => {
       return getPgmlChildVersions(document, version.parentVersionId).length > 1
     }).length,
     designVersionCount: getPgmlVersionRoleCount(document, 'design'),
