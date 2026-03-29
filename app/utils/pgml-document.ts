@@ -67,6 +67,21 @@ const normalizePgmlTimestamp = (value: string, context: string) => {
   return parsedTimestamp.toISOString()
 }
 
+const comparePgmlVersionsByRecency = (
+  left: PgmlVersionDocumentBlock,
+  right: PgmlVersionDocumentBlock
+) => {
+  if (left.createdAt !== right.createdAt) {
+    return right.createdAt.localeCompare(left.createdAt)
+  }
+
+  return right.id.localeCompare(left.id)
+}
+
+const getLatestPgmlVersionFromList = (versions: PgmlVersionDocumentBlock[]) => {
+  return [...versions].sort(comparePgmlVersionsByRecency)[0] || null
+}
+
 export const arePgmlSnapshotsEquivalent = (
   leftSource: string,
   rightSource: string,
@@ -156,78 +171,40 @@ export const getPgmlNearestCommonAncestor = (
 }
 
 export const getLatestPgmlVersion = (document: PgmlVersionSetDocument) => {
-  return [...document.versions].sort((left, right) => {
-    if (left.createdAt !== right.createdAt) {
-      return right.createdAt.localeCompare(left.createdAt)
-    }
-
-    return right.id.localeCompare(left.id)
-  })[0] || null
+  return getLatestPgmlVersionFromList(document.versions)
 }
 
 export const getLatestPgmlVersionByRole = (
   document: PgmlVersionSetDocument,
   role: PgmlVersionRole
 ) => {
-  return [...document.versions]
-    .filter(version => version.role === role)
-    .sort((left, right) => {
-      if (left.createdAt !== right.createdAt) {
-        return right.createdAt.localeCompare(left.createdAt)
-      }
-
-      return right.id.localeCompare(left.id)
-    })[0] || null
+  return getLatestPgmlVersionFromList(document.versions.filter(version => version.role === role))
 }
 
 export const getLatestPgmlLeafVersion = (document: PgmlVersionSetDocument) => {
-  return [...getPgmlLeafVersions(document)].sort((left, right) => {
-    if (left.createdAt !== right.createdAt) {
-      return right.createdAt.localeCompare(left.createdAt)
-    }
-
-    return right.id.localeCompare(left.id)
-  })[0] || null
+  return getLatestPgmlVersionFromList(getPgmlLeafVersions(document))
 }
 
 export const getLatestPgmlLeafVersionByRole = (
   document: PgmlVersionSetDocument,
   role: PgmlVersionRole
 ) => {
-  return [...getPgmlLeafVersions(document)]
-    .filter(version => version.role === role)
-    .sort((left, right) => {
-      if (left.createdAt !== right.createdAt) {
-        return right.createdAt.localeCompare(left.createdAt)
-      }
-
-      return right.id.localeCompare(left.id)
-    })[0] || null
+  return getLatestPgmlVersionFromList(
+    getPgmlLeafVersions(document).filter(version => version.role === role)
+  )
 }
 
 export const getLatestPgmlRootVersion = (document: PgmlVersionSetDocument) => {
-  return [...getPgmlRootVersions(document)].sort((left, right) => {
-    if (left.createdAt !== right.createdAt) {
-      return right.createdAt.localeCompare(left.createdAt)
-    }
-
-    return right.id.localeCompare(left.id)
-  })[0] || null
+  return getLatestPgmlVersionFromList(getPgmlRootVersions(document))
 }
 
 export const getLatestPgmlRootVersionByRole = (
   document: PgmlVersionSetDocument,
   role: PgmlVersionRole
 ) => {
-  return [...getPgmlRootVersions(document)]
-    .filter(version => version.role === role)
-    .sort((left, right) => {
-      if (left.createdAt !== right.createdAt) {
-        return right.createdAt.localeCompare(left.createdAt)
-      }
-
-      return right.id.localeCompare(left.id)
-    })[0] || null
+  return getLatestPgmlVersionFromList(
+    getPgmlRootVersions(document).filter(version => version.role === role)
+  )
 }
 
 export const getPgmlRootVersions = (document: PgmlVersionSetDocument) => {
