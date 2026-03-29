@@ -11,6 +11,7 @@ import {
   buildPgmlImportDumpInputDescription,
   buildPgmlImportConflictMessage,
   buildPgmlImportFailureMessage,
+  buildPgmlImportMissingInputMessage,
   buildPgmlImportSuccessDescription,
   buildPgmlRestoreVersionDescription
 } from '../../app/utils/pgml-version-copy'
@@ -65,5 +66,9 @@ describe('PGML version copy helpers', () => {
 
   it('builds the import conflict validation message', () => {
     expect(buildPgmlImportConflictMessage()).toContain('not both')
+  })
+
+  it('builds the missing import input message', () => {
+    expect(buildPgmlImportMissingInputMessage()).toContain('choose a text dump file')
   })
 })

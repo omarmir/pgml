@@ -61,6 +61,7 @@ import {
   buildPgmlImportBaseRequiredMessage,
   buildPgmlImportConflictMessage,
   buildPgmlImportFailureMessage,
+  buildPgmlImportMissingInputMessage,
   buildPgmlImportCheckpointRequiredDescription,
   buildPgmlImportSuccessDescription,
   buildPgmlRestoreVersionDescription
@@ -232,7 +233,6 @@ const importDumpText: Ref<string> = ref('')
 const isSubmittingImportDump: Ref<boolean> = ref(false)
 const restoreVersionDialogOpen: Ref<boolean> = ref(false)
 const restoreVersionId: Ref<string | null> = ref(null)
-const importDumpMissingInputErrorMessage = 'Paste pg_dump text or choose a text dump file before importing.'
 const tableEditorDraft: Ref<PgmlEditableTableDraft | null> = ref(null)
 const tableEditorOpen: Ref<boolean> = ref(false)
 const groupEditorDraft: Ref<PgmlEditableGroupDraft | null> = ref(null)
@@ -1032,7 +1032,7 @@ const submitImportDump = async () => {
   const trimmedText = importDumpText.value.trim()
 
   if (!selectedFile && trimmedText.length === 0) {
-    importDumpError.value = importDumpMissingInputErrorMessage
+    importDumpError.value = buildPgmlImportMissingInputMessage()
     return
   }
 

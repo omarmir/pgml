@@ -51,3 +51,7 @@ export const buildPgmlImportFailureMessage = () => {
 export const buildPgmlImportConflictMessage = () => {
   return 'Choose either pasted pg_dump text or a file upload, not both.'
 }
+
+export const buildPgmlImportMissingInputMessage = () => {
+  return 'Paste pg_dump text or choose a text dump file before importing.'
+}
