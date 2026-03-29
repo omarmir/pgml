@@ -7,5 +7,7 @@ describe('diagram versions panel source', () => {
 
     expect(file).toContain('migrationHasChanges = false')
     expect(file).toContain('const hasMigrationSql = computed(() => migrationHasChanges && migrationSql.trim().length > 0)')
+    expect(file).toContain('Level {{ version.depth }}')
+    expect(file).toContain("{{ version.childCount }} branch{{ version.childCount === 1 ? '' : 'es' }}")
   })
 })

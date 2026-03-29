@@ -28,8 +28,11 @@ type VersionDiffSection = {
 }
 
 type VersionPanelItem = {
+  childCount: number
   createdAt: string
+  depth: number
   id: string
+  isRoot: boolean
   isWorkspaceBase: boolean
   label: string
   parentVersionId: string | null

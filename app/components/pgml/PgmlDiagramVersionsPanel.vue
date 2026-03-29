@@ -12,8 +12,11 @@ import {
 } from '~/utils/uiStyles'
 
 type PgmlVersionPanelItem = {
+  childCount: number
   createdAt: string
+  depth: number
   id: string
+  isRoot: boolean
   isWorkspaceBase: boolean
   label: string
   parentVersionId: string | null
@@ -487,10 +490,19 @@ const swapComparePair = () => {
                   {{ version.role }}
                 </span>
                 <span
-                  v-if="version.parentVersionId === null"
+                  v-if="version.isRoot"
                   class="border border-[color:var(--studio-divider)] px-1.5 py-0.5 font-mono text-[0.52rem] uppercase tracking-[0.08em] text-[color:var(--studio-shell-muted)]"
                 >
                   Root
+                </span>
+                <span class="border border-[color:var(--studio-divider)] px-1.5 py-0.5 font-mono text-[0.52rem] uppercase tracking-[0.08em] text-[color:var(--studio-shell-muted)]">
+                  Level {{ version.depth }}
+                </span>
+                <span
+                  v-if="version.childCount > 0"
+                  class="border border-[color:var(--studio-divider)] px-1.5 py-0.5 font-mono text-[0.52rem] uppercase tracking-[0.08em] text-[color:var(--studio-shell-muted)]"
+                >
+                  {{ version.childCount }} branch{{ version.childCount === 1 ? '' : 'es' }}
                 </span>
                 <span
                   v-if="version.isWorkspaceBase"
