@@ -208,6 +208,14 @@ const createTestStringStream = (lineText: string) => {
   return stream
 }
 
+const allowsColumnTypeHighlight = (blockKind: string | null) => {
+  return blockKind === 'Table' || blockKind === 'Composite'
+}
+
+const isVersionReferenceProperty = (propertyName: string | null) => {
+  return propertyName === 'parent' || propertyName === 'based_on'
+}
+
 const getBlockKeyword = (lineText: string) => {
   const trimmedLine = lineText.trim()
 
@@ -231,7 +239,7 @@ const syncPgmlLineState = (lineText: string, state: PgmlStreamState) => {
 
   state.blockKind = state.blockStack[state.blockStack.length - 1] || null
   state.lineIdentifierIndex = 0
-  state.lineAllowsColumnTypeHighlight = state.blockKind === 'Table' || state.blockKind === 'Composite'
+  state.lineAllowsColumnTypeHighlight = allowsColumnTypeHighlight(state.blockKind)
   state.lineIsBlockDeclaration = false
   state.lastNamedTokenType = null
   state.lastPropertyName = null
@@ -353,7 +361,7 @@ const readPgmlToken = (stream: StringStream, state: PgmlStreamState) => {
       return 'className'
     }
 
-    if (state.lastPropertyName === 'parent' || state.lastPropertyName === 'based_on') {
+    if (isVersionReferenceProperty(state.lastPropertyName)) {
       state.lastNamedTokenType = 'typeName'
       state.lastPropertyName = null
       return 'typeName'
