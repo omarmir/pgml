@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest'
 import {
   buildPgmlImportBaseVersionDescription,
   buildPgmlImportBaseVersionItems,
+  buildPgmlWorkspaceCompareOption,
   buildPgmlVersionCompareOptions
 } from '../../app/utils/pgml-version-options'
 
@@ -58,5 +59,12 @@ describe('PGML version option helpers', () => {
       parentVersionId: 'v1',
       parentVersionLabel: 'Initial design'
     })).toBe('Continues from Initial design')
+  })
+
+  it('builds the workspace compare option', () => {
+    expect(buildPgmlWorkspaceCompareOption()).toEqual({
+      label: 'Current workspace',
+      value: 'workspace'
+    })
   })
 })

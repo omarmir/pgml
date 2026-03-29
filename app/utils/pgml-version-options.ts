@@ -5,6 +5,13 @@ export type PgmlVersionOptionItem = {
   parentVersionId: string | null
 }
 
+export const buildPgmlWorkspaceCompareOption = () => {
+  return {
+    label: 'Current workspace',
+    value: 'workspace'
+  }
+}
+
 export const buildPgmlImportBaseVersionDescription = (input: {
   parentVersionId: string | null
   parentVersionLabel?: string | null
@@ -18,10 +25,7 @@ export const buildPgmlImportBaseVersionDescription = (input: {
 
 export const buildPgmlVersionCompareOptions = (versions: PgmlVersionOptionItem[]) => {
   return [
-    {
-      label: 'Current workspace',
-      value: 'workspace'
-    },
+    buildPgmlWorkspaceCompareOption(),
     ...versions.map((version) => {
       return {
         label: version.label,
