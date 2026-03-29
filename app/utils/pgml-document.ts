@@ -473,6 +473,13 @@ export const getPgmlVersionLineage = (
   return lineage
 }
 
+export const getPgmlChildVersions = (
+  document: PgmlVersionSetDocument,
+  versionId: string | null
+) => {
+  return document.versions.filter(version => version.parentVersionId === versionId)
+}
+
 export const serializePgmlDocument = (document: PgmlVersionSetDocument) => {
   validateVersionSetDocument(document)
 

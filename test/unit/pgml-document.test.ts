@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest'
 import {
   createInitialPgmlDocument,
   createPgmlVersionFromWorkspace,
+  getPgmlChildVersions,
   getPgmlVersionById,
   getPgmlVersionLineage,
   getPgmlVersionMap,
@@ -133,6 +134,53 @@ Table public.orders {
       'Add orders'
     ])
     expect(getPgmlVersionLineage(secondVersion, null)).toEqual([])
+  })
+
+  it('returns direct child versions for a selected branch point', () => {
+    const initialDocument = createInitialPgmlDocument({
+      name: 'Billing',
+      workspaceSource: baseSnapshotSource
+    })
+    const rootDocument = createPgmlVersionFromWorkspace(initialDocument, {
+      createdAt: '2026-03-29T12:00:00.000Z',
+      name: 'Initial design',
+      role: 'design'
+    })
+    const rootVersionId = rootDocument.workspace.basedOnVersionId
+    const featureADocument = createPgmlVersionFromWorkspace(replacePgmlWorkspaceFromSnapshot(rootDocument, {
+      basedOnVersionId: rootVersionId,
+      source: `${baseSnapshotSource}
+
+Table public.orders {
+  id uuid [pk]
+}`,
+      updatedAt: '2026-03-29T12:05:00.000Z'
+    }), {
+      createdAt: '2026-03-29T12:10:00.000Z',
+      name: 'Orders branch',
+      role: 'design'
+    })
+    const featureBDocument = createPgmlVersionFromWorkspace(replacePgmlWorkspaceFromSnapshot(featureADocument, {
+      basedOnVersionId: rootVersionId,
+      source: `${baseSnapshotSource}
+
+Table public.memberships {
+  id uuid [pk]
+}`,
+      updatedAt: '2026-03-29T12:15:00.000Z'
+    }), {
+      createdAt: '2026-03-29T12:20:00.000Z',
+      name: 'Memberships branch',
+      role: 'design'
+    })
+
+    expect(getPgmlChildVersions(featureBDocument, rootVersionId).map(version => version.name)).toEqual([
+      'Orders branch',
+      'Memberships branch'
+    ])
+    expect(getPgmlChildVersions(featureBDocument, null).map(version => version.name)).toEqual([
+      'Initial design'
+    ])
   })
 
   it('rejects invalid VersionSet documents that reference missing parent or base versions', () => {
