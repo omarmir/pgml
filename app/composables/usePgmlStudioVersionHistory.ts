@@ -94,6 +94,8 @@ const buildWorkspaceSyncedDocument = (
     updatedAt?: string | null
   }
 ) => {
+  // The source editor always owns the live workspace text, so any serialized or
+  // checkpointed document must first be rebuilt from that head snapshot.
   return replacePgmlWorkspaceFromSnapshot(document, {
     basedOnVersionId: document.workspace.basedOnVersionId,
     source: normalizeSnapshotSource(source, options?.includeLayout ?? true),
@@ -175,6 +177,8 @@ const buildCompareRelationshipSummary = (input: {
   document: PgmlVersionSetDocument
   workspaceBaseVersion: PgmlVersionDocumentBlock | null
 }) => {
+  // Compare copy deliberately distinguishes the common workspace workflow
+  // (current draft vs locked base) from version-to-version lineage comparisons.
   if (input.compareTargetId === 'workspace') {
     if (!input.compareBaseVersion) {
       return buildPgmlEmptyBaseCompareRelationshipSummary()
@@ -246,6 +250,8 @@ export const usePgmlStudioVersionHistory = (
   }
 
   const normalizeSelectionState = () => {
+    // File loads, restores, and imports can invalidate UI selections; clamp
+    // every derived id back onto the current document before the UI renders it.
     previewTargetId.value = normalizePreviewTargetId(document.value, previewTargetId.value)
     compareBaseId.value = normalizeCompareBaseSelection(document.value, compareBaseId.value)
     compareTargetId.value = normalizeCompareTargetSelection(document.value, compareTargetId.value)
