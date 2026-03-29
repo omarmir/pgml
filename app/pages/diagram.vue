@@ -734,6 +734,7 @@ const compareMigrationBundle = computed(() => {
   }
 
   return {
+    meta: migrationBundle.meta,
     sql: {
       migration: {
         ...migrationBundle.sql.migration,
@@ -1720,6 +1721,7 @@ onBeforeUnmount(() => {
           :layout-changed="compareDiff.summary.layoutChanged"
           :has-blocking-source-errors="hasBlockingSourceErrors"
           :migration-file-name="compareMigrationBundle.sql.migration.fileName"
+          :migration-has-changes="compareMigrationBundle.meta.hasChanges"
           :migration-sql="compareMigrationBundle.sql.migration.content"
           :migration-warnings="compareMigrationBundle.sql.migration.warnings"
           :mobile-active-view="mobileCanvasView"
@@ -1805,6 +1807,7 @@ onBeforeUnmount(() => {
           :layout-changed="compareDiff.summary.layoutChanged"
           :has-blocking-source-errors="hasBlockingSourceErrors"
           :migration-file-name="compareMigrationBundle.sql.migration.fileName"
+          :migration-has-changes="compareMigrationBundle.meta.hasChanges"
           :migration-sql="compareMigrationBundle.sql.migration.content"
           :migration-warnings="compareMigrationBundle.sql.migration.warnings"
           :preview-target-id="previewTargetId"

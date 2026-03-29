@@ -43,6 +43,7 @@ const {
   diffSections,
   layoutChanged = 0,
   migrationFileName = 'pgml-version.migration.sql',
+  migrationHasChanges = false,
   migrationSql = '',
   migrationWarnings = [],
   previewTargetId = 'workspace',
@@ -57,6 +58,7 @@ const {
   diffSections: PgmlVersionDiffSection[]
   layoutChanged?: number
   migrationFileName?: string
+  migrationHasChanges?: boolean
   migrationSql?: string
   migrationWarnings?: string[]
   previewTargetId?: string
@@ -96,7 +98,7 @@ const compareTargetOption = computed(() => {
   return compareOptions.find(option => option.value === compareTargetId) || null
 })
 const hasDiffSections = computed(() => diffSections.length > 0 || layoutChanged > 0)
-const hasMigrationSql = computed(() => migrationSql.trim().length > 0)
+const hasMigrationSql = computed(() => migrationHasChanges && migrationSql.trim().length > 0)
 const hasVersions = computed(() => versions.length > 0)
 const latestVersionId = computed(() => versions.at(-1)?.id || null)
 const designVersionCount = computed(() => {

@@ -216,6 +216,7 @@ const {
   mobileActiveView = null,
   mobilePanelTab = null,
   migrationFileName = 'pgml-version.migration.sql',
+  migrationHasChanges = false,
   migrationSql = '',
   migrationWarnings = [],
   model,
@@ -237,6 +238,7 @@ const {
   mobileActiveView?: StudioMobileCanvasView | null
   mobilePanelTab?: DiagramPanelTab | null
   migrationFileName?: string
+  migrationHasChanges?: boolean
   migrationSql?: string
   migrationWarnings?: string[]
   model: PgmlSchemaModel
@@ -4539,6 +4541,7 @@ defineExpose<{
         :diff-sections="versionDiffSections"
         :layout-changed="layoutChanged"
         :migration-file-name="migrationFileName"
+        :migration-has-changes="migrationHasChanges"
         :migration-sql="migrationSql"
         :migration-warnings="migrationWarnings"
         :preview-target-id="previewTargetId"

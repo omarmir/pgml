@@ -46,6 +46,7 @@ const {
   mobilePanelTab = null,
   model,
   migrationFileName = 'pgml-version.migration.sql',
+  migrationHasChanges = false,
   migrationSql = '',
   migrationWarnings = [],
   previewTargetId = 'workspace',
@@ -66,6 +67,7 @@ const {
   mobileActiveView?: StudioMobileCanvasView | null
   mobilePanelTab?: DiagramPanelTab | null
   migrationFileName?: string
+  migrationHasChanges?: boolean
   migrationSql?: string
   migrationWarnings?: string[]
   model: PgmlSchemaModel
@@ -125,6 +127,7 @@ defineExpose<CanvasHandle>({
     :mobile-active-view="mobileActiveView"
     :mobile-panel-tab="mobilePanelTab"
     :migration-file-name="migrationFileName"
+    :migration-has-changes="migrationHasChanges"
     :migration-sql="migrationSql"
     :migration-warnings="migrationWarnings"
     :model="model"
