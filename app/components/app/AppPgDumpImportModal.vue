@@ -49,6 +49,21 @@ const fileSelectionPanelClass = 'grid gap-2 border border-[color:var(--studio-sh
 const errorPanelClass = 'grid gap-1 border border-[color:var(--studio-shell-error)]/40 bg-[color:var(--studio-shell-error)]/8 px-3 py-3 text-[0.74rem] text-[color:var(--studio-shell-error)]'
 const hasPastedText = computed(() => modelValue.trim().length > 0)
 const hasSelectedFile = computed(() => selectedFileName.trim().length > 0)
+const activeInputSummary = computed(() => {
+  if (hasSelectedFile.value && hasPastedText.value) {
+    return 'Both inputs are filled. Clear one before importing.'
+  }
+
+  if (hasSelectedFile.value) {
+    return `Import will use the selected file: ${selectedFileName}.`
+  }
+
+  if (hasPastedText.value) {
+    return 'Import will use the pasted pg_dump text.'
+  }
+
+  return 'Choose a file or paste dump text to begin the import.'
+})
 
 const triggerFilePicker = () => {
   fileInputRef.value?.click()
@@ -92,6 +107,9 @@ const handleTextInput = (event: Event) => {
         <p :class="studioBodyCopyClass">
           {{ inputDescription }}
         </p>
+        <div class="border border-[color:var(--studio-shell-border)] bg-[color:var(--studio-input-bg)] px-3 py-2 text-[0.68rem] text-[color:var(--studio-shell-muted)]">
+          {{ activeInputSummary }}
+        </div>
       </div>
 
       <slot name="before-inputs" />
