@@ -195,6 +195,13 @@ export const getPgmlVersionRoleCount = (
   return document.versions.filter(version => version.role === role).length
 }
 
+export const hasPgmlVersionRole = (
+  document: PgmlVersionSetDocument,
+  role: PgmlVersionRole
+) => {
+  return getPgmlVersionRoleCount(document, role) > 0
+}
+
 export const hasPgmlVersions = (document: PgmlVersionSetDocument) => {
   return getPgmlVersionCount(document) > 0
 }

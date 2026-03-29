@@ -19,6 +19,7 @@ import {
   getPgmlLeafVersions,
   getPgmlLeafVersionCount,
   getPgmlVersionRoleCount,
+  hasPgmlVersionRole,
   isPgmlLeafVersion,
   getPgmlRootVersions,
   getPgmlRootVersionCount,
@@ -135,6 +136,7 @@ Table public.memberships {
     expect(getPgmlVersionCount(document)).toBe(1)
     expect(hasPgmlVersions(document)).toBe(true)
     expect(getPgmlVersionRoleCount(document, 'implementation')).toBe(1)
+    expect(hasPgmlVersionRole(document, 'implementation')).toBe(true)
   })
 
   it('returns ordered lineage from the root version to the selected checkpoint', () => {
