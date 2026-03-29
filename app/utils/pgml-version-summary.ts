@@ -159,3 +159,7 @@ export const buildPgmlCompareDeltaDescription = (changedSectionCount: number) =>
     ? `${changedSectionCount} changed area${changedSectionCount === 1 ? '' : 's'} in the selected comparison.`
     : 'No visible delta in the selected comparison.'
 }
+
+export const buildPgmlEmptyBaseCompareRelationshipSummary = () => {
+  return 'Comparing the current workspace against an empty base.'
+}

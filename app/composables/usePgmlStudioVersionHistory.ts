@@ -1,4 +1,5 @@
 import type { ComputedRef, Ref } from 'vue'
+import { buildPgmlEmptyBaseCompareRelationshipSummary } from '~/utils/pgml-version-summary'
 import {
   buildPgmlCheckpointName,
   canCreatePgmlCheckpoint,
@@ -212,7 +213,7 @@ export const usePgmlStudioVersionHistory = (
   const compareRelationshipSummary = computed(() => {
     if (compareTargetId.value === 'workspace') {
       if (!compareBaseVersion.value) {
-        return 'Comparing the current workspace against an empty base.'
+        return buildPgmlEmptyBaseCompareRelationshipSummary()
       }
 
       if (compareBaseVersion.value.id === workspaceBaseVersion.value?.id) {

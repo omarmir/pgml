@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest'
 import { parsePgml } from '../../app/utils/pgml'
 import { diffPgmlSchemaModels } from '../../app/utils/pgml-diff'
 import {
+  buildPgmlEmptyBaseCompareRelationshipSummary,
   buildPgmlCompareDeltaDescription,
   buildPgmlDocumentEditorModeDescription,
   buildPgmlEditorReadOnlyLabel,
@@ -122,5 +123,9 @@ Table public.orders {
   it('builds compare delta descriptions from changed section counts', () => {
     expect(buildPgmlCompareDeltaDescription(2)).toContain('2 changed areas')
     expect(buildPgmlCompareDeltaDescription(0)).toBe('No visible delta in the selected comparison.')
+  })
+
+  it('builds the empty-base compare relationship summary', () => {
+    expect(buildPgmlEmptyBaseCompareRelationshipSummary()).toBe('Comparing the current workspace against an empty base.')
   })
 })
