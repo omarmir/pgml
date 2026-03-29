@@ -1988,6 +1988,54 @@ const validateSnapshotOnlyChildren = (
   return snapshotBlocks
 }
 
+const validateVersionSetChildren = (
+  nestedBlocks: PgmlRawBlock[],
+  diagnostics: PgmlLanguageDiagnostic[],
+  fallbackLine: PgmlLineInfo
+) => {
+  const workspaceBlocks = nestedBlocks.filter(nestedBlock => nestedBlock.kind === 'Workspace')
+  const versionBlocks = nestedBlocks.filter(nestedBlock => nestedBlock.kind === 'Version')
+
+  if (workspaceBlocks.length === 0) {
+    createDiagnostic(
+      diagnostics,
+      'pgml/version-set-workspace-missing',
+      'error',
+      'VersionSet requires a Workspace block.',
+      fallbackLine
+    )
+  }
+
+  if (workspaceBlocks.length > 1) {
+    workspaceBlocks.slice(1).forEach((workspaceBlock) => {
+      createDiagnostic(
+        diagnostics,
+        'pgml/version-set-workspace-duplicate',
+        'error',
+        'VersionSet only allows one Workspace block.',
+        workspaceBlock.headerLine
+      )
+    })
+  }
+
+  nestedBlocks.forEach((nestedBlock) => {
+    if (nestedBlock.kind !== 'Workspace' && nestedBlock.kind !== 'Version') {
+      createDiagnostic(
+        diagnostics,
+        'pgml/version-set-block-kind',
+        'error',
+        'VersionSet only allows Workspace and Version blocks.',
+        nestedBlock.headerLine
+      )
+    }
+  })
+
+  return {
+    versionBlocks,
+    workspaceBlock: workspaceBlocks[0] || null
+  }
+}
+
 const analyzeWorkspaceBlock = (
   block: PgmlRawBlock,
   diagnostics: PgmlLanguageDiagnostic[],
@@ -2130,45 +2178,10 @@ const analyzeVersionSetBlock = (
     )
   })
 
-  const workspaceBlocks = nested.blocks.filter(nestedBlock => nestedBlock.kind === 'Workspace')
-  const versionBlocks = nested.blocks.filter(nestedBlock => nestedBlock.kind === 'Version')
+  const { workspaceBlock, versionBlocks } = validateVersionSetChildren(nested.blocks, diagnostics, block.headerLine)
 
-  if (workspaceBlocks.length === 0) {
-    createDiagnostic(
-      diagnostics,
-      'pgml/version-set-workspace-missing',
-      'error',
-      'VersionSet requires a Workspace block.',
-      block.headerLine
-    )
-  }
-
-  if (workspaceBlocks.length > 1) {
-    workspaceBlocks.slice(1).forEach((workspaceBlock) => {
-      createDiagnostic(
-        diagnostics,
-        'pgml/version-set-workspace-duplicate',
-        'error',
-        'VersionSet only allows one Workspace block.',
-        workspaceBlock.headerLine
-      )
-    })
-  }
-
-  nested.blocks.forEach((nestedBlock) => {
-    if (nestedBlock.kind !== 'Workspace' && nestedBlock.kind !== 'Version') {
-      createDiagnostic(
-        diagnostics,
-        'pgml/version-set-block-kind',
-        'error',
-        'VersionSet only allows Workspace and Version blocks.',
-        nestedBlock.headerLine
-      )
-    }
-  })
-
-  if (workspaceBlocks[0]) {
-    analyzeWorkspaceBlock(workspaceBlocks[0], diagnostics, contexts, analysisState)
+  if (workspaceBlock) {
+    analyzeWorkspaceBlock(workspaceBlock, diagnostics, contexts, analysisState)
   }
 
   versionBlocks.forEach(versionBlock => analyzeVersionBlock(versionBlock, diagnostics, contexts, analysisState))
