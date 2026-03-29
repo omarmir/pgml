@@ -71,6 +71,8 @@ const comparePgmlVersionsByRecency = (
   left: PgmlVersionDocumentBlock,
   right: PgmlVersionDocumentBlock
 ) => {
+  // Timestamps are the primary ordering key for timeline-style operations.
+  // Version id remains the deterministic tie-breaker for equal timestamps.
   if (left.createdAt !== right.createdAt) {
     return right.createdAt.localeCompare(left.createdAt)
   }
@@ -86,6 +88,8 @@ const filterPgmlVersionsByParentId = (
   document: PgmlVersionSetDocument,
   parentVersionId: string | null
 ) => {
+  // Parent id `null` is the root of a branch; non-null parent ids describe the
+  // direct edge between checkpoints in the version graph.
   return document.versions.filter(version => version.parentVersionId === parentVersionId)
 }
 
@@ -252,6 +256,8 @@ export const hasPgmlVersions = (document: PgmlVersionSetDocument) => {
 }
 
 export const getPgmlLeafVersions = (document: PgmlVersionSetDocument) => {
+  // Leaves are the checkpoints that nothing else builds on yet, so they define
+  // branch tips and the latest immutable endpoints available for compare/restore.
   const parentIds = new Set(
     document.versions
       .map(version => version.parentVersionId)
