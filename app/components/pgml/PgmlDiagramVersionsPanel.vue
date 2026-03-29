@@ -21,6 +21,7 @@ type PgmlVersionPanelItem = {
   branchRootLabel: string | null
   childCount: number
   createdAt: string
+  descendantCount: number
   depth: number
   id: string
   isLeaf: boolean
@@ -558,6 +559,12 @@ const swapComparePair = () => {
                   class="border border-[color:var(--studio-divider)] px-1.5 py-0.5 font-mono text-[0.52rem] uppercase tracking-[0.08em] text-[color:var(--studio-shell-muted)]"
                 >
                   {{ version.siblingCount }} sibling{{ version.siblingCount === 1 ? '' : 's' }}
+                </span>
+                <span
+                  v-if="version.descendantCount > 0"
+                  class="border border-[color:var(--studio-divider)] px-1.5 py-0.5 font-mono text-[0.52rem] uppercase tracking-[0.08em] text-[color:var(--studio-shell-muted)]"
+                >
+                  {{ version.descendantCount }} descendant{{ version.descendantCount === 1 ? '' : 's' }}
                 </span>
                 <span
                   v-if="version.isWorkspaceBase"

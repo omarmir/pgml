@@ -14,6 +14,7 @@ describe('diagram versions panel source', () => {
     expect(file).toContain('Branch root: {{ version.branchRootLabel }}')
     expect(file).toContain('Leaf')
     expect(file).toContain("{{ version.siblingCount }} sibling{{ version.siblingCount === 1 ? '' : 's' }}")
+    expect(file).toContain("{{ version.descendantCount }} descendant{{ version.descendantCount === 1 ? '' : 's' }}")
     expect(file).toContain('Latest {{ version.role }}')
     expect(file).toContain('Latest impl to draft')
     expect(file).toContain('Latest design to draft')
