@@ -46,6 +46,10 @@ import {
 } from '~/utils/pgml-version-summary'
 import { buildPgmlCheckpointName } from '~/utils/pgml-document'
 import {
+  buildPgmlImportBaseVersionItems,
+  buildPgmlVersionCompareOptions
+} from '~/utils/pgml-version-options'
+import {
   buildPgmlWithNodeProperties,
   parsePgml,
   pgmlExample,
@@ -646,29 +650,10 @@ const versionPanelItems = computed(() => {
   })
 })
 const versionCompareOptions = computed(() => {
-  return [
-    {
-      label: 'Current workspace',
-      value: 'workspace'
-    },
-    ...versionHistoryItems.value.map((version) => {
-      return {
-        label: getVersionLabel(version),
-        value: version.id
-      }
-    })
-  ]
+  return buildPgmlVersionCompareOptions(versionPanelItems.value)
 })
 const importDumpBaseVersionItems = computed<ReferenceTargetItem[]>(() => {
-  return versions.value.map((version) => {
-    return {
-      description: version.parentVersionId
-        ? `Continues from ${version.parentVersionId}`
-        : 'Root version',
-      label: getVersionLabel(version),
-      value: version.id
-    }
-  })
+  return buildPgmlImportBaseVersionItems(versionPanelItems.value)
 })
 const compareDiff = computed(() => {
   return diffPgmlSchemaModels(
