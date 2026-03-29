@@ -31,6 +31,11 @@ export type PgmlCodeMirrorOptions = {
   placeholder?: string
 }
 
+const pgmlBlockKeywordPattern = /\b(?:VersionSet|Workspace|Version|Snapshot|TableGroup|Table|Enum|Domain|Composite|Function|Procedure|Trigger|Sequence|Properties|Ref:)\b/
+const pgmlNestedKeywordPattern = /\b(?:docs|affects|source|definition|Note|Index|Constraint)\b(?=\s|:|\(|\{)/
+const pgmlPropertyKeywordPattern = /\b(?:pk|unique|not|null|default|note|ref|language|volatility|security|timing|events|level|function|arguments|as|base|start|increment|min|max|cache|cycle|owned_by|summary|writes|sets|depends_on|reads|calls|uses|visible|collapsed|masonry|table_columns|table_width_scale|width|height|color|x|y|name|role|parent|created_at|based_on|updated_at)\b(?=\s|:|\])/
+const pgmlAtomPattern = /\b(?:true|false|design|implementation)\b/
+
 const pgmlHighlightStyle = HighlightStyle.define([
   { tag: tags.keyword, color: 'var(--studio-shell-label)', fontWeight: '700' },
   { tag: tags.comment, color: 'var(--studio-shell-muted)', fontStyle: 'italic' },
@@ -282,27 +287,27 @@ const readPgmlToken = (stream: StringStream, state: PgmlStreamState) => {
     return 'string'
   }
 
-  if (stream.match(/\b(?:VersionSet|Workspace|Version|Snapshot|TableGroup|Table|Enum|Domain|Composite|Function|Procedure|Trigger|Sequence|Properties|Ref:)\b/)) {
+  if (stream.match(pgmlBlockKeywordPattern)) {
     state.lineAllowsColumnTypeHighlight = false
     state.lastNamedTokenType = 'keyword'
     state.lastPropertyName = null
     return 'keyword'
   }
 
-  if (stream.match(/\b(?:docs|affects|source|definition|Note|Index|Constraint)\b(?=\s|:|\(|\{)/)) {
+  if (stream.match(pgmlNestedKeywordPattern)) {
     state.lineAllowsColumnTypeHighlight = false
     state.lastNamedTokenType = 'keyword'
     state.lastPropertyName = null
     return 'keyword'
   }
 
-  if (stream.match(/\b(?:pk|unique|not|null|default|note|ref|language|volatility|security|timing|events|level|function|arguments|as|base|start|increment|min|max|cache|cycle|owned_by|summary|writes|sets|depends_on|reads|calls|uses|visible|collapsed|masonry|table_columns|table_width_scale|width|height|color|x|y|name|role|parent|created_at|based_on|updated_at)\b(?=\s|:|\])/)) {
+  if (stream.match(pgmlPropertyKeywordPattern)) {
     state.lastNamedTokenType = 'propertyName'
     state.lastPropertyName = stream.current()
     return 'propertyName'
   }
 
-  if (stream.match(/\b(?:true|false|design|implementation)\b/)) {
+  if (stream.match(pgmlAtomPattern)) {
     return 'atom'
   }
 
