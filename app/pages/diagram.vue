@@ -658,6 +658,7 @@ const versionPanelItems = computed(() => {
       depth: version.depth,
       id: version.id,
       isLeaf: version.isLeaf,
+      isLatestByRole: version.isLatestByRole,
       isRoot: version.isRoot,
       isWorkspaceBase: version.isWorkspaceBase,
       label: getVersionLabel(version),

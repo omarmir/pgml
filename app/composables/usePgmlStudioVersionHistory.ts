@@ -10,6 +10,7 @@ import {
   getPgmlBranchRootLabel,
   getPgmlBranchRootId,
   getLatestPgmlVersion,
+  getLatestPgmlVersionByRole,
   getPgmlNearestCommonAncestor,
   getPgmlVersionById,
   getPgmlVersionDepth,
@@ -142,6 +143,8 @@ export const usePgmlStudioVersionHistory = (
   const workspaceBaseVersion = computed(() => getPgmlWorkspaceBaseVersion(document.value))
   const workspaceDirty = computed(() => isPgmlWorkspaceDirty(document.value))
   const canCheckpoint = computed(() => canCreatePgmlCheckpoint(document.value))
+  const latestDesignVersion = computed(() => getLatestPgmlVersionByRole(document.value, 'design'))
+  const latestImplementationVersion = computed(() => getLatestPgmlVersionByRole(document.value, 'implementation'))
   const versionItems = computed(() => {
     return document.value.versions.map((version) => {
       const lineage = getPgmlVersionLineage(document.value, version.id)
@@ -153,6 +156,11 @@ export const usePgmlStudioVersionHistory = (
         depth: getPgmlVersionDepth(document.value, version.id),
         ...version,
         isLeaf: isPgmlLeafVersion(document.value, version.id),
+        isLatestByRole: version.id === (
+          version.role === 'design'
+            ? latestDesignVersion.value?.id
+            : latestImplementationVersion.value?.id
+        ),
         isRoot: version.parentVersionId === null,
         isWorkspaceBase: document.value.workspace.basedOnVersionId === version.id,
         lineageIds: lineage.map(entry => entry.id),
@@ -372,6 +380,8 @@ export const usePgmlStudioVersionHistory = (
     serializeCurrentDocument,
     setCompareTargets,
     setPreviewTarget,
+    latestDesignVersion,
+    latestImplementationVersion,
     versionItems,
     versionedDocumentSource,
     versions,

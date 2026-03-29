@@ -13,5 +13,6 @@ describe('diagram versions panel source', () => {
     expect(file).toContain('Path: {{ version.lineageLabel }}')
     expect(file).toContain('Branch root: {{ version.branchRootLabel }}')
     expect(file).toContain('Leaf')
+    expect(file).toContain('Latest {{ version.role }}')
   })
 })

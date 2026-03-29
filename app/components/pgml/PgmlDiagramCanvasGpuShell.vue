@@ -185,6 +185,7 @@ type VersionPanelItem = {
   depth: number
   id: string
   isLeaf: boolean
+  isLatestByRole: boolean
   isRoot: boolean
   isWorkspaceBase: boolean
   label: string
