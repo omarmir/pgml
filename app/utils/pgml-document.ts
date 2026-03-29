@@ -81,6 +81,13 @@ export const isPgmlWorkspaceDirty = (
   )
 }
 
+export const canCreatePgmlCheckpoint = (
+  document: PgmlVersionSetDocument,
+  includeLayout = true
+) => {
+  return isPgmlWorkspaceDirty(document, includeLayout)
+}
+
 const trimQuotedValue = (value: string) => {
   const trimmed = value.trim()
   const doubleQuotedMatch = trimmed.match(/^"(.*)"$/u)

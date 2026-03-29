@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 
 import {
   arePgmlSnapshotsEquivalent,
+  canCreatePgmlCheckpoint,
   clonePgmlVersionSetDocument,
   createInitialPgmlDocument,
   createPgmlVersionFromWorkspace,
@@ -409,6 +410,33 @@ Table public.orders {
 
     expect(isPgmlWorkspaceDirty(document)).toBe(false)
     expect(isPgmlWorkspaceDirty(dirtyDocument)).toBe(true)
+  })
+
+  it('only allows checkpoint creation when the workspace has a meaningful delta', () => {
+    const cleanDocument = createInitialPgmlDocument({
+      initialVersion: {
+        createdAt: '2026-03-29T12:00:00.000Z',
+        name: 'Initial implementation',
+        parentVersionId: null,
+        role: 'implementation',
+        snapshot: {
+          source: baseSnapshotSource
+        }
+      },
+      name: 'Billing',
+      workspaceSource: baseSnapshotSource
+    })
+    const dirtyDocument = replacePgmlWorkspaceFromSnapshot(cleanDocument, {
+      basedOnVersionId: cleanDocument.workspace.basedOnVersionId,
+      source: `${baseSnapshotSource}
+
+Table public.orders {
+  id uuid [pk]
+}`
+    })
+
+    expect(canCreatePgmlCheckpoint(cleanDocument)).toBe(false)
+    expect(canCreatePgmlCheckpoint(dirtyDocument)).toBe(true)
   })
 
   it('rejects invalid VersionSet documents that reference missing parent or base versions', () => {
