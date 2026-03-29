@@ -72,9 +72,26 @@ const copyState: Ref<'idle' | 'success' | 'error'> = ref('idle')
 const copyButtonClass = joinStudioClasses(studioButtonClasses.secondary, 'text-[0.65rem]')
 const primaryButtonClass = joinStudioClasses(studioButtonClasses.primary, 'text-[0.65rem]')
 const secondaryButtonClass = joinStudioClasses(studioButtonClasses.secondary, 'text-[0.65rem]')
+const compareBaseOption = computed(() => {
+  return compareBaseId ? compareOptions.find(option => option.value === compareBaseId) || null : null
+})
+const compareTargetOption = computed(() => {
+  return compareOptions.find(option => option.value === compareTargetId) || null
+})
 const hasDiffSections = computed(() => diffSections.length > 0 || layoutChanged > 0)
 const hasMigrationSql = computed(() => migrationSql.trim().length > 0)
 const hasVersions = computed(() => versions.length > 0)
+const compareSummary = computed(() => {
+  const baseLabel = compareBaseOption.value?.label || 'Empty schema'
+  const targetLabel = compareTargetOption.value?.label || 'Current workspace'
+  const changedSectionCount = diffSections.length + (layoutChanged > 0 ? 1 : 0)
+
+  return {
+    baseLabel,
+    changedSectionCount,
+    targetLabel
+  }
+})
 
 const handleCopyMigration = async () => {
   if (migrationSql.trim().length === 0) {
@@ -159,6 +176,27 @@ const updateCompareTargetId = (value: unknown) => {
     <div class="grid gap-2 border border-[color:var(--studio-divider)] bg-[color:var(--studio-control-bg)] px-3 py-3">
       <div class="font-mono text-[0.6rem] uppercase tracking-[0.08em] text-[color:var(--studio-shell-label)]">
         Compare
+      </div>
+
+      <div class="grid gap-2 border border-[color:var(--studio-divider)] bg-[color:var(--studio-input-bg)] px-3 py-3">
+        <div class="flex flex-wrap items-center gap-2">
+          <span class="border border-[color:var(--studio-divider)] px-1.5 py-0.5 font-mono text-[0.52rem] uppercase tracking-[0.08em] text-[color:var(--studio-shell-muted)]">
+            {{ compareSummary.baseLabel }}
+          </span>
+          <span class="font-mono text-[0.58rem] uppercase tracking-[0.08em] text-[color:var(--studio-shell-muted)]">
+            to
+          </span>
+          <span class="border border-[color:var(--studio-ring)] px-1.5 py-0.5 font-mono text-[0.52rem] uppercase tracking-[0.08em] text-[color:var(--studio-shell-text)]">
+            {{ compareSummary.targetLabel }}
+          </span>
+        </div>
+        <p :class="studioCompactBodyCopyClass">
+          {{
+            compareSummary.changedSectionCount > 0
+              ? `${compareSummary.changedSectionCount} changed area${compareSummary.changedSectionCount === 1 ? '' : 's'} in the selected comparison.`
+              : 'No visible delta in the selected comparison.'
+          }}
+        </p>
       </div>
 
       <label class="grid gap-1">
