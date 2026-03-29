@@ -200,6 +200,7 @@ export const usePgmlStudioVersionHistory = (
             ? latestDesignVersion.value?.id
             : latestImplementationVersion.value?.id
         ),
+        isLatestOverall: version.id === getLatestPgmlVersion(document.value)?.id,
         isRoot: version.parentVersionId === null,
         siblingCount: getPgmlSiblingVersionCount(document.value, version.id),
         isWorkspaceBase: document.value.workspace.basedOnVersionId === version.id,

@@ -235,6 +235,7 @@ Properties "public.users" {
       depth: 0,
       isLeaf: false,
       isLatestByRole: false,
+      isLatestOverall: false,
       isRoot: true
     }))
     expect(api.versionItems.value[1]).toEqual(expect.objectContaining({
@@ -245,6 +246,7 @@ Properties "public.users" {
       depth: 1,
       isLeaf: true,
       isLatestByRole: true,
+      isLatestOverall: true,
       isRoot: false,
       lineageIds: expect.arrayContaining([rootVersion.id]),
       lineageLabel: 'Initial design -> Add status',
