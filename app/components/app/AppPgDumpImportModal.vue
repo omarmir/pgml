@@ -92,6 +92,8 @@ const handleTextInput = (event: Event) => {
         </p>
       </div>
 
+      <slot name="before-inputs" />
+
       <label class="grid gap-1">
         <span :class="studioFieldKickerClass">
           Upload a text pg_dump file

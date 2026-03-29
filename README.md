@@ -1,6 +1,6 @@
 # PGML
 
-PGML is a Postgres-first markup language that extends DBML toward real schema documentation.
+PGML is a Postgres-first markup language that extends DBML toward real schema documentation and grammar-native schema versioning.
 
 This repository contains:
 
@@ -8,7 +8,7 @@ This repository contains:
 - a Nuxt-based documentation site at `/`
 - a diagram studio at `/diagram` that parses PGML and renders a schema canvas
 
-PGML is designed to read like architecture documentation instead of migration output. It stays close to DBML where possible, then adds Postgres-native objects such as functions, procedures, triggers, sequences, constraints, custom types, and layout metadata.
+PGML is designed to read like architecture documentation instead of migration output. It stays close to DBML where possible, then adds Postgres-native objects such as functions, procedures, triggers, sequences, constraints, custom types, layout metadata, and versioned document roots.
 
 ## Why PGML
 
@@ -39,6 +39,7 @@ PGML is intentionally close to DBML, then opinionated where Postgres needs more 
 - Supports source-first executable objects with embedded SQL or PL/pgSQL.
 - Allows `docs {}` and `affects {}` blocks when narrative or dependency hints matter.
 - Persists studio state back into PGML with `Properties` blocks.
+- Stores document history directly in the grammar with `VersionSet`, `Workspace`, `Version`, and `Snapshot`.
 
 ## Quick Start
 
@@ -71,6 +72,42 @@ Function register_entity(entity_kind text) returns trigger [replace] {
 ## Documentation
 
 The language is block-based, readable, and meant to be learned from examples.
+
+### Versioned documents
+
+PGML documents are rooted in `VersionSet`. The mutable draft lives in `Workspace`, locked checkpoints live in `Version`, and schema objects remain inside `Snapshot`.
+
+```pgml
+VersionSet "Billing schema" {
+  Workspace {
+    based_on: v1
+    updated_at: "2026-03-29T14:12:00Z"
+
+    Snapshot {
+      Table public.users {
+        id uuid [pk]
+        email text [not null]
+        status text
+      }
+    }
+  }
+
+  Version v1 {
+    name: "Initial implementation"
+    role: implementation
+    created_at: "2026-03-20T15:00:00Z"
+
+    Snapshot {
+      Table public.users {
+        id uuid [pk]
+        email text [not null]
+      }
+    }
+  }
+}
+```
+
+The studio compares `Workspace` against a selected base `Version` to show deltas and generate forward migration SQL. Importing a `pg_dump` onto an existing document replaces `Workspace` and requires selecting the base `Version` it should increment from.
 
 ### Tables and references
 
@@ -164,6 +201,10 @@ Properties "custom-type:Domain:email_address" {
 
 The current parser and studio support:
 
+- `VersionSet`
+- `Workspace`
+- `Version`
+- `Snapshot`
 - `Table`
 - `TableGroup`
 - `Ref`

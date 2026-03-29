@@ -14,6 +14,10 @@ import {
   loadRecentComputerPgmlFile,
   openComputerPgmlFile
 } from '~/utils/computer-files'
+import {
+  createInitialPgmlDocument,
+  serializePgmlDocument
+} from '~/utils/pgml-document'
 import { useStudioSessionStore } from '~/stores/studio-session'
 import { useStudioSourcesStore } from '~/stores/studio-sources'
 import { pgmlExample } from '~/utils/pgml'
@@ -158,6 +162,35 @@ const pushComputerFileActionErrorToast = (description: string) => {
     icon: 'i-lucide-circle-alert'
   })
 }
+const buildVersionedPgmlText = (input: {
+  initialVersionName?: string
+  name: string
+  role?: 'design' | 'implementation'
+  snapshotSource: string
+}) => {
+  const normalizedSnapshotSource = input.snapshotSource.trim()
+
+  if (input.initialVersionName) {
+    return serializePgmlDocument(createInitialPgmlDocument({
+      initialVersion: {
+        createdAt: new Date().toISOString(),
+        name: input.initialVersionName,
+        parentVersionId: null,
+        role: input.role || 'design',
+        snapshot: {
+          source: normalizedSnapshotSource
+        }
+      },
+      name: input.name,
+      workspaceSource: normalizedSnapshotSource
+    }))
+  }
+
+  return serializePgmlDocument(createInitialPgmlDocument({
+    name: input.name,
+    workspaceSource: normalizedSnapshotSource
+  }))
+}
 
 const refreshSavedSchemas = () => {
   studioSourcesStore.refreshBrowserSchemas()
@@ -167,9 +200,17 @@ const refreshRecentComputerFiles = async () => {
 }
 const createBrowserSchemaFromImport = async (input: {
   name: string
-  text: string
+  snapshotSource: string
 }) => {
-  const createdSchema = studioSourcesStore.createBrowserSchema(input)
+  const createdSchema = studioSourcesStore.createBrowserSchema({
+    name: input.name,
+    text: buildVersionedPgmlText({
+      initialVersionName: 'Initial implementation',
+      name: input.name,
+      role: 'implementation',
+      snapshotSource: input.snapshotSource
+    })
+  })
 
   if (!createdSchema) {
     pushSaveErrorToast('Unable to save to local storage.')
@@ -257,7 +298,10 @@ const createComputerFile = async (input: {
 const createComputerFileFromLaunch = async (launchType: 'example' | 'new') => {
   await createComputerFile({
     name: launchType === 'example' ? exampleSchemaName : untitledSchemaName,
-    text: launchType === 'example' ? pgmlExample : ''
+    text: buildVersionedPgmlText({
+      name: launchType === 'example' ? exampleSchemaName : untitledSchemaName,
+      snapshotSource: launchType === 'example' ? pgmlExample : ''
+    })
   })
 }
 const openRecentComputerFileFromLaunch = async (recentFileId: string) => {
@@ -385,14 +429,19 @@ const submitPgDumpImport = async () => {
       queueComputerFileAccessAction({
         kind: 'create-import',
         schemaName: importedSchema.schemaName,
-        text: importedSchema.pgml
+        text: buildVersionedPgmlText({
+          initialVersionName: 'Initial implementation',
+          name: importedSchema.schemaName,
+          role: 'implementation',
+          snapshotSource: importedSchema.pgml
+        })
       })
       return
     }
 
     await createBrowserSchemaFromImport({
       name: importedSchema.schemaName,
-      text: importedSchema.pgml
+      snapshotSource: importedSchema.pgml
     })
   } catch (error) {
     pgDumpImportError.value = getActionErrorMessage(error, 'Unable to import that pg_dump.')

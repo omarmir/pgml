@@ -4,6 +4,7 @@ import type { CSSProperties, Ref } from 'vue'
 import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
 import { studioSelectUi, studioSwitchUi } from '~/constants/ui'
 import PgmlDiagramGpuScene from '~/components/pgml/PgmlDiagramGpuScene.vue'
+import PgmlDiagramVersionsPanel from '~/components/pgml/PgmlDiagramVersionsPanel.vue'
 import { buildTableGroupMasonryLayout, type TableAttachment, type TableAttachmentFlag, type TableAttachmentKind } from '~/utils/pgml-diagram-canvas'
 import {
   defaultPgmlTableWidthScale,
@@ -176,6 +177,30 @@ type MeasuredSize = {
   width: number
 }
 
+type VersionPanelItem = {
+  createdAt: string
+  id: string
+  isWorkspaceBase: boolean
+  label: string
+  parentVersionId: string | null
+  role: 'design' | 'implementation'
+}
+
+type VersionCompareOption = {
+  label: string
+  value: string
+}
+
+type VersionDiffSection = {
+  count: number
+  items: Array<{
+    id: string
+    kind: 'added' | 'modified' | 'removed'
+    label: string
+  }>
+  label: string
+}
+
 type DetailPopoverPlacement = {
   left: number
   top: number
@@ -186,17 +211,37 @@ const {
   exportBaseName = 'pgml-schema',
   exportPreferenceKey = 'name:pgml-schema',
   hasBlockingSourceErrors = false,
+  layoutChanged = 0,
   mobileActiveView = null,
   mobilePanelTab = null,
+  migrationFileName = 'pgml-version.migration.sql',
+  migrationSql = '',
+  migrationWarnings = [],
   model,
+  previewTargetId = 'workspace',
+  versionCompareBaseId = null,
+  versionCompareOptions = [],
+  versionCompareTargetId = 'workspace',
+  versionDiffSections = [],
+  versionItems = [],
   viewportResetKey = 0
 } = defineProps<{
   exportBaseName?: string
   exportPreferenceKey?: string
   hasBlockingSourceErrors?: boolean
+  layoutChanged?: number
   mobileActiveView?: StudioMobileCanvasView | null
   mobilePanelTab?: DiagramPanelTab | null
+  migrationFileName?: string
+  migrationSql?: string
+  migrationWarnings?: string[]
   model: PgmlSchemaModel
+  previewTargetId?: string
+  versionCompareBaseId?: string | null
+  versionCompareOptions?: VersionCompareOption[]
+  versionCompareTargetId?: string
+  versionDiffSections?: VersionDiffSection[]
+  versionItems?: VersionPanelItem[]
   viewportResetKey?: number
 }>()
 
@@ -208,6 +253,12 @@ const emit = defineEmits<{
   focusSource: [sourceRange: PgmlSourceRange]
   nodePropertiesChange: [properties: Record<string, PgmlNodeProperties>]
   panelTabChange: [tab: DiagramPanelTab]
+  restoreVersion: [versionId: string]
+  updateVersionCompareBaseId: [value: string | null]
+  updateVersionCompareTargetId: [value: string]
+  versionCheckpoint: []
+  versionImportDump: []
+  viewVersionTarget: [targetId: string]
 }>()
 
 const sceneRef: Ref<DiagramCanvasExposed | null> = ref(null)
@@ -2526,6 +2577,10 @@ const diagramPanelTitle = computed(() => {
     return 'Export'
   }
 
+  if (activePanelTab.value === 'versions') {
+    return 'Versions'
+  }
+
   if (selectedColumn.value) {
     return `${selectedColumn.value.table.fullName}.${selectedColumn.value.column.name}`
   }
@@ -2560,6 +2615,10 @@ const diagramPanelDescription = computed(() => {
 
   if (activePanelTab.value === 'export') {
     return 'Export the current accelerated diagram view.'
+  }
+
+  if (activePanelTab.value === 'versions') {
+    return 'Preview checkpoints, compare snapshots, and generate forward migrations.'
   }
 
   if (selectedColumn.value) {
@@ -3574,7 +3633,7 @@ defineExpose<{
         </div>
       </div>
 
-      <div class="grid grid-cols-3 border-b border-[color:var(--studio-divider)]">
+      <div class="grid grid-cols-4 border-b border-[color:var(--studio-divider)]">
         <button
           type="button"
           data-diagram-panel-tab="inspector"
@@ -3594,10 +3653,18 @@ defineExpose<{
         <button
           type="button"
           data-diagram-panel-tab="export"
-          :class="getStudioTabButtonClass({ active: activePanelTab === 'export' })"
+          :class="getStudioTabButtonClass({ active: activePanelTab === 'export', withTrailingBorder: true })"
           @click="activePanelTab = 'export'"
         >
           Export
+        </button>
+        <button
+          type="button"
+          data-diagram-panel-tab="versions"
+          :class="getStudioTabButtonClass({ active: activePanelTab === 'versions' })"
+          @click="activePanelTab = 'versions'"
+        >
+          Versions
         </button>
       </div>
 
@@ -4424,7 +4491,7 @@ defineExpose<{
       </div>
 
       <div
-        v-else
+        v-else-if="activePanelTab === 'export'"
         data-studio-scrollable="true"
         class="grid content-start gap-3 overflow-auto px-3 py-3"
       >
@@ -4456,6 +4523,26 @@ defineExpose<{
           />
         </div>
       </div>
+
+      <PgmlDiagramVersionsPanel
+        v-else
+        :compare-base-id="versionCompareBaseId"
+        :compare-options="versionCompareOptions"
+        :compare-target-id="versionCompareTargetId"
+        :diff-sections="versionDiffSections"
+        :layout-changed="layoutChanged"
+        :migration-file-name="migrationFileName"
+        :migration-sql="migrationSql"
+        :migration-warnings="migrationWarnings"
+        :preview-target-id="previewTargetId"
+        :versions="versionItems"
+        @create-checkpoint="emit('versionCheckpoint')"
+        @import-dump="emit('versionImportDump')"
+        @restore-version="emit('restoreVersion', $event)"
+        @update:compare-base-id="emit('updateVersionCompareBaseId', $event)"
+        @update:compare-target-id="emit('updateVersionCompareTargetId', $event)"
+        @view-target="emit('viewVersionTarget', $event)"
+      />
     </aside>
   </div>
 </template>

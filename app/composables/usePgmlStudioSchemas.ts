@@ -18,6 +18,7 @@ const schemaAutosaveDebounceMs = 5000
 const localStorageSaveErrorMessage = 'Unable to save to local storage.'
 
 type UsePgmlStudioSchemasOptions = {
+  applyLoadedSchemaText?: (value: string) => void
   autosaveEnabled?: ComputedRef<boolean>
   buildSchemaText: (includeLayout: boolean) => string
   canEmbedLayout: ComputedRef<boolean>
@@ -31,6 +32,7 @@ type PersistSchemaOptions = {
 }
 
 export const usePgmlStudioSchemas = ({
+  applyLoadedSchemaText,
   autosaveEnabled,
   buildSchemaText,
   canEmbedLayout,
@@ -77,7 +79,7 @@ export const usePgmlStudioSchemas = ({
     return normalizeSchemaName(currentSchemaName.value)
   }
   const getAutosaveText = () => {
-    return source.value
+    return buildSchemaText(includeLayoutInSchema.value)
   }
   const getCurrentSnapshot = () => {
     return getSnapshot(getAutosaveName(), getAutosaveText())
@@ -97,7 +99,12 @@ export const usePgmlStudioSchemas = ({
     localStorageSaveError.value = null
   }
   const applyUnsavedSchema = (nextSchema: { name: string, text: string }) => {
-    source.value = nextSchema.text
+    if (applyLoadedSchemaText) {
+      applyLoadedSchemaText(nextSchema.text)
+    } else {
+      source.value = nextSchema.text
+    }
+
     currentSchemaName.value = nextSchema.name
     clearPersistedSelection()
     syncSchemaSnapshot(nextSchema.name, nextSchema.text)
@@ -246,7 +253,12 @@ export const usePgmlStudioSchemas = ({
   }
 
   const loadSavedSchema = (schema: SavedPgmlSchema) => {
-    source.value = schema.text
+    if (applyLoadedSchemaText) {
+      applyLoadedSchemaText(schema.text)
+    } else {
+      source.value = schema.text
+    }
+
     hasSavedSchemaInSession.value = false
     syncPersistedState(schema)
     studioSessionStore.closeLoadDialog()
@@ -285,7 +297,12 @@ export const usePgmlStudioSchemas = ({
       const latestSavedSchema = orderSavedSchemas(savedSchemas.value)[0]
 
       if (latestSavedSchema) {
-        source.value = latestSavedSchema.text
+        if (applyLoadedSchemaText) {
+          applyLoadedSchemaText(latestSavedSchema.text)
+        } else {
+          source.value = latestSavedSchema.text
+        }
+
         syncPersistedState(latestSavedSchema)
       } else {
         syncCurrentSnapshot()

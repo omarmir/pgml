@@ -10,7 +10,7 @@ describe('Source launch card source', () => {
     expect(file).toContain('operations: SourceLaunchCardOperation[]')
     expect(file).toContain('sqlDumpAction?: SourceLaunchCardAction')
     expect(file).toContain('SQL dump')
-    expect(file).toContain('Import a pg_dump')
+    expect(file).toContain('Paste text or upload a dump file')
     expect(file).toContain('emit(\'action\'')
     expect(file).toContain('triggerAction')
     expect(file).toContain('emitLaunchAction(sqlDumpAction)')

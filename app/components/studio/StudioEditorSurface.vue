@@ -7,19 +7,32 @@ const source = defineModel<string>({
 })
 
 const {
+  editorMode,
+  editorModeItems = [],
   editorRefSetter,
   focusDiagnostic,
+  readOnly = false,
   sourceDiagnostics,
   sourceErrorCount,
   sourceWarningCount,
   visibleSourceDiagnostics
 } = defineProps<{
+  editorMode?: string
+  editorModeItems?: Array<{
+    label: string
+    value: string
+  }>
   editorRefSetter: (value: unknown) => void
   focusDiagnostic: (diagnostic: PgmlLanguageDiagnostic) => void
+  readOnly?: boolean
   sourceDiagnostics: PgmlLanguageDiagnostic[]
   sourceErrorCount: number
   sourceWarningCount: number
   visibleSourceDiagnostics: PgmlLanguageDiagnostic[]
+}>()
+
+const emit = defineEmits<{
+  'update:editorMode': [value: string]
 }>()
 const formatDiagnosticLineLabel = (diagnostic: PgmlLanguageDiagnostic) => {
   const lines = diagnostic.lines && diagnostic.lines.length > 0
@@ -38,11 +51,39 @@ const hiddenDiagnosticCount = computed(() => {
     data-editor-panel="true"
     class="flex h-full min-h-0 flex-col overflow-hidden bg-[color:var(--studio-shell-bg)] pr-0"
   >
+    <div
+      v-if="editorModeItems.length > 0"
+      class="flex shrink-0 items-center justify-between gap-3 border-b border-[color:var(--studio-shell-border)] px-3 py-2"
+    >
+      <div class="flex flex-wrap items-center gap-2">
+        <button
+          v-for="item in editorModeItems"
+          :key="item.value"
+          type="button"
+          class="border px-2.5 py-1 font-mono text-[0.6rem] uppercase tracking-[0.08em] transition-colors duration-150"
+          :class="editorMode === item.value
+            ? 'border-[color:var(--studio-ring)] bg-[color:var(--studio-input-bg)] text-[color:var(--studio-shell-text)]'
+            : 'border-[color:var(--studio-shell-border)] bg-[color:var(--studio-control-bg)] text-[color:var(--studio-shell-muted)]'"
+          @click="emit('update:editorMode', item.value)"
+        >
+          {{ item.label }}
+        </button>
+      </div>
+
+      <span
+        v-if="readOnly"
+        class="border border-[color:var(--studio-shell-border)] px-2 py-1 font-mono text-[0.58rem] uppercase tracking-[0.08em] text-[color:var(--studio-shell-muted)]"
+      >
+        Read only
+      </span>
+    </div>
+
     <div class="min-h-0 flex-1 overflow-hidden bg-[color:var(--studio-shell-bg)]">
       <PgmlSourceCodeEditor
         :ref="editorRefSetter"
         v-model="source"
         placeholder="Paste PGML here..."
+        :read-only="readOnly"
       />
     </div>
 

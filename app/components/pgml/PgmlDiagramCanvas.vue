@@ -12,21 +12,65 @@ type CanvasHandle = {
   getNodeLayoutProperties: () => Record<string, PgmlNodeProperties>
 }
 
+type VersionCompareOption = {
+  label: string
+  value: string
+}
+
+type VersionDiffSection = {
+  count: number
+  items: Array<{
+    id: string
+    kind: 'added' | 'modified' | 'removed'
+    label: string
+  }>
+  label: string
+}
+
+type VersionPanelItem = {
+  createdAt: string
+  id: string
+  isWorkspaceBase: boolean
+  label: string
+  parentVersionId: string | null
+  role: 'design' | 'implementation'
+}
+
 const {
   exportBaseName = 'pgml-schema',
   exportPreferenceKey = 'name:pgml-schema',
   hasBlockingSourceErrors = false,
+  layoutChanged = 0,
   mobileActiveView = null,
   mobilePanelTab = null,
   model,
+  migrationFileName = 'pgml-version.migration.sql',
+  migrationSql = '',
+  migrationWarnings = [],
+  previewTargetId = 'workspace',
+  versionCompareBaseId = null,
+  versionCompareOptions = [],
+  versionCompareTargetId = 'workspace',
+  versionDiffSections = [],
+  versionItems = [],
   viewportResetKey = 0
 } = defineProps<{
   exportBaseName?: string
   exportPreferenceKey?: string
   hasBlockingSourceErrors?: boolean
+  layoutChanged?: number
   mobileActiveView?: StudioMobileCanvasView | null
   mobilePanelTab?: DiagramPanelTab | null
+  migrationFileName?: string
+  migrationSql?: string
+  migrationWarnings?: string[]
   model: PgmlSchemaModel
+  previewTargetId?: string
+  versionCompareBaseId?: string | null
+  versionCompareOptions?: VersionCompareOption[]
+  versionCompareTargetId?: string
+  versionDiffSections?: VersionDiffSection[]
+  versionItems?: VersionPanelItem[]
   viewportResetKey?: number
 }>()
 
@@ -38,6 +82,12 @@ const emit = defineEmits<{
   focusSource: [sourceRange: PgmlSourceRange]
   nodePropertiesChange: [properties: Record<string, PgmlNodeProperties>]
   panelTabChange: [tab: DiagramPanelTab]
+  restoreVersion: [versionId: string]
+  updateVersionCompareBaseId: [value: string | null]
+  updateVersionCompareTargetId: [value: string]
+  versionCheckpoint: []
+  versionImportDump: []
+  viewVersionTarget: [targetId: string]
 }>()
 
 const shellRef: Ref<CanvasHandle | null> = ref(null)
@@ -64,9 +114,19 @@ defineExpose<CanvasHandle>({
     :export-base-name="exportBaseName"
     :export-preference-key="exportPreferenceKey"
     :has-blocking-source-errors="hasBlockingSourceErrors"
+    :layout-changed="layoutChanged"
     :mobile-active-view="mobileActiveView"
     :mobile-panel-tab="mobilePanelTab"
+    :migration-file-name="migrationFileName"
+    :migration-sql="migrationSql"
+    :migration-warnings="migrationWarnings"
     :model="model"
+    :preview-target-id="previewTargetId"
+    :version-compare-base-id="versionCompareBaseId"
+    :version-compare-options="versionCompareOptions"
+    :version-compare-target-id="versionCompareTargetId"
+    :version-diff-sections="versionDiffSections"
+    :version-items="versionItems"
     :viewport-reset-key="viewportResetKey"
     @create-group="emit('createGroup')"
     @create-table="emit('createTable', $event)"
@@ -75,5 +135,11 @@ defineExpose<CanvasHandle>({
     @focus-source="emit('focusSource', $event)"
     @node-properties-change="emit('nodePropertiesChange', $event)"
     @panel-tab-change="emit('panelTabChange', $event)"
+    @restore-version="emit('restoreVersion', $event)"
+    @update-version-compare-base-id="emit('updateVersionCompareBaseId', $event)"
+    @update-version-compare-target-id="emit('updateVersionCompareTargetId', $event)"
+    @version-checkpoint="emit('versionCheckpoint')"
+    @version-import-dump="emit('versionImportDump')"
+    @view-version-target="emit('viewVersionTarget', $event)"
   />
 </template>

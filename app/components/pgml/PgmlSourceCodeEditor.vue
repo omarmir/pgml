@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import type { Ref } from 'vue'
 import type { PgmlSourceRange } from '~/utils/pgml'
-import { EditorSelection, EditorState } from '@codemirror/state'
+import { Compartment, EditorSelection, EditorState } from '@codemirror/state'
 import { EditorView } from '@codemirror/view'
 import { createPgmlCodeMirrorExtensions } from '~/utils/pgml-codemirror'
 import { getPgmlSourceSelectionRange } from '~/utils/pgml'
@@ -12,10 +12,12 @@ type PgmlEditorHostElement = HTMLDivElement & {
 
 const {
   modelValue,
-  placeholder = 'Paste PGML here...'
+  placeholder = 'Paste PGML here...',
+  readOnly = false
 } = defineProps<{
   modelValue: string
   placeholder?: string
+  readOnly?: boolean
 }>()
 
 const emit = defineEmits<{
@@ -24,6 +26,8 @@ const emit = defineEmits<{
 
 const containerRef: Ref<PgmlEditorHostElement | null> = ref(null)
 const viewRef: Ref<EditorView | null> = ref(null)
+const editableCompartment = new Compartment()
+const readOnlyCompartment = new Compartment()
 let isApplyingExternalUpdate = false
 
 const focusOffset = (from: number, to?: number) => {
@@ -114,6 +118,8 @@ onMounted(() => {
     state: EditorState.create({
       doc: modelValue,
       extensions: [
+        editableCompartment.of(EditorView.editable.of(!readOnly)),
+        readOnlyCompartment.of(EditorState.readOnly.of(readOnly)),
         createPgmlCodeMirrorExtensions({
           placeholder
         }),
@@ -136,6 +142,19 @@ onMounted(() => {
 
 watch(() => modelValue, (nextValue) => {
   setValue(nextValue)
+})
+
+watch(() => readOnly, (nextValue) => {
+  if (!viewRef.value) {
+    return
+  }
+
+  viewRef.value.dispatch({
+    effects: [
+      editableCompartment.reconfigure(EditorView.editable.of(!nextValue)),
+      readOnlyCompartment.reconfigure(EditorState.readOnly.of(nextValue))
+    ]
+  })
 })
 
 onBeforeUnmount(() => {

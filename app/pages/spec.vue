@@ -9,6 +9,7 @@ import {
 const pageOutline = [
   { id: 'reasons', label: 'Why PGML' },
   { id: 'dbml', label: 'DBML Compatibility' },
+  { id: 'versioning', label: 'Versioning' },
   { id: 'documentation', label: 'Documentation' }
 ]
 
@@ -31,7 +32,7 @@ const reasons = [
   },
   {
     title: 'Generate migrations deterministically',
-    description: 'Because the schema is captured in a structured document instead of ad hoc SQL edits, PGML can be used as a deterministic input for migration generation and change planning.'
+    description: 'Because the schema is captured in a structured, version-aware document instead of ad hoc SQL edits, PGML can be used as a deterministic input for migration generation and change planning.'
   },
   {
     title: 'Reduce AI ambiguity',
@@ -40,6 +41,10 @@ const reasons = [
   {
     title: 'Preserve intent, not just DDL',
     description: 'PGML can keep docs, affects metadata, and embedded Properties blocks so the saved source explains what matters beyond the CREATE statement.'
+  },
+  {
+    title: 'Track schema evolution in the grammar',
+    description: 'VersionSet, Workspace, Version, and Snapshot make checkpoint history part of PGML itself, so comparing design against implementation does not rely on sidecar metadata.'
   }
 ]
 
@@ -65,6 +70,37 @@ const dbmlComparison = [
 ]
 
 const documentationExamples = [
+  {
+    title: 'Versioned documents',
+    description: 'PGML documents are rooted in VersionSet. Workspace is the mutable draft, Version blocks are immutable checkpoints, and Snapshot contains the existing schema grammar.',
+    code: `VersionSet "Billing schema" {
+  Workspace {
+    based_on: v1
+    updated_at: "2026-03-29T14:12:00Z"
+
+    Snapshot {
+      Table public.users {
+        id uuid [pk]
+        email text [not null]
+        status text
+      }
+    }
+  }
+
+  Version v1 {
+    name: "Initial implementation"
+    role: implementation
+    created_at: "2026-03-20T15:00:00Z"
+
+    Snapshot {
+      Table public.users {
+        id uuid [pk]
+        email text [not null]
+      }
+    }
+  }
+}`
+  },
   {
     title: 'Tables and references',
     description: 'Start with DBML-like table blocks. Keep columns first, then table-level indexes and constraints. Reference actions like `delete:` and `update:` stay next to the `ref:` they modify.',
@@ -141,28 +177,23 @@ Properties "custom-type:Domain:email_address" {
   }
 ]
 
-const heroQuickStartCode = `TableGroup Commerce {
-  public.products
-  public.orders
-  public.order_items
-}
+const heroQuickStartCode = `VersionSet "Commerce schema" {
+  Workspace {
+    Snapshot {
+      TableGroup Commerce {
+        public.products
+        public.orders
+        public.order_items
+      }
 
-Table public.orders {
-  id uuid [pk]
-  tenant_id uuid [not null, ref: > public.tenants.id]
-  customer_id uuid [ref: > public.users.id, delete: restrict]
-  total_cents integer [not null]
-}
-
-Function register_entity(entity_kind text) returns trigger [replace] {
-  source: $sql$
-    CREATE OR REPLACE FUNCTION public.register_entity(entity_kind text)
-    RETURNS trigger AS $$
-    BEGIN
-      RETURN NEW;
-    END;
-    $$ LANGUAGE plpgsql;
-  $sql$
+      Table public.orders {
+        id uuid [pk]
+        tenant_id uuid [not null, ref: > public.tenants.id]
+        customer_id uuid [ref: > public.users.id, delete: restrict]
+        total_cents integer [not null]
+      }
+    }
+  }
 }`
 
 const examplePanelClass = `${studioPanelSurfaceClass} min-w-0`
@@ -187,10 +218,10 @@ const tableOfContentsLinkClass = 'border-l border-transparent pl-3 text-sm text-
           </h1>
           <p class="max-w-2xl text-sm leading-7 text-[color:var(--studio-shell-muted)] sm:text-[0.97rem]">
             PGML stays close to DBML for tables and references, then extends it for the Postgres objects that shape real systems:
-            functions, procedures, triggers, sequences, constraints, custom types, and embedded layout state. The goal is simple:
-            one source file that is easy to read in a pull request and useful enough to drive the diagram studio directly. TableGroup
-            helps organize related tables, but PostgreSQL schema still comes from table names like public.orders, so group members
-            should stay fully qualified as schema.table.
+            functions, procedures, triggers, sequences, constraints, custom types, embedded layout state, and grammar-native
+            checkpoint history. The goal is simple: one source file that is easy to read in a pull request and useful enough to drive
+            the diagram studio directly. TableGroup helps organize related tables, but PostgreSQL schema still comes from table names
+            like public.orders, so group members should stay fully qualified as schema.table.
           </p>
         </div>
 
@@ -333,6 +364,29 @@ const tableOfContentsLinkClass = 'border-l border-transparent pl-3 text-sm text-
         </section>
 
         <section
+          id="versioning"
+          :class="sectionDividerClass"
+        >
+          <div class="flex flex-col gap-4">
+            <div>
+              <div :class="studioSectionKickerClass">
+                Versioning
+              </div>
+              <h2 class="mt-2 text-2xl font-semibold tracking-[-0.02em] text-[color:var(--studio-shell-text)]">
+                Version history is part of the PGML grammar, not a sidecar metadata format.
+              </h2>
+              <p class="mt-3 max-w-4xl text-sm leading-7 text-[color:var(--studio-shell-muted)]">
+                Every PGML document is a VersionSet. Workspace holds the active draft, each Version is an immutable checkpoint, and
+                Snapshot contains the familiar schema blocks. The studio compares one snapshot against another to show deltas, and it
+                generates forward SQL from those diffs instead of treating each saved state like a full wipe-and-recreate export.
+                Importing a pg_dump onto an existing document replaces the current Workspace and requires choosing the Version it
+                should increment from.
+              </p>
+            </div>
+          </div>
+        </section>
+
+        <section
           id="documentation"
           :class="sectionDividerClass"
         >
@@ -345,8 +399,9 @@ const tableOfContentsLinkClass = 'border-l border-transparent pl-3 text-sm text-
                 The language is block-based, readable, and meant to be learned from examples.
               </h2>
               <p class="mt-3 max-w-3xl text-sm leading-7 text-[color:var(--studio-shell-muted)]">
-                Start with table structure, add groups to cluster domains, use source blocks for executable objects, and let the studio
-                persist layout back into the same document with Properties. The examples below cover the current surface area used by this app.
+                Start with VersionSet and Workspace, add table structure and groups inside Snapshot, use source blocks for executable
+                objects, and let the studio persist layout back into the same document with Properties. The examples below cover the
+                current surface area used by this app.
               </p>
             </div>
 

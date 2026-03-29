@@ -17,6 +17,10 @@ import StudioEditorSurface from '~/components/studio/StudioEditorSurface.vue'
 import StudioMobileWorkspace from '~/components/studio/StudioMobileWorkspace.vue'
 import { usePgmlColumnDefaultSuggestions } from '~/composables/usePgmlColumnDefaultSuggestions'
 import { usePgmlStudioComputerFiles } from '~/composables/usePgmlStudioComputerFiles'
+import {
+  usePgmlStudioVersionHistory,
+  type PgmlVersionedDocumentEditorMode
+} from '~/composables/usePgmlStudioVersionHistory'
 import type { PgmlSourceEditorHandle } from '~/composables/usePgmlSourceEditor'
 import { useStudioHeaderActions } from '~/composables/useStudioHeaderActions'
 import { useStudioSchemaStatus } from '~/composables/useStudioSchemaStatus'
@@ -24,6 +28,7 @@ import { useStudioSessionStore } from '~/stores/studio-session'
 import { useStudioSourcesStore } from '~/stores/studio-sources'
 import {
   downloadSchemaText,
+  formatSavedPgmlSchemaTime,
   slugifySchemaName,
   type SavedPgmlSchema
 } from '~/utils/studio-browser-schemas'
@@ -31,7 +36,10 @@ import {
   getStudioLaunchRequestKey,
   parseStudioLaunchQuery
 } from '~/utils/studio-launch'
+import { diffPgmlSchemaModels } from '~/utils/pgml-diff'
+import { convertPgDumpToPgml } from '~/utils/pg-dump-import'
 import { analyzePgmlDocument } from '~/utils/pgml-language'
+import { buildPgmlMigrationDiffBundle } from '~/utils/pgml-migration-diff'
 import {
   buildPgmlWithNodeProperties,
   parsePgml,
@@ -101,6 +109,16 @@ type ReferenceTargetItem = {
 }
 
 type ReferenceActionField = 'referenceDeleteAction' | 'referenceUpdateAction'
+
+type VersionDiffSection = {
+  count: number
+  items: Array<{
+    id: string
+    kind: 'added' | 'modified' | 'removed'
+    label: string
+  }>
+  label: string
+}
 
 const defaultReferenceActionSelectValue = '__pgml_default_reference_action__'
 
@@ -175,11 +193,24 @@ const formatColumnTypeLabel = (value: string) => {
 }
 
 const source: Ref<string> = ref(pgmlExample)
+const editorDisplaySource: Ref<string> = ref(pgmlExample)
 const canvasRef: Ref<PgmlDiagramCanvasExposed | null> = ref(null)
 const canvasViewportResetKey: Ref<number> = ref(0)
 const isExporting: Ref<boolean> = ref(false)
+const versionDocumentName: Ref<string> = ref('Untitled schema')
 const mobileWorkspaceView: Ref<StudioMobileWorkspaceView> = ref('diagram')
 const mobilePanelTab: Ref<DiagramPanelTab> = ref(defaultStudioMobilePanelTab)
+const checkpointDialogOpen: Ref<boolean> = ref(false)
+const checkpointName: Ref<string> = ref('')
+const checkpointRole: Ref<'design' | 'implementation'> = ref('design')
+const importDumpDialogOpen: Ref<boolean> = ref(false)
+const importDumpBaseVersionId: Ref<string | null> = ref(null)
+const importDumpError: Ref<string | null> = ref(null)
+const importDumpSelectedFile: Ref<File | null> = ref(null)
+const importDumpText: Ref<string> = ref('')
+const isSubmittingImportDump: Ref<boolean> = ref(false)
+const importDumpConflictErrorMessage = 'Choose either pasted pg_dump text or a file upload, not both.'
+const importDumpMissingInputErrorMessage = 'Paste pg_dump text or choose a text dump file before importing.'
 const tableEditorDraft: Ref<PgmlEditableTableDraft | null> = ref(null)
 const tableEditorOpen: Ref<boolean> = ref(false)
 const groupEditorDraft: Ref<PgmlEditableGroupDraft | null> = ref(null)
@@ -209,6 +240,29 @@ const route = useRoute()
 const studioLaunchRequest = computed(() => parseStudioLaunchQuery(route.query))
 currentPersistenceSource.value = studioLaunchRequest.value?.source === 'file' ? 'file' : 'browser'
 const {
+  compareBaseId: versionCompareBaseId,
+  compareBaseSource,
+  compareTargetId: versionCompareTargetId,
+  compareTargetSource,
+  createCheckpoint: createVersionCheckpoint,
+  editorMode: versionedEditorMode,
+  isWorkspacePreview,
+  loadDocument: loadVersionedDocument,
+  previewSource,
+  previewTargetId,
+  replaceWorkspaceFromImportedSnapshot,
+  replaceWorkspaceFromVersion,
+  serializeCurrentDocument,
+  setCompareTargets,
+  setPreviewTarget,
+  versionItems: versionHistoryItems,
+  versionedDocumentSource,
+  versions
+} = usePgmlStudioVersionHistory({
+  documentName: computed(() => versionDocumentName.value),
+  source
+})
+const {
   isEditorPanelVisible,
   isCompactStudioLayout,
   layoutShellRef,
@@ -221,8 +275,42 @@ const secondaryModalButtonClass = studioButtonClasses.secondary
 const primaryModalButtonClass = studioButtonClasses.primary
 const tableEditorAddButtonClass = studioButtonClasses.primary
 const tableEditorRemoveButtonClass = studioButtonClasses.iconGhost
-const sourceAnalysis = computed(() => analyzePgmlDocument(source.value))
-const sourceDiagnostics = computed(() => sourceAnalysis.value.diagnostics)
+const versionedEditorModeItems = [
+  {
+    label: 'Workspace draft',
+    value: 'head'
+  },
+  {
+    label: 'Versioned document',
+    value: 'document'
+  }
+] satisfies Array<{
+  label: string
+  value: PgmlVersionedDocumentEditorMode
+}>
+const checkpointRoleItems = [
+  {
+    description: 'Lock a draft checkpoint that represents the next intended PGML design.',
+    label: 'Design',
+    value: 'design'
+  },
+  {
+    description: 'Lock a checkpoint that reflects imported implementation state from a dump.',
+    label: 'Implementation',
+    value: 'implementation'
+  }
+] satisfies Array<ReferenceTargetItem & {
+  value: 'design' | 'implementation'
+}>
+const workspaceSourceAnalysis = computed(() => analyzePgmlDocument(source.value))
+const previewSourceAnalysis = computed(() => analyzePgmlDocument(previewSource.value))
+const sourceDiagnostics = computed(() => {
+  if (versionedEditorMode.value === 'document') {
+    return []
+  }
+
+  return previewSourceAnalysis.value.diagnostics
+})
 const sourceErrorDiagnostics = computed(() => {
   return sourceDiagnostics.value.filter(diagnostic => diagnostic.severity === 'error')
 })
@@ -231,8 +319,21 @@ const sourceWarningDiagnostics = computed(() => {
 })
 const visibleSourceDiagnostics = computed(() => sourceDiagnostics.value.slice(0, 6))
 const hasBlockingSourceErrors = computed(() => sourceErrorDiagnostics.value.length > 0)
-const parsedModel = computed(() => parsePgml(source.value))
-const canEmbedLayout = computed(() => !hasBlockingSourceErrors.value)
+const workspaceHasBlockingSourceErrors = computed(() => {
+  return workspaceSourceAnalysis.value.diagnostics.some(diagnostic => diagnostic.severity === 'error')
+})
+const parsedModel = computed(() => parsePgml(previewSource.value))
+const workspaceParsedModel = computed(() => parsePgml(source.value))
+const canEmbedLayout = computed(() => !workspaceHasBlockingSourceErrors.value)
+const isEditorReadOnly = computed(() => {
+  return versionedEditorMode.value === 'document' || !isWorkspacePreview.value
+})
+const displayedEditorSource = computed(() => {
+  return versionedEditorMode.value === 'document'
+    ? versionedDocumentSource.value
+    : previewSource.value
+})
+const importDumpSelectedFileName = computed(() => importDumpSelectedFile.value?.name || '')
 const mobileCanvasView = computed<StudioMobileCanvasView>(() => {
   return mobileWorkspaceView.value === 'panel' ? 'panel' : 'diagram'
 })
@@ -244,17 +345,13 @@ const assignLayoutShellRef = (value: unknown) => {
 }
 
 const buildSchemaText = (includeLayout: boolean) => {
-  const strippedSource = stripPgmlPropertiesBlocks(source.value)
+  const shouldIncludeLayout = includeLayout && canEmbedLayout.value && canvasRef.value !== null
 
-  if (!includeLayout || !canEmbedLayout.value || !canvasRef.value) {
-    return strippedSource
-  }
-
-  return buildPgmlWithNodeProperties(strippedSource, canvasRef.value.getNodeLayoutProperties())
+  return serializeCurrentDocument(shouldIncludeLayout)
 }
 
 const syncSourceWithNodeProperties = (nodeProperties: Record<string, PgmlNodeProperties>) => {
-  if (hasBlockingSourceErrors.value) {
+  if (!isWorkspacePreview.value || workspaceHasBlockingSourceErrors.value) {
     return
   }
 
@@ -269,6 +366,24 @@ const syncSourceWithNodeProperties = (nodeProperties: Record<string, PgmlNodePro
 
   source.value = nextSource
 }
+
+watch(displayedEditorSource, (nextSource) => {
+  if (editorDisplaySource.value === nextSource) {
+    return
+  }
+
+  editorDisplaySource.value = nextSource
+}, {
+  immediate: true
+})
+
+watch(editorDisplaySource, (nextSource) => {
+  if (isEditorReadOnly.value || nextSource === source.value) {
+    return
+  }
+
+  source.value = nextSource
+})
 
 const {
   clearSchema: clearStudioSchema,
@@ -293,10 +408,11 @@ const {
   schemaActionDescription,
   schemaActionTitle
 } = usePgmlStudioSchemas({
+  applyLoadedSchemaText: loadVersionedDocument,
   autosaveEnabled: computed(() => currentPersistenceSource.value === 'browser'),
   buildSchemaText,
   canEmbedLayout,
-  initialSource: pgmlExample,
+  initialSource: versionedDocumentSource.value,
   restoreLatestOnSetup: studioLaunchRequest.value === null,
   source
 })
@@ -318,6 +434,7 @@ const {
   saveSchemaToComputerFile,
   syncLoadedComputerFile
 } = usePgmlStudioComputerFiles({
+  applyLoadedFileText: loadVersionedDocument,
   buildSchemaText,
   enabled: computed(() => currentPersistenceSource.value === 'file'),
   source
@@ -481,6 +598,184 @@ const loadDialogDescription = computed(() => {
 })
 const exportBaseName = computed(() => slugifySchemaName(activeSchemaName.value))
 const exportPreferenceKey = computed(() => `name:${slugifySchemaName(activeSchemaName.value)}`)
+const getVersionLabel = (input: {
+  id: string
+  name: string | null
+}) => {
+  return input.name && input.name.trim().length > 0 ? input.name : input.id
+}
+const versionPanelItems = computed(() => {
+  return versionHistoryItems.value.map((version) => {
+    return {
+      createdAt: formatSavedPgmlSchemaTime(version.createdAt),
+      id: version.id,
+      isWorkspaceBase: version.isWorkspaceBase,
+      label: getVersionLabel(version),
+      parentVersionId: version.parentVersionId,
+      role: version.role
+    }
+  })
+})
+const versionCompareOptions = computed(() => {
+  return [
+    {
+      label: 'Current workspace',
+      value: 'workspace'
+    },
+    ...versionHistoryItems.value.map((version) => {
+      return {
+        label: getVersionLabel(version),
+        value: version.id
+      }
+    })
+  ]
+})
+const importDumpBaseVersionItems = computed<ReferenceTargetItem[]>(() => {
+  return versions.value.map((version) => {
+    return {
+      description: version.parentVersionId
+        ? `Continues from ${version.parentVersionId}`
+        : 'Root version',
+      label: getVersionLabel(version),
+      value: version.id
+    }
+  })
+})
+const compareDiff = computed(() => {
+  return diffPgmlSchemaModels(
+    parsePgml(compareBaseSource.value),
+    parsePgml(compareTargetSource.value)
+  )
+})
+const versionDiffSections = computed<VersionDiffSection[]>(() => {
+  const sectionEntries = [
+    {
+      items: compareDiff.value.tables,
+      label: 'Tables'
+    },
+    {
+      items: compareDiff.value.columns,
+      label: 'Columns'
+    },
+    {
+      items: compareDiff.value.references,
+      label: 'References'
+    },
+    {
+      items: compareDiff.value.indexes,
+      label: 'Indexes'
+    },
+    {
+      items: compareDiff.value.constraints,
+      label: 'Constraints'
+    },
+    {
+      items: compareDiff.value.groups,
+      label: 'Groups'
+    },
+    {
+      items: [
+        ...compareDiff.value.functions,
+        ...compareDiff.value.procedures,
+        ...compareDiff.value.triggers,
+        ...compareDiff.value.sequences
+      ],
+      label: 'Routines'
+    },
+    {
+      items: compareDiff.value.customTypes,
+      label: 'Types'
+    }
+  ]
+
+  return sectionEntries.reduce<VersionDiffSection[]>((sections, entry) => {
+    if (entry.items.length === 0) {
+      return sections
+    }
+
+    sections.push({
+      count: entry.items.length,
+      items: entry.items.map((item) => {
+        return {
+          id: item.id,
+          kind: item.kind,
+          label: item.label
+        }
+      }),
+      label: entry.label
+    })
+
+    return sections
+  }, [])
+})
+const compareBaseLabel = computed(() => {
+  if (versionCompareBaseId.value === null) {
+    return 'empty'
+  }
+
+  if (versionCompareBaseId.value === 'workspace') {
+    return 'workspace'
+  }
+
+  return getVersionLabel({
+    id: versionCompareBaseId.value,
+    name: versions.value.find(version => version.id === versionCompareBaseId.value)?.name || null
+  })
+})
+const compareTargetLabel = computed(() => {
+  if (versionCompareTargetId.value === 'workspace') {
+    return 'workspace'
+  }
+
+  return getVersionLabel({
+    id: versionCompareTargetId.value,
+    name: versions.value.find(version => version.id === versionCompareTargetId.value)?.name || null
+  })
+})
+const compareMigrationBundle = computed(() => {
+  const migrationBundle = buildPgmlMigrationDiffBundle(
+    parsePgml(compareBaseSource.value),
+    parsePgml(compareTargetSource.value),
+    {
+      baseName: `${exportBaseName.value}-${slugifySchemaName(compareBaseLabel.value)}-to-${slugifySchemaName(compareTargetLabel.value)}`
+    }
+  )
+
+  if (versionCompareBaseId.value !== null) {
+    return migrationBundle
+  }
+
+  return {
+    sql: {
+      migration: {
+        ...migrationBundle.sql.migration,
+        warnings: [
+          'No base version is selected. The migration is being generated from an empty schema.',
+          ...migrationBundle.sql.migration.warnings
+        ]
+      }
+    }
+  }
+})
+const importDumpDialogCopy = computed(() => {
+  const baseVersion = importDumpBaseVersionId.value
+    ? versions.value.find(version => version.id === importDumpBaseVersionId.value) || null
+    : null
+  const baseLabel = baseVersion ? getVersionLabel(baseVersion) : 'the selected version'
+
+  return {
+    confirmLabel: 'Replace workspace with import',
+    description: `Paste a text pg_dump or upload a text dump file. PGML will convert the dump into schema objects, replace the current workspace snapshot, and set the workspace to increment from ${baseLabel}.`,
+    inputDescription: 'Choose exactly one input method. This replaces the current draft workspace but does not create a locked version until you checkpoint it.',
+    title: 'Import pg_dump onto a version'
+  }
+})
+
+watch(activeSchemaName, (nextName) => {
+  versionDocumentName.value = nextName
+}, {
+  immediate: true
+})
 
 watch(activeSaveError, (nextError) => {
   if (!nextError) {
@@ -495,7 +790,7 @@ watch(activeSaveError, (nextError) => {
   pushSaveErrorToast(nextError)
 })
 
-watch(studioLaunchRequest, async (request) => {
+watch([studioLaunchRequest, orderedSavedSchemas], async ([request]) => {
   if (!request) {
     return
   }
@@ -506,8 +801,6 @@ watch(studioLaunchRequest, async (request) => {
     return
   }
 
-  appliedStudioLaunchKey.value = requestKey
-
   if (request.source === 'file') {
     const preloadedFileLaunch = studioSessionStore.consumePreloadedFileLaunch(request)
 
@@ -515,22 +808,34 @@ watch(studioLaunchRequest, async (request) => {
       syncLoadedComputerFile(preloadedFileLaunch)
       await refreshRecentComputerFiles()
       currentPersistenceSource.value = 'file'
+      appliedStudioLaunchKey.value = requestKey
       requestCanvasViewportReset()
       return
     }
 
-    await loadRecentComputerFile(request.recentFileId)
+    const didLoadRecentFile = await loadRecentComputerFileById(request.recentFileId)
+
+    if (!didLoadRecentFile) {
+      return
+    }
+
+    currentPersistenceSource.value = 'file'
+    loadDialogOpen.value = false
+    appliedStudioLaunchKey.value = requestKey
+    requestCanvasViewportReset()
     return
   }
 
   currentPersistenceSource.value = 'browser'
 
   if (request.launch === 'example') {
+    appliedStudioLaunchKey.value = requestKey
     loadExample()
     return
   }
 
   if (request.launch === 'new') {
+    appliedStudioLaunchKey.value = requestKey
     clearSchema()
     return
   }
@@ -539,9 +844,12 @@ watch(studioLaunchRequest, async (request) => {
     return schema.id === request.schemaId
   })
 
-  if (savedSchema) {
-    loadSavedSchema(savedSchema)
+  if (!savedSchema) {
+    return
   }
+
+  appliedStudioLaunchKey.value = requestKey
+  loadSavedSchema(savedSchema)
 }, {
   immediate: true
 })
@@ -569,6 +877,196 @@ const saveCurrentSchema = async () => {
   }
 
   pushSaveSuccessToast(getSaveSuccessToastDescription())
+}
+const openCheckpointDialog = () => {
+  checkpointDialogOpen.value = true
+  checkpointName.value = `Checkpoint ${versions.value.length + 1}`
+  checkpointRole.value = 'design'
+}
+const closeCheckpointDialog = () => {
+  checkpointDialogOpen.value = false
+}
+const saveCheckpoint = () => {
+  const normalizedName = checkpointName.value.trim()
+
+  if (normalizedName.length === 0) {
+    return
+  }
+
+  const createdVersion = createVersionCheckpoint({
+    includeLayout: true,
+    name: normalizedName,
+    role: checkpointRole.value
+  })
+
+  if (!createdVersion) {
+    return
+  }
+
+  checkpointDialogOpen.value = false
+  checkpointName.value = ''
+  setPreviewTarget('workspace')
+  requestCanvasViewportReset()
+  toast.add({
+    title: 'Checkpoint created',
+    description: `${getVersionLabel(createdVersion)} is now locked as a ${createdVersion.role} version.`,
+    color: 'success',
+    icon: 'i-lucide-check'
+  })
+}
+const syncImportDumpConflictError = () => {
+  const hasFile = importDumpSelectedFile.value !== null
+  const hasText = importDumpText.value.trim().length > 0
+
+  if (hasFile && hasText) {
+    importDumpError.value = importDumpConflictErrorMessage
+    return false
+  }
+
+  if (importDumpError.value === importDumpConflictErrorMessage) {
+    importDumpError.value = null
+  }
+
+  return true
+}
+const resetImportDumpDialog = () => {
+  importDumpDialogOpen.value = false
+  importDumpError.value = null
+  importDumpSelectedFile.value = null
+  importDumpText.value = ''
+  importDumpBaseVersionId.value = null
+}
+const openImportDumpDialog = () => {
+  if (versions.value.length === 0) {
+    toast.add({
+      title: 'Checkpoint required',
+      description: 'Create a version checkpoint before importing a dump onto this document.',
+      color: 'error',
+      icon: 'i-lucide-circle-alert'
+    })
+    return
+  }
+
+  importDumpDialogOpen.value = true
+  importDumpError.value = null
+  importDumpSelectedFile.value = null
+  importDumpText.value = ''
+  importDumpBaseVersionId.value = versionHistoryItems.value.find(version => version.isWorkspaceBase)?.id
+    || versions.value.at(-1)?.id
+    || null
+}
+const closeImportDumpDialog = () => {
+  if (isSubmittingImportDump.value) {
+    return
+  }
+
+  resetImportDumpDialog()
+}
+const handleImportDumpDialogOpenChange = (nextOpen: boolean) => {
+  if (nextOpen) {
+    importDumpDialogOpen.value = true
+    return
+  }
+
+  closeImportDumpDialog()
+}
+const setImportDumpText = (value: string) => {
+  importDumpText.value = value
+  syncImportDumpConflictError()
+}
+const setImportDumpFile = (files: FileList | null) => {
+  importDumpSelectedFile.value = files?.[0] || null
+  syncImportDumpConflictError()
+}
+const clearImportDumpFile = () => {
+  importDumpSelectedFile.value = null
+  syncImportDumpConflictError()
+}
+const submitImportDump = async () => {
+  if (!importDumpBaseVersionId.value) {
+    importDumpError.value = 'Choose the version this import should increment from.'
+    return
+  }
+
+  if (!syncImportDumpConflictError()) {
+    return
+  }
+
+  const selectedFile = importDumpSelectedFile.value
+  const trimmedText = importDumpText.value.trim()
+
+  if (!selectedFile && trimmedText.length === 0) {
+    importDumpError.value = importDumpMissingInputErrorMessage
+    return
+  }
+
+  isSubmittingImportDump.value = true
+
+  try {
+    const importedSql = selectedFile ? await selectedFile.text() : importDumpText.value
+    const importedSchema = convertPgDumpToPgml({
+      preferredName: selectedFile?.name,
+      sql: importedSql
+    })
+
+    replaceWorkspaceFromImportedSnapshot({
+      basedOnVersionId: importDumpBaseVersionId.value,
+      includeLayout: true,
+      source: importedSchema.pgml
+    })
+    requestCanvasViewportReset()
+    resetImportDumpDialog()
+    toast.add({
+      title: 'Workspace replaced',
+      description: 'The imported dump is now the current workspace draft. Create a checkpoint when you want to lock it.',
+      color: 'success',
+      icon: 'i-lucide-check'
+    })
+  } catch (error) {
+    if (error instanceof Error && error.message.trim().length > 0) {
+      importDumpError.value = error.message
+    } else if (typeof error === 'string' && error.trim().length > 0) {
+      importDumpError.value = error
+    } else {
+      importDumpError.value = 'Unable to import that pg_dump.'
+    }
+  } finally {
+    isSubmittingImportDump.value = false
+  }
+}
+const viewVersionTarget = (targetId: string) => {
+  setPreviewTarget(targetId === 'workspace' ? 'workspace' : targetId)
+  requestCanvasViewportReset()
+}
+const restoreVersionToWorkspace = (versionId: string) => {
+  const didRestore = replaceWorkspaceFromVersion(versionId)
+
+  if (!didRestore) {
+    return
+  }
+
+  requestCanvasViewportReset()
+  toast.add({
+    title: 'Workspace restored',
+    description: 'The selected version is now the active workspace draft.',
+    color: 'success',
+    icon: 'i-lucide-check'
+  })
+}
+const updateVersionCompareBaseId = (value: string | null) => {
+  setCompareTargets({
+    baseId: value,
+    targetId: versionCompareTargetId.value
+  })
+}
+const updateVersionCompareTargetId = (value: string) => {
+  setCompareTargets({
+    baseId: versionCompareBaseId.value,
+    targetId: value
+  })
+}
+const updateVersionedEditorMode = (value: string) => {
+  versionedEditorMode.value = value === 'document' ? 'document' : 'head'
 }
 
 const actionMenus = computed<StudioHeaderMenu[]>(() => {
@@ -633,6 +1131,18 @@ const actionMenus = computed<StudioHeaderMenu[]>(() => {
               openSchemaDialog('download')
             }
           }
+        ],
+        [
+          {
+            label: 'Create checkpoint',
+            icon: 'i-lucide-bookmark-plus',
+            onSelect: openCheckpointDialog
+          },
+          {
+            label: 'Import pg_dump onto version',
+            icon: 'i-lucide-file-up',
+            onSelect: openImportDumpDialog
+          }
         ]
       ],
       label: 'Schema'
@@ -681,7 +1191,7 @@ const groupSelectItems = computed<ReferenceTargetItem[]>(() => {
       value: 'Ungrouped',
       description: 'Leave this table floating outside a table group.'
     },
-    ...parsedModel.value.groups
+    ...workspaceParsedModel.value.groups
       .map(group => ({
         label: group.name,
         value: group.name,
@@ -693,19 +1203,19 @@ const groupSelectItems = computed<ReferenceTargetItem[]>(() => {
   ]
 })
 const schemaSelectItems = computed(() => {
-  return Array.from(new Set(['public', ...parsedModel.value.schemas])).sort((left, right) => left.localeCompare(right))
+  return Array.from(new Set(['public', ...workspaceParsedModel.value.schemas])).sort((left, right) => left.localeCompare(right))
 })
 const tableTypeItems = computed<ReferenceTargetItem[]>(() => {
   const dynamicTypes = Array.from(new Set([
-    ...parsedModel.value.customTypes.map(customType => customType.name),
-    ...parsedModel.value.tables.flatMap(table => table.columns.map(column => column.type)),
+    ...workspaceParsedModel.value.customTypes.map(customType => customType.name),
+    ...workspaceParsedModel.value.tables.flatMap(table => table.columns.map(column => column.type)),
     ...(tableEditorDraft.value?.columns.map(column => column.type) || [])
   ].filter(type => type.trim().length > 0))).sort((left, right) => left.localeCompare(right))
   const orderedTypes = Array.from(new Set([
     ...commonPgmlColumnTypes,
     ...dynamicTypes
   ]))
-  const customTypeKinds = new Map(parsedModel.value.customTypes.map(customType => [customType.name, customType.kind]))
+  const customTypeKinds = new Map(workspaceParsedModel.value.customTypes.map(customType => [customType.name, customType.kind]))
 
   return orderedTypes.map((value) => {
     const beginnerPreset = beginnerFriendlyColumnTypePresets[value]
@@ -789,7 +1299,7 @@ const referenceActionItems: ReferenceTargetItem[] = [
   }
 ]
 const tableTargetItems = computed<ReferenceTargetItem[]>(() => {
-  return parsedModel.value.tables
+  return workspaceParsedModel.value.tables
     .map(table => ({
       label: table.fullName,
       value: table.fullName,
@@ -798,7 +1308,7 @@ const tableTargetItems = computed<ReferenceTargetItem[]>(() => {
     .sort((left, right) => left.label.localeCompare(right.label))
 })
 const groupTableItems = computed<ReferenceTargetItem[]>(() => {
-  return parsedModel.value.tables
+  return workspaceParsedModel.value.tables
     .map(table => ({
       label: table.fullName,
       value: table.fullName,
@@ -818,7 +1328,7 @@ const getColumnDefaultItems = (columnType: string) => {
 }
 
 const getReferenceColumnItems = (tableFullName: string): ReferenceTargetItem[] => {
-  const referenceTable = parsedModel.value.tables.find(table => table.fullName === tableFullName)
+  const referenceTable = workspaceParsedModel.value.tables.find(table => table.fullName === tableFullName)
 
   return referenceTable?.columns.map(column => ({
     label: column.name,
@@ -838,11 +1348,11 @@ const normalizeReferenceActionSelectValue = (value: unknown) => {
 }
 
 const openTableEditor = (tableId: string) => {
-  if (hasBlockingSourceErrors.value) {
+  if (!isWorkspacePreview.value || workspaceHasBlockingSourceErrors.value) {
     return
   }
 
-  const table = parsedModel.value.tables.find(candidate => candidate.fullName === tableId)
+  const table = workspaceParsedModel.value.tables.find(candidate => candidate.fullName === tableId)
 
   if (!table) {
     return
@@ -853,7 +1363,7 @@ const openTableEditor = (tableId: string) => {
 }
 
 const openTableCreator = (groupName: string | null) => {
-  if (hasBlockingSourceErrors.value) {
+  if (!isWorkspacePreview.value || workspaceHasBlockingSourceErrors.value) {
     return
   }
 
@@ -862,22 +1372,22 @@ const openTableCreator = (groupName: string | null) => {
 }
 
 const openGroupEditor = (groupName: string) => {
-  if (hasBlockingSourceErrors.value) {
+  if (!isWorkspacePreview.value || workspaceHasBlockingSourceErrors.value) {
     return
   }
 
-  const group = parsedModel.value.groups.find(candidate => candidate.name === groupName)
+  const group = workspaceParsedModel.value.groups.find(candidate => candidate.name === groupName)
 
   if (!group) {
     return
   }
 
-  groupEditorDraft.value = cloneEditableGroupDraft(createEditableGroupDraft(group, parsedModel.value))
+  groupEditorDraft.value = cloneEditableGroupDraft(createEditableGroupDraft(group, workspaceParsedModel.value))
   groupEditorOpen.value = true
 }
 
 const openGroupCreator = () => {
-  if (hasBlockingSourceErrors.value) {
+  if (!isWorkspacePreview.value || workspaceHasBlockingSourceErrors.value) {
     return
   }
 
@@ -1051,20 +1561,20 @@ const updateTableDraftReferenceAction = (
 }
 
 const saveTableEditor = () => {
-  if (!tableEditorDraft.value || tableEditorErrors.value.length > 0) {
+  if (!isWorkspacePreview.value || !tableEditorDraft.value || tableEditorErrors.value.length > 0) {
     return
   }
 
-  source.value = applyEditableTableDraftToSource(source.value, parsedModel.value, tableEditorDraft.value)
+  source.value = applyEditableTableDraftToSource(source.value, workspaceParsedModel.value, tableEditorDraft.value)
   closeTableEditor()
 }
 
 const saveGroupEditor = () => {
-  if (!groupEditorDraft.value || groupEditorErrors.value.length > 0) {
+  if (!isWorkspacePreview.value || !groupEditorDraft.value || groupEditorErrors.value.length > 0) {
     return
   }
 
-  source.value = applyEditableGroupDraftToSource(source.value, parsedModel.value, groupEditorDraft.value)
+  source.value = applyEditableGroupDraftToSource(source.value, workspaceParsedModel.value, groupEditorDraft.value)
   closeGroupEditor()
 }
 
@@ -1085,6 +1595,10 @@ const runExport = async (format: 'svg' | 'png', scaleFactor?: number) => {
 }
 
 const handleCanvasFocusSource = (sourceRange: PgmlSourceRange) => {
+  if (versionedEditorMode.value === 'document') {
+    versionedEditorMode.value = 'head'
+  }
+
   if (isCompactStudioLayout.value) {
     mobileWorkspaceView.value = 'pgml'
   }
@@ -1164,9 +1678,19 @@ onBeforeUnmount(() => {
           :model="parsedModel"
           :export-base-name="exportBaseName"
           :export-preference-key="exportPreferenceKey"
+          :layout-changed="compareDiff.summary.layoutChanged"
           :has-blocking-source-errors="hasBlockingSourceErrors"
+          :migration-file-name="compareMigrationBundle.sql.migration.fileName"
+          :migration-sql="compareMigrationBundle.sql.migration.content"
+          :migration-warnings="compareMigrationBundle.sql.migration.warnings"
           :mobile-active-view="mobileCanvasView"
           :mobile-panel-tab="mobilePanelTab"
+          :preview-target-id="previewTargetId"
+          :version-compare-base-id="versionCompareBaseId"
+          :version-compare-options="versionCompareOptions"
+          :version-compare-target-id="versionCompareTargetId"
+          :version-diff-sections="versionDiffSections"
+          :version-items="versionPanelItems"
           :viewport-reset-key="canvasViewportResetKey"
           @create-group="openGroupCreator"
           @focus-source="handleCanvasFocusSource"
@@ -1175,18 +1699,28 @@ onBeforeUnmount(() => {
           @edit-group="openGroupEditor"
           @edit-table="openTableEditor"
           @node-properties-change="syncSourceWithNodeProperties"
+          @restore-version="restoreVersionToWorkspace"
+          @update-version-compare-base-id="updateVersionCompareBaseId"
+          @update-version-compare-target-id="updateVersionCompareTargetId"
+          @version-checkpoint="openCheckpointDialog"
+          @version-import-dump="openImportDumpDialog"
+          @view-version-target="viewVersionTarget"
         />
       </template>
 
       <template #pgml>
         <StudioEditorSurface
-          v-model="source"
+          v-model="editorDisplaySource"
+          :editor-mode="versionedEditorMode"
+          :editor-mode-items="versionedEditorModeItems"
           :editor-ref-setter="assignEditorRef"
           :focus-diagnostic="focusEditorDiagnostic"
+          :read-only="isEditorReadOnly"
           :source-diagnostics="sourceDiagnostics"
           :source-error-count="sourceErrorDiagnostics.length"
           :source-warning-count="sourceWarningDiagnostics.length"
           :visible-source-diagnostics="visibleSourceDiagnostics"
+          @update:editor-mode="updateVersionedEditorMode"
         />
       </template>
     </StudioMobileWorkspace>
@@ -1202,13 +1736,17 @@ onBeforeUnmount(() => {
     >
       <template #editor>
         <StudioEditorSurface
-          v-model="source"
+          v-model="editorDisplaySource"
+          :editor-mode="versionedEditorMode"
+          :editor-mode-items="versionedEditorModeItems"
           :editor-ref-setter="assignEditorRef"
           :focus-diagnostic="focusEditorDiagnostic"
+          :read-only="isEditorReadOnly"
           :source-diagnostics="sourceDiagnostics"
           :source-error-count="sourceErrorDiagnostics.length"
           :source-warning-count="sourceWarningDiagnostics.length"
           :visible-source-diagnostics="visibleSourceDiagnostics"
+          @update:editor-mode="updateVersionedEditorMode"
         />
       </template>
 
@@ -1218,7 +1756,17 @@ onBeforeUnmount(() => {
           :model="parsedModel"
           :export-base-name="exportBaseName"
           :export-preference-key="exportPreferenceKey"
+          :layout-changed="compareDiff.summary.layoutChanged"
           :has-blocking-source-errors="hasBlockingSourceErrors"
+          :migration-file-name="compareMigrationBundle.sql.migration.fileName"
+          :migration-sql="compareMigrationBundle.sql.migration.content"
+          :migration-warnings="compareMigrationBundle.sql.migration.warnings"
+          :preview-target-id="previewTargetId"
+          :version-compare-base-id="versionCompareBaseId"
+          :version-compare-options="versionCompareOptions"
+          :version-compare-target-id="versionCompareTargetId"
+          :version-diff-sections="versionDiffSections"
+          :version-items="versionPanelItems"
           :viewport-reset-key="canvasViewportResetKey"
           @create-group="openGroupCreator"
           @focus-source="handleCanvasFocusSource"
@@ -1227,11 +1775,112 @@ onBeforeUnmount(() => {
           @edit-group="openGroupEditor"
           @edit-table="openTableEditor"
           @node-properties-change="syncSourceWithNodeProperties"
+          @restore-version="restoreVersionToWorkspace"
+          @update-version-compare-base-id="updateVersionCompareBaseId"
+          @update-version-compare-target-id="updateVersionCompareTargetId"
+          @version-checkpoint="openCheckpointDialog"
+          @version-import-dump="openImportDumpDialog"
+          @view-version-target="viewVersionTarget"
         />
       </template>
     </StudioDesktopWorkspace>
 
     <ClientOnly>
+      <StudioModalFrame
+        v-model:open="checkpointDialogOpen"
+        title="Create checkpoint"
+        description="Lock the current workspace snapshot as an immutable PGML version."
+        surface-id="checkpoint"
+        body-class="grid gap-4 px-4 py-3"
+      >
+        <div class="grid gap-4">
+          <label class="grid gap-1">
+            <span :class="studioFieldKickerClass">
+              Version name
+            </span>
+            <UInput
+              v-model="checkpointName"
+              placeholder="Checkpoint name"
+              color="neutral"
+              variant="outline"
+              size="sm"
+              :ui="studioFieldUi"
+            />
+          </label>
+
+          <label class="grid gap-1">
+            <span :class="studioFieldKickerClass">
+              Version role
+            </span>
+            <USelect
+              :items="checkpointRoleItems"
+              :model-value="checkpointRole"
+              value-key="value"
+              label-key="label"
+              color="neutral"
+              variant="outline"
+              size="sm"
+              :ui="studioSelectUi"
+              @update:model-value="checkpointRole = $event === 'implementation' ? 'implementation' : 'design'"
+            />
+          </label>
+        </div>
+
+        <template #footer>
+          <UButton
+            label="Cancel"
+            color="neutral"
+            variant="outline"
+            :class="secondaryModalButtonClass"
+            @click="closeCheckpointDialog"
+          />
+          <UButton
+            label="Create checkpoint"
+            color="neutral"
+            variant="soft"
+            :class="primaryModalButtonClass"
+            :disabled="checkpointName.trim().length === 0"
+            @click="saveCheckpoint"
+          />
+        </template>
+      </StudioModalFrame>
+
+      <AppPgDumpImportModal
+        :open="importDumpDialogOpen"
+        :title="importDumpDialogCopy.title"
+        :description="importDumpDialogCopy.description"
+        :confirm-label="importDumpDialogCopy.confirmLabel"
+        :input-description="importDumpDialogCopy.inputDescription"
+        :model-value="importDumpText"
+        :selected-file-name="importDumpSelectedFileName"
+        :error-message="importDumpError"
+        :is-submitting="isSubmittingImportDump"
+        @update:open="handleImportDumpDialogOpenChange"
+        @update:model-value="setImportDumpText"
+        @select-file="setImportDumpFile"
+        @clear-file="clearImportDumpFile"
+        @submit="submitImportDump"
+      >
+        <template #before-inputs>
+          <label class="grid gap-1">
+            <span :class="studioFieldKickerClass">
+              Increment from version
+            </span>
+            <USelect
+              :items="importDumpBaseVersionItems"
+              :model-value="importDumpBaseVersionId || undefined"
+              value-key="value"
+              label-key="label"
+              color="neutral"
+              variant="outline"
+              size="sm"
+              :ui="studioSelectUi"
+              @update:model-value="importDumpBaseVersionId = typeof $event === 'string' ? $event : null"
+            />
+          </label>
+        </template>
+      </AppPgDumpImportModal>
+
       <StudioModalFrame
         v-model:open="schemaDialogOpen"
         :title="schemaActionTitle"

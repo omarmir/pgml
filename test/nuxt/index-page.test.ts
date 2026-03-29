@@ -16,7 +16,7 @@ describe('Index page source', () => {
     expect(file).toContain('sqlDumpDescription')
     expect(file).toContain('cardId: \'browser-local-storage\'')
     expect(file).toContain('Start new')
-    expect(file).toContain('Start from example')
+    expect(file).toContain('Open bundled example')
     expect(file).toContain('Open existing')
     expect(file).toContain('data-spec-banner="true"')
     expect(file).toContain('Need the language reference before you open the studio?')

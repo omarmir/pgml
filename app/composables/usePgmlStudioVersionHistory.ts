@@ -1,0 +1,296 @@
+import type { ComputedRef, Ref } from 'vue'
+import {
+  createInitialPgmlDocument,
+  createPgmlVersionFromWorkspace,
+  getPgmlDocumentPreviewSource,
+  parsePgmlDocument,
+  replacePgmlWorkspaceFromSnapshot,
+  serializePgmlDocument,
+  type PgmlVersionDocumentBlock,
+  type PgmlVersionRole,
+  type PgmlVersionSetDocument
+} from '~/utils/pgml-document'
+import { stripPgmlPropertiesBlocks } from '~/utils/pgml'
+
+export type PgmlVersionPreviewTarget = 'workspace' | string
+
+export const versionedDocumentEditorModeValues = ['head', 'document'] as const
+
+export type PgmlVersionedDocumentEditorMode = typeof versionedDocumentEditorModeValues[number]
+
+const normalizeSnapshotSource = (value: string, includeLayout: boolean) => {
+  return includeLayout ? value.trim() : stripPgmlPropertiesBlocks(value).trim()
+}
+
+const cloneVersionDocument = (document: PgmlVersionSetDocument) => {
+  return {
+    ...document,
+    versions: document.versions.map((version) => {
+      return {
+        ...version,
+        snapshot: {
+          source: version.snapshot.source
+        }
+      }
+    }),
+    workspace: {
+      ...document.workspace,
+      snapshot: {
+        source: document.workspace.snapshot.source
+      }
+    }
+  } satisfies PgmlVersionSetDocument
+}
+
+const buildDefaultCompareBaseId = (document: PgmlVersionSetDocument) => {
+  if (document.workspace.basedOnVersionId) {
+    return document.workspace.basedOnVersionId
+  }
+
+  return document.versions.at(-1)?.id || null
+}
+
+const buildDefaultCompareTargetId = (document: PgmlVersionSetDocument) => {
+  if (document.workspace.snapshot.source.trim().length > 0) {
+    return 'workspace'
+  }
+
+  return document.versions.at(-1)?.id || 'workspace'
+}
+
+export const usePgmlStudioVersionHistory = (
+  input: {
+    documentName: ComputedRef<string>
+    source: Ref<string>
+  }
+) => {
+  const document: Ref<PgmlVersionSetDocument> = ref(createInitialPgmlDocument({
+    name: input.documentName.value,
+    workspaceSource: input.source.value
+  }))
+  const previewTargetId: Ref<PgmlVersionPreviewTarget> = ref('workspace')
+  const editorMode: Ref<PgmlVersionedDocumentEditorMode> = ref('head')
+  const compareBaseId: Ref<string | null> = ref(null)
+  const compareTargetId: Ref<string> = ref('workspace')
+
+  const syncWorkspaceSource = () => {
+    document.value = replacePgmlWorkspaceFromSnapshot(document.value, {
+      basedOnVersionId: document.value.workspace.basedOnVersionId,
+      source: input.source.value,
+      updatedAt: document.value.workspace.updatedAt
+    })
+  }
+
+  const setDocument = (nextDocument: PgmlVersionSetDocument) => {
+    document.value = {
+      ...nextDocument,
+      name: input.documentName.value
+    }
+    input.source.value = nextDocument.workspace.snapshot.source
+    previewTargetId.value = 'workspace'
+    compareBaseId.value = buildDefaultCompareBaseId(nextDocument)
+    compareTargetId.value = buildDefaultCompareTargetId(nextDocument)
+  }
+
+  const resetDocument = (workspaceSource = '') => {
+    setDocument(createInitialPgmlDocument({
+      name: input.documentName.value,
+      workspaceSource
+    }))
+  }
+
+  const loadDocument = (rawText: string) => {
+    const normalizedSource = rawText.trim()
+    let parsedDocument: PgmlVersionSetDocument
+
+    if (normalizedSource.length === 0 || !normalizedSource.startsWith('VersionSet')) {
+      parsedDocument = createInitialPgmlDocument({
+        name: input.documentName.value,
+        workspaceSource: rawText
+      })
+    } else {
+      parsedDocument = parsePgmlDocument(rawText)
+    }
+
+    setDocument({
+      ...parsedDocument,
+      name: input.documentName.value
+    })
+  }
+
+  const versions = computed(() => document.value.versions)
+  const versionItems = computed(() => {
+    return document.value.versions.map((version) => {
+      return {
+        ...version,
+        isWorkspaceBase: document.value.workspace.basedOnVersionId === version.id
+      }
+    })
+  })
+  const previewSource = computed(() => {
+    if (previewTargetId.value === 'workspace') {
+      return input.source.value
+    }
+
+    return getPgmlDocumentPreviewSource(document.value, {
+      versionId: previewTargetId.value
+    })
+  })
+  const versionedDocumentSource = computed(() => {
+    const workingDocument = replacePgmlWorkspaceFromSnapshot(document.value, {
+      basedOnVersionId: document.value.workspace.basedOnVersionId,
+      source: input.source.value,
+      updatedAt: document.value.workspace.updatedAt
+    })
+
+    workingDocument.name = input.documentName.value
+
+    return serializePgmlDocument(workingDocument)
+  })
+  const isWorkspacePreview = computed(() => previewTargetId.value === 'workspace')
+  const compareBaseVersion = computed(() => {
+    return compareBaseId.value
+      ? document.value.versions.find(version => version.id === compareBaseId.value) || null
+      : null
+  })
+  const compareTargetVersion = computed<PgmlVersionDocumentBlock | null>(() => {
+    if (compareTargetId.value === 'workspace') {
+      return null
+    }
+
+    return document.value.versions.find(version => version.id === compareTargetId.value) || null
+  })
+  const compareBaseSource = computed(() => {
+    if (compareBaseId.value === 'workspace') {
+      return input.source.value
+    }
+
+    return compareBaseVersion.value?.snapshot.source || ''
+  })
+  const compareTargetSource = computed(() => {
+    return compareTargetVersion.value?.snapshot.source || input.source.value
+  })
+
+  watch(() => input.documentName.value, (nextName) => {
+    document.value = {
+      ...document.value,
+      name: nextName
+    }
+  })
+
+  watch(input.source, () => {
+    syncWorkspaceSource()
+  })
+
+  const serializeCurrentDocument = (includeLayout: boolean) => {
+    const workingDocument = cloneVersionDocument(document.value)
+
+    workingDocument.name = input.documentName.value
+    workingDocument.workspace.snapshot.source = normalizeSnapshotSource(input.source.value, includeLayout)
+    workingDocument.versions = workingDocument.versions.map((version) => {
+      return {
+        ...version,
+        snapshot: {
+          source: normalizeSnapshotSource(version.snapshot.source, includeLayout)
+        }
+      }
+    })
+
+    return serializePgmlDocument(workingDocument)
+  }
+
+  const createCheckpoint = (inputOptions: {
+    createdAt?: string
+    includeLayout: boolean
+    name: string
+    role: PgmlVersionRole
+  }) => {
+    const workingDocument = replacePgmlWorkspaceFromSnapshot(document.value, {
+      basedOnVersionId: document.value.workspace.basedOnVersionId,
+      source: normalizeSnapshotSource(input.source.value, inputOptions.includeLayout),
+      updatedAt: inputOptions.createdAt || new Date().toISOString()
+    })
+    const nextDocument = createPgmlVersionFromWorkspace(workingDocument, {
+      createdAt: inputOptions.createdAt || new Date().toISOString(),
+      name: inputOptions.name,
+      role: inputOptions.role
+    })
+
+    setDocument(nextDocument)
+
+    return nextDocument.versions.at(-1) || null
+  }
+
+  const replaceWorkspaceFromVersion = (versionId: string) => {
+    const targetVersion = document.value.versions.find(version => version.id === versionId)
+
+    if (!targetVersion) {
+      return false
+    }
+
+    document.value = replacePgmlWorkspaceFromSnapshot(document.value, {
+      basedOnVersionId: targetVersion.id,
+      source: targetVersion.snapshot.source,
+      updatedAt: new Date().toISOString()
+    })
+    input.source.value = targetVersion.snapshot.source
+    previewTargetId.value = 'workspace'
+    compareBaseId.value = targetVersion.parentVersionId
+    compareTargetId.value = 'workspace'
+
+    return true
+  }
+
+  const replaceWorkspaceFromImportedSnapshot = (inputOptions: {
+    basedOnVersionId: string
+    includeLayout: boolean
+    source: string
+  }) => {
+    document.value = replacePgmlWorkspaceFromSnapshot(document.value, {
+      basedOnVersionId: inputOptions.basedOnVersionId,
+      source: normalizeSnapshotSource(inputOptions.source, inputOptions.includeLayout),
+      updatedAt: new Date().toISOString()
+    })
+    input.source.value = document.value.workspace.snapshot.source
+    previewTargetId.value = 'workspace'
+    compareBaseId.value = inputOptions.basedOnVersionId
+    compareTargetId.value = 'workspace'
+  }
+
+  const setPreviewTarget = (nextTargetId: PgmlVersionPreviewTarget) => {
+    previewTargetId.value = nextTargetId
+  }
+
+  const setCompareTargets = (inputOptions: {
+    baseId: string | null
+    targetId: string
+  }) => {
+    compareBaseId.value = inputOptions.baseId
+    compareTargetId.value = inputOptions.targetId
+  }
+
+  return {
+    compareBaseId,
+    compareBaseSource,
+    compareBaseVersion,
+    compareTargetId,
+    compareTargetSource,
+    compareTargetVersion,
+    createCheckpoint,
+    document,
+    editorMode,
+    isWorkspacePreview,
+    loadDocument,
+    previewSource,
+    previewTargetId,
+    replaceWorkspaceFromImportedSnapshot,
+    replaceWorkspaceFromVersion,
+    resetDocument,
+    serializeCurrentDocument,
+    setCompareTargets,
+    setPreviewTarget,
+    versionItems,
+    versionedDocumentSource,
+    versions
+  }
+}
