@@ -126,3 +126,18 @@ export const buildPgmlWorkspaceStatus = (input: {
     ? 'Draft changes are waiting to be checkpointed.'
     : 'Draft matches the current locked base version.'
 }
+
+export const buildPgmlEditorReadOnlyLabel = (input: {
+  isWorkspacePreview: boolean
+  mode: 'document' | 'head'
+}) => {
+  if (input.mode === 'document') {
+    return 'Document view'
+  }
+
+  if (!input.isWorkspacePreview) {
+    return 'Version preview'
+  }
+
+  return 'Read only'
+}

@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest'
 import { parsePgml } from '../../app/utils/pgml'
 import { diffPgmlSchemaModels } from '../../app/utils/pgml-diff'
 import {
+  buildPgmlEditorReadOnlyLabel,
   buildPgmlPreviewTargetLabel,
   buildPgmlVersionCompareSummary,
   buildPgmlVersionDiffSections,
@@ -89,5 +90,16 @@ Table public.orders {
     expect(buildPgmlWorkspaceStatus({
       canCheckpoint: false
     })).toBe('Draft matches the current locked base version.')
+  })
+
+  it('builds read-only labels from editor mode and preview state', () => {
+    expect(buildPgmlEditorReadOnlyLabel({
+      isWorkspacePreview: true,
+      mode: 'document'
+    })).toBe('Document view')
+    expect(buildPgmlEditorReadOnlyLabel({
+      isWorkspacePreview: false,
+      mode: 'head'
+    })).toBe('Version preview')
   })
 })
