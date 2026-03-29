@@ -749,6 +749,13 @@ export const getPgmlChildVersions = (
   return document.versions.filter(version => version.parentVersionId === versionId)
 }
 
+export const hasPgmlChildVersions = (
+  document: PgmlVersionSetDocument,
+  versionId: string | null
+) => {
+  return getPgmlChildVersions(document, versionId).length > 0
+}
+
 export const getPgmlDescendantVersions = (
   document: PgmlVersionSetDocument,
   versionId: string | null

@@ -9,6 +9,7 @@ import {
   createPgmlVersionFromWorkspace,
   getPgmlDocumentVersionStats,
   getPgmlChildVersions,
+  hasPgmlChildVersions,
   getPgmlDescendantVersions,
   getLatestPgmlVersion,
   getLatestPgmlVersionByRole,
@@ -214,6 +215,7 @@ Table public.memberships {
       'Orders branch',
       'Memberships branch'
     ])
+    expect(hasPgmlChildVersions(featureBDocument, rootVersionId)).toBe(true)
     expect(getPgmlChildVersions(featureBDocument, null).map(version => version.name)).toEqual([
       'Initial design'
     ])
