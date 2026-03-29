@@ -75,6 +75,17 @@ const compareChangeColorByKind: Readonly<Record<PgmlDiffChangeKind, string>> = O
   removed: '#f43f5e'
 })
 
+const hasValue = <T>(value: T | null | undefined): value is T => {
+  return value !== null && value !== undefined
+}
+
+const hasNodeId = (value: string | null | undefined): value is string => {
+  return typeof value === 'string' && value.length > 0
+}
+
+// Snapshot text feeds the compare inspector, so it should stay stable across runs.
+// We intentionally remove transient source-range metadata and sort object keys to
+// keep the before/after payloads easy to diff in tests and in the UI.
 const buildStableSnapshotValue = (value: unknown): unknown => {
   if (Array.isArray(value)) {
     return value.map(entry => buildStableSnapshotValue(entry))
@@ -173,7 +184,7 @@ const buildCustomTypeObjectId = (customType: PgmlCustomType) => {
 }
 
 const pickSourceRange = (...ranges: Array<PgmlSourceRange | null | undefined>) => {
-  return ranges.find(range => range !== null && range !== undefined) || null
+  return ranges.find(hasValue) || null
 }
 
 const buildEntryDescription = (
@@ -185,13 +196,13 @@ const buildEntryDescription = (
 }
 
 const buildNodeIds = (...ids: Array<string | null | undefined>) => {
-  return Array.from(new Set(ids.filter((id): id is string => Boolean(id))))
+  return Array.from(new Set(ids.filter(hasNodeId)))
 }
 
 const buildSelectionCandidates = (
   entries: Array<DiagramGpuSelection | null | undefined>
 ) => {
-  return entries.filter((entry): entry is DiagramGpuSelection => entry !== null && entry !== undefined)
+  return entries.filter(hasValue)
 }
 
 const buildLayoutSelectionCandidates = (
@@ -262,6 +273,8 @@ export const buildPgmlDiagramCompareEntries = (
   baseModel: PgmlSchemaModel,
   targetModel: PgmlSchemaModel
 ) => {
+  // The compare panel works from one flattened list so diagram clicks, search,
+  // and inspector details can all talk about the same change identity.
   const entries: PgmlDiagramCompareEntry[] = []
 
   entries.push(...buildEntryFromDiff({
