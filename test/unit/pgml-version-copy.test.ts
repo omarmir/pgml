@@ -9,6 +9,7 @@ import {
   buildPgmlImportDumpDialogTitle,
   buildPgmlImportDumpDialogDescription,
   buildPgmlImportDumpInputDescription,
+  buildPgmlImportConflictMessage,
   buildPgmlImportFailureMessage,
   buildPgmlImportSuccessDescription,
   buildPgmlRestoreVersionDescription
@@ -60,5 +61,9 @@ describe('PGML version copy helpers', () => {
 
   it('builds the generic import failure message', () => {
     expect(buildPgmlImportFailureMessage()).toBe('Unable to import that pg_dump.')
+  })
+
+  it('builds the import conflict validation message', () => {
+    expect(buildPgmlImportConflictMessage()).toContain('not both')
   })
 })

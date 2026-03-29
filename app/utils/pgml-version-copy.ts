@@ -47,3 +47,7 @@ export const buildPgmlImportSuccessDescription = () => {
 export const buildPgmlImportFailureMessage = () => {
   return 'Unable to import that pg_dump.'
 }
+
+export const buildPgmlImportConflictMessage = () => {
+  return 'Choose either pasted pg_dump text or a file upload, not both.'
+}

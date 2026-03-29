@@ -59,6 +59,7 @@ import {
   buildPgmlImportDumpInputDescription,
   buildPgmlImportDumpDialogTitle,
   buildPgmlImportBaseRequiredMessage,
+  buildPgmlImportConflictMessage,
   buildPgmlImportFailureMessage,
   buildPgmlImportCheckpointRequiredDescription,
   buildPgmlImportSuccessDescription,
@@ -231,7 +232,6 @@ const importDumpText: Ref<string> = ref('')
 const isSubmittingImportDump: Ref<boolean> = ref(false)
 const restoreVersionDialogOpen: Ref<boolean> = ref(false)
 const restoreVersionId: Ref<string | null> = ref(null)
-const importDumpConflictErrorMessage = 'Choose either pasted pg_dump text or a file upload, not both.'
 const importDumpMissingInputErrorMessage = 'Paste pg_dump text or choose a text dump file before importing.'
 const tableEditorDraft: Ref<PgmlEditableTableDraft | null> = ref(null)
 const tableEditorOpen: Ref<boolean> = ref(false)
@@ -954,11 +954,11 @@ const syncImportDumpConflictError = () => {
   const hasText = importDumpText.value.trim().length > 0
 
   if (hasFile && hasText) {
-    importDumpError.value = importDumpConflictErrorMessage
+    importDumpError.value = buildPgmlImportConflictMessage()
     return false
   }
 
-  if (importDumpError.value === importDumpConflictErrorMessage) {
+  if (importDumpError.value === buildPgmlImportConflictMessage()) {
     importDumpError.value = null
   }
 
