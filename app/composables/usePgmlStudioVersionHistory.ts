@@ -20,6 +20,7 @@ import {
   getPgmlBranchRootId,
   getLatestPgmlVersion,
   getLatestPgmlVersionByRole,
+  getPgmlLeafVersions,
   getPgmlRootVersions,
   getPgmlNearestCommonAncestor,
   getPgmlVersionById,
@@ -152,6 +153,7 @@ export const usePgmlStudioVersionHistory = (
 
   const versions = computed(() => document.value.versions)
   const rootVersions = computed(() => getPgmlRootVersions(document.value))
+  const leafVersions = computed(() => getPgmlLeafVersions(document.value))
   const workspaceBaseVersion = computed(() => getPgmlWorkspaceBaseVersion(document.value))
   const workspaceDirty = computed(() => isPgmlWorkspaceDirty(document.value))
   const canCheckpoint = computed(() => canCreatePgmlCheckpoint(document.value))
@@ -391,6 +393,7 @@ export const usePgmlStudioVersionHistory = (
     editorMode,
     isWorkspacePreview,
     loadDocument,
+    leafVersions,
     previewSource,
     previewTargetId,
     replaceWorkspaceFromImportedSnapshot,
