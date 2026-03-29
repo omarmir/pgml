@@ -82,6 +82,13 @@ const getLatestPgmlVersionFromList = (versions: PgmlVersionDocumentBlock[]) => {
   return [...versions].sort(comparePgmlVersionsByRecency)[0] || null
 }
 
+const filterPgmlVersionsByParentId = (
+  document: PgmlVersionSetDocument,
+  parentVersionId: string | null
+) => {
+  return document.versions.filter(version => version.parentVersionId === parentVersionId)
+}
+
 export const arePgmlSnapshotsEquivalent = (
   leftSource: string,
   rightSource: string,
@@ -208,7 +215,7 @@ export const getLatestPgmlRootVersionByRole = (
 }
 
 export const getPgmlRootVersions = (document: PgmlVersionSetDocument) => {
-  return document.versions.filter(version => version.parentVersionId === null)
+  return filterPgmlVersionsByParentId(document, null)
 }
 
 export const getPgmlRootVersionCount = (document: PgmlVersionSetDocument) => {
@@ -797,7 +804,7 @@ export const getPgmlChildVersions = (
   document: PgmlVersionSetDocument,
   versionId: string | null
 ) => {
-  return document.versions.filter(version => version.parentVersionId === versionId)
+  return filterPgmlVersionsByParentId(document, versionId)
 }
 
 export const hasPgmlChildVersions = (
