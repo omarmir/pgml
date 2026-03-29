@@ -212,6 +212,7 @@ type DetailPopoverPlacement = {
 
 const {
   canCreateCheckpoint = true,
+  compareRelationshipSummary = '',
   exportBaseName = 'pgml-schema',
   exportPreferenceKey = 'name:pgml-schema',
   hasBlockingSourceErrors = false,
@@ -235,6 +236,7 @@ const {
   viewportResetKey = 0
 } = defineProps<{
   canCreateCheckpoint?: boolean
+  compareRelationshipSummary?: string
   exportBaseName?: string
   exportPreferenceKey?: string
   hasBlockingSourceErrors?: boolean
@@ -4542,6 +4544,7 @@ defineExpose<{
         :compare-base-id="versionCompareBaseId"
         :can-create-checkpoint="canCreateCheckpoint"
         :compare-options="versionCompareOptions"
+        :compare-relationship-summary="compareRelationshipSummary"
         :compare-target-id="versionCompareTargetId"
         :diff-sections="versionDiffSections"
         :layout-changed="layoutChanged"

@@ -42,6 +42,7 @@ const {
   canCreateCheckpoint = true,
   compareBaseId = null,
   compareOptions,
+  compareRelationshipSummary = '',
   compareTargetId,
   diffSections,
   layoutChanged = 0,
@@ -58,6 +59,7 @@ const {
   canCreateCheckpoint?: boolean
   compareBaseId?: string | null
   compareOptions: PgmlVersionCompareOption[]
+  compareRelationshipSummary?: string
   compareTargetId: string
   diffSections: PgmlVersionDiffSection[]
   layoutChanged?: number
@@ -301,6 +303,12 @@ const swapComparePair = () => {
               ? `${compareSummary.changedSectionCount} changed area${compareSummary.changedSectionCount === 1 ? '' : 's'} in the selected comparison.`
               : 'No visible delta in the selected comparison.'
           }}
+        </p>
+        <p
+          v-if="compareRelationshipSummary.length > 0"
+          class="text-[0.66rem] text-[color:var(--studio-shell-muted)]"
+        >
+          {{ compareRelationshipSummary }}
         </p>
       </div>
 

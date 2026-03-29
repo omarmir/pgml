@@ -241,4 +241,38 @@ Properties "public.users" {
 
     expect(checkpoint?.name).toBe('Design checkpoint 1 · 2026-03-29')
   })
+
+  it('describes whether a compare pair is direct or branched in version history', async () => {
+    const { api, source } = await mountVersionHistoryComposable()
+    const rootVersion = api.createCheckpoint({
+      createdAt: '2026-03-29T12:00:00.000Z',
+      includeLayout: true,
+      name: 'Initial design',
+      role: 'design'
+    })
+
+    if (!rootVersion) {
+      throw new Error('Expected the checkpoint to be created.')
+    }
+
+    source.value = importedWorkspaceSource
+
+    const childVersion = api.createCheckpoint({
+      createdAt: '2026-03-29T12:05:00.000Z',
+      includeLayout: true,
+      name: 'Add status',
+      role: 'design'
+    })
+
+    if (!childVersion) {
+      throw new Error('Expected the checkpoint to be created.')
+    }
+
+    api.setCompareTargets({
+      baseId: rootVersion.id,
+      targetId: childVersion.id
+    })
+
+    expect(api.compareRelationshipSummary.value).toContain('increments directly from')
+  })
 })

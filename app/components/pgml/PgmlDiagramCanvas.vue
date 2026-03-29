@@ -41,6 +41,7 @@ type VersionPanelItem = {
 
 const {
   canCreateCheckpoint = true,
+  compareRelationshipSummary = '',
   exportBaseName = 'pgml-schema',
   exportPreferenceKey = 'name:pgml-schema',
   hasBlockingSourceErrors = false,
@@ -64,6 +65,7 @@ const {
   viewportResetKey = 0
 } = defineProps<{
   canCreateCheckpoint?: boolean
+  compareRelationshipSummary?: string
   exportBaseName?: string
   exportPreferenceKey?: string
   hasBlockingSourceErrors?: boolean
@@ -125,6 +127,7 @@ defineExpose<CanvasHandle>({
   <PgmlDiagramCanvasGpuShell
     ref="shellRef"
     :can-create-checkpoint="canCreateCheckpoint"
+    :compare-relationship-summary="compareRelationshipSummary"
     :export-base-name="exportBaseName"
     :export-preference-key="exportPreferenceKey"
     :has-blocking-source-errors="hasBlockingSourceErrors"

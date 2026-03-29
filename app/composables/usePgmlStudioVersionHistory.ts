@@ -7,6 +7,7 @@ import {
   createPgmlVersionFromWorkspace,
   getPgmlChildVersions,
   getLatestPgmlVersion,
+  getPgmlNearestCommonAncestor,
   getPgmlVersionById,
   getPgmlVersionDepth,
   getPgmlWorkspaceBaseVersion,
@@ -188,6 +189,39 @@ export const usePgmlStudioVersionHistory = (
   const compareTargetSource = computed(() => {
     return compareTargetVersion.value?.snapshot.source || input.source.value
   })
+  const compareRelationshipSummary = computed(() => {
+    if (compareTargetId.value === 'workspace') {
+      if (!compareBaseVersion.value) {
+        return 'Comparing the current workspace against an empty base.'
+      }
+
+      if (compareBaseVersion.value.id === workspaceBaseVersion.value?.id) {
+        return `Comparing the current workspace against its locked base ${compareBaseVersion.value.name || compareBaseVersion.value.id}.`
+      }
+
+      return `Comparing the current workspace against ${compareBaseVersion.value.name || compareBaseVersion.value.id}.`
+    }
+
+    if (!compareBaseVersion.value || !compareTargetVersion.value) {
+      return 'Select a valid base and target to compare version history.'
+    }
+
+    if (compareTargetVersion.value.parentVersionId === compareBaseVersion.value.id) {
+      return `${compareTargetVersion.value.name || compareTargetVersion.value.id} increments directly from ${compareBaseVersion.value.name || compareBaseVersion.value.id}.`
+    }
+
+    const commonAncestor = getPgmlNearestCommonAncestor(
+      document.value,
+      compareBaseVersion.value.id,
+      compareTargetVersion.value.id
+    )
+
+    if (commonAncestor) {
+      return `Selected versions diverge from ${commonAncestor.name || commonAncestor.id}.`
+    }
+
+    return 'Selected versions do not share a common recorded ancestor.'
+  })
 
   watch(() => input.documentName.value, (nextName) => {
     document.value = {
@@ -302,6 +336,7 @@ export const usePgmlStudioVersionHistory = (
     compareBaseId,
     compareBaseSource,
     compareBaseVersion,
+    compareRelationshipSummary,
     compareTargetId,
     compareTargetSource,
     compareTargetVersion,

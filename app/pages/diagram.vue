@@ -251,6 +251,7 @@ const {
   compareTargetId: versionCompareTargetId,
   compareTargetSource,
   canCheckpoint,
+  compareRelationshipSummary,
   createCheckpoint: createVersionCheckpoint,
   document: versionDocument,
   editorMode: versionedEditorMode,
@@ -1692,6 +1693,7 @@ onBeforeUnmount(() => {
         <PgmlDiagramCanvas
           ref="canvasRef"
           :can-create-checkpoint="canCheckpoint"
+          :compare-relationship-summary="compareRelationshipSummary"
           :model="parsedModel"
           :export-base-name="exportBaseName"
           :export-preference-key="exportPreferenceKey"
@@ -1779,6 +1781,7 @@ onBeforeUnmount(() => {
         <PgmlDiagramCanvas
           ref="canvasRef"
           :can-create-checkpoint="canCheckpoint"
+          :compare-relationship-summary="compareRelationshipSummary"
           :model="parsedModel"
           :export-base-name="exportBaseName"
           :export-preference-key="exportPreferenceKey"
