@@ -392,6 +392,28 @@ const assertNoUnexpectedTopLevelLines = (lines: string[], context: string) => {
   }
 }
 
+const collectBlockMetadata = (
+  lines: string[],
+  context: string
+) => {
+  const metadata = lines.reduce<Record<string, string>>((entries, line) => {
+    const entry = parseMetadataEntry(line)
+
+    if (entry) {
+      entries[entry.key] = entry.value
+    }
+
+    return entries
+  }, {})
+
+  assertNoUnexpectedTopLevelLines(
+    lines.filter(line => parseMetadataEntry(line) === null),
+    context
+  )
+
+  return metadata
+}
+
 const getRequiredMetadataValue = (
   metadata: Record<string, string>,
   key: string,
@@ -442,20 +464,7 @@ const parseWorkspaceBlock = (block: PgmlNamedBlock): PgmlWorkspaceDocumentBlock 
   }
 
   const nested = collectBlocks(block.body.join('\n'))
-  const metadata = nested.topLevel.reduce<Record<string, string>>((entries, line) => {
-    const entry = parseMetadataEntry(line)
-
-    if (entry) {
-      entries[entry.key] = entry.value
-    }
-
-    return entries
-  }, {})
-
-  assertNoUnexpectedTopLevelLines(
-    nested.topLevel.filter(line => parseMetadataEntry(line) === null),
-    'Workspace'
-  )
+  const metadata = collectBlockMetadata(nested.topLevel, 'Workspace')
 
   if (nested.blocks.length !== 1) {
     throw new Error('Workspace requires exactly one Snapshot block.')
@@ -476,20 +485,7 @@ const parseVersionBlock = (block: PgmlNamedBlock): PgmlVersionDocumentBlock => {
   }
 
   const nested = collectBlocks(block.body.join('\n'))
-  const metadata = nested.topLevel.reduce<Record<string, string>>((entries, line) => {
-    const entry = parseMetadataEntry(line)
-
-    if (entry) {
-      entries[entry.key] = entry.value
-    }
-
-    return entries
-  }, {})
-
-  assertNoUnexpectedTopLevelLines(
-    nested.topLevel.filter(line => parseMetadataEntry(line) === null),
-    `Version ${versionId}`
-  )
+  const metadata = collectBlockMetadata(nested.topLevel, `Version ${versionId}`)
 
   if (nested.blocks.length !== 1) {
     throw new Error(`Version ${versionId} requires exactly one Snapshot block.`)
