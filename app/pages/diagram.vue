@@ -209,6 +209,8 @@ const importDumpError: Ref<string | null> = ref(null)
 const importDumpSelectedFile: Ref<File | null> = ref(null)
 const importDumpText: Ref<string> = ref('')
 const isSubmittingImportDump: Ref<boolean> = ref(false)
+const restoreVersionDialogOpen: Ref<boolean> = ref(false)
+const restoreVersionId: Ref<string | null> = ref(null)
 const importDumpConflictErrorMessage = 'Choose either pasted pg_dump text or a file upload, not both.'
 const importDumpMissingInputErrorMessage = 'Paste pg_dump text or choose a text dump file before importing.'
 const tableEditorDraft: Ref<PgmlEditableTableDraft | null> = ref(null)
@@ -795,6 +797,11 @@ const importDumpDialogCopy = computed(() => {
     title: 'Import pg_dump onto a version'
   }
 })
+const restoreVersionCandidate = computed(() => {
+  return restoreVersionId.value
+    ? versions.value.find(version => version.id === restoreVersionId.value) || null
+    : null
+})
 
 watch(activeSchemaName, (nextName) => {
   versionDocumentName.value = nextName
@@ -910,6 +917,10 @@ const openCheckpointDialog = () => {
 }
 const closeCheckpointDialog = () => {
   checkpointDialogOpen.value = false
+}
+const closeRestoreVersionDialog = () => {
+  restoreVersionDialogOpen.value = false
+  restoreVersionId.value = null
 }
 const saveCheckpoint = () => {
   const normalizedName = checkpointName.value.trim()
@@ -1064,13 +1075,22 @@ const viewVersionTarget = (targetId: string) => {
   requestCanvasViewportReset()
 }
 const restoreVersionToWorkspace = (versionId: string) => {
-  const didRestore = replaceWorkspaceFromVersion(versionId)
+  restoreVersionId.value = versionId
+  restoreVersionDialogOpen.value = true
+}
+const confirmRestoreVersionToWorkspace = () => {
+  if (!restoreVersionId.value) {
+    return
+  }
+
+  const didRestore = replaceWorkspaceFromVersion(restoreVersionId.value)
 
   if (!didRestore) {
     return
   }
 
   requestCanvasViewportReset()
+  closeRestoreVersionDialog()
   toast.add({
     title: 'Workspace restored',
     description: 'The selected version is now the active workspace draft.',
@@ -1870,6 +1890,49 @@ onBeforeUnmount(() => {
             :class="primaryModalButtonClass"
             :disabled="checkpointName.trim().length === 0"
             @click="saveCheckpoint"
+          />
+        </template>
+      </StudioModalFrame>
+
+      <StudioModalFrame
+        v-model:open="restoreVersionDialogOpen"
+        title="Restore version to workspace"
+        description="Replace the current workspace draft with a locked version snapshot."
+        surface-id="restore-version"
+        body-class="grid gap-4 px-4 py-3"
+      >
+        <div class="grid gap-3">
+          <div class="border border-[color:var(--studio-shell-border)] bg-[color:var(--studio-control-bg)] px-3 py-3">
+            <div :class="studioFieldKickerClass">
+              Selected version
+            </div>
+            <div class="mt-2 text-[0.85rem] font-semibold text-[color:var(--studio-shell-text)]">
+              {{ restoreVersionCandidate ? getVersionLabel(restoreVersionCandidate) : 'Unknown version' }}
+            </div>
+            <p class="mt-2 text-[0.74rem] leading-6 text-[color:var(--studio-shell-muted)]">
+              {{
+                activeHasPendingChanges
+                  ? 'The current workspace has unsaved changes. Restoring will replace the draft before the next checkpoint.'
+                  : 'This will replace the current workspace draft and point future changes at the restored base version.'
+              }}
+            </p>
+          </div>
+        </div>
+
+        <template #footer>
+          <UButton
+            label="Cancel"
+            color="neutral"
+            variant="outline"
+            :class="secondaryModalButtonClass"
+            @click="closeRestoreVersionDialog"
+          />
+          <UButton
+            label="Restore version"
+            color="neutral"
+            variant="soft"
+            :class="primaryModalButtonClass"
+            @click="confirmRestoreVersionToWorkspace"
           />
         </template>
       </StudioModalFrame>
