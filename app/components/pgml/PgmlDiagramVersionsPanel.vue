@@ -427,14 +427,17 @@ const swapComparePair = () => {
         </div>
 
         <div
-          v-for="version in versions"
+          v-for="(version, versionIndex) in versions"
           :key="version.id"
-          class="grid gap-2 border border-[color:var(--studio-divider)] bg-[color:var(--studio-input-bg)] px-3 py-3"
+          class="grid gap-2 border-l-2 border-[color:var(--studio-divider)] border-y border-r bg-[color:var(--studio-input-bg)] px-3 py-3"
           :class="previewTargetId === version.id ? 'border-[color:var(--studio-ring)]' : ''"
         >
           <div class="flex items-start justify-between gap-3">
             <div class="min-w-0">
               <div class="flex flex-wrap items-center gap-2">
+                <span class="border border-[color:var(--studio-divider)] px-1.5 py-0.5 font-mono text-[0.52rem] uppercase tracking-[0.08em] text-[color:var(--studio-shell-muted)]">
+                  {{ versionIndex + 1 }}
+                </span>
                 <div class="truncate text-[0.8rem] font-semibold text-[color:var(--studio-shell-text)]">
                   {{ version.label }}
                 </div>
@@ -464,6 +467,9 @@ const swapComparePair = () => {
                 {{ version.createdAt }}
                 <template v-if="version.parentVersionId">
                   · branches from {{ version.parentVersionId }}
+                </template>
+                <template v-else>
+                  · starting point
                 </template>
               </div>
             </div>
