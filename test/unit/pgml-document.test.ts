@@ -6,6 +6,7 @@ import {
   getPgmlChildVersions,
   getPgmlDescendantVersions,
   getPgmlVersionById,
+  getPgmlVersionDepth,
   getPgmlVersionLineage,
   getPgmlVersionMap,
   getPgmlWorkspaceBaseVersion,
@@ -231,6 +232,35 @@ Table public.order_items {
       'Orders branch',
       'Order items'
     ])
+  })
+
+  it('calculates branch depth from the selected version lineage', () => {
+    const initialDocument = createInitialPgmlDocument({
+      name: 'Billing',
+      workspaceSource: baseSnapshotSource
+    })
+    const firstVersion = createPgmlVersionFromWorkspace(initialDocument, {
+      createdAt: '2026-03-29T12:00:00.000Z',
+      name: 'Initial design',
+      role: 'design'
+    })
+    const secondVersion = createPgmlVersionFromWorkspace(replacePgmlWorkspaceFromSnapshot(firstVersion, {
+      basedOnVersionId: firstVersion.workspace.basedOnVersionId,
+      source: `${baseSnapshotSource}
+
+Table public.orders {
+  id uuid [pk]
+}`,
+      updatedAt: '2026-03-29T12:05:00.000Z'
+    }), {
+      createdAt: '2026-03-29T12:10:00.000Z',
+      name: 'Add orders',
+      role: 'design'
+    })
+
+    expect(getPgmlVersionDepth(secondVersion, secondVersion.versions[0]?.id || null)).toBe(0)
+    expect(getPgmlVersionDepth(secondVersion, secondVersion.versions[1]?.id || null)).toBe(1)
+    expect(getPgmlVersionDepth(secondVersion, null)).toBe(0)
   })
 
   it('rejects invalid VersionSet documents that reference missing parent or base versions', () => {

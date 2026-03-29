@@ -504,6 +504,15 @@ export const getPgmlDescendantVersions = (
   return descendants
 }
 
+export const getPgmlVersionDepth = (
+  document: PgmlVersionSetDocument,
+  versionId: string | null
+) => {
+  const lineage = getPgmlVersionLineage(document, versionId)
+
+  return lineage.length > 0 ? lineage.length - 1 : 0
+}
+
 export const serializePgmlDocument = (document: PgmlVersionSetDocument) => {
   validateVersionSetDocument(document)
 
