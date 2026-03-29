@@ -51,4 +51,141 @@ describe('PGML version diffing', () => {
     )
     expect(migrationBundle.sql.migration.warnings).toEqual([])
   })
+
+  it('handles removed references, replaced custom types and omitted routines with warnings', () => {
+    const baseSource = `Enum order_status {
+  draft
+  submitted
+}
+
+Sequence order_number_seq {
+  source: $sql$
+    CREATE SEQUENCE public.order_number_seq START WITH 10;
+  $sql$
+}
+
+Table public.users {
+  id uuid [pk]
+  email text [unique]
+}
+
+Table public.orders {
+  id uuid [pk]
+  user_id uuid [ref: > public.users.id]
+}
+
+Function refresh_orders() returns void [replace] {
+  source: $sql$
+    CREATE OR REPLACE FUNCTION public.refresh_orders()
+    RETURNS void AS $$
+    BEGIN
+      RETURN;
+    END;
+    $$ LANGUAGE plpgsql;
+  $sql$
+}`
+    const targetSource = `Enum order_status {
+  draft
+  paid
+}
+
+Table public.users {
+  id uuid [pk]
+  email text
+}
+
+Table public.orders {
+  id uuid [pk]
+  user_id uuid
+}
+
+Function orphan_report() {
+}`
+    const diff = diffPgmlSchemaModels(parsePgml(baseSource), parsePgml(targetSource))
+    const migrationBundle = buildPgmlMigrationDiffBundle(
+      parsePgml(baseSource),
+      parsePgml(targetSource),
+      {
+        baseName: 'Version warnings'
+      }
+    )
+
+    expect(diff.customTypes).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        id: 'Enum::order_status',
+        kind: 'modified'
+      })
+    ]))
+    expect(diff.references).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        id: expect.stringContaining('public.orders'),
+        kind: 'removed'
+      })
+    ]))
+    expect(migrationBundle.sql.migration.content).toContain('DROP TYPE IF EXISTS "public"."order_status";')
+    expect(migrationBundle.sql.migration.content).toContain('CREATE TYPE "public"."order_status" AS ENUM (\'draft\', \'paid\');')
+    expect(migrationBundle.sql.migration.content).toContain('DROP SEQUENCE IF EXISTS "public"."order_number_seq";')
+    expect(migrationBundle.sql.migration.content).toContain('ALTER TABLE "public"."orders" DROP CONSTRAINT IF EXISTS "orders_user_id_fkey";')
+    expect(migrationBundle.sql.migration.warnings).toEqual(expect.arrayContaining([
+      expect.stringContaining('Column uniqueness changed for public.users.email'),
+      expect.stringContaining('Function refresh_orders was removed'),
+      expect.stringContaining('Function orphan_report has no source block')
+    ]))
+  })
+
+  it('emits trigger, default, index, and constraint changes for altered tables', () => {
+    const baseSource = `Table public.users {
+  id uuid [pk]
+  email text
+  Constraint users_email_check: email <> ''
+}
+
+Trigger trg_touch_users on public.users {
+  source: $sql$
+    CREATE TRIGGER trg_touch_users
+      AFTER UPDATE ON public.users
+      FOR EACH ROW
+      EXECUTE FUNCTION public.touch_users();
+  $sql$
+}`
+    const targetSource = `Table public.users {
+  id uuid [pk]
+  email text [not null, default: '']
+  Constraint users_email_check: email <> '' and email is not null
+  Index idx_users_email (email) [type: btree]
+}
+
+Trigger trg_touch_users on public.users {
+  source: $sql$
+    CREATE TRIGGER trg_touch_users
+      BEFORE UPDATE ON public.users
+      FOR EACH ROW
+      EXECUTE FUNCTION public.touch_users();
+  $sql$
+}`
+    const migrationBundle = buildPgmlMigrationDiffBundle(
+      parsePgml(baseSource),
+      parsePgml(targetSource)
+    )
+
+    expect(migrationBundle.sql.migration.content).toContain(
+      'ALTER TABLE "public"."users" ALTER COLUMN "email" SET DEFAULT \'\';'
+    )
+    expect(migrationBundle.sql.migration.content).toContain(
+      'ALTER TABLE "public"."users" ALTER COLUMN "email" SET NOT NULL;'
+    )
+    expect(migrationBundle.sql.migration.content).toContain(
+      'ALTER TABLE "public"."users" DROP CONSTRAINT IF EXISTS "users_email_check";'
+    )
+    expect(migrationBundle.sql.migration.content).toContain(
+      'ALTER TABLE "public"."users" ADD CONSTRAINT "users_email_check" CHECK (email <> \'\' and email is not null);'
+    )
+    expect(migrationBundle.sql.migration.content).toContain(
+      'CREATE INDEX "idx_users_email" ON "public"."users" USING btree ("email");'
+    )
+    expect(migrationBundle.sql.migration.content).toContain(
+      'DROP TRIGGER IF EXISTS "trg_touch_users" ON "public"."users";'
+    )
+    expect(migrationBundle.sql.migration.content).toContain('CREATE TRIGGER trg_touch_users')
+  })
 })
