@@ -47,6 +47,9 @@ describe('usePgmlStudioVersionHistory', () => {
   it('creates checkpoints, previews locked versions, restores them, and replaces the workspace from imports', async () => {
     const { api, source } = await mountVersionHistoryComposable()
 
+    expect(api.workspaceDirty.value).toBe(true)
+    expect(api.canCheckpoint.value).toBe(true)
+
     const initialVersion = api.createCheckpoint({
       createdAt: '2026-03-29T12:00:00.000Z',
       includeLayout: true,
@@ -59,6 +62,7 @@ describe('usePgmlStudioVersionHistory', () => {
     }
 
     expect(api.document.value.workspace.basedOnVersionId).toBe(initialVersion.id)
+    expect(api.workspaceBaseVersion.value?.id).toBe(initialVersion.id)
     expect(api.versionedDocumentSource.value).toContain('VersionSet "Billing"')
     expect(api.versionedDocumentSource.value).toContain(`Version ${initialVersion.id}`)
 
@@ -83,6 +87,8 @@ describe('usePgmlStudioVersionHistory', () => {
     expect(api.previewTargetId.value).toBe('workspace')
     expect(source.value).toBe(baseWorkspaceSource)
     expect(api.compareTargetId.value).toBe('workspace')
+    expect(api.workspaceDirty.value).toBe(false)
+    expect(api.canCheckpoint.value).toBe(false)
   })
 
   it('loads raw snapshot text into a new versioned document when no VersionSet root exists', async () => {

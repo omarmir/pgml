@@ -1,8 +1,13 @@
 import type { ComputedRef, Ref } from 'vue'
 import {
+  canCreatePgmlCheckpoint,
+  clonePgmlVersionSetDocument,
   createInitialPgmlDocument,
   createPgmlVersionFromWorkspace,
+  getPgmlVersionById,
+  getPgmlWorkspaceBaseVersion,
   getPgmlDocumentPreviewSource,
+  isPgmlWorkspaceDirty,
   parsePgmlDocument,
   replacePgmlWorkspaceFromSnapshot,
   serializePgmlDocument,
@@ -20,26 +25,6 @@ export type PgmlVersionedDocumentEditorMode = typeof versionedDocumentEditorMode
 
 const normalizeSnapshotSource = (value: string, includeLayout: boolean) => {
   return includeLayout ? value.trim() : stripPgmlPropertiesBlocks(value).trim()
-}
-
-const cloneVersionDocument = (document: PgmlVersionSetDocument) => {
-  return {
-    ...document,
-    versions: document.versions.map((version) => {
-      return {
-        ...version,
-        snapshot: {
-          source: version.snapshot.source
-        }
-      }
-    }),
-    workspace: {
-      ...document.workspace,
-      snapshot: {
-        source: document.workspace.snapshot.source
-      }
-    }
-  } satisfies PgmlVersionSetDocument
 }
 
 const buildDefaultCompareBaseId = (document: PgmlVersionSetDocument) => {
@@ -119,6 +104,9 @@ export const usePgmlStudioVersionHistory = (
   }
 
   const versions = computed(() => document.value.versions)
+  const workspaceBaseVersion = computed(() => getPgmlWorkspaceBaseVersion(document.value))
+  const workspaceDirty = computed(() => isPgmlWorkspaceDirty(document.value))
+  const canCheckpoint = computed(() => canCreatePgmlCheckpoint(document.value))
   const versionItems = computed(() => {
     return document.value.versions.map((version) => {
       return {
@@ -149,16 +137,14 @@ export const usePgmlStudioVersionHistory = (
   })
   const isWorkspacePreview = computed(() => previewTargetId.value === 'workspace')
   const compareBaseVersion = computed(() => {
-    return compareBaseId.value
-      ? document.value.versions.find(version => version.id === compareBaseId.value) || null
-      : null
+    return getPgmlVersionById(document.value, compareBaseId.value)
   })
   const compareTargetVersion = computed<PgmlVersionDocumentBlock | null>(() => {
     if (compareTargetId.value === 'workspace') {
       return null
     }
 
-    return document.value.versions.find(version => version.id === compareTargetId.value) || null
+    return getPgmlVersionById(document.value, compareTargetId.value)
   })
   const compareBaseSource = computed(() => {
     if (compareBaseId.value === 'workspace') {
@@ -183,7 +169,7 @@ export const usePgmlStudioVersionHistory = (
   })
 
   const serializeCurrentDocument = (includeLayout: boolean) => {
-    const workingDocument = cloneVersionDocument(document.value)
+    const workingDocument = clonePgmlVersionSetDocument(document.value)
 
     workingDocument.name = input.documentName.value
     workingDocument.workspace.snapshot.source = normalizeSnapshotSource(input.source.value, includeLayout)
@@ -276,6 +262,7 @@ export const usePgmlStudioVersionHistory = (
     compareTargetId,
     compareTargetSource,
     compareTargetVersion,
+    canCheckpoint,
     createCheckpoint,
     document,
     editorMode,
@@ -291,6 +278,8 @@ export const usePgmlStudioVersionHistory = (
     setPreviewTarget,
     versionItems,
     versionedDocumentSource,
-    versions
+    versions,
+    workspaceBaseVersion,
+    workspaceDirty
   }
 }
