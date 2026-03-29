@@ -944,9 +944,16 @@ const sortVersionSiblings = (versions: PgmlVersionDocumentBlock[]) => {
   })
 }
 
+const getSortedPgmlChildVersions = (
+  document: PgmlVersionSetDocument,
+  versionId: string | null
+) => {
+  return sortVersionSiblings(getPgmlChildVersions(document, versionId))
+}
+
 export const getPgmlVersionsInTopologicalOrder = (document: PgmlVersionSetDocument) => {
   const orderedVersions: PgmlVersionDocumentBlock[] = []
-  const pendingVersions = sortVersionSiblings(getPgmlChildVersions(document, null))
+  const pendingVersions = getSortedPgmlChildVersions(document, null)
 
   while (pendingVersions.length > 0) {
     const nextVersion = pendingVersions.shift() || null
@@ -956,7 +963,7 @@ export const getPgmlVersionsInTopologicalOrder = (document: PgmlVersionSetDocume
     }
 
     orderedVersions.push(nextVersion)
-    sortVersionSiblings(getPgmlChildVersions(document, nextVersion.id)).forEach((childVersion) => {
+    getSortedPgmlChildVersions(document, nextVersion.id).forEach((childVersion) => {
       pendingVersions.push(childVersion)
     })
   }
