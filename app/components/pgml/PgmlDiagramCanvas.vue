@@ -28,18 +28,26 @@ type VersionDiffSection = {
 }
 
 type VersionPanelItem = {
+  ancestorCount: number
+  branchLeafCount: number
+  branchMaxDepth: number
+  branchVersionCount: number
   branchRootId: string | null
   branchRootLabel: string | null
   childCount: number
   createdAt: string
+  descendantCount: number
   depth: number
   id: string
   isLeaf: boolean
   isLatestByRole: boolean
+  isLatestOverall: boolean
   isRoot: boolean
+  siblingCount: number
   isWorkspaceBase: boolean
   label: string
   lineageLabel: string
+  parentVersionLabel: string | null
   parentVersionId: string | null
   role: 'design' | 'implementation'
 }
