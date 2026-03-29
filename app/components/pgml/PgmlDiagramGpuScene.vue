@@ -89,6 +89,12 @@ type TouchPinchSession = {
   initialScale: number
 }
 
+type ViewTransform = {
+  panX: number
+  panY: number
+  scale: number
+}
+
 type HitTarget = {
   attachmentId?: string
   columnName?: string
@@ -127,6 +133,7 @@ const emit = defineEmits<{
   moveNode: [payload: { id: string, kind: 'group' | 'object' | 'table', x: number, y: number }]
   scaleChange: [scale: number]
   select: [selection: DiagramGpuSelection | null]
+  transformChange: [transform: ViewTransform]
   toggleObjectCollapsed: [id: string]
 }>()
 
@@ -170,9 +177,10 @@ let activeVisibleObjectIds = new Set<string>()
 let activeVisibleConnectionIds = new Set<string>()
 let fullRenderScheduled = false
 let transformRenderScheduled = false
-let deferredFullRenderTimeout: ReturnType<typeof window.setTimeout> | null = null
+let deferredFullRenderTimeout: ReturnType<typeof setTimeout> | null = null
 let lineAnimationFrame: number | null = null
 let lineAnimationOffset = 0
+let hasViewportInteraction = false
 
 const fontMonoFamily = '"IBM Plex Mono", "IBM Plex Mono Fallback: Courier New", "IBM Plex Mono Fallback: Roboto Mono", "IBM Plex Mono Fallback: Noto Sans Mono", monospace'
 const fontMono = `600 9px ${fontMonoFamily}`
@@ -184,6 +192,10 @@ const fontSansMuted = '400 8px ui-sans-serif, system-ui, -apple-system, BlinkMac
 
 const clamp = (value: number, min: number, max: number) => {
   return Math.min(max, Math.max(min, value))
+}
+
+const approximatelyEqual = (left: number, right: number, tolerance: number) => {
+  return Math.abs(left - right) <= tolerance
 }
 
 type SceneColor = {
@@ -460,6 +472,11 @@ const updateWorldTransform = () => {
   worldContainer.position.set(worldPanX, worldPanY)
   worldContainer.scale.set(worldScale)
   emit('scaleChange', worldScale)
+  emit('transformChange', {
+    panX: worldPanX,
+    panY: worldPanY,
+    scale: worldScale
+  })
 }
 
 const roundRect = (
@@ -590,7 +607,7 @@ const normalizeBadgeWidths = (
       break
     }
 
-    nextWidths[largestIndex] = Math.max(minimumWidth, nextWidths[largestIndex] - 4)
+    nextWidths[largestIndex] = Math.max(minimumWidth, (nextWidths[largestIndex] || minimumWidth) - 4)
   }
 
   return nextWidths
@@ -706,6 +723,67 @@ const getSelectionStateKey = (id: string) => {
   }
 
   return 'idle'
+}
+
+const hashDiagramRenderSignature = (value: string) => {
+  let hash = 0
+
+  for (const character of value) {
+    hash = ((hash << 5) - hash) + character.charCodeAt(0)
+    hash |= 0
+  }
+
+  return Math.abs(hash).toString(36)
+}
+
+const getGroupRenderSignature = (group: DiagramGpuGroupNode) => {
+  return [
+    group.color,
+    group.columnCount,
+    group.masonry ? 'masonry' : 'grid',
+    group.note || '',
+    group.tableCount,
+    group.tableIds.join(','),
+    group.tableWidthScale,
+    group.title
+  ].join('|')
+}
+
+const getTableRenderSignature = (card: DiagramGpuTableCard) => {
+  return [
+    card.color,
+    card.groupId || '',
+    card.headerHeight,
+    card.schema,
+    card.title,
+    ...card.rows.map((row) => {
+      return [
+        row.key,
+        row.kind,
+        row.title,
+        row.subtitle,
+        row.columnName || '',
+        row.attachmentId || '',
+        row.kindLabel || '',
+        row.highlightColor || '',
+        row.accentColor || '',
+        row.badges.map(badge => `${badge.label}:${badge.color}`).join(',')
+      ].join(':')
+    })
+  ].join('|')
+}
+
+const getObjectRenderSignature = (node: DiagramGpuObjectNode) => {
+  return [
+    node.collapsed ? 'collapsed' : 'expanded',
+    node.color,
+    node.details.join('|'),
+    node.impactTargets.map(target => `${target.tableId}:${target.columnName || '*'}`).join(','),
+    node.kindLabel,
+    node.subtitle,
+    node.tableIds.join(','),
+    node.title
+  ].join('|')
 }
 
 const createCanvas = (width: number, height: number, resolution: number) => {
@@ -947,6 +1025,9 @@ const buildTableCanvas = (card: DiagramGpuTableCard, resolution: number) => {
 
 const buildGroupCanvas = (group: DiagramGpuGroupNode, resolution: number) => {
   const { canvas, context } = createCanvas(group.width, group.height, resolution)
+  const selectionKey = getSelectionStateKey(group.id)
+  const accentColor = getNodeAccentColor(group.color)
+  const borderColor = getNodeBorderColor(group.color, 'group')
   const shellFill = sceneTheme.groupSurface
   const bodyOverlayFill = withAlpha(group.color, 0.02)
 
@@ -959,11 +1040,10 @@ const buildGroupCanvas = (group: DiagramGpuGroupNode, resolution: number) => {
   context.clip()
   context.fillStyle = bodyOverlayFill
   context.fillRect(1, 1, Math.max(0, group.width - 2), Math.max(0, group.height - 2))
-  context.clearRect(1, 1, Math.max(0, group.width - 2), Math.max(0, diagramGroupHeaderBandHeight))
   context.restore()
 
-  context.strokeStyle = getNodeBorderColor(group.color, 'group')
-  context.lineWidth = 1
+  context.strokeStyle = selectionKey === 'selected-group' ? accentColor : borderColor
+  context.lineWidth = selectionKey === 'selected-group' ? 1.5 : 1
   roundRect(context, 0.5, 0.5, group.width - 1, group.height - 1, 2.5)
   context.stroke()
 
@@ -972,26 +1052,22 @@ const buildGroupCanvas = (group: DiagramGpuGroupNode, resolution: number) => {
 
 const buildGroupHeaderOverlayCanvas = (group: DiagramGpuGroupNode, resolution: number) => {
   const { canvas, context } = createCanvas(group.width, diagramGroupHeaderBandHeight, resolution)
-  const selectionKey = getSelectionStateKey(group.id)
   const accentColor = getNodeAccentColor(group.color)
-  const borderColor = getNodeBorderColor(group.color, 'group')
-  const shellFill = sceneTheme.groupSurface
-  const bodyOverlayFill = withAlpha(group.color, 0.02)
-  const headerBaseFill = compositeColors(bodyOverlayFill, compositeColors(shellFill, sceneTheme.background))
-  const headerFadeHeight = Math.max(diagramGroupHeaderHeight + 18, Math.round(group.height * 0.22))
-  const visibleHeaderFadeHeight = Math.min(diagramGroupHeaderBandHeight, headerFadeHeight)
-  const headerGradient = context.createLinearGradient(0, 0, 0, visibleHeaderFadeHeight)
-  headerGradient.addColorStop(0, compositeColors(withAlpha(group.color, 0.119), headerBaseFill))
-  headerGradient.addColorStop(0.38, compositeColors(withAlpha(group.color, 0.065), headerBaseFill))
-  headerGradient.addColorStop(1, compositeColors(bodyOverlayFill, headerBaseFill))
+  const headerTopFill = withAlpha(group.color, 0.28)
+  const headerMidFill = withAlpha(group.color, 0.14)
+  const headerLowFill = withAlpha(group.color, 0.05)
+  const headerGradient = context.createLinearGradient(0, 0, 0, diagramGroupHeaderBandHeight)
+  headerGradient.addColorStop(0, headerTopFill)
+  headerGradient.addColorStop(0.24, headerMidFill)
+  headerGradient.addColorStop(0.5, headerLowFill)
+  headerGradient.addColorStop(0.72, 'rgba(0, 0, 0, 0)')
+  headerGradient.addColorStop(1, 'rgba(0, 0, 0, 0)')
 
   context.save()
   topRoundRect(context, 0.5, 0.5, group.width - 1, diagramGroupHeaderBandHeight - 0.5, 2.5)
   context.clip()
-  context.fillStyle = headerBaseFill
-  context.fillRect(1, 1, Math.max(0, group.width - 2), Math.max(0, diagramGroupHeaderBandHeight - 1))
   context.fillStyle = headerGradient
-  context.fillRect(1, 1, Math.max(0, group.width - 2), Math.max(0, visibleHeaderFadeHeight))
+  context.fillRect(1, 1, Math.max(0, group.width - 2), Math.max(0, diagramGroupHeaderBandHeight - 1))
 
   context.font = fontMonoSmallRegular
   context.fillStyle = accentColor
@@ -1016,18 +1092,6 @@ const buildGroupHeaderOverlayCanvas = (group: DiagramGpuGroupNode, resolution: n
 
   drawHeaderChip(context, pillX, 9, pillWidth, pill, fontMonoSmallRegular)
   context.restore()
-
-  context.strokeStyle = selectionKey === 'selected-group' ? accentColor : borderColor
-  context.lineWidth = selectionKey === 'selected-group' ? 1.5 : 1
-  topRoundRect(context, 0.5, 0.5, group.width - 1, diagramGroupHeaderBandHeight - 0.5, 2.5)
-  context.stroke()
-
-  context.strokeStyle = mixColors(group.color, sceneTheme.divider, 0.1)
-  context.lineWidth = 1
-  context.beginPath()
-  context.moveTo(1, diagramGroupHeaderHeight + 0.5)
-  context.lineTo(group.width - 1, diagramGroupHeaderHeight + 0.5)
-  context.stroke()
 
   return canvas
 }
@@ -1092,6 +1156,7 @@ const getOrCreateSpriteEntry = (
   entries: Map<string, TextureCacheEntry>,
   key: string,
   kind: 'group' | 'group-header' | 'object' | 'table',
+  renderSignature: string,
   width: number,
   height: number,
   buildCanvas: (resolution: number) => HTMLCanvasElement
@@ -1101,7 +1166,7 @@ const getOrCreateSpriteEntry = (
   }
 
   const resolution = getTextureResolution()
-  const nextKey = `${key}:${getSelectionStateKey(key)}:${Math.round(resolution * 100)}:${width}x${height}`
+  const nextKey = `${key}:${getSelectionStateKey(key)}:${Math.round(resolution * 100)}:${width}x${height}:${hashDiagramRenderSignature(renderSignature)}`
   const existingEntry = entries.get(key)
 
   if (existingEntry?.key === nextKey) {
@@ -1379,10 +1444,10 @@ const scheduleTransformRender = () => {
 
 const scheduleDeferredFullRender = (delay = 72) => {
   if (deferredFullRenderTimeout !== null) {
-    window.clearTimeout(deferredFullRenderTimeout)
+    clearTimeout(deferredFullRenderTimeout)
   }
 
-  deferredFullRenderTimeout = window.setTimeout(() => {
+  deferredFullRenderTimeout = setTimeout(() => {
     deferredFullRenderTimeout = null
     scheduleFullRender()
   }, delay)
@@ -1517,7 +1582,9 @@ const renderConnectionLayer = () => {
     return
   }
 
-  lineGraphics.clear()
+  const nextLineGraphics = lineGraphics
+
+  nextLineGraphics.clear()
 
   if (!showRelationshipLines) {
     return
@@ -1538,12 +1605,12 @@ const renderConnectionLayer = () => {
     } as const
 
     if (!line.dashed) {
-      drawSolidPolyline(lineGraphics, line.points, solidStyle)
+      drawSolidPolyline(nextLineGraphics, line.points, solidStyle)
       return
     }
 
     if (line.animated) {
-      drawSolidPolyline(lineGraphics, line.points, {
+      drawSolidPolyline(nextLineGraphics, line.points, {
         ...solidStyle,
         alpha: 0.18,
         width: 0.94
@@ -1552,7 +1619,7 @@ const renderConnectionLayer = () => {
 
     const dashPattern = parseDashPattern(line.dashPattern)
     drawDashedPolyline(
-      lineGraphics,
+      nextLineGraphics,
       line.points,
       dashPattern,
       line.animated ? lineAnimationOffset : 0,
@@ -1614,10 +1681,12 @@ const renderScene = () => {
   activeVisibleConnectionIds = visibleConnectionIds
 
   groups.forEach((group) => {
+    const renderSignature = getGroupRenderSignature(group)
     const entry = getOrCreateSpriteEntry(
       groupSpriteEntries,
       group.id,
       'group',
+      renderSignature,
       group.width,
       group.height,
       (resolution) => buildGroupCanvas(group, resolution)
@@ -1635,6 +1704,7 @@ const renderScene = () => {
       groupHeaderSpriteEntries,
       group.id,
       'group-header',
+      renderSignature,
       group.width,
       diagramGroupHeaderBandHeight,
       (resolution) => buildGroupHeaderOverlayCanvas(group, resolution)
@@ -1654,6 +1724,7 @@ const renderScene = () => {
       tableSpriteEntries,
       table.id,
       'table',
+      getTableRenderSignature(table),
       table.width,
       table.height,
       (resolution) => buildTableCanvas(table, resolution)
@@ -1679,6 +1750,7 @@ const renderScene = () => {
       objectSpriteEntries,
       objectNode.id,
       'object',
+      getObjectRenderSignature(objectNode),
       objectNode.width,
       objectNode.height,
       (resolution) => buildObjectCanvas(objectNode, resolution)
@@ -1705,23 +1777,50 @@ const renderScene = () => {
   app.render()
 }
 
-const resetView = () => {
+const getResetViewTransform = (
+  nextViewportWidth = viewportWidth.value,
+  nextViewportHeight = viewportHeight.value,
+  nextViewportInsetRight = viewportInsetRight
+) => {
   const worldWidth = Math.max(1, worldBounds.maxX - worldBounds.minX)
   const worldHeight = Math.max(1, worldBounds.maxY - worldBounds.minY)
   const padding = 40
-  const insetRight = Math.max(0, viewportInsetRight)
-  const availableWidth = Math.max(1, viewportWidth.value - insetRight - padding * 2)
+  const insetRight = Math.max(0, nextViewportInsetRight)
+  const availableWidth = Math.max(1, nextViewportWidth - insetRight - padding * 2)
   const widthScale = availableWidth / worldWidth
-  const heightScale = (viewportHeight.value - padding * 2) / worldHeight
+  const heightScale = (nextViewportHeight - padding * 2) / worldHeight
   const fittedScale = clamp(Math.min(widthScale, heightScale), diagramMinScale, diagramMaxScale)
   const contentWidth = worldWidth * fittedScale
   const contentHeight = worldHeight * fittedScale
   const contentLeft = padding + (availableWidth - contentWidth) / 2
-  const contentTop = (viewportHeight.value - contentHeight) / 2
+  const contentTop = (nextViewportHeight - contentHeight) / 2
 
-  worldScale = fittedScale
-  worldPanX = contentLeft - worldBounds.minX * fittedScale
-  worldPanY = contentTop - worldBounds.minY * fittedScale
+  return {
+    panX: contentLeft - worldBounds.minX * fittedScale,
+    panY: contentTop - worldBounds.minY * fittedScale,
+    scale: fittedScale
+  } satisfies ViewTransform
+}
+
+const isAtResetViewTransform = (
+  nextViewportWidth = viewportWidth.value,
+  nextViewportHeight = viewportHeight.value,
+  nextViewportInsetRight = viewportInsetRight
+) => {
+  const resetTransform = getResetViewTransform(nextViewportWidth, nextViewportHeight, nextViewportInsetRight)
+
+  return approximatelyEqual(worldScale, resetTransform.scale, 0.001)
+    && approximatelyEqual(worldPanX, resetTransform.panX, 1)
+    && approximatelyEqual(worldPanY, resetTransform.panY, 1)
+}
+
+const resetView = () => {
+  const nextTransform = getResetViewTransform()
+
+  worldScale = nextTransform.scale
+  worldPanX = nextTransform.panX
+  worldPanY = nextTransform.panY
+  hasViewportInteraction = false
   scheduleFullRender()
 }
 
@@ -1741,6 +1840,7 @@ const zoomToScale = (nextScale: number, clientX: number, clientY: number) => {
   worldScale = clampedScale
   worldPanX = pointerX - worldX * clampedScale
   worldPanY = pointerY - worldY * clampedScale
+  hasViewportInteraction = true
   scheduleTransformRender()
   scheduleDeferredFullRender()
 }
@@ -1901,6 +2001,7 @@ const handlePointerMove = (event: PointerEvent) => {
   if (dragSession.mode === 'pan') {
     worldPanX = dragSession.originPanX + deltaClientX
     worldPanY = dragSession.originPanY + deltaClientY
+    hasViewportInteraction = true
     scheduleTransformRender()
     scheduleDeferredFullRender(48)
     return
@@ -1959,6 +2060,7 @@ const handleTouchMove = (event: TouchEvent) => {
   worldScale = transform.scale
   worldPanX = transform.pan.x
   worldPanY = transform.pan.y
+  hasViewportInteraction = true
   scheduleTransformRender()
   scheduleDeferredFullRender(48)
 }
@@ -2110,6 +2212,7 @@ const initPixi = async () => {
   app.stage.addChild(stageContainer)
 
   measureViewport()
+  app.renderer.resize(viewportWidth.value, viewportHeight.value)
   refreshSceneTheme()
   updateBackgroundGrid()
   rebuildSpatialIndices()
@@ -2121,7 +2224,7 @@ const destroyPixi = () => {
   destroyed = true
   resetTouchInteraction()
   if (deferredFullRenderTimeout !== null) {
-    window.clearTimeout(deferredFullRenderTimeout)
+    clearTimeout(deferredFullRenderTimeout)
     deferredFullRenderTimeout = null
   }
   if (lineAnimationFrame !== null) {
@@ -2143,6 +2246,29 @@ const destroyPixi = () => {
   groupHeaderContainer = null
   tableContainer = null
   objectContainer = null
+}
+
+const syncViewportLayout = () => {
+  const previousViewportWidth = viewportWidth.value
+  const previousViewportHeight = viewportHeight.value
+  const shouldRefitView = !hasViewportInteraction
+    || previousViewportWidth <= 1
+    || previousViewportHeight <= 1
+    || isAtResetViewTransform(previousViewportWidth, previousViewportHeight, viewportInsetRight)
+
+  measureViewport()
+  refreshSceneTheme()
+  updateBackgroundGrid()
+  if (app) {
+    app.renderer.resize(viewportWidth.value, viewportHeight.value)
+  }
+
+  if (shouldRefitView) {
+    resetView()
+    return
+  }
+
+  scheduleFullRender()
 }
 
 watch(
@@ -2185,21 +2311,15 @@ watch(
   }
 )
 
-useResizeObserver(hostRef, () => {
-  measureViewport()
-  refreshSceneTheme()
-  updateBackgroundGrid()
-  if (app) {
-    app.renderer.resize(viewportWidth.value, viewportHeight.value)
-  }
-  scheduleFullRender()
-})
+useResizeObserver(hostRef, syncViewportLayout)
 
 onMounted(async () => {
   await initPixi()
+  window.addEventListener('resize', syncViewportLayout)
 })
 
 onBeforeUnmount(() => {
+  window.removeEventListener('resize', syncViewportLayout)
   destroyPixi()
 })
 

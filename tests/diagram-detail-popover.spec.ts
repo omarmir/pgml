@@ -1,4 +1,5 @@
 import { expect, test } from '@nuxt/test-utils/playwright'
+import type { Page } from '@playwright/test'
 import {
   getPgmlEditor,
   setPgmlEditorValue
@@ -7,12 +8,166 @@ import { authorizeStudioLaunchAccess } from './helpers/studio-launch'
 
 test.setTimeout(120_000)
 
+type MeasuredRect = {
+  bottom: number
+  left: number
+  right: number
+  top: number
+}
+
 test.beforeEach(async ({ page }) => {
   await authorizeStudioLaunchAccess(page)
 })
 
-test('selecting an attached entity opens a detail popover with its contents', async ({ goto, page }) => {
+const readAttachmentRowRect = async (page: Page, tableId: string, attachmentId: string) => {
+  let nextRect: MeasuredRect | null = null
+
+  await expect.poll(async () => {
+    nextRect = await page.evaluate(({ attachmentId: nextAttachmentId, tableId: nextTableId }) => {
+      const debugWindow = window as Window & {
+        __pgmlSceneDebug?: {
+          tableCards: Array<{
+            headerHeight: number
+            id: string
+            rows: Array<{
+              attachmentId?: string
+              kind: 'attachment' | 'column'
+            }>
+            width: number
+            x: number
+            y: number
+          }>
+        }
+        __pgmlSceneRendererDebug?: {
+          panX: number
+          panY: number
+          scale: number
+        }
+      }
+      const viewport = document.querySelector('[data-diagram-viewport="true"]')
+
+      if (!(viewport instanceof HTMLElement) || !debugWindow.__pgmlSceneDebug || !debugWindow.__pgmlSceneRendererDebug) {
+        return null
+      }
+
+      const table = debugWindow.__pgmlSceneDebug.tableCards.find(entry => entry.id === nextTableId)
+
+      if (!table) {
+        return null
+      }
+
+      const rowIndex = table.rows.findIndex((row) => {
+        return row.kind === 'attachment' && row.attachmentId === nextAttachmentId
+      })
+
+      if (rowIndex < 0) {
+        return null
+      }
+
+      const viewportRect = viewport.getBoundingClientRect()
+      const rendererDebug = debugWindow.__pgmlSceneRendererDebug
+      const rowTop = (table.y + table.headerHeight + rowIndex * 31) * rendererDebug.scale + rendererDebug.panY
+      const rowBottom = (table.y + table.headerHeight + (rowIndex + 1) * 31) * rendererDebug.scale + rendererDebug.panY
+      const rowLeft = table.x * rendererDebug.scale + rendererDebug.panX
+      const rowRight = (table.x + table.width) * rendererDebug.scale + rendererDebug.panX
+
+      return {
+        bottom: viewportRect.top + rowBottom,
+        left: viewportRect.left + rowLeft,
+        right: viewportRect.left + rowRight,
+        top: viewportRect.top + rowTop
+      }
+    }, {
+      attachmentId,
+      tableId
+    })
+
+    return nextRect !== null
+  }).toBe(true)
+
+  return nextRect as MeasuredRect
+}
+
+const readObjectRect = async (page: Page, objectId: string) => {
+  let nextRect: MeasuredRect | null = null
+
+  await expect.poll(async () => {
+    nextRect = await page.evaluate((nextObjectId) => {
+      const debugWindow = window as Window & {
+        __pgmlSceneDebug?: {
+          objectCards: Array<{
+            height: number
+            id: string
+            width: number
+            x: number
+            y: number
+          }>
+        }
+        __pgmlSceneRendererDebug?: {
+          panX: number
+          panY: number
+          scale: number
+        }
+      }
+      const viewport = document.querySelector('[data-diagram-viewport="true"]')
+
+      if (!(viewport instanceof HTMLElement) || !debugWindow.__pgmlSceneDebug || !debugWindow.__pgmlSceneRendererDebug) {
+        return null
+      }
+
+      const objectCard = debugWindow.__pgmlSceneDebug.objectCards.find(entry => entry.id === nextObjectId)
+
+      if (!objectCard) {
+        return null
+      }
+
+      const viewportRect = viewport.getBoundingClientRect()
+      const rendererDebug = debugWindow.__pgmlSceneRendererDebug
+      const objectTop = objectCard.y * rendererDebug.scale + rendererDebug.panY
+      const objectBottom = (objectCard.y + objectCard.height) * rendererDebug.scale + rendererDebug.panY
+      const objectLeft = objectCard.x * rendererDebug.scale + rendererDebug.panX
+      const objectRight = (objectCard.x + objectCard.width) * rendererDebug.scale + rendererDebug.panX
+
+      return {
+        bottom: viewportRect.top + objectBottom,
+        left: viewportRect.left + objectLeft,
+        right: viewportRect.left + objectRight,
+        top: viewportRect.top + objectTop
+      }
+    }, objectId)
+
+    return nextRect !== null
+  }).toBe(true)
+
+  return nextRect as MeasuredRect
+}
+
+const expectPopoverBesideTarget = (popoverBox: { height: number, width: number, x: number, y: number } | null, targetRect: MeasuredRect) => {
+  expect(popoverBox).not.toBeNull()
+
+  if (!popoverBox) {
+    return
+  }
+
+  const popoverLeft = popoverBox.x
+  const popoverRight = popoverBox.x + popoverBox.width
+  const popoverTop = popoverBox.y
+  const popoverBottom = popoverBox.y + popoverBox.height
+  const rightGap = popoverLeft - targetRect.right
+  const leftGap = targetRect.left - popoverRight
+  const overlapsVertically = Math.min(popoverBottom, targetRect.bottom) - Math.max(popoverTop, targetRect.top)
+
+  expect(overlapsVertically).toBeGreaterThan(8)
+  expect(
+    (rightGap >= -2 && rightGap <= 48)
+    || (leftGap >= -2 && leftGap <= 48)
+  ).toBe(true)
+}
+
+test('selecting an attached entity opens a detail popover beside its table row', async ({ goto, page }) => {
   await goto('/diagram')
+  const rowRect = await readAttachmentRowRect(page, 'public.products', 'index:idx_products_search')
+
   await page.locator('[data-diagram-panel-tab="entities"]').click()
   await page.locator('[data-browser-entity-row="index:idx_products_search"] button').first().click()
 
@@ -21,9 +176,10 @@ test('selecting an attached entity opens a detail popover with its contents', as
   await expect(popover).toBeVisible()
   await expect(popover).toContainText('Index')
   await expect(popover).toContainText('Columns: search')
+  expectPopoverBesideTarget(await popover.boundingBox(), rowRect)
 })
 
-test('selecting a standalone routine opens a detail popover with source lines', async ({ goto, page }) => {
+test('selecting a standalone routine opens a detail popover beside its object card', async ({ goto, page }) => {
   await goto('/diagram')
 
   const editor = getPgmlEditor(page)
@@ -40,6 +196,8 @@ Function orphan_report() {
   $sql$
 }`)
 
+  const objectRect = await readObjectRect(page, 'function:orphan_report')
+
   await page.locator('[data-diagram-panel-tab="entities"]').click()
   await expect(page.locator('[data-browser-entity-row="function:orphan_report"]')).toBeVisible()
   await page.locator('[data-browser-entity-row="function:orphan_report"] button').first().click()
@@ -51,4 +209,5 @@ Function orphan_report() {
   await expect(popover).toContainText('language: sql')
   await expect(popover).toContainText('source:')
   await expect(popover).toContainText('select 1;')
+  expectPopoverBesideTarget(await popover.boundingBox(), objectRect)
 })

@@ -1,6 +1,7 @@
 <script setup lang="ts">
-import type { Ref } from 'vue'
-import { computed, onBeforeUnmount, ref, watch } from 'vue'
+import { useResizeObserver } from '@vueuse/core'
+import type { CSSProperties, Ref } from 'vue'
+import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
 import { studioSelectUi, studioSwitchUi } from '~/constants/ui'
 import PgmlDiagramGpuScene from '~/components/pgml/PgmlDiagramGpuScene.vue'
 import { buildTableGroupMasonryLayout, type TableAttachment, type TableAttachmentFlag, type TableAttachmentKind } from '~/utils/pgml-diagram-canvas'
@@ -80,6 +81,12 @@ type DiagramCanvasExposed = {
   getScale: () => number
   resetView: () => void
   zoomBy: (direction: 1 | -1) => void
+}
+
+type DiagramCanvasViewportTransform = {
+  panX: number
+  panY: number
+  scale: number
 }
 
 type MeasuredBounds = {
@@ -162,6 +169,17 @@ type DiagramDetailPopover = {
   title: string
 }
 
+type MeasuredSize = {
+  height: number
+  width: number
+}
+
+type DetailPopoverPlacement = {
+  left: number
+  top: number
+  width: number
+}
+
 const {
   exportBaseName = 'pgml-schema',
   exportPreferenceKey = 'name:pgml-schema',
@@ -191,12 +209,27 @@ const emit = defineEmits<{
 }>()
 
 const sceneRef: Ref<DiagramCanvasExposed | null> = ref(null)
+const viewportRef: Ref<HTMLDivElement | null> = ref(null)
+const detailPopoverRef: Ref<HTMLDivElement | null> = ref(null)
 const selectedSelection: Ref<DiagramGpuSelection | null> = ref(null)
 const activePanelTab: Ref<DiagramPanelTab> = ref('inspector')
 const isDesktopSidePanelOpen: Ref<boolean> = ref(true)
 const showRelationshipLines: Ref<boolean> = ref(true)
 const snapToGrid: Ref<boolean> = ref(true)
 const currentScale: Ref<number> = ref(1)
+const sceneTransform: Ref<DiagramCanvasViewportTransform> = ref({
+  panX: 0,
+  panY: 0,
+  scale: 1
+})
+const viewportSize: Ref<MeasuredSize> = ref({
+  height: 0,
+  width: 0
+})
+const detailPopoverSize: Ref<MeasuredSize> = ref({
+  height: 0,
+  width: 0
+})
 const entitySearchQuery: Ref<string> = ref('')
 const entitySearchInputRef: Ref<HTMLInputElement | null> = ref(null)
 const connectionLines: Ref<DiagramGpuConnectionLine[]> = ref([])
@@ -250,6 +283,10 @@ const objectKindColors: Record<string, string> = {
 
 const objectColumnGapX = 300
 const objectRowGapY = 188
+
+const clamp = (value: number, min: number, max: number) => {
+  return Math.min(max, Math.max(min, value))
+}
 
 const downloadBlob = (blob: Blob, fileName: string) => {
   const objectUrl = URL.createObjectURL(blob)
@@ -2124,10 +2161,121 @@ const shouldShowDetailPopover = computed(() => {
   return selectedDetailPopover.value !== null && !isMobilePanelView.value
 })
 
+const detailPopoverViewportInsetRight = computed(() => {
+  return !isMobilePanelView.value && isDiagramPanelVisible.value ? 336 : 0
+})
+
+const selectedDetailAnchorBounds = computed<MeasuredBounds | null>(() => {
+  const transform = sceneTransform.value
+
+  if (transform.scale <= 0.001) {
+    return null
+  }
+
+  if (selectedSelection.value?.kind === 'attachment') {
+    const selection = selectedSelection.value
+    const table = tableCards.value.find(entry => entry.id === selection.tableId)
+
+    if (!table) {
+      return null
+    }
+
+    const rowIndex = table.rows.findIndex((row) => {
+      return row.kind === 'attachment' && row.attachmentId === selection.attachmentId
+    })
+
+    if (rowIndex < 0) {
+      return null
+    }
+
+    return createBounds(
+      table.x * transform.scale + transform.panX,
+      (table.y + table.headerHeight + rowIndex * diagramTableRowHeight) * transform.scale + transform.panY,
+      table.width * transform.scale,
+      diagramTableRowHeight * transform.scale
+    )
+  }
+
+  if (selectedSelection.value?.kind === 'object') {
+    const objectNode = objectLayoutStates.value[selectedSelection.value.id]
+
+    if (!objectNode || !previewableObjectKindLabels.has(objectNode.kindLabel)) {
+      return null
+    }
+
+    return createBounds(
+      objectNode.x * transform.scale + transform.panX,
+      objectNode.y * transform.scale + transform.panY,
+      objectNode.width * transform.scale,
+      objectNode.height * transform.scale
+    )
+  }
+
+  return null
+})
+
+const detailPopoverPlacement = computed<DetailPopoverPlacement | null>(() => {
+  const anchorBounds = selectedDetailAnchorBounds.value
+  const safeViewportWidth = viewportSize.value.width
+  const safeViewportHeight = viewportSize.value.height
+
+  if (!anchorBounds || safeViewportWidth <= 1 || safeViewportHeight <= 1) {
+    return null
+  }
+
+  const margin = 12
+  const gap = 14
+  const minimumPopoverWidth = 220
+  const fallbackPopoverWidth = 160
+  const preferredPopoverWidth = 360
+  const popoverHeight = detailPopoverSize.value.height > 0 ? detailPopoverSize.value.height : 260
+  const usableViewportWidth = Math.max(margin, safeViewportWidth - detailPopoverViewportInsetRight.value)
+  const availableRightWidth = Math.max(0, usableViewportWidth - margin - anchorBounds.right - gap)
+  const availableLeftWidth = Math.max(0, anchorBounds.left - gap - margin)
+  const shouldPlaceRight = availableRightWidth >= minimumPopoverWidth
+    || (availableRightWidth >= availableLeftWidth && availableRightWidth >= fallbackPopoverWidth)
+  const availableSideWidth = shouldPlaceRight ? availableRightWidth : availableLeftWidth
+  const popoverWidth = availableSideWidth >= minimumPopoverWidth
+    ? Math.min(preferredPopoverWidth, availableSideWidth)
+    : Math.max(fallbackPopoverWidth, Math.min(preferredPopoverWidth, availableSideWidth))
+  const maxLeft = Math.max(margin, usableViewportWidth - popoverWidth - margin)
+  const left = shouldPlaceRight
+    ? clamp(anchorBounds.right + gap, margin, maxLeft)
+    : clamp(anchorBounds.left - gap - popoverWidth, margin, maxLeft)
+  const maxTop = Math.max(margin, safeViewportHeight - popoverHeight - margin)
+  const top = clamp(anchorBounds.top - 12, margin, maxTop)
+
+  return {
+    left,
+    top,
+    width: popoverWidth
+  }
+})
+
 const detailPopoverContainerClass = computed(() => {
   return isMobileCanvasShell.value
     ? 'pointer-events-none absolute inset-x-3 top-3 z-[4] flex'
-    : 'pointer-events-none absolute left-3 top-3 z-[4] flex max-w-[26rem]'
+    : 'pointer-events-none absolute z-[4] flex'
+})
+
+const detailPopoverContainerStyle = computed<CSSProperties | undefined>(() => {
+  if (isMobileCanvasShell.value) {
+    return undefined
+  }
+
+  if (!detailPopoverPlacement.value) {
+    return {
+      left: '12px',
+      top: '12px',
+      width: '24rem'
+    }
+  }
+
+  return {
+    left: `${Math.round(detailPopoverPlacement.value.left)}px`,
+    top: `${Math.round(detailPopoverPlacement.value.top)}px`,
+    width: `${Math.round(detailPopoverPlacement.value.width)}px`
+  }
 })
 
 const getDetailPopoverBadgeStyle = (color: string) => {
@@ -2577,9 +2725,36 @@ const handleSceneToggleObjectCollapsed = (id: string) => {
   toggleObjectCollapsed(id)
 }
 
+const handleSceneTransformChange = (nextTransform: DiagramCanvasViewportTransform) => {
+  sceneTransform.value = nextTransform
+  currentScale.value = nextTransform.scale
+}
+
 const handleSceneSelect = (nextSelection: DiagramGpuSelection | null) => {
   selectedSelection.value = nextSelection
   activePanelTab.value = 'inspector'
+}
+
+const measureElementSize = (element: HTMLElement | null): MeasuredSize => {
+  if (!element) {
+    return {
+      height: 0,
+      width: 0
+    }
+  }
+
+  return {
+    height: Math.round(element.offsetHeight),
+    width: Math.round(element.offsetWidth)
+  }
+}
+
+const syncViewportSize = () => {
+  viewportSize.value = measureElementSize(viewportRef.value)
+}
+
+const syncDetailPopoverSize = () => {
+  detailPopoverSize.value = measureElementSize(detailPopoverRef.value)
 }
 
 const updateEntityVisibility = (id: string, visible: boolean) => {
@@ -2906,6 +3081,23 @@ watch(
 )
 
 watch(
+  () => shouldShowDetailPopover.value,
+  async (shouldShow) => {
+    if (!shouldShow) {
+      detailPopoverSize.value = {
+        height: 0,
+        width: 0
+      }
+      return
+    }
+
+    await nextTick()
+    syncViewportSize()
+    syncDetailPopoverSize()
+  }
+)
+
+watch(
   () => [
     connectionLines.value.length,
     tableCards.value.length,
@@ -2927,7 +3119,20 @@ watch(
         objectCount: number
         objectCards: Array<{ height: number, id: string, width: number, x: number, y: number }>
         selectedSelection: DiagramGpuSelection | null
-        tableCards: Array<{ height: number, id: string, width: number, x: number, y: number }>
+        tableCards: Array<{
+          headerHeight: number
+          height: number
+          id: string
+          rows: Array<{
+            attachmentId?: string
+            columnName?: string
+            kind: DiagramGpuRow['kind']
+            key: string
+          }>
+          width: number
+          x: number
+          y: number
+        }>
         tableCount: number
         worldBounds: DiagramGpuWorldBounds
       }
@@ -2948,8 +3153,17 @@ watch(
       selectedSelection: selectedSelection.value,
       tableCards: tableCards.value.map((card) => {
         return {
+          headerHeight: card.headerHeight,
           height: card.height,
           id: card.id,
+          rows: card.rows.map((row) => {
+            return {
+              attachmentId: row.attachmentId,
+              columnName: row.columnName,
+              key: row.key,
+              kind: row.kind
+            }
+          }),
           width: card.width,
           x: card.x,
           y: card.y
@@ -2964,6 +3178,9 @@ watch(
     immediate: true
   }
 )
+
+useResizeObserver(viewportRef, syncViewportSize)
+useResizeObserver(detailPopoverRef, syncDetailPopoverSize)
 
 onBeforeUnmount(() => {
   routingWorker?.terminate()
@@ -2986,6 +3203,7 @@ defineExpose<{
 
 <template>
   <div
+    ref="viewportRef"
     data-diagram-viewport="true"
     class="relative h-full min-h-0 overflow-hidden border"
     :style="diagramViewportStyle"
@@ -2998,22 +3216,24 @@ defineExpose<{
       :selection="selectedSelection"
       :show-relationship-lines="showRelationshipLines"
       :tables="tableCards"
-      :viewport-inset-right="!isMobilePanelView && isDiagramPanelVisible ? 336 : 0"
+      :viewport-inset-right="detailPopoverViewportInsetRight"
       :viewport-reset-key="viewportResetKey"
       :world-bounds="worldBounds"
       @focus-source="focusSourceRange"
       @move-end="handleSceneMoveEnd"
       @move-node="handleSceneMoveNode"
-      @scale-change="currentScale = $event"
       @select="handleSceneSelect"
+      @transform-change="handleSceneTransformChange"
       @toggle-object-collapsed="handleSceneToggleObjectCollapsed"
     />
 
     <div
       v-if="shouldShowDetailPopover && selectedDetailPopover"
       :class="detailPopoverContainerClass"
+      :style="detailPopoverContainerStyle"
     >
       <div
+        ref="detailPopoverRef"
         data-diagram-detail-popover="true"
         :data-attachment-popover="selectedDetailPopover.kind === 'attachment' ? selectedDetailPopover.id : undefined"
         :data-object-popover="selectedDetailPopover.kind === 'object' ? selectedDetailPopover.id : undefined"

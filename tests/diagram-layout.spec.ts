@@ -1,4 +1,5 @@
 import { expect, test } from '@nuxt/test-utils/playwright'
+import { diagramMaxScale, diagramMinScale } from '../app/utils/diagram-gpu-scene'
 import { getPgmlEditor, readPgmlEditorValue, setPgmlEditorValue } from './helpers/pgml-editor'
 import { authorizeStudioLaunchAccess } from './helpers/studio-launch'
 
@@ -196,40 +197,200 @@ test('diagram panel reuses the PGML editor scrollbar styling', async ({ goto, pa
 test('studio canvas stays viewport-bound and starts centered on the diagram', async ({ goto, page }) => {
   await goto('/diagram')
 
-  await expect(page.locator('[data-node-anchor="group:Core"]')).toBeVisible()
   await expect(page.locator('[data-grid-snap-toggle="true"]')).toHaveAttribute('aria-pressed', 'true')
+  await page.waitForFunction(() => {
+    return typeof (window as Window & {
+      __pgmlSceneDebug?: {
+        worldBounds: {
+          maxX: number
+          maxY: number
+          minX: number
+          minY: number
+        }
+      }
+      __pgmlSceneRendererDebug?: {
+        panX: number
+        panY: number
+        scale: number
+      }
+    }).__pgmlSceneRendererDebug?.scale === 'number'
+    && !!(window as Window & {
+        __pgmlSceneDebug?: {
+          worldBounds: {
+            maxX: number
+            maxY: number
+            minX: number
+            minY: number
+          }
+        }
+      }).__pgmlSceneDebug?.worldBounds
+  })
 
   const diagnostics = await page.evaluate(() => {
     const documentElement = document.documentElement
-    const nodeElements = Array.from(document.querySelectorAll('[data-node-anchor]')).filter((element): element is HTMLElement => {
-      return element instanceof HTMLElement
-    })
+    const viewport = document.querySelector('[data-diagram-viewport="true"]')
+    const debugWindow = window as Window & {
+      __pgmlSceneDebug?: {
+        worldBounds: {
+          maxX: number
+          maxY: number
+          minX: number
+          minY: number
+        }
+      }
+      __pgmlSceneRendererDebug?: {
+        panX: number
+        panY: number
+        scale: number
+      }
+    }
 
-    if (!nodeElements.length) {
+    if (!(viewport instanceof HTMLElement) || !debugWindow.__pgmlSceneDebug?.worldBounds || !debugWindow.__pgmlSceneRendererDebug) {
       return null
     }
 
-    const nodeRects = nodeElements.map((element) => {
-      return element.getBoundingClientRect()
-    })
-    const minX = Math.min(...nodeRects.map(rect => rect.left))
-    const maxX = Math.max(...nodeRects.map(rect => rect.right))
-    const minY = Math.min(...nodeRects.map(rect => rect.top))
-    const maxY = Math.max(...nodeRects.map(rect => rect.bottom))
+    const insetRight = 336
+    const viewportRect = viewport.getBoundingClientRect()
+    const worldBounds = debugWindow.__pgmlSceneDebug.worldBounds
+    const rendererDebug = debugWindow.__pgmlSceneRendererDebug
+    const minX = viewportRect.left + worldBounds.minX * rendererDebug.scale + rendererDebug.panX
+    const maxX = viewportRect.left + worldBounds.maxX * rendererDebug.scale + rendererDebug.panX
+    const minY = viewportRect.top + worldBounds.minY * rendererDebug.scale + rendererDebug.panY
+    const maxY = viewportRect.top + worldBounds.maxY * rendererDebug.scale + rendererDebug.panY
 
     return {
+      bottomOverflow: Math.round(maxY - viewportRect.bottom),
       hasHorizontalScroll: documentElement.scrollWidth > window.innerWidth + 1,
       hasVerticalScroll: documentElement.scrollHeight > window.innerHeight + 1,
-      centerOffsetX: Math.round(((minX + maxX) / 2) - (window.innerWidth / 2)),
-      centerOffsetY: Math.round(((minY + maxY) / 2) - (window.innerHeight / 2))
+      centerOffsetX: Math.round(((minX + maxX) / 2) - (viewportRect.left + ((viewportRect.width - insetRight) / 2))),
+      centerOffsetY: Math.round(((minY + maxY) / 2) - (viewportRect.top + (viewportRect.height / 2))),
+      leftOverflow: Math.round(viewportRect.left - minX),
+      rightOverflow: Math.round(maxX - (viewportRect.right - insetRight)),
+      topOverflow: Math.round(viewportRect.top - minY)
     }
   })
 
   expect(diagnostics).not.toBeNull()
   expect(diagnostics?.hasHorizontalScroll).toBe(false)
   expect(diagnostics?.hasVerticalScroll).toBe(false)
-  expect(Math.abs(diagnostics?.centerOffsetX || 0)).toBeLessThan(180)
-  expect(Math.abs(diagnostics?.centerOffsetY || 0)).toBeLessThan(120)
+  expect(Math.abs(diagnostics?.centerOffsetX || 0)).toBeLessThan(28)
+  expect(Math.abs(diagnostics?.centerOffsetY || 0)).toBeLessThan(28)
+  expect(diagnostics?.leftOverflow || 0).toBeLessThanOrEqual(8)
+  expect(diagnostics?.rightOverflow || 0).toBeLessThanOrEqual(8)
+  expect(diagnostics?.topOverflow || 0).toBeLessThanOrEqual(8)
+  expect(diagnostics?.bottomOverflow || 0).toBeLessThanOrEqual(8)
+})
+
+test('studio canvas refits when the workspace shrinks after the initial fit', async ({ goto, page }) => {
+  await page.setViewportSize({
+    width: 1440,
+    height: 960
+  })
+  await goto('/diagram')
+
+  await expect(page.locator('[data-grid-snap-toggle="true"]')).toHaveAttribute('aria-pressed', 'true')
+  await page.waitForFunction(() => {
+    return typeof (window as Window & {
+      __pgmlSceneDebug?: {
+        worldBounds: {
+          maxX: number
+          maxY: number
+          minX: number
+          minY: number
+        }
+      }
+      __pgmlSceneRendererDebug?: {
+        scale: number
+      }
+    }).__pgmlSceneRendererDebug?.scale === 'number'
+    && !!(window as Window & {
+        __pgmlSceneDebug?: {
+          worldBounds: {
+            maxX: number
+            maxY: number
+            minX: number
+            minY: number
+          }
+        }
+      }).__pgmlSceneDebug?.worldBounds
+  })
+
+  const initialScale = await page.evaluate(() => {
+    return (window as Window & {
+      __pgmlSceneRendererDebug?: {
+        scale: number
+      }
+    }).__pgmlSceneRendererDebug?.scale || 0
+  })
+
+  await page.setViewportSize({
+    width: 1180,
+    height: 760
+  })
+
+  await expect.poll(async () => {
+    return await page.evaluate(() => {
+      return (window as Window & {
+        __pgmlSceneRendererDebug?: {
+          scale: number
+        }
+      }).__pgmlSceneRendererDebug?.scale || 0
+    })
+  }).toBeLessThan(initialScale - 0.03)
+
+  const diagnostics = await page.evaluate(({ maxScale, minScale }) => {
+    const viewport = document.querySelector('[data-diagram-viewport="true"]')
+    const debugWindow = window as Window & {
+      __pgmlSceneDebug?: {
+        worldBounds: {
+          maxX: number
+          maxY: number
+          minX: number
+          minY: number
+        }
+      }
+      __pgmlSceneRendererDebug?: {
+        scale: number
+      }
+    }
+
+    if (!(viewport instanceof HTMLElement) || !debugWindow.__pgmlSceneDebug?.worldBounds || !debugWindow.__pgmlSceneRendererDebug) {
+      return null
+    }
+
+    const insetRight = 336
+    const padding = 40
+    const viewportRect = viewport.getBoundingClientRect()
+    const worldBounds = debugWindow.__pgmlSceneDebug.worldBounds
+    const rendererDebug = debugWindow.__pgmlSceneRendererDebug
+    const minX = viewportRect.left + worldBounds.minX * rendererDebug.scale + rendererDebug.panX
+    const maxX = viewportRect.left + worldBounds.maxX * rendererDebug.scale + rendererDebug.panX
+    const minY = viewportRect.top + worldBounds.minY * rendererDebug.scale + rendererDebug.panY
+    const maxY = viewportRect.top + worldBounds.maxY * rendererDebug.scale + rendererDebug.panY
+    const worldWidth = Math.max(1, worldBounds.maxX - worldBounds.minX)
+    const worldHeight = Math.max(1, worldBounds.maxY - worldBounds.minY)
+    const availableWidth = Math.max(1, viewport.clientWidth - insetRight - padding * 2)
+    const fittedScale = Math.min(
+      availableWidth / worldWidth,
+      (viewport.clientHeight - padding * 2) / worldHeight
+    )
+    const expectedScale = Math.min(maxScale, Math.max(minScale, fittedScale))
+
+    return {
+      actualScale: rendererDebug.scale,
+      centerOffsetX: Math.round(((minX + maxX) / 2) - (viewportRect.left + ((viewportRect.width - insetRight) / 2))),
+      centerOffsetY: Math.round(((minY + maxY) / 2) - (viewportRect.top + (viewportRect.height / 2))),
+      expectedScale
+    }
+  }, {
+    maxScale: diagramMaxScale,
+    minScale: diagramMinScale
+  })
+
+  expect(diagnostics).not.toBeNull()
+  expect(Math.abs((diagnostics?.actualScale || 0) - (diagnostics?.expectedScale || 0))).toBeLessThan(0.02)
+  expect(Math.abs(diagnostics?.centerOffsetX || 0)).toBeLessThan(28)
+  expect(Math.abs(diagnostics?.centerOffsetY || 0)).toBeLessThan(28)
 })
 
 test('studio header keeps named menus on the left and the current schema centered', async ({ goto, page }) => {
