@@ -877,6 +877,22 @@ export const getPgmlBranchLeafVersionCount = (
     .length
 }
 
+export const getPgmlBranchMaxDepth = (
+  document: PgmlVersionSetDocument,
+  versionId: string | null
+) => {
+  const branchRoot = getPgmlVersionById(document, versionId)
+
+  if (!branchRoot) {
+    return 0
+  }
+
+  return [branchRoot, ...getPgmlDescendantVersions(document, versionId)]
+    .reduce((maxDepth, version) => {
+      return Math.max(maxDepth, getPgmlVersionDepth(document, version.id))
+    }, getPgmlVersionDepth(document, branchRoot.id))
+}
+
 export const getPgmlVersionDepth = (
   document: PgmlVersionSetDocument,
   versionId: string | null
