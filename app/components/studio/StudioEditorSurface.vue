@@ -11,7 +11,9 @@ const {
   editorModeItems = [],
   editorRefSetter,
   focusDiagnostic,
+  modeDescription = '',
   readOnly = false,
+  readOnlyLabel = 'Read only',
   sourceDiagnostics,
   sourceErrorCount,
   sourceWarningCount,
@@ -24,7 +26,9 @@ const {
   }>
   editorRefSetter: (value: unknown) => void
   focusDiagnostic: (diagnostic: PgmlLanguageDiagnostic) => void
+  modeDescription?: string
   readOnly?: boolean
+  readOnlyLabel?: string
   sourceDiagnostics: PgmlLanguageDiagnostic[]
   sourceErrorCount: number
   sourceWarningCount: number
@@ -53,29 +57,38 @@ const hiddenDiagnosticCount = computed(() => {
   >
     <div
       v-if="editorModeItems.length > 0"
-      class="flex shrink-0 items-center justify-between gap-3 border-b border-[color:var(--studio-shell-border)] px-3 py-2"
+      class="grid shrink-0 gap-2 border-b border-[color:var(--studio-shell-border)] px-3 py-2"
     >
-      <div class="flex flex-wrap items-center gap-2">
-        <button
-          v-for="item in editorModeItems"
-          :key="item.value"
-          type="button"
-          class="border px-2.5 py-1 font-mono text-[0.6rem] uppercase tracking-[0.08em] transition-colors duration-150"
-          :class="editorMode === item.value
-            ? 'border-[color:var(--studio-ring)] bg-[color:var(--studio-input-bg)] text-[color:var(--studio-shell-text)]'
-            : 'border-[color:var(--studio-shell-border)] bg-[color:var(--studio-control-bg)] text-[color:var(--studio-shell-muted)]'"
-          @click="emit('update:editorMode', item.value)"
+      <div class="flex items-start justify-between gap-3">
+        <div class="flex flex-wrap items-center gap-2">
+          <button
+            v-for="item in editorModeItems"
+            :key="item.value"
+            type="button"
+            class="border px-2.5 py-1 font-mono text-[0.6rem] uppercase tracking-[0.08em] transition-colors duration-150"
+            :class="editorMode === item.value
+              ? 'border-[color:var(--studio-ring)] bg-[color:var(--studio-input-bg)] text-[color:var(--studio-shell-text)]'
+              : 'border-[color:var(--studio-shell-border)] bg-[color:var(--studio-control-bg)] text-[color:var(--studio-shell-muted)]'"
+            @click="emit('update:editorMode', item.value)"
+          >
+            {{ item.label }}
+          </button>
+        </div>
+
+        <span
+          v-if="readOnly"
+          class="border border-[color:var(--studio-shell-border)] px-2 py-1 font-mono text-[0.58rem] uppercase tracking-[0.08em] text-[color:var(--studio-shell-muted)]"
         >
-          {{ item.label }}
-        </button>
+          {{ readOnlyLabel }}
+        </span>
       </div>
 
-      <span
-        v-if="readOnly"
-        class="border border-[color:var(--studio-shell-border)] px-2 py-1 font-mono text-[0.58rem] uppercase tracking-[0.08em] text-[color:var(--studio-shell-muted)]"
+      <p
+        v-if="modeDescription.length > 0"
+        class="text-[0.68rem] leading-5 text-[color:var(--studio-shell-muted)]"
       >
-        Read only
-      </span>
+        {{ modeDescription }}
+      </p>
     </div>
 
     <div class="min-h-0 flex-1 overflow-hidden bg-[color:var(--studio-shell-bg)]">

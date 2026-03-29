@@ -328,6 +328,31 @@ const canEmbedLayout = computed(() => !workspaceHasBlockingSourceErrors.value)
 const isEditorReadOnly = computed(() => {
   return versionedEditorMode.value === 'document' || !isWorkspacePreview.value
 })
+const editorReadOnlyLabel = computed(() => {
+  if (versionedEditorMode.value === 'document') {
+    return 'Document view'
+  }
+
+  if (!isWorkspacePreview.value) {
+    return 'Version preview'
+  }
+
+  return 'Read only'
+})
+const editorModeDescription = computed(() => {
+  if (versionedEditorMode.value === 'document') {
+    return 'Showing the full VersionSet document, including locked checkpoints and workspace metadata.'
+  }
+
+  if (!isWorkspacePreview.value) {
+    const previewVersion = versions.value.find(version => version.id === previewTargetId.value) || null
+    const previewLabel = previewVersion ? getVersionLabel(previewVersion) : 'the selected version'
+
+    return `Showing ${previewLabel} as a locked snapshot preview. Restore it to the workspace if you want to edit from it.`
+  }
+
+  return 'Editing the current workspace snapshot. Checkpoint it when you want to lock a version into the history.'
+})
 const displayedEditorSource = computed(() => {
   return versionedEditorMode.value === 'document'
     ? versionedDocumentSource.value
@@ -1715,7 +1740,9 @@ onBeforeUnmount(() => {
           :editor-mode-items="versionedEditorModeItems"
           :editor-ref-setter="assignEditorRef"
           :focus-diagnostic="focusEditorDiagnostic"
+          :mode-description="editorModeDescription"
           :read-only="isEditorReadOnly"
+          :read-only-label="editorReadOnlyLabel"
           :source-diagnostics="sourceDiagnostics"
           :source-error-count="sourceErrorDiagnostics.length"
           :source-warning-count="sourceWarningDiagnostics.length"
@@ -1741,7 +1768,9 @@ onBeforeUnmount(() => {
           :editor-mode-items="versionedEditorModeItems"
           :editor-ref-setter="assignEditorRef"
           :focus-diagnostic="focusEditorDiagnostic"
+          :mode-description="editorModeDescription"
           :read-only="isEditorReadOnly"
+          :read-only-label="editorReadOnlyLabel"
           :source-diagnostics="sourceDiagnostics"
           :source-error-count="sourceErrorDiagnostics.length"
           :source-warning-count="sourceWarningDiagnostics.length"
