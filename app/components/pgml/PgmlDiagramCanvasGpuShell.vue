@@ -224,6 +224,8 @@ const {
   versionCompareTargetId = 'workspace',
   versionDiffSections = [],
   versionItems = [],
+  workspaceBaseLabel = 'No base version yet',
+  workspaceStatus = 'Draft is ready to checkpoint.',
   viewportResetKey = 0
 } = defineProps<{
   exportBaseName?: string
@@ -242,6 +244,8 @@ const {
   versionCompareTargetId?: string
   versionDiffSections?: VersionDiffSection[]
   versionItems?: VersionPanelItem[]
+  workspaceBaseLabel?: string
+  workspaceStatus?: string
   viewportResetKey?: number
 }>()
 
@@ -4536,6 +4540,8 @@ defineExpose<{
         :migration-warnings="migrationWarnings"
         :preview-target-id="previewTargetId"
         :versions="versionItems"
+        :workspace-base-label="workspaceBaseLabel"
+        :workspace-status="workspaceStatus"
         @create-checkpoint="emit('versionCheckpoint')"
         @import-dump="emit('versionImportDump')"
         @restore-version="emit('restoreVersion', $event)"

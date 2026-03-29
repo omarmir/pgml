@@ -53,6 +53,8 @@ const {
   versionCompareTargetId = 'workspace',
   versionDiffSections = [],
   versionItems = [],
+  workspaceBaseLabel = 'No base version yet',
+  workspaceStatus = 'Draft is ready to checkpoint.',
   viewportResetKey = 0
 } = defineProps<{
   exportBaseName?: string
@@ -71,6 +73,8 @@ const {
   versionCompareTargetId?: string
   versionDiffSections?: VersionDiffSection[]
   versionItems?: VersionPanelItem[]
+  workspaceBaseLabel?: string
+  workspaceStatus?: string
   viewportResetKey?: number
 }>()
 
@@ -127,6 +131,8 @@ defineExpose<CanvasHandle>({
     :version-compare-target-id="versionCompareTargetId"
     :version-diff-sections="versionDiffSections"
     :version-items="versionItems"
+    :workspace-base-label="workspaceBaseLabel"
+    :workspace-status="workspaceStatus"
     :viewport-reset-key="viewportResetKey"
     @create-group="emit('createGroup')"
     @create-table="emit('createTable', $event)"

@@ -247,6 +247,7 @@ const {
   compareTargetId: versionCompareTargetId,
   compareTargetSource,
   createCheckpoint: createVersionCheckpoint,
+  document: versionDocument,
   editorMode: versionedEditorMode,
   isWorkspacePreview,
   loadDocument: loadVersionedDocument,
@@ -759,6 +760,24 @@ const compareTargetLabel = computed(() => {
     name: versions.value.find(version => version.id === versionCompareTargetId.value)?.name || null
   })
 })
+const workspaceBaseLabel = computed(() => {
+  if (!versionDocument.value.workspace.basedOnVersionId) {
+    return 'No locked base version yet.'
+  }
+
+  const baseVersion = versions.value.find((version) => {
+    return version.id === versionDocument.value.workspace.basedOnVersionId
+  }) || null
+
+  return baseVersion
+    ? `Incrementing from ${getVersionLabel(baseVersion)}.`
+    : `Incrementing from ${versionDocument.value.workspace.basedOnVersionId}.`
+})
+const workspaceStatus = computed(() => {
+  return activeHasPendingChanges.value
+    ? 'Draft changes are waiting to be checkpointed.'
+    : 'Draft matches the current saved workspace state.'
+})
 const compareMigrationBundle = computed(() => {
   const migrationBundle = buildPgmlMigrationDiffBundle(
     parsePgml(compareBaseSource.value),
@@ -798,7 +817,9 @@ const importDumpDialogCopy = computed(() => {
   }
 })
 const checkpointBaseVersion = computed(() => {
-  return versions.value.find(version => version.id === document.value.workspace.basedOnVersionId) || null
+  return versions.value.find((version) => {
+    return version.id === versionDocument.value.workspace.basedOnVersionId
+  }) || null
 })
 const selectedImportDumpBaseVersion = computed(() => {
   return importDumpBaseVersionId.value
@@ -1744,6 +1765,8 @@ onBeforeUnmount(() => {
           :version-compare-target-id="versionCompareTargetId"
           :version-diff-sections="versionDiffSections"
           :version-items="versionPanelItems"
+          :workspace-base-label="workspaceBaseLabel"
+          :workspace-status="workspaceStatus"
           :viewport-reset-key="canvasViewportResetKey"
           @create-group="openGroupCreator"
           @focus-source="handleCanvasFocusSource"
@@ -1824,6 +1847,8 @@ onBeforeUnmount(() => {
           :version-compare-target-id="versionCompareTargetId"
           :version-diff-sections="versionDiffSections"
           :version-items="versionPanelItems"
+          :workspace-base-label="workspaceBaseLabel"
+          :workspace-status="workspaceStatus"
           :viewport-reset-key="canvasViewportResetKey"
           @create-group="openGroupCreator"
           @focus-source="handleCanvasFocusSource"

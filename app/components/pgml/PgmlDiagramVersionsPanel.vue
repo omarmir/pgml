@@ -45,7 +45,9 @@ const {
   migrationSql = '',
   migrationWarnings = [],
   previewTargetId = 'workspace',
-  versions
+  versions,
+  workspaceBaseLabel = 'No base version yet',
+  workspaceStatus = 'Draft is ready to checkpoint.'
 } = defineProps<{
   compareBaseId?: string | null
   compareOptions: PgmlVersionCompareOption[]
@@ -57,6 +59,8 @@ const {
   migrationWarnings?: string[]
   previewTargetId?: string
   versions: PgmlVersionPanelItem[]
+  workspaceBaseLabel?: string
+  workspaceStatus?: string
 }>()
 
 const emit = defineEmits<{
@@ -431,6 +435,12 @@ const swapComparePair = () => {
           </span>
           <span class="text-[0.66rem] text-[color:var(--studio-shell-muted)]">
             Editable working draft
+          </span>
+          <span class="text-[0.62rem] text-[color:var(--studio-shell-muted)]">
+            {{ workspaceBaseLabel }}
+          </span>
+          <span class="text-[0.62rem] text-[color:var(--studio-shell-muted)]">
+            {{ workspaceStatus }}
           </span>
           <span
             v-if="previewTargetId === 'workspace'"
