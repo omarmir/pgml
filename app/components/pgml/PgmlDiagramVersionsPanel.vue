@@ -93,6 +93,12 @@ const hasDiffSections = computed(() => diffSections.length > 0 || layoutChanged 
 const hasMigrationSql = computed(() => migrationSql.trim().length > 0)
 const hasVersions = computed(() => versions.length > 0)
 const latestVersionId = computed(() => versions.at(-1)?.id || null)
+const designVersionCount = computed(() => {
+  return versions.filter(version => version.role === 'design').length
+})
+const implementationVersionCount = computed(() => {
+  return versions.filter(version => version.role === 'implementation').length
+})
 const workspaceBaseVersionId = computed(() => {
   return versions.find(version => version.isWorkspaceBase)?.id || null
 })
@@ -215,6 +221,33 @@ const swapComparePair = () => {
       <p :class="studioCompactBodyCopyClass">
         Lock workspace checkpoints, compare snapshots, and export forward SQL from the selected base to the selected target.
       </p>
+    </div>
+
+    <div class="grid grid-cols-3 gap-2 text-[0.66rem] text-[color:var(--studio-shell-muted)]">
+      <div class="border border-[color:var(--studio-divider)] bg-[color:var(--studio-input-bg)] px-3 py-3">
+        <div class="font-mono uppercase tracking-[0.08em] text-[color:var(--studio-shell-label)]">
+          Locked
+        </div>
+        <div class="mt-1 text-[0.9rem] font-semibold text-[color:var(--studio-shell-text)]">
+          {{ versions.length }}
+        </div>
+      </div>
+      <div class="border border-[color:var(--studio-divider)] bg-[color:var(--studio-input-bg)] px-3 py-3">
+        <div class="font-mono uppercase tracking-[0.08em] text-[color:var(--studio-shell-label)]">
+          Design
+        </div>
+        <div class="mt-1 text-[0.9rem] font-semibold text-[color:var(--studio-shell-text)]">
+          {{ designVersionCount }}
+        </div>
+      </div>
+      <div class="border border-[color:var(--studio-divider)] bg-[color:var(--studio-input-bg)] px-3 py-3">
+        <div class="font-mono uppercase tracking-[0.08em] text-[color:var(--studio-shell-label)]">
+          Impl
+        </div>
+        <div class="mt-1 text-[0.9rem] font-semibold text-[color:var(--studio-shell-text)]">
+          {{ implementationVersionCount }}
+        </div>
+      </div>
     </div>
 
     <div class="grid gap-2 border border-[color:var(--studio-divider)] bg-[color:var(--studio-control-bg)] px-3 py-3">
