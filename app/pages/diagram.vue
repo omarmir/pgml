@@ -257,6 +257,7 @@ const {
   document: versionDocument,
   editorMode: versionedEditorMode,
   isWorkspacePreview,
+  latestImplementationVersion,
   loadDocument: loadVersionedDocument,
   previewSource,
   previewTargetId,
@@ -975,6 +976,7 @@ const openImportDumpDialog = () => {
   importDumpSelectedFile.value = null
   importDumpText.value = ''
   importDumpBaseVersionId.value = versionHistoryItems.value.find(version => version.isWorkspaceBase)?.id
+    || latestImplementationVersion.value?.id
     || latestVersionId.value
     || null
 }
