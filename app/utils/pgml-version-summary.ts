@@ -163,3 +163,7 @@ export const buildPgmlCompareDeltaDescription = (changedSectionCount: number) =>
 export const buildPgmlEmptyBaseCompareRelationshipSummary = () => {
   return 'Comparing the current workspace against an empty base.'
 }
+
+export const buildPgmlWorkspaceBaseCompareRelationshipSummary = (baseLabel: string) => {
+  return `Comparing the current workspace against its locked base ${baseLabel}.`
+}

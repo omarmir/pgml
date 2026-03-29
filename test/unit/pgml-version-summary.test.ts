@@ -11,6 +11,7 @@ import {
   buildPgmlVersionPreviewDescription,
   buildPgmlVersionCompareSummary,
   buildPgmlVersionDiffSections,
+  buildPgmlWorkspaceBaseCompareRelationshipSummary,
   buildPgmlWorkspaceBaseLabel,
   buildPgmlWorkspaceEditorDescription,
   buildPgmlWorkspaceStatus
@@ -127,5 +128,9 @@ Table public.orders {
 
   it('builds the empty-base compare relationship summary', () => {
     expect(buildPgmlEmptyBaseCompareRelationshipSummary()).toBe('Comparing the current workspace against an empty base.')
+  })
+
+  it('builds the workspace-base compare relationship summary', () => {
+    expect(buildPgmlWorkspaceBaseCompareRelationshipSummary('Initial design')).toContain('locked base Initial design')
   })
 })

@@ -1,5 +1,8 @@
 import type { ComputedRef, Ref } from 'vue'
-import { buildPgmlEmptyBaseCompareRelationshipSummary } from '~/utils/pgml-version-summary'
+import {
+  buildPgmlEmptyBaseCompareRelationshipSummary,
+  buildPgmlWorkspaceBaseCompareRelationshipSummary
+} from '~/utils/pgml-version-summary'
 import {
   buildPgmlCheckpointName,
   canCreatePgmlCheckpoint,
@@ -217,7 +220,7 @@ export const usePgmlStudioVersionHistory = (
       }
 
       if (compareBaseVersion.value.id === workspaceBaseVersion.value?.id) {
-        return `Comparing the current workspace against its locked base ${compareBaseVersion.value.name || compareBaseVersion.value.id}.`
+        return buildPgmlWorkspaceBaseCompareRelationshipSummary(compareBaseVersion.value.name || compareBaseVersion.value.id)
       }
 
       return `Comparing the current workspace against ${compareBaseVersion.value.name || compareBaseVersion.value.id}.`
