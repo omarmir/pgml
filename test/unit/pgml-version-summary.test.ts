@@ -5,7 +5,8 @@ import { diffPgmlSchemaModels } from '../../app/utils/pgml-diff'
 import {
   buildPgmlPreviewTargetLabel,
   buildPgmlVersionCompareSummary,
-  buildPgmlVersionDiffSections
+  buildPgmlVersionDiffSections,
+  buildPgmlWorkspaceBaseLabel
 } from '../../app/utils/pgml-version-summary'
 
 describe('PGML version summary helpers', () => {
@@ -65,5 +66,18 @@ Table public.orders {
       previewTargetId: 'v2',
       workspaceLabel: 'Workspace draft'
     })).toBe('Checkpoint v2')
+  })
+
+  it('builds a workspace base label from the selected base version', () => {
+    expect(buildPgmlWorkspaceBaseLabel({
+      basedOnVersionId: null,
+      fallbackVersionId: null,
+      versionLabel: null
+    })).toBe('No locked base version yet.')
+    expect(buildPgmlWorkspaceBaseLabel({
+      basedOnVersionId: 'v2',
+      fallbackVersionId: 'v2',
+      versionLabel: 'Implementation sync'
+    })).toBe('Incrementing from Implementation sync.')
   })
 })

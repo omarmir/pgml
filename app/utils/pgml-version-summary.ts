@@ -102,3 +102,19 @@ export const buildPgmlPreviewTargetLabel = (input: {
 
   return input.fallbackLabel || 'Selected version'
 }
+
+export const buildPgmlWorkspaceBaseLabel = (input: {
+  basedOnVersionId: string | null
+  fallbackVersionId?: string | null
+  versionLabel?: string | null
+}) => {
+  if (!input.basedOnVersionId) {
+    return 'No locked base version yet.'
+  }
+
+  if (input.versionLabel) {
+    return `Incrementing from ${input.versionLabel}.`
+  }
+
+  return `Incrementing from ${input.fallbackVersionId || input.basedOnVersionId}.`
+}

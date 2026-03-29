@@ -41,6 +41,7 @@ import { convertPgDumpToPgml } from '~/utils/pg-dump-import'
 import { analyzePgmlDocument } from '~/utils/pgml-language'
 import {
   buildPgmlVersionDiffSections,
+  buildPgmlWorkspaceBaseLabel,
   type PgmlVersionDiffSection
 } from '~/utils/pgml-version-summary'
 import {
@@ -712,17 +713,15 @@ const compareTargetLabel = computed(() => {
   })
 })
 const workspaceBaseLabel = computed(() => {
-  if (!versionDocument.value.workspace.basedOnVersionId) {
-    return 'No locked base version yet.'
-  }
-
   const baseVersion = versions.value.find((version) => {
     return version.id === versionDocument.value.workspace.basedOnVersionId
   }) || null
 
-  return baseVersion
-    ? `Incrementing from ${getVersionLabel(baseVersion)}.`
-    : `Incrementing from ${versionDocument.value.workspace.basedOnVersionId}.`
+  return buildPgmlWorkspaceBaseLabel({
+    basedOnVersionId: versionDocument.value.workspace.basedOnVersionId,
+    fallbackVersionId: versionDocument.value.workspace.basedOnVersionId,
+    versionLabel: baseVersion ? getVersionLabel(baseVersion) : null
+  })
 })
 const workspaceStatus = computed(() => {
   if (!canCheckpoint.value) {
