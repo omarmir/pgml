@@ -49,6 +49,16 @@ export const normalizePgmlSnapshotSource = (value: string) => {
   return normalizeLineEndings(value).trim()
 }
 
+const normalizePgmlTimestamp = (value: string, context: string) => {
+  const parsedTimestamp = new Date(value)
+
+  if (Number.isNaN(parsedTimestamp.getTime())) {
+    throw new Error(`${context} requires a valid ISO timestamp.`)
+  }
+
+  return parsedTimestamp.toISOString()
+}
+
 export const arePgmlSnapshotsEquivalent = (
   leftSource: string,
   rightSource: string,
@@ -323,7 +333,7 @@ const parseWorkspaceBlock = (block: PgmlNamedBlock): PgmlWorkspaceDocumentBlock 
   return {
     basedOnVersionId: metadata.based_on || null,
     snapshot: parseSnapshotBlock(nested.blocks[0]!, 'Workspace'),
-    updatedAt: metadata.updated_at || null
+    updatedAt: metadata.updated_at ? normalizePgmlTimestamp(metadata.updated_at, 'Workspace updated_at') : null
   }
 }
 
@@ -361,7 +371,10 @@ const parseVersionBlock = (block: PgmlNamedBlock): PgmlVersionDocumentBlock => {
   }
 
   return {
-    createdAt: getRequiredMetadataValue(metadata, 'created_at', `Version ${versionId}`),
+    createdAt: normalizePgmlTimestamp(
+      getRequiredMetadataValue(metadata, 'created_at', `Version ${versionId}`),
+      `Version ${versionId} created_at`
+    ),
     id: versionId,
     name: metadata.name || null,
     parentVersionId: metadata.parent || null,
@@ -695,6 +708,7 @@ export const createInitialPgmlDocument = (input?: {
   if (initialVersion) {
     versions.push({
       ...initialVersion,
+      createdAt: normalizePgmlTimestamp(initialVersion.createdAt, 'Initial version created_at'),
       id: createPgmlVersionId()
     })
   }
@@ -722,7 +736,7 @@ export const createPgmlVersionFromWorkspace = (
   }
 ) => {
   const nextVersion: PgmlVersionDocumentBlock = {
-    createdAt: input.createdAt,
+    createdAt: normalizePgmlTimestamp(input.createdAt, 'Version created_at'),
     id: createPgmlVersionId(),
     name: input.name,
     parentVersionId: document.workspace.basedOnVersionId,
@@ -757,7 +771,9 @@ export const replacePgmlWorkspaceFromSnapshot = (
       snapshot: {
         source: normalizePgmlSnapshotSource(input.source)
       },
-      updatedAt: input.updatedAt ?? document.workspace.updatedAt
+      updatedAt: input.updatedAt === undefined || input.updatedAt === null
+        ? document.workspace.updatedAt
+        : normalizePgmlTimestamp(input.updatedAt, 'Workspace updated_at')
     }
   } satisfies PgmlVersionSetDocument
 }

@@ -57,6 +57,7 @@ Table public.orders {
     expect(serialized).toContain('Version ')
     expect(reparsed.name).toBe('Billing')
     expect(reparsed.versions).toHaveLength(1)
+    expect(reparsed.versions[0]?.createdAt).toBe('2026-03-29T12:00:00.000Z')
     expect(reparsed.workspace.basedOnVersionId).toBe(reparsed.versions[0]?.id)
     expect(reparsed.versions[0]?.role).toBe('implementation')
     expect(reparsed.workspace.snapshot.source).toContain('Table public.orders')
@@ -558,6 +559,46 @@ Table public.memberships {
       branchBDocument.versions[1]?.id || null,
       branchBDocument.versions[2]?.id || null
     )?.name).toBe('Initial design')
+  })
+
+  it('rejects invalid timestamps and normalizes valid ones to ISO strings', () => {
+    const document = createInitialPgmlDocument({
+      initialVersion: {
+        createdAt: '2026-03-29 12:00:00Z',
+        name: 'Initial implementation',
+        parentVersionId: null,
+        role: 'implementation',
+        snapshot: {
+          source: baseSnapshotSource
+        }
+      },
+      name: 'Billing'
+    })
+
+    expect(document.versions[0]?.createdAt).toBe('2026-03-29T12:00:00.000Z')
+    expect(() => parsePgmlDocument(`VersionSet "Broken" {
+  Workspace {
+    based_on: v1
+
+    Snapshot {
+      Table public.users {
+        id uuid [pk]
+      }
+    }
+  }
+
+  Version v1 {
+    name: "Initial"
+    role: design
+    created_at: "not-a-timestamp"
+
+    Snapshot {
+      Table public.users {
+        id uuid [pk]
+      }
+    }
+  }
+}`)).toThrow('Version v1 created_at requires a valid ISO timestamp.')
   })
 
   it('rejects invalid VersionSet documents that reference missing parent or base versions', () => {
