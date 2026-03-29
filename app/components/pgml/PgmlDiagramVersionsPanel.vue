@@ -92,6 +92,13 @@ const compareSummary = computed(() => {
     targetLabel
   }
 })
+const previewLabel = computed(() => {
+  if (previewTargetId === 'workspace') {
+    return 'Current workspace'
+  }
+
+  return versions.find(version => version.id === previewTargetId)?.label || 'Selected version'
+})
 
 const handleCopyMigration = async () => {
   if (migrationSql.trim().length === 0) {
@@ -281,6 +288,12 @@ const updateCompareTargetId = (value: unknown) => {
           <span class="text-[0.66rem] text-[color:var(--studio-shell-muted)]">
             Editable working draft
           </span>
+          <span
+            v-if="previewTargetId === 'workspace'"
+            class="font-mono text-[0.58rem] uppercase tracking-[0.08em] text-[color:var(--studio-shell-label)]"
+          >
+            Previewing now
+          </span>
         </button>
 
         <div
@@ -306,16 +319,28 @@ const updateCompareTargetId = (value: unknown) => {
                   {{ version.role }}
                 </span>
                 <span
+                  v-if="version.parentVersionId === null"
+                  class="border border-[color:var(--studio-divider)] px-1.5 py-0.5 font-mono text-[0.52rem] uppercase tracking-[0.08em] text-[color:var(--studio-shell-muted)]"
+                >
+                  Root
+                </span>
+                <span
                   v-if="version.isWorkspaceBase"
                   class="border border-[color:var(--studio-ring)] px-1.5 py-0.5 font-mono text-[0.52rem] uppercase tracking-[0.08em] text-[color:var(--studio-shell-text)]"
                 >
                   Workspace base
                 </span>
+                <span
+                  v-if="previewTargetId === version.id"
+                  class="border border-[color:var(--studio-shell-label)] px-1.5 py-0.5 font-mono text-[0.52rem] uppercase tracking-[0.08em] text-[color:var(--studio-shell-text)]"
+                >
+                  Previewing now
+                </span>
               </div>
               <div class="mt-1 text-[0.66rem] text-[color:var(--studio-shell-muted)]">
                 {{ version.createdAt }}
                 <template v-if="version.parentVersionId">
-                  · from {{ version.parentVersionId }}
+                  · branches from {{ version.parentVersionId }}
                 </template>
               </div>
             </div>
@@ -341,6 +366,10 @@ const updateCompareTargetId = (value: unknown) => {
           </div>
         </div>
       </div>
+
+      <p :class="studioCompactBodyCopyClass">
+        Preview target: {{ previewLabel }}.
+      </p>
     </div>
 
     <div class="grid gap-2 border border-[color:var(--studio-divider)] bg-[color:var(--studio-control-bg)] px-3 py-3">
