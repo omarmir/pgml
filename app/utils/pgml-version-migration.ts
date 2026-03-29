@@ -135,11 +135,36 @@ const prefixStepWarnings = (
   return warnings.map(warning => `${label}: ${warning}`)
 }
 
+const buildMigrationStepLabel = (step: {
+  baseLabel: string
+  targetLabel: string
+}) => {
+  return `${step.baseLabel} -> ${step.targetLabel}`
+}
+
+const buildPlannedStepDescriptors = (steps: Array<{
+  plan: PgmlMigrationDiffPlan
+  target: {
+    baseLabel: string
+    targetLabel: string
+  }
+}>) => {
+  return steps.map((step, index) => {
+    return {
+      index,
+      label: `${step.target.baseLabel} -> ${step.target.targetLabel}`,
+      plan: step.plan
+    }
+  })
+}
+
 const buildResolvedVersionMigrationSteps = (
   document: PgmlVersionSetDocument,
   baseVersionId: string | null,
   targetId: PgmlVersionMigrationTargetId
 ) => {
+  // History-aware migrations only make sense when the selected base/target pair
+  // follows a forward lineage through locked checkpoints.
   if (!baseVersionId) {
     return null
   }
@@ -356,34 +381,23 @@ export const buildPgmlVersionMigrationBundle = (
       }
     }
   }).filter(step => step.meta.hasChanges || step.meta.warningCount > 0)
+  const stepDescriptors = buildPlannedStepDescriptors(stepBundles)
 
   const prefixedWarnings = stepBundles.flatMap((step, stepIndex) => {
     return prefixStepWarnings(
       step.sql.migration.warnings,
-      `Step ${stepIndex + 1} (${step.target.baseLabel} -> ${step.target.targetLabel})`
+      `Step ${stepIndex + 1} (${buildMigrationStepLabel(step.target)})`
     )
   })
   const combinedStatements = stepBundles.flatMap(step => step.plan.statements)
   const combinedSqlArtifact = {
-    content: buildVersionHistorySqlContent(stepBundles.map((step, index) => {
-      return {
-        index,
-        label: `${step.target.baseLabel} -> ${step.target.targetLabel}`,
-        plan: step.plan
-      }
-    })),
+    content: buildVersionHistorySqlContent(stepDescriptors),
     fileName: `${normalizedBaseName}.migration.sql`,
     label: 'Version Migration SQL',
     warnings: prefixedWarnings
   }
   const combinedKyselyArtifact = {
-    content: buildVersionHistoryKyselyContent(normalizedBaseName, stepBundles.map((step, index) => {
-      return {
-        index,
-        label: `${step.target.baseLabel} -> ${step.target.targetLabel}`,
-        plan: step.plan
-      }
-    })),
+    content: buildVersionHistoryKyselyContent(normalizedBaseName, stepDescriptors),
     fileName: `${normalizedBaseName}.migration.ts`,
     label: 'Version Migration',
     warnings: prefixedWarnings
