@@ -657,6 +657,7 @@ const versionPanelItems = computed(() => {
       createdAt: formatSavedPgmlSchemaTime(version.createdAt),
       depth: version.depth,
       id: version.id,
+      isLeaf: version.isLeaf,
       isRoot: version.isRoot,
       isWorkspaceBase: version.isWorkspaceBase,
       label: getVersionLabel(version),

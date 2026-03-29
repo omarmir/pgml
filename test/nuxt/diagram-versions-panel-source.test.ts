@@ -12,5 +12,6 @@ describe('diagram versions panel source', () => {
     expect(file).toContain('compareRelationshipSummary')
     expect(file).toContain('Path: {{ version.lineageLabel }}')
     expect(file).toContain('Branch root: {{ version.branchRootLabel }}')
+    expect(file).toContain('Leaf')
   })
 })

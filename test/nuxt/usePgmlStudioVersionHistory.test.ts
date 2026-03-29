@@ -221,6 +221,7 @@ Properties "public.users" {
     expect(api.versionItems.value[0]).toEqual(expect.objectContaining({
       childCount: 1,
       depth: 0,
+      isLeaf: false,
       isRoot: true
     }))
     expect(api.versionItems.value[1]).toEqual(expect.objectContaining({
@@ -228,6 +229,7 @@ Properties "public.users" {
       branchRootLabel: 'Initial design',
       childCount: 0,
       depth: 1,
+      isLeaf: true,
       isRoot: false,
       lineageIds: expect.arrayContaining([rootVersion.id]),
       lineageLabel: 'Initial design -> Add status'

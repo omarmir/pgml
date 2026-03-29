@@ -34,6 +34,7 @@ type VersionPanelItem = {
   createdAt: string
   depth: number
   id: string
+  isLeaf: boolean
   isRoot: boolean
   isWorkspaceBase: boolean
   label: string
