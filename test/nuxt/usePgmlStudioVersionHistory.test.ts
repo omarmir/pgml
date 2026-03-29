@@ -226,7 +226,8 @@ Properties "public.users" {
     expect(api.versionItems.value[1]).toEqual(expect.objectContaining({
       childCount: 0,
       depth: 1,
-      isRoot: false
+      isRoot: false,
+      lineageIds: expect.arrayContaining([rootVersion.id])
     }))
   })
 

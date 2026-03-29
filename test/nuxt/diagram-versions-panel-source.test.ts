@@ -10,5 +10,6 @@ describe('diagram versions panel source', () => {
     expect(file).toContain('Level {{ version.depth }}')
     expect(file).toContain("{{ version.childCount }} branch{{ version.childCount === 1 ? '' : 'es' }}")
     expect(file).toContain('compareRelationshipSummary')
+    expect(file).toContain('Path: {{ version.lineageLabel }}')
   })
 })

@@ -19,6 +19,7 @@ type PgmlVersionPanelItem = {
   isRoot: boolean
   isWorkspaceBase: boolean
   label: string
+  lineageLabel: string
   parentVersionId: string | null
   role: 'design' | 'implementation'
 }
@@ -534,6 +535,9 @@ const swapComparePair = () => {
                 <template v-else>
                   · starting point
                 </template>
+              </div>
+              <div class="mt-1 text-[0.62rem] text-[color:var(--studio-shell-muted)]">
+                Path: {{ version.lineageLabel }}
               </div>
             </div>
 

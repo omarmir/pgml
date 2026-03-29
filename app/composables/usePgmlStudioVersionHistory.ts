@@ -10,6 +10,7 @@ import {
   getPgmlNearestCommonAncestor,
   getPgmlVersionById,
   getPgmlVersionDepth,
+  getPgmlVersionLineage,
   getPgmlWorkspaceBaseVersion,
   getPgmlDocumentPreviewSource,
   isPgmlWorkspaceDirty,
@@ -139,12 +140,15 @@ export const usePgmlStudioVersionHistory = (
   const canCheckpoint = computed(() => canCreatePgmlCheckpoint(document.value))
   const versionItems = computed(() => {
     return document.value.versions.map((version) => {
+      const lineage = getPgmlVersionLineage(document.value, version.id)
+
       return {
         childCount: getPgmlChildVersions(document.value, version.id).length,
         depth: getPgmlVersionDepth(document.value, version.id),
         ...version,
         isRoot: version.parentVersionId === null,
-        isWorkspaceBase: document.value.workspace.basedOnVersionId === version.id
+        isWorkspaceBase: document.value.workspace.basedOnVersionId === version.id,
+        lineageIds: lineage.map(entry => entry.id)
       }
     })
   })

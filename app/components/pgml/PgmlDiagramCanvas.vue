@@ -35,6 +35,7 @@ type VersionPanelItem = {
   isRoot: boolean
   isWorkspaceBase: boolean
   label: string
+  lineageLabel: string
   parentVersionId: string | null
   role: 'design' | 'implementation'
 }
