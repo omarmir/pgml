@@ -560,7 +560,9 @@ export const buildPgmlMigrationDiffBundle = (
   } = {}
 ): PgmlMigrationDiffBundle => {
   const warnings = new Set<string>()
-  const statements: string[] = []
+  const preTableStatements: string[] = []
+  const tableStatements: string[] = []
+  const postTableStatements: string[] = []
   const baseName = normalizeExportBaseName(options.baseName || 'pgml-version')
 
   const beforeTypes = buildCustomTypeMap(baseModel.customTypes)
@@ -572,12 +574,12 @@ export const buildPgmlMigrationDiffBundle = (
     const afterType = afterTypes.get(typeId) || null
 
     if (beforeType && !afterType) {
-      statements.push(buildDropCustomTypeStatement(beforeType))
+      postTableStatements.push(buildDropCustomTypeStatement(beforeType))
       return
     }
 
     if (!beforeType && afterType) {
-      statements.push(buildCreateCustomTypeStatement(afterType))
+      preTableStatements.push(buildCreateCustomTypeStatement(afterType))
       return
     }
 
@@ -586,8 +588,8 @@ export const buildPgmlMigrationDiffBundle = (
       && afterType
       && toStableJson(normalizeCustomTypeForCompare(beforeType)) !== toStableJson(normalizeCustomTypeForCompare(afterType))
     ) {
-      statements.push(buildDropCustomTypeStatement(beforeType))
-      statements.push(buildCreateCustomTypeStatement(afterType))
+      postTableStatements.push(buildDropCustomTypeStatement(beforeType))
+      preTableStatements.push(buildCreateCustomTypeStatement(afterType))
     }
   })
 
@@ -600,12 +602,12 @@ export const buildPgmlMigrationDiffBundle = (
     const afterSequence = afterSequences.get(sequenceId) || null
 
     if (beforeSequence && !afterSequence) {
-      statements.push(buildDropSequenceStatement(beforeSequence))
+      postTableStatements.push(buildDropSequenceStatement(beforeSequence))
       return
     }
 
     if (!beforeSequence && afterSequence) {
-      statements.push(buildCreateSequenceStatement(afterSequence))
+      preTableStatements.push(buildCreateSequenceStatement(afterSequence))
       return
     }
 
@@ -614,8 +616,8 @@ export const buildPgmlMigrationDiffBundle = (
       && afterSequence
       && toStableJson(normalizeSequenceForCompare(beforeSequence)) !== toStableJson(normalizeSequenceForCompare(afterSequence))
     ) {
-      statements.push(buildDropSequenceStatement(beforeSequence))
-      statements.push(buildCreateSequenceStatement(afterSequence))
+      postTableStatements.push(buildDropSequenceStatement(beforeSequence))
+      preTableStatements.push(buildCreateSequenceStatement(afterSequence))
     }
   })
 
@@ -628,20 +630,20 @@ export const buildPgmlMigrationDiffBundle = (
     const afterTable = afterTables.get(tableId) || null
 
     if (beforeTable && !afterTable) {
-      statements.push(`DROP TABLE IF EXISTS ${formatQualifiedSqlName(beforeTable.fullName)};`)
+      tableStatements.push(`DROP TABLE IF EXISTS ${formatQualifiedSqlName(beforeTable.fullName)};`)
       return
     }
 
     if (!beforeTable && afterTable) {
-      statements.push(buildCreateTableStatement(afterTable))
+      tableStatements.push(buildCreateTableStatement(afterTable))
       afterTable.indexes.forEach((index) => {
-        statements.push(buildCreateIndexStatement(afterTable.fullName, index))
+        tableStatements.push(buildCreateIndexStatement(afterTable.fullName, index))
       })
       return
     }
 
     if (beforeTable && afterTable) {
-      buildTableAlterStatements(beforeTable, afterTable, warnings).forEach(statement => statements.push(statement))
+      buildTableAlterStatements(beforeTable, afterTable, warnings).forEach(statement => tableStatements.push(statement))
     }
   })
 
@@ -654,12 +656,12 @@ export const buildPgmlMigrationDiffBundle = (
     const afterReference = afterReferences.get(referenceId) || null
 
     if (beforeReference && !afterReference) {
-      statements.push(buildDropReferenceStatement(beforeReference))
+      preTableStatements.push(buildDropReferenceStatement(beforeReference))
       return
     }
 
     if (!beforeReference && afterReference) {
-      statements.push(buildCreateReferenceStatement(afterReference))
+      postTableStatements.push(buildCreateReferenceStatement(afterReference))
       return
     }
 
@@ -668,8 +670,8 @@ export const buildPgmlMigrationDiffBundle = (
       && afterReference
       && toStableJson(normalizeReferenceForCompare(beforeReference)) !== toStableJson(normalizeReferenceForCompare(afterReference))
     ) {
-      statements.push(buildDropReferenceStatement(beforeReference))
-      statements.push(buildCreateReferenceStatement(afterReference))
+      preTableStatements.push(buildDropReferenceStatement(beforeReference))
+      postTableStatements.push(buildCreateReferenceStatement(afterReference))
     }
   })
 
@@ -698,7 +700,7 @@ export const buildPgmlMigrationDiffBundle = (
         const statement = buildRoutineCreateStatement(kind, afterRoutine, warnings)
 
         if (statement) {
-          statements.push(statement)
+          postTableStatements.push(statement)
         }
       }
     })
@@ -713,7 +715,7 @@ export const buildPgmlMigrationDiffBundle = (
     const afterTrigger = afterTriggers.get(triggerId) || null
 
     if (beforeTrigger && !afterTrigger) {
-      statements.push(buildTriggerDropStatement(beforeTrigger))
+      postTableStatements.push(buildTriggerDropStatement(beforeTrigger))
       return
     }
 
@@ -726,16 +728,22 @@ export const buildPgmlMigrationDiffBundle = (
       || toStableJson(normalizeTriggerForCompare(beforeTrigger)) !== toStableJson(normalizeTriggerForCompare(afterTrigger))
     ) {
       if (beforeTrigger) {
-        statements.push(buildTriggerDropStatement(beforeTrigger))
+        postTableStatements.push(buildTriggerDropStatement(beforeTrigger))
       }
 
       const statement = buildTriggerCreateStatement(afterTrigger, warnings)
 
       if (statement) {
-        statements.push(statement)
+        postTableStatements.push(statement)
       }
     }
   })
+
+  const statements = [
+    ...preTableStatements,
+    ...tableStatements,
+    ...postTableStatements
+  ]
 
   return {
     sql: {

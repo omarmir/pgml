@@ -150,6 +150,32 @@ describe('PGML version diffing', () => {
     expect(migrationBundle.sql.migration.content).not.toContain('CREATE OR REPLACE FUNCTION public.refresh_orders()')
   })
 
+  it('drops references before dropping the referenced table snapshot', () => {
+    const migrationBundle = buildPgmlMigrationDiffBundle(
+      parsePgml(`Table public.users {
+  id uuid [pk]
+}
+
+Table public.orders {
+  id uuid [pk]
+  user_id uuid [ref: > public.users.id]
+}`),
+      parsePgml(`Table public.users {
+  id uuid [pk]
+}`)
+    )
+    const referenceDropIndex = migrationBundle.sql.migration.content.indexOf(
+      'ALTER TABLE "public"."orders" DROP CONSTRAINT IF EXISTS "orders_user_id_fkey";'
+    )
+    const tableDropIndex = migrationBundle.sql.migration.content.indexOf(
+      'DROP TABLE IF EXISTS "public"."orders";'
+    )
+
+    expect(referenceDropIndex).toBeGreaterThan(-1)
+    expect(tableDropIndex).toBeGreaterThan(-1)
+    expect(referenceDropIndex).toBeLessThan(tableDropIndex)
+  })
+
   it('handles removed references, replaced custom types and omitted routines with warnings', () => {
     const baseSource = `Enum order_status {
   draft
