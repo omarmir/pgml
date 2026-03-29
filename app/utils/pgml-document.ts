@@ -511,6 +511,16 @@ const parseVersionBlock = (block: PgmlNamedBlock): PgmlVersionDocumentBlock => {
   }
 }
 
+const partitionVersionSetBlocks = (blocks: PgmlNamedBlock[]) => {
+  const workspaceBlocks = blocks.filter(block => block.header === workspaceKeyword)
+  const versionBlocks = blocks.filter(block => getVersionId(block.header) !== null)
+
+  return {
+    versionBlocks,
+    workspaceBlocks
+  }
+}
+
 const validateVersionSetDocument = (document: PgmlVersionSetDocument) => {
   const versionIds = new Set<string>()
   const versionsById = new Map(document.versions.map(version => [version.id, version] as const))
@@ -592,8 +602,13 @@ export const parsePgmlDocument = (source: string): PgmlVersionSetDocument => {
     throw new Error('VersionSet only allows Workspace and Version blocks.')
   }
 
-  const workspaceBlocks = nested.blocks.filter(block => block.header === workspaceKeyword)
-  const versionBlocks = nested.blocks.filter(block => getVersionId(block.header) !== null)
+  // VersionSet is intentionally strict: the root only coordinates workspace
+  // state and immutable Version blocks. All schema entities live inside nested
+  // Snapshot blocks, never directly under the document root.
+  const {
+    versionBlocks,
+    workspaceBlocks
+  } = partitionVersionSetBlocks(nested.blocks)
 
   if (workspaceBlocks.length !== 1) {
     throw new Error('VersionSet requires exactly one Workspace block.')
