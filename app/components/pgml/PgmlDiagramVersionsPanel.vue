@@ -3,7 +3,10 @@ import type { Ref } from 'vue'
 import {
   studioSelectUi
 } from '~/constants/ui'
-import { buildPgmlVersionCompareSummary } from '~/utils/pgml-version-summary'
+import {
+  buildPgmlPreviewTargetLabel,
+  buildPgmlVersionCompareSummary
+} from '~/utils/pgml-version-summary'
 import {
   joinStudioClasses,
   studioButtonClasses,
@@ -140,11 +143,11 @@ const compareSummary = computed(() => {
   })
 })
 const previewLabel = computed(() => {
-  if (previewTargetId === 'workspace') {
-    return 'Current workspace'
-  }
-
-  return versions.find(version => version.id === previewTargetId)?.label || 'Selected version'
+  return buildPgmlPreviewTargetLabel({
+    fallbackLabel: versions.find(version => version.id === previewTargetId)?.label || null,
+    previewTargetId,
+    workspaceLabel: 'Current workspace'
+  })
 })
 
 const handleCopyMigration = async () => {

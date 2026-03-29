@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest'
 import { parsePgml } from '../../app/utils/pgml'
 import { diffPgmlSchemaModels } from '../../app/utils/pgml-diff'
 import {
+  buildPgmlPreviewTargetLabel,
   buildPgmlVersionCompareSummary,
   buildPgmlVersionDiffSections
 } from '../../app/utils/pgml-version-summary'
@@ -51,5 +52,18 @@ Table public.orders {
       changedSectionCount: 2,
       targetLabel: 'workspace'
     })
+  })
+
+  it('builds a preview label for workspace and version targets', () => {
+    expect(buildPgmlPreviewTargetLabel({
+      fallbackLabel: null,
+      previewTargetId: 'workspace',
+      workspaceLabel: 'Workspace draft'
+    })).toBe('Workspace draft')
+    expect(buildPgmlPreviewTargetLabel({
+      fallbackLabel: 'Checkpoint v2',
+      previewTargetId: 'v2',
+      workspaceLabel: 'Workspace draft'
+    })).toBe('Checkpoint v2')
   })
 })

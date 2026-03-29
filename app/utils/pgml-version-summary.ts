@@ -90,3 +90,15 @@ export const buildPgmlVersionCompareSummary = (input: {
     targetLabel: input.compareTargetLabel || 'Current workspace'
   } satisfies PgmlVersionCompareSummary
 }
+
+export const buildPgmlPreviewTargetLabel = (input: {
+  fallbackLabel?: string | null
+  previewTargetId: string
+  workspaceLabel?: string | null
+}) => {
+  if (input.previewTargetId === 'workspace') {
+    return input.workspaceLabel || 'Current workspace'
+  }
+
+  return input.fallbackLabel || 'Selected version'
+}
