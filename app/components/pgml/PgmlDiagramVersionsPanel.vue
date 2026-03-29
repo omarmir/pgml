@@ -381,7 +381,7 @@ const swapComparePair = () => {
           variant="outline"
           size="xs"
           :class="secondaryButtonClass"
-          :disabled="latestVersionId === null"
+          :disabled="latestVersionId === null || isComparePresetActive({ baseId: latestVersionId, targetId: 'workspace' })"
           @click="applyComparePreset({ baseId: latestVersionId, targetId: 'workspace' })"
         />
         <UButton
