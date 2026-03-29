@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest'
 import { parsePgml } from '../../app/utils/pgml'
 import { diffPgmlSchemaModels } from '../../app/utils/pgml-diff'
 import {
+  buildPgmlDocumentEditorModeDescription,
   buildPgmlEditorReadOnlyLabel,
   buildPgmlPreviewTargetLabel,
   buildPgmlVersionCompareSummary,
@@ -101,5 +102,9 @@ Table public.orders {
       isWorkspacePreview: false,
       mode: 'head'
     })).toBe('Version preview')
+  })
+
+  it('builds the document editor mode description', () => {
+    expect(buildPgmlDocumentEditorModeDescription()).toContain('full VersionSet document')
   })
 })

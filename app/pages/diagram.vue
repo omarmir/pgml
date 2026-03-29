@@ -40,6 +40,7 @@ import { diffPgmlSchemaModels } from '~/utils/pgml-diff'
 import { convertPgDumpToPgml } from '~/utils/pg-dump-import'
 import { analyzePgmlDocument } from '~/utils/pgml-language'
 import {
+  buildPgmlDocumentEditorModeDescription,
   buildPgmlEditorReadOnlyLabel,
   buildPgmlVersionDiffSections,
   buildPgmlWorkspaceBaseLabel,
@@ -365,7 +366,7 @@ const editorReadOnlyLabel = computed(() => {
 })
 const editorModeDescription = computed(() => {
   if (versionedEditorMode.value === 'document') {
-    return 'Showing the full VersionSet document, including locked checkpoints and workspace metadata.'
+    return buildPgmlDocumentEditorModeDescription()
   }
 
   if (!isWorkspacePreview.value) {
