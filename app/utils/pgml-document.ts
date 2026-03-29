@@ -161,6 +161,16 @@ export const getPgmlRootVersions = (document: PgmlVersionSetDocument) => {
   return document.versions.filter(version => version.parentVersionId === null)
 }
 
+export const getPgmlLeafVersions = (document: PgmlVersionSetDocument) => {
+  const parentIds = new Set(
+    document.versions
+      .map(version => version.parentVersionId)
+      .filter((versionId): versionId is string => versionId !== null)
+  )
+
+  return document.versions.filter(version => !parentIds.has(version.id))
+}
+
 const trimQuotedValue = (value: string) => {
   const trimmed = value.trim()
   const doubleQuotedMatch = trimmed.match(/^"(.*)"$/u)
