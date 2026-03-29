@@ -1,4 +1,5 @@
 import { nanoid } from 'nanoid'
+import { stripPgmlPropertiesBlocks } from './pgml'
 
 export type PgmlVersionRole = 'design' | 'implementation'
 
@@ -46,6 +47,21 @@ const normalizeLineEndings = (value: string) => {
 
 export const normalizePgmlSnapshotSource = (value: string) => {
   return normalizeLineEndings(value).trim()
+}
+
+export const arePgmlSnapshotsEquivalent = (
+  leftSource: string,
+  rightSource: string,
+  includeLayout = true
+) => {
+  const normalizedLeftSource = includeLayout
+    ? normalizePgmlSnapshotSource(leftSource)
+    : normalizePgmlSnapshotSource(stripPgmlPropertiesBlocks(leftSource))
+  const normalizedRightSource = includeLayout
+    ? normalizePgmlSnapshotSource(rightSource)
+    : normalizePgmlSnapshotSource(stripPgmlPropertiesBlocks(rightSource))
+
+  return normalizedLeftSource === normalizedRightSource
 }
 
 const trimQuotedValue = (value: string) => {

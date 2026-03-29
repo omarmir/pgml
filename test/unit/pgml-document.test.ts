@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 
 import {
+  arePgmlSnapshotsEquivalent,
   clonePgmlVersionSetDocument,
   createInitialPgmlDocument,
   createPgmlVersionFromWorkspace,
@@ -366,6 +367,20 @@ Table public.memberships {
 
     expect(document.workspace.snapshot.source).toContain('Table public.users')
     expect(normalizePgmlSnapshotSource(`\r\n${baseSnapshotSource}\r\n`)).toBe(baseSnapshotSource)
+  })
+
+  it('compares snapshots with optional layout stripping', () => {
+    const layoutSource = `Table public.users {
+  id uuid [pk]
+}
+
+Properties "public.users" {
+  x: 120
+  y: 180
+}`
+
+    expect(arePgmlSnapshotsEquivalent(layoutSource, baseSnapshotSource, true)).toBe(false)
+    expect(arePgmlSnapshotsEquivalent(layoutSource, baseSnapshotSource, false)).toBe(true)
   })
 
   it('rejects invalid VersionSet documents that reference missing parent or base versions', () => {
