@@ -12,6 +12,13 @@ export const buildPgmlWorkspaceCompareOption = () => {
   }
 }
 
+export const buildPgmlVersionCompareOption = (version: Pick<PgmlVersionOptionItem, 'id' | 'label'>) => {
+  return {
+    label: version.label,
+    value: version.id
+  }
+}
+
 export const buildPgmlImportBaseVersionDescription = (input: {
   parentVersionId: string | null
   parentVersionLabel?: string | null
@@ -26,12 +33,7 @@ export const buildPgmlImportBaseVersionDescription = (input: {
 export const buildPgmlVersionCompareOptions = (versions: PgmlVersionOptionItem[]) => {
   return [
     buildPgmlWorkspaceCompareOption(),
-    ...versions.map((version) => {
-      return {
-        label: version.label,
-        value: version.id
-      }
-    })
+    ...versions.map(version => buildPgmlVersionCompareOption(version))
   ]
 }
 
