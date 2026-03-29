@@ -495,6 +495,14 @@ const swapComparePair = () => {
 
             <div class="flex flex-wrap gap-1">
               <UButton
+                label="Compare"
+                color="neutral"
+                variant="outline"
+                size="xs"
+                :class="secondaryButtonClass"
+                @click="applyComparePreset({ baseId: version.id, targetId: 'workspace' })"
+              />
+              <UButton
                 label="View"
                 color="neutral"
                 variant="outline"
