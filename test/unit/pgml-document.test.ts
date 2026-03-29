@@ -3,6 +3,9 @@ import { describe, expect, it } from 'vitest'
 import {
   createInitialPgmlDocument,
   createPgmlVersionFromWorkspace,
+  getPgmlVersionById,
+  getPgmlVersionMap,
+  getPgmlWorkspaceBaseVersion,
   parsePgmlDocument,
   replacePgmlWorkspaceFromSnapshot,
   serializePgmlDocument
@@ -75,6 +78,28 @@ Table public.memberships {
     expect(withSecondVersion.versions[1]?.parentVersionId).toBe(withFirstVersion.versions[0]?.id)
     expect(withSecondVersion.versions[1]?.id.startsWith('v_')).toBe(true)
     expect(withSecondVersion.workspace.basedOnVersionId).toBe(withSecondVersion.versions[1]?.id)
+  })
+
+  it('exposes version lookup helpers for ids and the current workspace base', () => {
+    const document = createInitialPgmlDocument({
+      initialVersion: {
+        createdAt: '2026-03-29T12:00:00.000Z',
+        name: 'Initial implementation',
+        parentVersionId: null,
+        role: 'implementation',
+        snapshot: {
+          source: baseSnapshotSource
+        }
+      },
+      name: 'Billing'
+    })
+    const versionMap = getPgmlVersionMap(document)
+    const workspaceBaseVersion = getPgmlWorkspaceBaseVersion(document)
+
+    expect(versionMap.size).toBe(1)
+    expect(workspaceBaseVersion?.id).toBe(document.workspace.basedOnVersionId)
+    expect(getPgmlVersionById(document, workspaceBaseVersion?.id || null)?.name).toBe('Initial implementation')
+    expect(getPgmlVersionById(document, 'missing-version')).toBeNull()
   })
 
   it('rejects invalid VersionSet documents that reference missing parent or base versions', () => {

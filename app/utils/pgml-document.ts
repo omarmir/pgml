@@ -436,6 +436,25 @@ const buildVersionBlock = (version: PgmlVersionDocumentBlock) => {
   return lines.join('\n')
 }
 
+export const getPgmlVersionMap = (document: PgmlVersionSetDocument) => {
+  return new Map(document.versions.map(version => [version.id, version] as const))
+}
+
+export const getPgmlVersionById = (
+  document: PgmlVersionSetDocument,
+  versionId: string | null
+) => {
+  if (!versionId) {
+    return null
+  }
+
+  return getPgmlVersionMap(document).get(versionId) || null
+}
+
+export const getPgmlWorkspaceBaseVersion = (document: PgmlVersionSetDocument) => {
+  return getPgmlVersionById(document, document.workspace.basedOnVersionId)
+}
+
 export const serializePgmlDocument = (document: PgmlVersionSetDocument) => {
   validateVersionSetDocument(document)
 
