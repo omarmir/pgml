@@ -22,5 +22,7 @@ describe('diagram page source', () => {
     expect(file).toContain('Versioned document')
     expect(file).toContain('<AppPgDumpImportModal')
     expect(file).toContain('@version-import-dump="openImportDumpDialog"')
+    expect(file).toContain('buildPgmlCheckpointName(versionDocument.value')
+    expect(file).toContain('checkpointNameIsSuggested')
   })
 })

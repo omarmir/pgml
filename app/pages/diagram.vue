@@ -44,6 +44,7 @@ import {
   buildPgmlVersionDiffSections,
   type PgmlVersionDiffSection
 } from '~/utils/pgml-version-summary'
+import { buildPgmlCheckpointName } from '~/utils/pgml-document'
 import {
   buildPgmlWithNodeProperties,
   parsePgml,
@@ -196,6 +197,8 @@ const mobileWorkspaceView: Ref<StudioMobileWorkspaceView> = ref('diagram')
 const mobilePanelTab: Ref<DiagramPanelTab> = ref(defaultStudioMobilePanelTab)
 const checkpointDialogOpen: Ref<boolean> = ref(false)
 const checkpointName: Ref<string> = ref('')
+const checkpointSuggestedCreatedAt: Ref<string | null> = ref(null)
+const checkpointNameIsSuggested: Ref<boolean> = ref(false)
 const checkpointRole: Ref<'design' | 'implementation'> = ref('design')
 const importDumpDialogOpen: Ref<boolean> = ref(false)
 const importDumpBaseVersionId: Ref<string | null> = ref(null)
@@ -876,12 +879,21 @@ const saveCurrentSchema = async () => {
   pushSaveSuccessToast(getSaveSuccessToastDescription())
 }
 const openCheckpointDialog = () => {
+  const suggestedCreatedAt = new Date().toISOString()
+
   checkpointDialogOpen.value = true
-  checkpointName.value = `Checkpoint ${versions.value.length + 1}`
   checkpointRole.value = 'design'
+  checkpointSuggestedCreatedAt.value = suggestedCreatedAt
+  checkpointName.value = buildPgmlCheckpointName(versionDocument.value, {
+    createdAt: suggestedCreatedAt,
+    role: 'design'
+  })
+  checkpointNameIsSuggested.value = true
 }
 const closeCheckpointDialog = () => {
   checkpointDialogOpen.value = false
+  checkpointSuggestedCreatedAt.value = null
+  checkpointNameIsSuggested.value = false
 }
 const closeRestoreVersionDialog = () => {
   restoreVersionDialogOpen.value = false
@@ -906,6 +918,8 @@ const saveCheckpoint = () => {
 
   checkpointDialogOpen.value = false
   checkpointName.value = ''
+  checkpointSuggestedCreatedAt.value = null
+  checkpointNameIsSuggested.value = false
   setPreviewTarget('workspace')
   requestCanvasViewportReset()
   toast.add({
@@ -915,6 +929,17 @@ const saveCheckpoint = () => {
     icon: 'i-lucide-check'
   })
 }
+
+watch(checkpointRole, (nextRole) => {
+  if (!checkpointDialogOpen.value || !checkpointNameIsSuggested.value || !checkpointSuggestedCreatedAt.value) {
+    return
+  }
+
+  checkpointName.value = buildPgmlCheckpointName(versionDocument.value, {
+    createdAt: checkpointSuggestedCreatedAt.value,
+    role: nextRole
+  })
+})
 const syncImportDumpConflictError = () => {
   const hasFile = importDumpSelectedFile.value !== null
   const hasText = importDumpText.value.trim().length > 0
@@ -1839,6 +1864,7 @@ onBeforeUnmount(() => {
               variant="outline"
               size="sm"
               :ui="studioFieldUi"
+              @update:model-value="checkpointNameIsSuggested = false"
             />
           </label>
 
