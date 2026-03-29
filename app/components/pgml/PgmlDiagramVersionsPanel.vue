@@ -92,6 +92,10 @@ const compareTargetOption = computed(() => {
 const hasDiffSections = computed(() => diffSections.length > 0 || layoutChanged > 0)
 const hasMigrationSql = computed(() => migrationSql.trim().length > 0)
 const hasVersions = computed(() => versions.length > 0)
+const latestVersionId = computed(() => versions.at(-1)?.id || null)
+const workspaceBaseVersionId = computed(() => {
+  return versions.find(version => version.isWorkspaceBase)?.id || null
+})
 const compareSummary = computed(() => {
   const baseLabel = compareBaseOption.value?.label || 'Empty schema'
   const targetLabel = compareTargetOption.value?.label || 'Current workspace'
@@ -160,6 +164,25 @@ const updateCompareTargetId = (value: unknown) => {
   }
 
   emit('update:compareTargetId', value)
+}
+
+const applyComparePreset = (input: {
+  baseId: string | null
+  targetId: string
+}) => {
+  emit('update:compareBaseId', input.baseId)
+  emit('update:compareTargetId', input.targetId)
+}
+
+const swapComparePair = () => {
+  if (compareBaseId === null) {
+    return
+  }
+
+  applyComparePreset({
+    baseId: compareTargetId === 'workspace' ? null : compareTargetId,
+    targetId: compareBaseId
+  })
 }
 </script>
 
@@ -246,6 +269,36 @@ const updateCompareTargetId = (value: unknown) => {
           @update:model-value="updateCompareTargetId"
         />
       </label>
+
+      <div class="flex flex-wrap gap-2">
+        <UButton
+          label="Workspace base to draft"
+          color="neutral"
+          variant="outline"
+          size="xs"
+          :class="secondaryButtonClass"
+          :disabled="workspaceBaseVersionId === null"
+          @click="applyComparePreset({ baseId: workspaceBaseVersionId, targetId: 'workspace' })"
+        />
+        <UButton
+          label="Latest to draft"
+          color="neutral"
+          variant="outline"
+          size="xs"
+          :class="secondaryButtonClass"
+          :disabled="latestVersionId === null"
+          @click="applyComparePreset({ baseId: latestVersionId, targetId: 'workspace' })"
+        />
+        <UButton
+          label="Swap"
+          color="neutral"
+          variant="outline"
+          size="xs"
+          :class="secondaryButtonClass"
+          :disabled="compareBaseId === null"
+          @click="swapComparePair"
+        />
+      </div>
 
       <div
         v-if="hasDiffSections"
