@@ -12,6 +12,11 @@ import type {
 } from './pgml'
 
 export type PgmlMigrationDiffBundle = {
+  meta: {
+    hasChanges: boolean
+    statementCount: number
+    warningCount: number
+  }
   sql: {
     migration: PgmlExportArtifact
   }
@@ -832,6 +837,11 @@ export const buildPgmlMigrationDiffBundle = (
   ]
 
   return {
+    meta: {
+      hasChanges: statements.length > 0,
+      statementCount: statements.length,
+      warningCount: warnings.size
+    },
     sql: {
       migration: {
         content: `${sqlHeader}\n\nBEGIN;\n\n${statements.join('\n\n')}\n\nCOMMIT;\n`,

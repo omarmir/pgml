@@ -45,6 +45,11 @@ describe('PGML version diffing', () => {
     )
 
     expect(migrationBundle.sql.migration.fileName).toBe('billing-versions.migration.sql')
+    expect(migrationBundle.meta).toEqual({
+      hasChanges: true,
+      statementCount: 1,
+      warningCount: 0
+    })
     expect(migrationBundle.sql.migration.content).toContain('BEGIN;')
     expect(migrationBundle.sql.migration.content).toContain(
       'ALTER TABLE "public"."users" ADD COLUMN "email" text NOT NULL;'
