@@ -18,6 +18,7 @@ import {
   getPgmlVersionDisplayLabel,
   getPgmlLeafVersions,
   getPgmlLeafVersionCount,
+  getPgmlVersionRoleCount,
   isPgmlLeafVersion,
   getPgmlRootVersions,
   getPgmlRootVersionCount,
@@ -133,6 +134,7 @@ Table public.memberships {
     expect(getPgmlVersionById(document, 'missing-version')).toBeNull()
     expect(getPgmlVersionCount(document)).toBe(1)
     expect(hasPgmlVersions(document)).toBe(true)
+    expect(getPgmlVersionRoleCount(document, 'implementation')).toBe(1)
   })
 
   it('returns ordered lineage from the root version to the selected checkpoint', () => {

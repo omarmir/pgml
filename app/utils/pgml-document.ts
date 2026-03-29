@@ -110,7 +110,7 @@ export const buildPgmlCheckpointName = (
   }
 ) => {
   const roleLabel = input.role === 'implementation' ? 'Implementation' : 'Design'
-  const roleVersionCount = document.versions.filter(version => version.role === input.role).length + 1
+  const roleVersionCount = getPgmlVersionRoleCount(document, input.role) + 1
   const normalizedDate = input.createdAt.slice(0, 10)
 
   return `${roleLabel} checkpoint ${roleVersionCount} · ${normalizedDate}`
@@ -124,8 +124,8 @@ export const getPgmlDocumentVersionStats = (
     branchVersionCount: document.versions.filter(version => {
       return getPgmlChildVersions(document, version.parentVersionId).length > 1
     }).length,
-    designVersionCount: document.versions.filter(version => version.role === 'design').length,
-    implementationVersionCount: document.versions.filter(version => version.role === 'implementation').length,
+    designVersionCount: getPgmlVersionRoleCount(document, 'design'),
+    implementationVersionCount: getPgmlVersionRoleCount(document, 'implementation'),
     rootVersionCount: getPgmlRootVersionCount(document),
     versionCount: getPgmlVersionCount(document),
     workspaceDirty: isPgmlWorkspaceDirty(document, includeLayout)
@@ -186,6 +186,13 @@ export const getPgmlRootVersionCount = (document: PgmlVersionSetDocument) => {
 
 export const getPgmlVersionCount = (document: PgmlVersionSetDocument) => {
   return document.versions.length
+}
+
+export const getPgmlVersionRoleCount = (
+  document: PgmlVersionSetDocument,
+  role: PgmlVersionRole
+) => {
+  return document.versions.filter(version => version.role === role).length
 }
 
 export const hasPgmlVersions = (document: PgmlVersionSetDocument) => {
