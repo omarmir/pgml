@@ -30,6 +30,7 @@ type PgmlVersionPanelItem = {
   id: string
   isLeaf: boolean
   isLatestByRole: boolean
+  isLatestOverall: boolean
   isRoot: boolean
   siblingCount: number
   isWorkspaceBase: boolean
@@ -536,6 +537,12 @@ const swapComparePair = () => {
                   class="border border-[color:var(--studio-shell-label)] px-1.5 py-0.5 font-mono text-[0.52rem] uppercase tracking-[0.08em] text-[color:var(--studio-shell-text)]"
                 >
                   Latest {{ version.role }}
+                </span>
+                <span
+                  v-if="version.isLatestOverall"
+                  class="border border-[color:var(--studio-shell-label)] px-1.5 py-0.5 font-mono text-[0.52rem] uppercase tracking-[0.08em] text-[color:var(--studio-shell-text)]"
+                >
+                  Latest overall
                 </span>
                 <span
                   v-if="version.isRoot"
