@@ -480,6 +480,30 @@ export const getPgmlChildVersions = (
   return document.versions.filter(version => version.parentVersionId === versionId)
 }
 
+export const getPgmlDescendantVersions = (
+  document: PgmlVersionSetDocument,
+  versionId: string | null
+) => {
+  const descendants: PgmlVersionDocumentBlock[] = []
+  const pendingVersionIds = getPgmlChildVersions(document, versionId).map(version => version.id)
+
+  while (pendingVersionIds.length > 0) {
+    const nextVersionId = pendingVersionIds.shift() || null
+    const nextVersion = getPgmlVersionById(document, nextVersionId)
+
+    if (!nextVersion) {
+      continue
+    }
+
+    descendants.push(nextVersion)
+    getPgmlChildVersions(document, nextVersion.id).forEach((childVersion) => {
+      pendingVersionIds.push(childVersion.id)
+    })
+  }
+
+  return descendants
+}
+
 export const serializePgmlDocument = (document: PgmlVersionSetDocument) => {
   validateVersionSetDocument(document)
 

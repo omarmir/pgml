@@ -4,6 +4,7 @@ import {
   createInitialPgmlDocument,
   createPgmlVersionFromWorkspace,
   getPgmlChildVersions,
+  getPgmlDescendantVersions,
   getPgmlVersionById,
   getPgmlVersionLineage,
   getPgmlVersionMap,
@@ -180,6 +181,55 @@ Table public.memberships {
     ])
     expect(getPgmlChildVersions(featureBDocument, null).map(version => version.name)).toEqual([
       'Initial design'
+    ])
+  })
+
+  it('returns all descendant versions under a selected branch point', () => {
+    const initialDocument = createInitialPgmlDocument({
+      name: 'Billing',
+      workspaceSource: baseSnapshotSource
+    })
+    const rootDocument = createPgmlVersionFromWorkspace(initialDocument, {
+      createdAt: '2026-03-29T12:00:00.000Z',
+      name: 'Initial design',
+      role: 'design'
+    })
+    const rootVersionId = rootDocument.workspace.basedOnVersionId
+    const branchDocument = createPgmlVersionFromWorkspace(replacePgmlWorkspaceFromSnapshot(rootDocument, {
+      basedOnVersionId: rootVersionId,
+      source: `${baseSnapshotSource}
+
+Table public.orders {
+  id uuid [pk]
+}`,
+      updatedAt: '2026-03-29T12:05:00.000Z'
+    }), {
+      createdAt: '2026-03-29T12:10:00.000Z',
+      name: 'Orders branch',
+      role: 'design'
+    })
+    const branchVersionId = branchDocument.workspace.basedOnVersionId
+    const finalDocument = createPgmlVersionFromWorkspace(replacePgmlWorkspaceFromSnapshot(branchDocument, {
+      basedOnVersionId: branchVersionId,
+      source: `${baseSnapshotSource}
+
+Table public.orders {
+  id uuid [pk]
+}
+
+Table public.order_items {
+  id uuid [pk]
+}`,
+      updatedAt: '2026-03-29T12:15:00.000Z'
+    }), {
+      createdAt: '2026-03-29T12:20:00.000Z',
+      name: 'Order items',
+      role: 'design'
+    })
+
+    expect(getPgmlDescendantVersions(finalDocument, rootVersionId).map(version => version.name)).toEqual([
+      'Orders branch',
+      'Order items'
     ])
   })
 
