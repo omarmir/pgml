@@ -52,6 +52,22 @@ describe('PGML version diffing', () => {
     expect(migrationBundle.sql.migration.warnings).toEqual([])
   })
 
+  it('ignores column modifier ordering when classifying changes', () => {
+    const diff = diffPgmlSchemaModels(
+      parsePgml(`Table public.users {
+  id uuid [pk]
+  email text [not null, unique]
+}`),
+      parsePgml(`Table public.users {
+  id uuid [pk]
+  email text [unique, not null]
+}`)
+    )
+
+    expect(diff.columns).toEqual([])
+    expect(diff.summary.modified).toBe(0)
+  })
+
   it('handles removed references, replaced custom types and omitted routines with warnings', () => {
     const baseSource = `Enum order_status {
   draft

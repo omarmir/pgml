@@ -140,7 +140,7 @@ const normalizeCustomTypeValue = (customType: PgmlCustomType) => {
 
 const normalizeColumnValue = (column: PgmlTable['columns'][number]) => {
   return {
-    modifiers: [...column.modifiers],
+    modifiers: [...column.modifiers].sort((left, right) => left.localeCompare(right)),
     name: column.name,
     note: column.note,
     reference: column.reference,
