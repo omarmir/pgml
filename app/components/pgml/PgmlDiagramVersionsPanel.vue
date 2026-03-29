@@ -200,59 +200,61 @@ const swapComparePair = () => {
     data-diagram-versions-panel="true"
     class="grid content-start gap-3 overflow-auto px-3 py-3"
   >
-    <div class="flex flex-wrap gap-2">
-      <UButton
-        label="Create checkpoint"
-        color="neutral"
-        variant="soft"
-        :class="primaryButtonClass"
-        @click="emit('create-checkpoint')"
-      />
-      <UButton
-        label="Import dump"
-        color="neutral"
-        variant="outline"
-        :class="secondaryButtonClass"
-        :disabled="!hasVersions"
-        @click="emit('import-dump')"
-      />
-    </div>
-
-    <div :class="joinStudioClasses(studioPanelSurfaceClass, 'px-3 py-3')">
-      <p :class="studioCompactBodyCopyClass">
-        Lock workspace checkpoints, compare snapshots, and export forward SQL from the selected base to the selected target.
-      </p>
-      <p
-        v-if="!hasVersions"
-        class="mt-2 text-[0.66rem] text-[color:var(--studio-shell-muted)]"
-      >
-        Import stays locked until you create the first checkpointed base version.
-      </p>
-    </div>
-
-    <div class="grid grid-cols-3 gap-2 text-[0.66rem] text-[color:var(--studio-shell-muted)]">
-      <div class="border border-[color:var(--studio-divider)] bg-[color:var(--studio-input-bg)] px-3 py-3">
-        <div class="font-mono uppercase tracking-[0.08em] text-[color:var(--studio-shell-label)]">
-          Locked
-        </div>
-        <div class="mt-1 text-[0.9rem] font-semibold text-[color:var(--studio-shell-text)]">
-          {{ versions.length }}
-        </div>
+    <div class="sticky top-0 z-[1] grid gap-3 bg-[color:var(--studio-shell-bg)] pb-1">
+      <div class="flex flex-wrap gap-2">
+        <UButton
+          label="Create checkpoint"
+          color="neutral"
+          variant="soft"
+          :class="primaryButtonClass"
+          @click="emit('create-checkpoint')"
+        />
+        <UButton
+          label="Import dump"
+          color="neutral"
+          variant="outline"
+          :class="secondaryButtonClass"
+          :disabled="!hasVersions"
+          @click="emit('import-dump')"
+        />
       </div>
-      <div class="border border-[color:var(--studio-divider)] bg-[color:var(--studio-input-bg)] px-3 py-3">
-        <div class="font-mono uppercase tracking-[0.08em] text-[color:var(--studio-shell-label)]">
-          Design
-        </div>
-        <div class="mt-1 text-[0.9rem] font-semibold text-[color:var(--studio-shell-text)]">
-          {{ designVersionCount }}
-        </div>
+
+      <div :class="joinStudioClasses(studioPanelSurfaceClass, 'px-3 py-3')">
+        <p :class="studioCompactBodyCopyClass">
+          Lock workspace checkpoints, compare snapshots, and export forward SQL from the selected base to the selected target.
+        </p>
+        <p
+          v-if="!hasVersions"
+          class="mt-2 text-[0.66rem] text-[color:var(--studio-shell-muted)]"
+        >
+          Import stays locked until you create the first checkpointed base version.
+        </p>
       </div>
-      <div class="border border-[color:var(--studio-divider)] bg-[color:var(--studio-input-bg)] px-3 py-3">
-        <div class="font-mono uppercase tracking-[0.08em] text-[color:var(--studio-shell-label)]">
-          Impl
+
+      <div class="grid grid-cols-3 gap-2 text-[0.66rem] text-[color:var(--studio-shell-muted)]">
+        <div class="border border-[color:var(--studio-divider)] bg-[color:var(--studio-input-bg)] px-3 py-3">
+          <div class="font-mono uppercase tracking-[0.08em] text-[color:var(--studio-shell-label)]">
+            Locked
+          </div>
+          <div class="mt-1 text-[0.9rem] font-semibold text-[color:var(--studio-shell-text)]">
+            {{ versions.length }}
+          </div>
         </div>
-        <div class="mt-1 text-[0.9rem] font-semibold text-[color:var(--studio-shell-text)]">
-          {{ implementationVersionCount }}
+        <div class="border border-[color:var(--studio-divider)] bg-[color:var(--studio-input-bg)] px-3 py-3">
+          <div class="font-mono uppercase tracking-[0.08em] text-[color:var(--studio-shell-label)]">
+            Design
+          </div>
+          <div class="mt-1 text-[0.9rem] font-semibold text-[color:var(--studio-shell-text)]">
+            {{ designVersionCount }}
+          </div>
+        </div>
+        <div class="border border-[color:var(--studio-divider)] bg-[color:var(--studio-input-bg)] px-3 py-3">
+          <div class="font-mono uppercase tracking-[0.08em] text-[color:var(--studio-shell-label)]">
+            Impl
+          </div>
+          <div class="mt-1 text-[0.9rem] font-semibold text-[color:var(--studio-shell-text)]">
+            {{ implementationVersionCount }}
+          </div>
         </div>
       </div>
     </div>
