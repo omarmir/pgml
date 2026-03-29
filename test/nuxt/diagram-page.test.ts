@@ -27,5 +27,6 @@ describe('diagram page source', () => {
     expect(file).toContain(':can-create-checkpoint="canCheckpoint"')
     expect(file).toContain(':latest-version-id="latestVersionId"')
     expect(file).toContain('The selected base version no longer exists.')
+    expect(file).toContain('getPgmlVersionDisplayLabel')
   })
 })

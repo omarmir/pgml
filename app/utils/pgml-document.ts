@@ -49,6 +49,10 @@ export const normalizePgmlSnapshotSource = (value: string) => {
   return normalizeLineEndings(value).trim()
 }
 
+export const getPgmlVersionDisplayLabel = (version: PgmlVersionDocumentBlock) => {
+  return version.name && version.name.trim().length > 0 ? version.name : version.id
+}
+
 const normalizePgmlTimestamp = (value: string, context: string) => {
   const parsedTimestamp = new Date(value)
 
@@ -643,9 +647,7 @@ export const buildPgmlVersionLineageLabel = (
   versionId: string | null
 ) => {
   return getPgmlVersionLineage(document, versionId)
-    .map((version) => {
-      return version.name && version.name.trim().length > 0 ? version.name : version.id
-    })
+    .map(getPgmlVersionDisplayLabel)
     .join(' -> ')
 }
 
@@ -693,7 +695,7 @@ export const getPgmlBranchRootLabel = (
     return null
   }
 
-  return rootVersion.name && rootVersion.name.trim().length > 0 ? rootVersion.name : rootVersion.id
+  return getPgmlVersionDisplayLabel(rootVersion)
 }
 
 export const getPgmlChildVersions = (

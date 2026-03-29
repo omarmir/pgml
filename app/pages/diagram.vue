@@ -45,6 +45,7 @@ import {
 } from '~/utils/pgml-version-summary'
 import {
   buildPgmlCheckpointName,
+  getPgmlVersionDisplayLabel,
   getLatestPgmlVersion
 } from '~/utils/pgml-document'
 import { buildPgmlVersionMigrationBundle } from '~/utils/pgml-version-migration'
@@ -636,7 +637,16 @@ const getVersionLabel = (input: {
   id: string
   name: string | null
 }) => {
-  return input.name && input.name.trim().length > 0 ? input.name : input.id
+  return getPgmlVersionDisplayLabel({
+    createdAt: '',
+    id: input.id,
+    name: input.name,
+    parentVersionId: null,
+    role: 'design',
+    snapshot: {
+      source: ''
+    }
+  })
 }
 const versionPanelItems = computed(() => {
   return versionHistoryItems.value.map((version) => {

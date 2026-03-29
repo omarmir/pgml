@@ -15,6 +15,7 @@ import {
   getPgmlBranchRootVersion,
   getPgmlBranchRootId,
   getPgmlBranchRootLabel,
+  getPgmlVersionDisplayLabel,
   getPgmlLeafVersions,
   getPgmlRootVersions,
   isPgmlVersionDescendant,
@@ -845,6 +846,29 @@ Table public.memberships {
 }`)
 
     expect(buildPgmlVersionLineageLabel(parsed, 'v2')).toBe('Implementation root -> Design branch')
+  })
+
+  it('builds a display label from the version name when present', () => {
+    expect(getPgmlVersionDisplayLabel({
+      createdAt: '2026-03-29T12:00:00.000Z',
+      id: 'v1',
+      name: 'Named version',
+      parentVersionId: null,
+      role: 'design',
+      snapshot: {
+        source: baseSnapshotSource
+      }
+    })).toBe('Named version')
+    expect(getPgmlVersionDisplayLabel({
+      createdAt: '2026-03-29T12:00:00.000Z',
+      id: 'v2',
+      name: '   ',
+      parentVersionId: null,
+      role: 'design',
+      snapshot: {
+        source: baseSnapshotSource
+      }
+    })).toBe('v2')
   })
 
   it('detects whether one version is an ancestor of another', () => {
