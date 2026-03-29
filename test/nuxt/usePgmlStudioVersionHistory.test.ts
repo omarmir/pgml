@@ -170,4 +170,28 @@ Properties "public.users" {
     expect(api.compareBaseId.value).toBeNull()
     expect(api.compareTargetId.value).toBe('workspace')
   })
+
+  it('clamps invalid preview and compare ids back to valid version history targets', async () => {
+    const { api } = await mountVersionHistoryComposable()
+    const initialVersion = api.createCheckpoint({
+      createdAt: '2026-03-29T12:00:00.000Z',
+      includeLayout: true,
+      name: 'Initial design',
+      role: 'design'
+    })
+
+    if (!initialVersion) {
+      throw new Error('Expected the checkpoint to be created.')
+    }
+
+    api.setPreviewTarget('missing-version')
+    api.setCompareTargets({
+      baseId: initialVersion.id,
+      targetId: 'missing-version'
+    })
+
+    expect(api.previewTargetId.value).toBe('workspace')
+    expect(api.compareBaseId.value).toBe(initialVersion.id)
+    expect(api.compareTargetId.value).toBe('workspace')
+  })
 })
