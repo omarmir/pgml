@@ -19,6 +19,7 @@ import {
   getPgmlLeafVersions,
   isPgmlLeafVersion,
   getPgmlRootVersions,
+  getPgmlRootVersionCount,
   isPgmlVersionDescendant,
   isPgmlVersionAncestor,
   buildPgmlVersionLineageLabel,
@@ -698,6 +699,7 @@ Table public.memberships {
 }`)
 
     expect(getPgmlRootVersions(parsed).map(version => version.id)).toEqual(['v1'])
+    expect(getPgmlRootVersionCount(parsed)).toBe(1)
   })
 
   it('returns leaf versions that have no child checkpoints', () => {
