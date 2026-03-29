@@ -19,6 +19,7 @@ import {
 type PgmlVersionPanelItem = {
   ancestorCount: number
   branchLeafCount: number
+  branchMaxDepth: number
   branchVersionCount: number
   branchRootId: string | null
   branchRootLabel: string | null
@@ -586,6 +587,12 @@ const swapComparePair = () => {
                   class="border border-[color:var(--studio-divider)] px-1.5 py-0.5 font-mono text-[0.52rem] uppercase tracking-[0.08em] text-[color:var(--studio-shell-muted)]"
                 >
                   Branch leaves {{ version.branchLeafCount }}
+                </span>
+                <span
+                  v-if="version.branchMaxDepth > version.depth"
+                  class="border border-[color:var(--studio-divider)] px-1.5 py-0.5 font-mono text-[0.52rem] uppercase tracking-[0.08em] text-[color:var(--studio-shell-muted)]"
+                >
+                  Branch depth {{ version.branchMaxDepth }}
                 </span>
                 <span
                   v-if="version.isWorkspaceBase"
