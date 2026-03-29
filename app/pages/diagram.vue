@@ -58,6 +58,7 @@ import {
   buildPgmlImportDumpDialogDescription,
   buildPgmlImportDumpInputDescription,
   buildPgmlImportDumpDialogTitle,
+  buildPgmlImportBaseRequiredMessage,
   buildPgmlImportCheckpointRequiredDescription,
   buildPgmlRestoreVersionDescription
 } from '~/utils/pgml-version-copy'
@@ -1017,7 +1018,7 @@ const clearImportDumpFile = () => {
 }
 const submitImportDump = async () => {
   if (!importDumpBaseVersionId.value) {
-    importDumpError.value = 'Choose the version this import should increment from.'
+    importDumpError.value = buildPgmlImportBaseRequiredMessage()
     return
   }
 

@@ -35,3 +35,7 @@ export const buildPgmlImportDumpConfirmLabel = () => {
 export const buildPgmlImportCheckpointRequiredDescription = () => {
   return 'Create a version checkpoint before importing a dump onto this document.'
 }
+
+export const buildPgmlImportBaseRequiredMessage = () => {
+  return 'Choose the version this import should increment from.'
+}
