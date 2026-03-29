@@ -628,21 +628,33 @@ const buildSnapshotBlock = (snapshot: PgmlDocumentSnapshot, level: number) => {
   return lines.join('\n')
 }
 
+const buildMetadataLine = (
+  key: string,
+  value: string,
+  level: number,
+  quoteValue = false
+) => {
+  return `${'  '.repeat(level)}${key}: ${quoteValue ? quoteMetadataValue(value) : value}`
+}
+
+const pushMetadataSpacer = (lines: string[]) => {
+  if (lines.length > 1) {
+    lines.push('')
+  }
+}
+
 const buildWorkspaceBlock = (workspace: PgmlWorkspaceDocumentBlock) => {
   const lines = ['  Workspace {']
 
   if (workspace.basedOnVersionId) {
-    lines.push(`    based_on: ${workspace.basedOnVersionId}`)
+    lines.push(buildMetadataLine('based_on', workspace.basedOnVersionId, 2))
   }
 
   if (workspace.updatedAt) {
-    lines.push(`    updated_at: ${quoteMetadataValue(workspace.updatedAt)}`)
+    lines.push(buildMetadataLine('updated_at', workspace.updatedAt, 2, true))
   }
 
-  if (lines.length > 1) {
-    lines.push('')
-  }
-
+  pushMetadataSpacer(lines)
   lines.push(buildSnapshotBlock(workspace.snapshot, 2))
   lines.push('  }')
 
@@ -653,16 +665,16 @@ const buildVersionBlock = (version: PgmlVersionDocumentBlock) => {
   const lines = [`  Version ${version.id} {`]
 
   if (version.name) {
-    lines.push(`    name: ${quoteMetadataValue(version.name)}`)
+    lines.push(buildMetadataLine('name', version.name, 2, true))
   }
 
-  lines.push(`    role: ${version.role}`)
+  lines.push(buildMetadataLine('role', version.role, 2))
 
   if (version.parentVersionId) {
-    lines.push(`    parent: ${version.parentVersionId}`)
+    lines.push(buildMetadataLine('parent', version.parentVersionId, 2))
   }
 
-  lines.push(`    created_at: ${quoteMetadataValue(version.createdAt)}`)
+  lines.push(buildMetadataLine('created_at', version.createdAt, 2, true))
   lines.push('')
   lines.push(buildSnapshotBlock(version.snapshot, 2))
   lines.push('  }')
