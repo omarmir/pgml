@@ -168,6 +168,53 @@ const buildVersionHistoryItem = (
   }
 }
 
+const buildCompareRelationshipSummary = (input: {
+  compareBaseVersion: PgmlVersionDocumentBlock | null
+  compareTargetId: string
+  compareTargetVersion: PgmlVersionDocumentBlock | null
+  document: PgmlVersionSetDocument
+  workspaceBaseVersion: PgmlVersionDocumentBlock | null
+}) => {
+  if (input.compareTargetId === 'workspace') {
+    if (!input.compareBaseVersion) {
+      return buildPgmlEmptyBaseCompareRelationshipSummary()
+    }
+
+    if (input.compareBaseVersion.id === input.workspaceBaseVersion?.id) {
+      return buildPgmlWorkspaceBaseCompareRelationshipSummary(
+        input.compareBaseVersion.name || input.compareBaseVersion.id
+      )
+    }
+
+    return buildPgmlWorkspaceCompareRelationshipSummary(
+      input.compareBaseVersion.name || input.compareBaseVersion.id
+    )
+  }
+
+  if (!input.compareBaseVersion || !input.compareTargetVersion) {
+    return buildPgmlInvalidCompareRelationshipSummary()
+  }
+
+  if (input.compareTargetVersion.parentVersionId === input.compareBaseVersion.id) {
+    return buildPgmlDirectIncrementCompareRelationshipSummary(
+      input.compareTargetVersion.name || input.compareTargetVersion.id,
+      input.compareBaseVersion.name || input.compareBaseVersion.id
+    )
+  }
+
+  const commonAncestor = getPgmlNearestCommonAncestor(
+    input.document,
+    input.compareBaseVersion.id,
+    input.compareTargetVersion.id
+  )
+
+  if (commonAncestor) {
+    return buildPgmlDivergedCompareRelationshipSummary(commonAncestor.name || commonAncestor.id)
+  }
+
+  return buildPgmlNoCommonAncestorCompareRelationshipSummary()
+}
+
 export const usePgmlStudioVersionHistory = (
   input: {
     documentName: ComputedRef<string>
@@ -292,40 +339,13 @@ export const usePgmlStudioVersionHistory = (
     return compareTargetVersion.value?.snapshot.source || input.source.value
   })
   const compareRelationshipSummary = computed(() => {
-    if (compareTargetId.value === 'workspace') {
-      if (!compareBaseVersion.value) {
-        return buildPgmlEmptyBaseCompareRelationshipSummary()
-      }
-
-      if (compareBaseVersion.value.id === workspaceBaseVersion.value?.id) {
-        return buildPgmlWorkspaceBaseCompareRelationshipSummary(compareBaseVersion.value.name || compareBaseVersion.value.id)
-      }
-
-      return buildPgmlWorkspaceCompareRelationshipSummary(compareBaseVersion.value.name || compareBaseVersion.value.id)
-    }
-
-    if (!compareBaseVersion.value || !compareTargetVersion.value) {
-      return buildPgmlInvalidCompareRelationshipSummary()
-    }
-
-    if (compareTargetVersion.value.parentVersionId === compareBaseVersion.value.id) {
-      return buildPgmlDirectIncrementCompareRelationshipSummary(
-        compareTargetVersion.value.name || compareTargetVersion.value.id,
-        compareBaseVersion.value.name || compareBaseVersion.value.id
-      )
-    }
-
-    const commonAncestor = getPgmlNearestCommonAncestor(
-      document.value,
-      compareBaseVersion.value.id,
-      compareTargetVersion.value.id
-    )
-
-    if (commonAncestor) {
-      return buildPgmlDivergedCompareRelationshipSummary(commonAncestor.name || commonAncestor.id)
-    }
-
-    return buildPgmlNoCommonAncestorCompareRelationshipSummary()
+    return buildCompareRelationshipSummary({
+      compareBaseVersion: compareBaseVersion.value,
+      compareTargetId: compareTargetId.value,
+      compareTargetVersion: compareTargetVersion.value,
+      document: document.value,
+      workspaceBaseVersion: workspaceBaseVersion.value
+    })
   })
 
   watch(() => input.documentName.value, (nextName) => {
