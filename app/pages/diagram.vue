@@ -64,6 +64,7 @@ import {
   buildPgmlImportMissingInputMessage,
   buildPgmlImportCheckpointRequiredDescription,
   buildPgmlImportSuccessDescription,
+  buildPgmlRestoreSuccessDescription,
   buildPgmlRestoreVersionDescription
 } from '~/utils/pgml-version-copy'
 import {
@@ -1098,7 +1099,7 @@ const confirmRestoreVersionToWorkspace = () => {
   closeRestoreVersionDialog()
   toast.add({
     title: 'Workspace restored',
-    description: 'The selected version is now the active workspace draft.',
+    description: buildPgmlRestoreSuccessDescription(),
     color: 'success',
     icon: 'i-lucide-check'
   })

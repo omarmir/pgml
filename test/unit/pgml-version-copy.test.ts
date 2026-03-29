@@ -13,6 +13,7 @@ import {
   buildPgmlImportFailureMessage,
   buildPgmlImportMissingInputMessage,
   buildPgmlImportSuccessDescription,
+  buildPgmlRestoreSuccessDescription,
   buildPgmlRestoreVersionDescription
 } from '../../app/utils/pgml-version-copy'
 
@@ -70,5 +71,9 @@ describe('PGML version copy helpers', () => {
 
   it('builds the missing import input message', () => {
     expect(buildPgmlImportMissingInputMessage()).toContain('choose a text dump file')
+  })
+
+  it('builds the restore success description', () => {
+    expect(buildPgmlRestoreSuccessDescription()).toContain('active workspace draft')
   })
 })

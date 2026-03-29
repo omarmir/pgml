@@ -55,3 +55,7 @@ export const buildPgmlImportConflictMessage = () => {
 export const buildPgmlImportMissingInputMessage = () => {
   return 'Paste pg_dump text or choose a text dump file before importing.'
 }
+
+export const buildPgmlRestoreSuccessDescription = () => {
+  return 'The selected version is now the active workspace draft.'
+}
