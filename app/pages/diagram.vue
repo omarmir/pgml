@@ -633,8 +633,11 @@ const getVersionLabel = (input: {
 const versionPanelItems = computed(() => {
   return versionHistoryItems.value.map((version) => {
     return {
+      childCount: version.childCount,
       createdAt: formatSavedPgmlSchemaTime(version.createdAt),
+      depth: version.depth,
       id: version.id,
+      isRoot: version.isRoot,
       isWorkspaceBase: version.isWorkspaceBase,
       label: getVersionLabel(version),
       parentVersionId: version.parentVersionId,

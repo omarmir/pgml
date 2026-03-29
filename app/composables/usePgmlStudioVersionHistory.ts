@@ -4,7 +4,9 @@ import {
   clonePgmlVersionSetDocument,
   createInitialPgmlDocument,
   createPgmlVersionFromWorkspace,
+  getPgmlChildVersions,
   getPgmlVersionById,
+  getPgmlVersionDepth,
   getPgmlWorkspaceBaseVersion,
   getPgmlDocumentPreviewSource,
   isPgmlWorkspaceDirty,
@@ -135,7 +137,10 @@ export const usePgmlStudioVersionHistory = (
   const versionItems = computed(() => {
     return document.value.versions.map((version) => {
       return {
+        childCount: getPgmlChildVersions(document.value, version.id).length,
+        depth: getPgmlVersionDepth(document.value, version.id),
         ...version,
+        isRoot: version.parentVersionId === null,
         isWorkspaceBase: document.value.workspace.basedOnVersionId === version.id
       }
     })

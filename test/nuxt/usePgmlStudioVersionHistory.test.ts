@@ -194,4 +194,39 @@ Properties "public.users" {
     expect(api.compareBaseId.value).toBe(initialVersion.id)
     expect(api.compareTargetId.value).toBe('workspace')
   })
+
+  it('enriches version history items with branch depth and child counts', async () => {
+    const { api, source } = await mountVersionHistoryComposable()
+    const rootVersion = api.createCheckpoint({
+      createdAt: '2026-03-29T12:00:00.000Z',
+      includeLayout: true,
+      name: 'Initial design',
+      role: 'design'
+    })
+
+    if (!rootVersion) {
+      throw new Error('Expected the checkpoint to be created.')
+    }
+
+    source.value = importedWorkspaceSource
+
+    const branchVersion = api.createCheckpoint({
+      createdAt: '2026-03-29T12:05:00.000Z',
+      includeLayout: true,
+      name: 'Add status',
+      role: 'design'
+    })
+
+    expect(branchVersion?.id).toBeTruthy()
+    expect(api.versionItems.value[0]).toEqual(expect.objectContaining({
+      childCount: 1,
+      depth: 0,
+      isRoot: true
+    }))
+    expect(api.versionItems.value[1]).toEqual(expect.objectContaining({
+      childCount: 0,
+      depth: 1,
+      isRoot: false
+    }))
+  })
 })
