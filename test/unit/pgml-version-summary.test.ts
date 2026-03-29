@@ -2,7 +2,10 @@ import { describe, expect, it } from 'vitest'
 
 import { parsePgml } from '../../app/utils/pgml'
 import { diffPgmlSchemaModels } from '../../app/utils/pgml-diff'
-import { buildPgmlVersionDiffSections } from '../../app/utils/pgml-version-summary'
+import {
+  buildPgmlVersionCompareSummary,
+  buildPgmlVersionDiffSections
+} from '../../app/utils/pgml-version-summary'
 
 describe('PGML version summary helpers', () => {
   it('groups schema diff entries into labeled compare sections', () => {
@@ -31,5 +34,22 @@ Table public.orders {
         label: 'Columns'
       }
     ])
+  })
+
+  it('builds a compare summary from labels, sections, and layout changes', () => {
+    expect(buildPgmlVersionCompareSummary({
+      compareBaseLabel: 'v1',
+      compareTargetLabel: 'workspace',
+      diffSections: [{
+        count: 2,
+        items: [],
+        label: 'Tables'
+      }],
+      layoutChanged: 1
+    })).toEqual({
+      baseLabel: 'v1',
+      changedSectionCount: 2,
+      targetLabel: 'workspace'
+    })
   })
 })

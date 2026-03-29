@@ -3,6 +3,7 @@ import type { Ref } from 'vue'
 import {
   studioSelectUi
 } from '~/constants/ui'
+import { buildPgmlVersionCompareSummary } from '~/utils/pgml-version-summary'
 import {
   joinStudioClasses,
   studioButtonClasses,
@@ -131,15 +132,12 @@ const migrationLineCount = computed(() => {
   return hasMigrationSql.value ? migrationSql.trim().split('\n').length : 0
 })
 const compareSummary = computed(() => {
-  const baseLabel = compareBaseOption.value?.label || 'Empty schema'
-  const targetLabel = compareTargetOption.value?.label || 'Current workspace'
-  const changedSectionCount = diffSections.length + (layoutChanged > 0 ? 1 : 0)
-
-  return {
-    baseLabel,
-    changedSectionCount,
-    targetLabel
-  }
+  return buildPgmlVersionCompareSummary({
+    compareBaseLabel: compareBaseOption.value?.label || null,
+    compareTargetLabel: compareTargetOption.value?.label || null,
+    diffSections,
+    layoutChanged
+  })
 })
 const previewLabel = computed(() => {
   if (previewTargetId === 'workspace') {

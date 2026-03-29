@@ -10,6 +10,12 @@ export type PgmlVersionDiffSection = {
   label: string
 }
 
+export type PgmlVersionCompareSummary = {
+  baseLabel: string
+  changedSectionCount: number
+  targetLabel: string
+}
+
 export const buildPgmlVersionDiffSections = (diff: PgmlSchemaDiff) => {
   const sectionEntries = [
     {
@@ -70,4 +76,17 @@ export const buildPgmlVersionDiffSections = (diff: PgmlSchemaDiff) => {
 
     return sections
   }, [])
+}
+
+export const buildPgmlVersionCompareSummary = (input: {
+  compareBaseLabel?: string | null
+  compareTargetLabel?: string | null
+  diffSections: PgmlVersionDiffSection[]
+  layoutChanged: number
+}) => {
+  return {
+    baseLabel: input.compareBaseLabel || 'Empty schema',
+    changedSectionCount: input.diffSections.length + (input.layoutChanged > 0 ? 1 : 0),
+    targetLabel: input.compareTargetLabel || 'Current workspace'
+  } satisfies PgmlVersionCompareSummary
 }
