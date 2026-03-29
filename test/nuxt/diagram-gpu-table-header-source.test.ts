@@ -13,4 +13,19 @@ describe('diagram GPU table header source', () => {
     expect(shellFile).toContain('${card.rows.length} ROWS</text>')
     expect(shellFile).toContain('${card.y + offsetY + 42}')
   })
+
+  it('lets grouped table headers fade from the group accent into the neutral table surface', () => {
+    const sceneFile = readSourceFile('app/components/pgml/PgmlDiagramGpuScene.vue')
+
+    expect(sceneFile).toContain('const headerMidColor = isGroupedTable')
+    expect(sceneFile).toContain('? withAlpha(card.color, 0.04)')
+    expect(sceneFile).toContain('const headerTopColor = isGroupedTable')
+    expect(sceneFile).toContain('? withAlpha(card.color, 0.08)')
+    expect(sceneFile).toContain('const headerBottomColor = isGroupedTable')
+    expect(sceneFile).toContain('? withAlpha(card.color, 0.015)')
+    expect(sceneFile).toContain('const headerFinalColor = isGroupedTable ? \'rgba(0, 0, 0, 0)\' : headerBottomColor')
+    expect(sceneFile).toContain('headerGradient.addColorStop(isGroupedTable ? 0.2 : 0.64, headerMidColor)')
+    expect(sceneFile).toContain('headerGradient.addColorStop(isGroupedTable ? 0.48 : 1, headerBottomColor)')
+    expect(sceneFile).toContain('headerGradient.addColorStop(1, headerFinalColor)')
+  })
 })

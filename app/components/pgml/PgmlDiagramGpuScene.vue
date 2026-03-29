@@ -181,6 +181,7 @@ let deferredFullRenderTimeout: ReturnType<typeof setTimeout> | null = null
 let lineAnimationFrame: number | null = null
 let lineAnimationOffset = 0
 let hasViewportInteraction = false
+let themeObserver: MutationObserver | null = null
 
 const fontMonoFamily = '"IBM Plex Mono", "IBM Plex Mono Fallback: Courier New", "IBM Plex Mono Fallback: Roboto Mono", "IBM Plex Mono Fallback: Noto Sans Mono", monospace'
 const fontMono = `600 9px ${fontMonoFamily}`
@@ -240,6 +241,26 @@ let sceneTheme: SceneTheme = {
   surface: diagramSurfaceColor,
   tableSurface: diagramTableSurfaceColor
 }
+const getSceneThemeSignature = (value: SceneTheme) => {
+  return [
+    value.background,
+    value.control,
+    value.divider,
+    value.dot,
+    value.groupSurface,
+    value.groupSurfaceSoft,
+    value.label,
+    value.muted,
+    value.nodeAccentMix,
+    value.nodeBorderNeutral,
+    value.rail,
+    value.rowSurface,
+    value.shellText,
+    value.surface,
+    value.tableSurface
+  ].join('|')
+}
+let sceneThemeSignature = getSceneThemeSignature(sceneTheme)
 
 const parseColor = (value: string, fallback = '#38bdf8') => {
   const trimmedValue = value.trim()
@@ -354,7 +375,7 @@ const readCssColorVariable = (name: string, fallback: string) => {
 }
 
 const refreshSceneTheme = () => {
-  sceneTheme = {
+  const nextTheme = {
     background: readCssColorVariable('--studio-canvas-bg', diagramBackgroundColor),
     control: readCssColorVariable('--studio-control-bg', diagramPanelSurfaceColor),
     divider: readCssColorVariable('--studio-divider', diagramDividerColor),
@@ -370,7 +391,14 @@ const refreshSceneTheme = () => {
     shellText: readCssColorVariable('--studio-shell-text', diagramTextColor),
     surface: readCssColorVariable('--studio-node-surface-bottom', diagramSurfaceColor),
     tableSurface: readCssColorVariable('--studio-table-surface', diagramTableSurfaceColor)
-  }
+  } satisfies SceneTheme
+  const nextThemeSignature = getSceneThemeSignature(nextTheme)
+  const didChange = nextThemeSignature !== sceneThemeSignature
+
+  sceneTheme = nextTheme
+  sceneThemeSignature = nextThemeSignature
+
+  return didChange
 }
 
 const getTextureResolution = () => {
@@ -858,14 +886,15 @@ const buildTableCanvas = (card: DiagramGpuTableCard, resolution: number) => {
     ? sceneTheme.tableSurface
     : mixColors(sceneTheme.surface, sceneTheme.tableSurface, 0.52)
   const headerMidColor = isGroupedTable
-    ? withAlpha(sceneTheme.label, 0)
+    ? withAlpha(card.color, 0.04)
     : withAlpha(card.color, 0.1)
   const headerTopColor = isGroupedTable
-    ? withAlpha(sceneTheme.label, 0)
+    ? withAlpha(card.color, 0.08)
     : withAlpha(card.color, 0.2)
   const headerBottomColor = isGroupedTable
-    ? withAlpha(sceneTheme.label, 0)
+    ? withAlpha(card.color, 0.015)
     : withAlpha(card.color, 0.05)
+  const headerFinalColor = isGroupedTable ? 'rgba(0, 0, 0, 0)' : headerBottomColor
   const dividerColor = sceneTheme.divider
   const rowSelectedColor = withAlpha(card.color, 0.16)
   const shellTextColor = sceneTheme.shellText
@@ -900,8 +929,9 @@ const buildTableCanvas = (card: DiagramGpuTableCard, resolution: number) => {
   context.fillRect(1, 1, Math.max(0, card.width - 2), Math.max(0, card.headerHeight - 1))
   const headerGradient = context.createLinearGradient(0, 0, 0, card.headerHeight)
   headerGradient.addColorStop(0, headerTopColor)
-  headerGradient.addColorStop(0.64, headerMidColor)
-  headerGradient.addColorStop(1, headerBottomColor)
+  headerGradient.addColorStop(isGroupedTable ? 0.2 : 0.64, headerMidColor)
+  headerGradient.addColorStop(isGroupedTable ? 0.48 : 1, headerBottomColor)
+  headerGradient.addColorStop(1, headerFinalColor)
   context.fillStyle = headerGradient
   context.fillRect(1, 1, Math.max(0, card.width - 2), Math.max(0, card.headerHeight - 1))
 
@@ -1050,24 +1080,34 @@ const buildGroupCanvas = (group: DiagramGpuGroupNode, resolution: number) => {
   return canvas
 }
 
+const getGroupHeaderOverlayHeight = (group: DiagramGpuGroupNode) => {
+  return Math.min(group.height, diagramGroupHeaderBandHeight + 24)
+}
+
 const buildGroupHeaderOverlayCanvas = (group: DiagramGpuGroupNode, resolution: number) => {
-  const { canvas, context } = createCanvas(group.width, diagramGroupHeaderBandHeight, resolution)
+  const headerOverlayHeight = getGroupHeaderOverlayHeight(group)
+  const { canvas, context } = createCanvas(group.width, headerOverlayHeight, resolution)
   const accentColor = getNodeAccentColor(group.color)
   const headerTopFill = withAlpha(group.color, 0.28)
   const headerMidFill = withAlpha(group.color, 0.14)
   const headerLowFill = withAlpha(group.color, 0.05)
-  const headerGradient = context.createLinearGradient(0, 0, 0, diagramGroupHeaderBandHeight)
+  const headerMidStop = Math.min(1, (diagramGroupHeaderBandHeight * 0.24) / headerOverlayHeight)
+  const headerLowStop = Math.min(1, (diagramGroupHeaderBandHeight * 0.5) / headerOverlayHeight)
+  const headerTailStop = Math.min(1, diagramGroupHeaderBandHeight / headerOverlayHeight)
+  const headerFadeOutStop = Math.min(1, (diagramGroupHeaderBandHeight + 18) / headerOverlayHeight)
+  const headerGradient = context.createLinearGradient(0, 0, 0, headerOverlayHeight)
   headerGradient.addColorStop(0, headerTopFill)
-  headerGradient.addColorStop(0.24, headerMidFill)
-  headerGradient.addColorStop(0.5, headerLowFill)
-  headerGradient.addColorStop(0.72, 'rgba(0, 0, 0, 0)')
+  headerGradient.addColorStop(headerMidStop, headerMidFill)
+  headerGradient.addColorStop(headerLowStop, headerLowFill)
+  headerGradient.addColorStop(headerTailStop, headerLowFill)
+  headerGradient.addColorStop(headerFadeOutStop, 'rgba(0, 0, 0, 0)')
   headerGradient.addColorStop(1, 'rgba(0, 0, 0, 0)')
 
   context.save()
-  topRoundRect(context, 0.5, 0.5, group.width - 1, diagramGroupHeaderBandHeight - 0.5, 2.5)
+  topRoundRect(context, 0.5, 0.5, group.width - 1, headerOverlayHeight - 0.5, 2.5)
   context.clip()
   context.fillStyle = headerGradient
-  context.fillRect(1, 1, Math.max(0, group.width - 2), Math.max(0, diagramGroupHeaderBandHeight - 1))
+  context.fillRect(1, 1, Math.max(0, group.width - 2), Math.max(0, headerOverlayHeight - 1))
 
   context.font = fontMonoSmallRegular
   context.fillStyle = accentColor
@@ -1166,7 +1206,7 @@ const getOrCreateSpriteEntry = (
   }
 
   const resolution = getTextureResolution()
-  const nextKey = `${key}:${getSelectionStateKey(key)}:${Math.round(resolution * 100)}:${width}x${height}:${hashDiagramRenderSignature(renderSignature)}`
+  const nextKey = `${key}:${getSelectionStateKey(key)}:${Math.round(resolution * 100)}:${width}x${height}:${hashDiagramRenderSignature(renderSignature)}:${hashDiagramRenderSignature(sceneThemeSignature)}`
   const existingEntry = entries.get(key)
 
   if (existingEntry?.key === nextKey) {
@@ -1409,11 +1449,13 @@ const publishRendererDebug = () => {
 
   ;(window as Window & {
     __pgmlSceneRendererDebug?: {
+      background: string
       panX: number
       panY: number
       scale: number
     }
   }).__pgmlSceneRendererDebug = {
+    background: sceneTheme.background,
     panX: worldPanX,
     panY: worldPanY,
     scale: worldScale
@@ -1706,7 +1748,7 @@ const renderScene = () => {
       'group-header',
       renderSignature,
       group.width,
-      diagramGroupHeaderBandHeight,
+      getGroupHeaderOverlayHeight(group),
       (resolution) => buildGroupHeaderOverlayCanvas(group, resolution)
     )
 
@@ -2271,6 +2313,30 @@ const syncViewportLayout = () => {
   scheduleFullRender()
 }
 
+const syncSceneTheme = () => {
+  if (!refreshSceneTheme()) {
+    return
+  }
+
+  updateBackgroundGrid()
+  scheduleFullRender()
+}
+
+const watchSceneTheme = () => {
+  if (!import.meta.client) {
+    return
+  }
+
+  themeObserver?.disconnect()
+  themeObserver = new MutationObserver(() => {
+    syncSceneTheme()
+  })
+  themeObserver.observe(document.documentElement, {
+    attributeFilter: ['data-studio-theme', 'style'],
+    attributes: true
+  })
+}
+
 watch(
   () => viewportResetKey,
   () => {
@@ -2315,11 +2381,14 @@ useResizeObserver(hostRef, syncViewportLayout)
 
 onMounted(async () => {
   await initPixi()
+  watchSceneTheme()
   window.addEventListener('resize', syncViewportLayout)
 })
 
 onBeforeUnmount(() => {
   window.removeEventListener('resize', syncViewportLayout)
+  themeObserver?.disconnect()
+  themeObserver = null
   destroyPixi()
 })
 

@@ -13,7 +13,7 @@ test.beforeEach(async ({ page }) => {
 test('studio exports svg and png downloads', async ({ goto, page }) => {
   await goto('/diagram')
 
-  const exportMenuButton = page.getByRole('button', { name: 'Export' })
+  const exportMenuButton = page.getByTitle('Export')
 
   await expect(exportMenuButton).toBeVisible()
   await expect(page.locator('[data-attachment-row="index:idx_products_search"]')).toBeVisible()
@@ -258,4 +258,59 @@ test('light mode keeps export controls readable', async ({ goto, page }) => {
   expect(downloadButtonStyles.backgroundColor).not.toBe('rgba(0, 0, 0, 0)')
   expect(downloadButtonStyles.borderColor).not.toBe('rgba(0, 0, 0, 0)')
   expect(downloadButtonStyles.color).not.toBe(downloadButtonStyles.backgroundColor)
+})
+
+test('light mode updates the GPU scene and svg export without a resize', async ({ goto, page }) => {
+  await goto('/diagram')
+
+  await page.getByRole('button', { name: 'Switch to light mode' }).click()
+
+  await expect.poll(async () => {
+    return page.evaluate(() => {
+      return (window as Window & {
+        __pgmlSceneRendererDebug?: {
+          background?: string
+        }
+      }).__pgmlSceneRendererDebug?.background || null
+    })
+  }).toBe('#f8fafc')
+
+  const viewportStyles = await page.locator('[data-diagram-viewport="true"]').evaluate((element) => {
+    const styles = window.getComputedStyle(element)
+
+    return {
+      backgroundColor: styles.backgroundColor,
+      borderColor: styles.borderColor
+    }
+  })
+
+  expect(viewportStyles.backgroundColor).toBe('rgb(248, 250, 252)')
+  expect(viewportStyles.borderColor).toBe('rgba(15, 23, 42, 0.08)')
+
+  const panelStyles = await page.locator('[data-diagram-panel="true"]').evaluate((element) => {
+    const styles = window.getComputedStyle(element)
+
+    return {
+      backgroundColor: styles.backgroundColor,
+      borderColor: styles.borderColor
+    }
+  })
+
+  expect(panelStyles.backgroundColor).toBe('rgba(255, 255, 255, 0.92)')
+  expect(panelStyles.borderColor).toBe('rgba(15, 23, 42, 0.08)')
+
+  const exportMenuButton = page.getByTitle('Export')
+
+  await exportMenuButton.click()
+
+  const svgDownloadPromise = page.waitForEvent('download')
+
+  await page.getByRole('menuitem', { name: 'SVG' }).click()
+
+  const svgDownload = await svgDownloadPromise
+  const svgPath = await svgDownload.path()
+  const svgText = readFileSync(svgPath!, 'utf8')
+
+  expect(svgText).toContain('fill="#f8fafc"')
+  expect(svgText).not.toContain('#12232d')
 })

@@ -11,7 +11,9 @@ import {
   pgmlTableWidthScaleValues
 } from '~/utils/pgml-node-properties'
 import {
+  diagramBackgroundColor,
   diagramDividerColor,
+  diagramDotColor,
   diagramGroupHeaderBandHeight,
   diagramGroupHeaderHeight,
   diagramGroupHorizontalPadding,
@@ -24,7 +26,6 @@ import {
   diagramObjectHeaderHeight,
   diagramObjectMinHeight,
   diagramPalette,
-  diagramPanelSurfaceColor,
   diagramRailColor,
   diagramRowSurfaceColor,
   diagramSurfaceColor,
@@ -62,6 +63,7 @@ import type {
   PgmlTrigger
 } from '~/utils/pgml'
 import { getOrderedGroupTables, getSequenceAttachedTableIds } from '~/utils/pgml'
+import { normalizeSvgPaint } from '~/utils/svg-paint'
 import {
   defaultStudioMobilePanelTab,
   type DiagramPanelTab,
@@ -2569,13 +2571,13 @@ const diagramPanelDescription = computed(() => {
   return 'Select a group, table, row, or object.'
 })
 
-const diagramViewportStyle = {
-  backgroundColor: diagramSurfaceColor,
+const diagramViewportStyle: CSSProperties = {
+  backgroundColor: 'var(--studio-canvas-bg)',
   borderColor: 'var(--studio-divider)'
 }
 
-const floatingPanelStyle = {
-  backgroundColor: diagramPanelSurfaceColor,
+const floatingPanelStyle: CSSProperties = {
+  backgroundColor: 'var(--studio-control-bg)',
   borderColor: 'var(--studio-divider)',
   boxShadow: 'var(--studio-floating-shadow)',
   backdropFilter: 'blur(18px)'
@@ -2902,20 +2904,66 @@ const escapeXml = (value: string) => {
     .replaceAll('\'', '&apos;')
 }
 
+type ExportThemeColors = {
+  background: string
+  divider: string
+  dot: string
+  label: string
+  muted: string
+  rowSurface: string
+  shellText: string
+  surface: string
+  tableSurface: string
+}
+
+const readDiagramThemeToken = (name: string, fallback: string) => {
+  if (!import.meta.client) {
+    return fallback
+  }
+
+  return getComputedStyle(document.documentElement).getPropertyValue(name).trim() || fallback
+}
+
+const getExportThemeColors = (): ExportThemeColors => {
+  return {
+    background: readDiagramThemeToken('--studio-canvas-bg', diagramBackgroundColor),
+    divider: readDiagramThemeToken('--studio-divider', diagramDividerColor),
+    dot: readDiagramThemeToken('--studio-canvas-dot', diagramDotColor),
+    label: readDiagramThemeToken('--studio-shell-label', diagramLabelTextColor),
+    muted: readDiagramThemeToken('--studio-shell-muted', diagramMutedTextColor),
+    rowSurface: readDiagramThemeToken('--studio-row-surface', diagramRowSurfaceColor),
+    shellText: readDiagramThemeToken('--studio-shell-text', diagramTextColor),
+    surface: readDiagramThemeToken('--studio-node-surface-bottom', diagramSurfaceColor),
+    tableSurface: readDiagramThemeToken('--studio-table-surface', diagramTableSurfaceColor)
+  }
+}
+
+const buildSvgPaintAttributes = (attribute: 'fill' | 'stroke', value: string, fallback: string) => {
+  const paint = normalizeSvgPaint(value, fallback)
+  const attributes = [`${attribute}="${paint.color}"`]
+
+  if (paint.opacity !== null && paint.opacity < 1) {
+    attributes.push(`${attribute}-opacity="${paint.opacity}"`)
+  }
+
+  return attributes.join(' ')
+}
+
 const buildExportSvg = () => {
   const padding = 96
   const exportWidth = Math.ceil(worldBounds.value.maxX - worldBounds.value.minX + padding * 2)
   const exportHeight = Math.ceil(worldBounds.value.maxY - worldBounds.value.minY + padding * 2)
   const offsetX = padding - worldBounds.value.minX
   const offsetY = padding - worldBounds.value.minY
+  const exportTheme = getExportThemeColors()
   const parts: string[] = [
     `<svg xmlns="http://www.w3.org/2000/svg" width="${exportWidth}" height="${exportHeight}" viewBox="0 0 ${exportWidth} ${exportHeight}">`,
     '<defs>',
     '<pattern id="pgml-grid" width="18" height="18" patternUnits="userSpaceOnUse">',
-    '<circle cx="9" cy="9" r="1" fill="rgba(148,163,184,0.2)" />',
+    `<circle cx="9" cy="9" r="1" ${buildSvgPaintAttributes('fill', exportTheme.dot, diagramDotColor)} />`,
     '</pattern>',
     '</defs>',
-    `<rect x="0" y="0" width="${exportWidth}" height="${exportHeight}" fill="${diagramSurfaceColor}" />`,
+    `<rect x="0" y="0" width="${exportWidth}" height="${exportHeight}" ${buildSvgPaintAttributes('fill', exportTheme.background, diagramBackgroundColor)} />`,
     `<rect x="0" y="0" width="${exportWidth}" height="${exportHeight}" fill="url(#pgml-grid)" />`
   ]
 
@@ -2923,8 +2971,8 @@ const buildExportSvg = () => {
     parts.push(
       `<rect x="${group.x + offsetX}" y="${group.y + offsetY}" width="${group.width}" height="${group.height}" rx="2" ry="2" fill="${group.color}" fill-opacity="0.14" stroke="${group.color}" stroke-opacity="0.42" />`,
       `<text x="${group.x + offsetX + 12}" y="${group.y + offsetY + 18}" fill="${group.color}" font-size="8" font-family="ui-monospace, monospace">TABLE GROUP</text>`,
-      `<text x="${group.x + offsetX + 12}" y="${group.y + offsetY + 38}" fill="${diagramTextColor}" font-size="14" font-weight="600" font-family="ui-sans-serif, system-ui">${escapeXml(group.title)}</text>`,
-      `<line x1="${group.x + offsetX}" y1="${group.y + offsetY + diagramGroupHeaderHeight}" x2="${group.x + offsetX + group.width}" y2="${group.y + offsetY + diagramGroupHeaderHeight}" stroke="${diagramDividerColor}" />`
+      `<text x="${group.x + offsetX + 12}" y="${group.y + offsetY + 38}" ${buildSvgPaintAttributes('fill', exportTheme.shellText, diagramTextColor)} font-size="14" font-weight="600" font-family="ui-sans-serif, system-ui">${escapeXml(group.title)}</text>`,
+      `<line x1="${group.x + offsetX}" y1="${group.y + offsetY + diagramGroupHeaderHeight}" x2="${group.x + offsetX + group.width}" y2="${group.y + offsetY + diagramGroupHeaderHeight}" ${buildSvgPaintAttributes('stroke', exportTheme.divider, diagramDividerColor)} />`
     )
   })
 
@@ -2943,29 +2991,29 @@ const buildExportSvg = () => {
 
   tableCards.value.forEach((card) => {
     parts.push(
-      `<rect x="${card.x + offsetX}" y="${card.y + offsetY}" width="${card.width}" height="${card.height}" rx="2" ry="2" fill="${diagramTableSurfaceColor}" stroke="${card.color}" stroke-opacity="0.48" />`,
-      `<line x1="${card.x + offsetX}" y1="${card.y + offsetY + card.headerHeight}" x2="${card.x + offsetX + card.width}" y2="${card.y + offsetY + card.headerHeight}" stroke="${diagramDividerColor}" />`,
+      `<rect x="${card.x + offsetX}" y="${card.y + offsetY}" width="${card.width}" height="${card.height}" rx="2" ry="2" ${buildSvgPaintAttributes('fill', exportTheme.tableSurface, diagramTableSurfaceColor)} stroke="${card.color}" stroke-opacity="0.48" />`,
+      `<line x1="${card.x + offsetX}" y1="${card.y + offsetY + card.headerHeight}" x2="${card.x + offsetX + card.width}" y2="${card.y + offsetY + card.headerHeight}" ${buildSvgPaintAttributes('stroke', exportTheme.divider, diagramDividerColor)} />`,
       `<text x="${card.x + offsetX + 10}" y="${card.y + offsetY + 16}" fill="${card.color}" font-size="8" font-family="ui-monospace, monospace">TABLE</text>`,
-      `<text x="${card.x + offsetX + card.width - 10}" y="${card.y + offsetY + 16}" fill="${diagramMutedTextColor}" font-size="8" text-anchor="end" font-family="ui-monospace, monospace">${card.rows.length} ROWS</text>`,
-      `<text x="${card.x + offsetX + 10}" y="${card.y + offsetY + 42}" fill="${diagramTextColor}" font-size="14" font-weight="600" font-family="ui-sans-serif, system-ui">${escapeXml(card.title)}</text>`
+      `<text x="${card.x + offsetX + card.width - 10}" y="${card.y + offsetY + 16}" ${buildSvgPaintAttributes('fill', exportTheme.muted, diagramMutedTextColor)} font-size="8" text-anchor="end" font-family="ui-monospace, monospace">${card.rows.length} ROWS</text>`,
+      `<text x="${card.x + offsetX + 10}" y="${card.y + offsetY + 42}" ${buildSvgPaintAttributes('fill', exportTheme.shellText, diagramTextColor)} font-size="14" font-weight="600" font-family="ui-sans-serif, system-ui">${escapeXml(card.title)}</text>`
     )
 
     card.rows.forEach((row, index) => {
       const rowY = card.y + offsetY + card.headerHeight + index * diagramTableRowHeight
 
       parts.push(
-        `<rect x="${card.x + offsetX}" y="${rowY}" width="${card.width}" height="${diagramTableRowHeight}" fill="${diagramRowSurfaceColor}" />`,
-        `<text x="${card.x + offsetX + 10}" y="${rowY + 14}" fill="${diagramTextColor}" font-size="9" font-family="ui-monospace, monospace">${escapeXml(row.title)}</text>`,
-        `<text x="${card.x + offsetX + 10}" y="${rowY + 25}" fill="${diagramMutedTextColor}" font-size="8" font-family="ui-sans-serif, system-ui">${escapeXml(row.subtitle)}</text>`
+        `<rect x="${card.x + offsetX}" y="${rowY}" width="${card.width}" height="${diagramTableRowHeight}" ${buildSvgPaintAttributes('fill', exportTheme.rowSurface, diagramRowSurfaceColor)} />`,
+        `<text x="${card.x + offsetX + 10}" y="${rowY + 14}" ${buildSvgPaintAttributes('fill', exportTheme.shellText, diagramTextColor)} font-size="9" font-family="ui-monospace, monospace">${escapeXml(row.title)}</text>`,
+        `<text x="${card.x + offsetX + 10}" y="${rowY + 25}" ${buildSvgPaintAttributes('fill', exportTheme.muted, diagramMutedTextColor)} font-size="8" font-family="ui-sans-serif, system-ui">${escapeXml(row.subtitle)}</text>`
       )
     })
   })
 
   objectNodes.value.forEach((node) => {
     parts.push(
-      `<rect x="${node.x + offsetX}" y="${node.y + offsetY}" width="${node.width}" height="${node.height}" fill="${diagramSurfaceColor}" stroke="${node.color}" stroke-opacity="0.4" />`,
+      `<rect x="${node.x + offsetX}" y="${node.y + offsetY}" width="${node.width}" height="${node.height}" ${buildSvgPaintAttributes('fill', exportTheme.surface, diagramSurfaceColor)} stroke="${node.color}" stroke-opacity="0.4" />`,
       `<text x="${node.x + offsetX + 10}" y="${node.y + offsetY + 16}" fill="${node.color}" font-size="8" font-family="ui-monospace, monospace">${escapeXml(node.kindLabel.toUpperCase())}</text>`,
-      `<text x="${node.x + offsetX + 10}" y="${node.y + offsetY + 32}" fill="${diagramTextColor}" font-size="14" font-family="ui-sans-serif, system-ui">${escapeXml(node.title)}</text>`
+      `<text x="${node.x + offsetX + 10}" y="${node.y + offsetY + 32}" ${buildSvgPaintAttributes('fill', exportTheme.shellText, diagramTextColor)} font-size="14" font-family="ui-sans-serif, system-ui">${escapeXml(node.title)}</text>`
     )
   })
 
