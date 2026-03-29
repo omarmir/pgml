@@ -175,3 +175,10 @@ export const buildPgmlWorkspaceCompareRelationshipSummary = (baseLabel: string) 
 export const buildPgmlInvalidCompareRelationshipSummary = () => {
   return 'Select a valid base and target to compare version history.'
 }
+
+export const buildPgmlDirectIncrementCompareRelationshipSummary = (
+  targetLabel: string,
+  baseLabel: string
+) => {
+  return `${targetLabel} increments directly from ${baseLabel}.`
+}

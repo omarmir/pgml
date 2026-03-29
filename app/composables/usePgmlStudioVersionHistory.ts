@@ -1,5 +1,6 @@
 import type { ComputedRef, Ref } from 'vue'
 import {
+  buildPgmlDirectIncrementCompareRelationshipSummary,
   buildPgmlEmptyBaseCompareRelationshipSummary,
   buildPgmlInvalidCompareRelationshipSummary,
   buildPgmlWorkspaceCompareRelationshipSummary,
@@ -233,7 +234,10 @@ export const usePgmlStudioVersionHistory = (
     }
 
     if (compareTargetVersion.value.parentVersionId === compareBaseVersion.value.id) {
-      return `${compareTargetVersion.value.name || compareTargetVersion.value.id} increments directly from ${compareBaseVersion.value.name || compareBaseVersion.value.id}.`
+      return buildPgmlDirectIncrementCompareRelationshipSummary(
+        compareTargetVersion.value.name || compareTargetVersion.value.id,
+        compareBaseVersion.value.name || compareBaseVersion.value.id
+      )
     }
 
     const commonAncestor = getPgmlNearestCommonAncestor(

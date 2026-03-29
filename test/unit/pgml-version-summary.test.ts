@@ -5,6 +5,7 @@ import { diffPgmlSchemaModels } from '../../app/utils/pgml-diff'
 import {
   buildPgmlEmptyBaseCompareRelationshipSummary,
   buildPgmlCompareDeltaDescription,
+  buildPgmlDirectIncrementCompareRelationshipSummary,
   buildPgmlDocumentEditorModeDescription,
   buildPgmlEditorReadOnlyLabel,
   buildPgmlInvalidCompareRelationshipSummary,
@@ -142,5 +143,9 @@ Table public.orders {
 
   it('builds the invalid compare relationship summary', () => {
     expect(buildPgmlInvalidCompareRelationshipSummary()).toBe('Select a valid base and target to compare version history.')
+  })
+
+  it('builds direct increment compare relationship summaries', () => {
+    expect(buildPgmlDirectIncrementCompareRelationshipSummary('Add orders', 'Initial design')).toBe('Add orders increments directly from Initial design.')
   })
 })
