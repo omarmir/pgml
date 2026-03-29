@@ -54,6 +54,7 @@ import { buildPgmlVersionMigrationBundle } from '~/utils/pgml-version-migration'
 import {
   buildPgmlCheckpointRoleDescription,
   buildPgmlCheckpointTargetLabel,
+  buildPgmlImportDumpConfirmLabel,
   buildPgmlImportDumpDialogDescription,
   buildPgmlImportDumpInputDescription,
   buildPgmlImportDumpDialogTitle,
@@ -753,7 +754,7 @@ const importDumpDialogCopy = computed(() => {
   const baseLabel = baseVersion ? getVersionLabel(baseVersion) : 'the selected version'
 
   return {
-    confirmLabel: 'Replace workspace with import',
+    confirmLabel: buildPgmlImportDumpConfirmLabel(),
     description: buildPgmlImportDumpDialogDescription(baseLabel),
     inputDescription: buildPgmlImportDumpInputDescription(),
     title: buildPgmlImportDumpDialogTitle()

@@ -27,3 +27,7 @@ export const buildPgmlImportDumpInputDescription = () => {
 export const buildPgmlImportDumpDialogTitle = () => {
   return 'Import pg_dump onto a version'
 }
+
+export const buildPgmlImportDumpConfirmLabel = () => {
+  return 'Replace workspace with import'
+}

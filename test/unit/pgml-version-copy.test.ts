@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest'
 import {
   buildPgmlCheckpointRoleDescription,
   buildPgmlCheckpointTargetLabel,
+  buildPgmlImportDumpConfirmLabel,
   buildPgmlImportDumpDialogTitle,
   buildPgmlImportDumpDialogDescription,
   buildPgmlImportDumpInputDescription,
@@ -35,5 +36,9 @@ describe('PGML version copy helpers', () => {
 
   it('builds the import dialog title', () => {
     expect(buildPgmlImportDumpDialogTitle()).toBe('Import pg_dump onto a version')
+  })
+
+  it('builds the import dialog confirm label', () => {
+    expect(buildPgmlImportDumpConfirmLabel()).toBe('Replace workspace with import')
   })
 })
