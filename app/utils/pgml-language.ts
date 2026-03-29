@@ -206,6 +206,9 @@ const versionRoleValueTemplates = [
   { label: 'implementation', detail: 'An implementation-side checkpoint.', apply: 'implementation' }
 ] as const
 
+const workspaceMetadataKeys = new Set(['based_on', 'updated_at'])
+const versionMetadataKeys = new Set(['name', 'role', 'parent', 'created_at'])
+
 const tableBodyKeywordTemplates = [
   { label: 'Note:', detail: 'Add a table note.', apply: 'Note: ' },
   { label: 'Index', detail: 'Add an index definition.', apply: 'Index ' },
@@ -1867,6 +1870,112 @@ const analyzeNestedSnapshotBlock = (
   )
 }
 
+const collectNestedHistoryBlocks = (
+  block: PgmlRawBlock,
+  diagnostics: PgmlLanguageDiagnostic[],
+  contexts: PgmlContextRange[]
+) => {
+  const nested = collectRawBlocks(block.body, diagnostics, contexts, {
+    topLevelContextKind: null
+  })
+
+  buildContexts(nested.blocks, contexts)
+
+  return nested
+}
+
+const validateMetadataOnlyLines = (
+  lines: PgmlLineInfo[],
+  diagnostics: PgmlLanguageDiagnostic[],
+  options: {
+    allowedKeys: Set<string>
+    entryCode: string
+    entryMessage: string
+    keyCode: string
+    keyMessage: string
+  }
+) => {
+  lines.forEach((line) => {
+    const entry = parseMetadataEntry(line.trimmed)
+
+    if (!entry) {
+      createDiagnostic(
+        diagnostics,
+        options.entryCode,
+        'error',
+        options.entryMessage,
+        line
+      )
+      return
+    }
+
+    if (!options.allowedKeys.has(normalizeMetadataKey(entry.key))) {
+      createDiagnostic(
+        diagnostics,
+        options.keyCode,
+        'error',
+        options.keyMessage,
+        line
+      )
+    }
+  })
+}
+
+const validateSnapshotOnlyChildren = (
+  nestedBlocks: PgmlRawBlock[],
+  diagnostics: PgmlLanguageDiagnostic[],
+  options: {
+    fallbackLine: PgmlLineInfo
+    missingCode: string
+    missingMessage: string
+    duplicateCode: string
+    duplicateMessage: string
+    invalidBlockCode: string
+    invalidBlockMessage: string
+  }
+) => {
+  const snapshotBlocks = nestedBlocks.filter(nestedBlock => nestedBlock.kind === 'Snapshot')
+
+  if (snapshotBlocks.length === 0) {
+    const firstBlock = nestedBlocks[0]
+
+    diagnostics.push({
+      code: options.missingCode,
+      severity: 'error',
+      message: options.missingMessage,
+      from: firstBlock ? firstBlock.from : options.fallbackLine.from,
+      to: firstBlock ? firstBlock.to : Math.max(options.fallbackLine.from + 1, options.fallbackLine.to),
+      line: firstBlock ? firstBlock.startLine : options.fallbackLine.number
+    })
+  }
+
+  if (snapshotBlocks.length > 1) {
+    snapshotBlocks.slice(1).forEach((snapshotBlock) => {
+      createDiagnostic(
+        diagnostics,
+        options.duplicateCode,
+        'error',
+        options.duplicateMessage,
+        snapshotBlock.headerLine
+      )
+    })
+  }
+
+  nestedBlocks.forEach((nestedBlock) => {
+    if (nestedBlock.kind !== 'Snapshot') {
+      createDiagnostic(
+        diagnostics,
+        options.invalidBlockCode,
+        'error',
+        options.invalidBlockMessage,
+        nestedBlock.headerLine
+      )
+    }
+  })
+
+  return snapshotBlocks
+}
+
 const analyzeWorkspaceBlock = (
   block: PgmlRawBlock,
   diagnostics: PgmlLanguageDiagnostic[],
@@ -1884,73 +1993,24 @@ const analyzeWorkspaceBlock = (
     return
   }
 
-  const nested = collectRawBlocks(block.body, diagnostics, contexts, {
-    topLevelContextKind: null
+  const nested = collectNestedHistoryBlocks(block, diagnostics, contexts)
+
+  validateMetadataOnlyLines(nested.topLevelLines, diagnostics, {
+    allowedKeys: workspaceMetadataKeys,
+    entryCode: 'pgml/workspace-entry',
+    entryMessage: 'Workspace only allows metadata entries and a nested Snapshot block.',
+    keyCode: 'pgml/workspace-key',
+    keyMessage: 'Workspace only supports `based_on` and `updated_at` metadata.'
   })
 
-  buildContexts(nested.blocks, contexts)
-
-  nested.topLevelLines.forEach((line) => {
-    const entry = parseMetadataEntry(line.trimmed)
-
-    if (!entry) {
-      createDiagnostic(
-        diagnostics,
-        'pgml/workspace-entry',
-        'error',
-        'Workspace only allows metadata entries and a nested Snapshot block.',
-        line
-      )
-      return
-    }
-
-    const normalizedKey = normalizeMetadataKey(entry.key)
-
-    if (normalizedKey !== 'based_on' && normalizedKey !== 'updated_at') {
-      createDiagnostic(
-        diagnostics,
-        'pgml/workspace-key',
-        'error',
-        'Workspace only supports `based_on` and `updated_at` metadata.',
-        line
-      )
-    }
-  })
-
-  const snapshotBlocks = nested.blocks.filter(nestedBlock => nestedBlock.kind === 'Snapshot')
-
-  if (snapshotBlocks.length === 0) {
-    createDiagnostic(
-      diagnostics,
-      'pgml/workspace-snapshot-missing',
-      'error',
-      'Workspace requires a Snapshot block.',
-      block.headerLine
-    )
-  }
-
-  if (snapshotBlocks.length > 1) {
-    snapshotBlocks.slice(1).forEach((snapshotBlock) => {
-      createDiagnostic(
-        diagnostics,
-        'pgml/workspace-snapshot-duplicate',
-        'error',
-        'Workspace only allows one Snapshot block.',
-        snapshotBlock.headerLine
-      )
-    })
-  }
-
-  nested.blocks.forEach((nestedBlock) => {
-    if (nestedBlock.kind !== 'Snapshot') {
-      createDiagnostic(
-        diagnostics,
-        'pgml/workspace-block-kind',
-        'error',
-        'Workspace only allows a nested Snapshot block.',
-        nestedBlock.headerLine
-      )
-    }
+  const snapshotBlocks = validateSnapshotOnlyChildren(nested.blocks, diagnostics, {
+    fallbackLine: block.headerLine,
+    missingCode: 'pgml/workspace-snapshot-missing',
+    missingMessage: 'Workspace requires a Snapshot block.',
+    duplicateCode: 'pgml/workspace-snapshot-duplicate',
+    duplicateMessage: 'Workspace only allows one Snapshot block.',
+    invalidBlockCode: 'pgml/workspace-block-kind',
+    invalidBlockMessage: 'Workspace only allows a nested Snapshot block.'
   })
 
   if (snapshotBlocks[0]) {
@@ -1979,44 +2039,24 @@ const analyzeVersionBlock = (
 
   analysisState.versionIds.push(createNamedRange(versionId, block.headerLine, versionId))
 
-  const nested = collectRawBlocks(block.body, diagnostics, contexts, {
-    topLevelContextKind: null
-  })
+  const nested = collectNestedHistoryBlocks(block, diagnostics, contexts)
 
-  buildContexts(nested.blocks, contexts)
+  validateMetadataOnlyLines(nested.topLevelLines, diagnostics, {
+    allowedKeys: versionMetadataKeys,
+    entryCode: 'pgml/version-entry',
+    entryMessage: 'Version only allows metadata entries and a nested Snapshot block.',
+    keyCode: 'pgml/version-key',
+    keyMessage: 'Version only supports `name`, `role`, `parent`, and `created_at` metadata.'
+  })
 
   nested.topLevelLines.forEach((line) => {
     const entry = parseMetadataEntry(line.trimmed)
 
-    if (!entry) {
-      createDiagnostic(
-        diagnostics,
-        'pgml/version-entry',
-        'error',
-        'Version only allows metadata entries and a nested Snapshot block.',
-        line
-      )
+    if (entry?.key !== 'role') {
       return
     }
 
-    const normalizedKey = normalizeMetadataKey(entry.key)
-
-    if (!['name', 'role', 'parent', 'created_at'].includes(normalizedKey)) {
-      createDiagnostic(
-        diagnostics,
-        'pgml/version-key',
-        'error',
-        'Version only supports `name`, `role`, `parent`, and `created_at` metadata.',
-        line
-      )
-      return
-    }
-
-    if (
-      normalizedKey === 'role'
-      && entry.value !== 'design'
-      && entry.value !== 'implementation'
-    ) {
+    if (entry.value !== 'design' && entry.value !== 'implementation') {
       createDiagnostic(
         diagnostics,
         'pgml/version-role',
@@ -2027,40 +2067,14 @@ const analyzeVersionBlock = (
     }
   })
 
-  const snapshotBlocks = nested.blocks.filter(nestedBlock => nestedBlock.kind === 'Snapshot')
-
-  if (snapshotBlocks.length === 0) {
-    createDiagnostic(
-      diagnostics,
-      'pgml/version-snapshot-missing',
-      'error',
-      `Version ${versionId} requires a Snapshot block.`,
-      block.headerLine
-    )
-  }
-
-  if (snapshotBlocks.length > 1) {
-    snapshotBlocks.slice(1).forEach((snapshotBlock) => {
-      createDiagnostic(
-        diagnostics,
-        'pgml/version-snapshot-duplicate',
-        'error',
-        `Version ${versionId} only allows one Snapshot block.`,
-        snapshotBlock.headerLine
-      )
-    })
-  }
-
-  nested.blocks.forEach((nestedBlock) => {
-    if (nestedBlock.kind !== 'Snapshot') {
-      createDiagnostic(
-        diagnostics,
-        'pgml/version-block-kind',
-        'error',
-        'Version only allows a nested Snapshot block.',
-        nestedBlock.headerLine
-      )
-    }
+  const snapshotBlocks = validateSnapshotOnlyChildren(nested.blocks, diagnostics, {
+    fallbackLine: block.headerLine,
+    missingCode: 'pgml/version-snapshot-missing',
+    missingMessage: `Version ${versionId} requires a Snapshot block.`,
+    duplicateCode: 'pgml/version-snapshot-duplicate',
+    duplicateMessage: `Version ${versionId} only allows one Snapshot block.`,
+    invalidBlockCode: 'pgml/version-block-kind',
+    invalidBlockMessage: 'Version only allows a nested Snapshot block.'
   })
 
   if (snapshotBlocks[0]) {
