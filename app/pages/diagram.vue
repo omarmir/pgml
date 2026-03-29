@@ -51,6 +51,7 @@ import {
   getLatestPgmlVersion
 } from '~/utils/pgml-document'
 import { buildPgmlVersionMigrationBundle } from '~/utils/pgml-version-migration'
+import { buildPgmlCheckpointTargetLabel } from '~/utils/pgml-version-copy'
 import {
   buildPgmlImportBaseVersionItems,
   buildPgmlVersionCompareOptions
@@ -1852,7 +1853,7 @@ onBeforeUnmount(() => {
               Checkpoint target
             </div>
             <div class="mt-2 text-[0.84rem] font-semibold text-[color:var(--studio-shell-text)]">
-              {{ checkpointBaseVersion ? `Branches from ${getVersionLabel(checkpointBaseVersion)}` : 'Creates the first locked version from the workspace draft' }}
+              {{ buildPgmlCheckpointTargetLabel(checkpointBaseVersion ? getVersionLabel(checkpointBaseVersion) : null) }}
             </div>
             <p class="mt-2 text-[0.72rem] leading-6 text-[color:var(--studio-shell-muted)]">
               {{
