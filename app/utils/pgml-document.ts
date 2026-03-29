@@ -184,6 +184,13 @@ export const getPgmlRootVersionCount = (document: PgmlVersionSetDocument) => {
   return getPgmlRootVersions(document).length
 }
 
+export const isPgmlRootVersion = (
+  document: PgmlVersionSetDocument,
+  versionId: string | null
+) => {
+  return getPgmlRootVersions(document).some(version => version.id === versionId)
+}
+
 export const getPgmlVersionCount = (document: PgmlVersionSetDocument) => {
   return document.versions.length
 }
