@@ -527,13 +527,43 @@ export const getPgmlSiblingVersions = (
     .filter(version => version.id !== targetVersion.id)
 }
 
+const sortVersionSiblings = (versions: PgmlVersionDocumentBlock[]) => {
+  return [...versions].sort((left, right) => {
+    if (left.createdAt !== right.createdAt) {
+      return left.createdAt.localeCompare(right.createdAt)
+    }
+
+    return left.id.localeCompare(right.id)
+  })
+}
+
+export const getPgmlVersionsInTopologicalOrder = (document: PgmlVersionSetDocument) => {
+  const orderedVersions: PgmlVersionDocumentBlock[] = []
+  const pendingVersions = sortVersionSiblings(getPgmlChildVersions(document, null))
+
+  while (pendingVersions.length > 0) {
+    const nextVersion = pendingVersions.shift() || null
+
+    if (!nextVersion) {
+      continue
+    }
+
+    orderedVersions.push(nextVersion)
+    sortVersionSiblings(getPgmlChildVersions(document, nextVersion.id)).forEach((childVersion) => {
+      pendingVersions.push(childVersion)
+    })
+  }
+
+  return orderedVersions
+}
+
 export const serializePgmlDocument = (document: PgmlVersionSetDocument) => {
   validateVersionSetDocument(document)
 
   const sections = [
     `VersionSet ${quoteMetadataValue(document.name)} {`,
     buildWorkspaceBlock(document.workspace),
-    ...document.versions.map(buildVersionBlock),
+    ...getPgmlVersionsInTopologicalOrder(document).map(buildVersionBlock),
     '}'
   ]
 

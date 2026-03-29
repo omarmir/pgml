@@ -9,6 +9,7 @@ import {
   getPgmlVersionDepth,
   getPgmlVersionLineage,
   getPgmlVersionMap,
+  getPgmlVersionsInTopologicalOrder,
   getPgmlSiblingVersions,
   getPgmlWorkspaceBaseVersion,
   parsePgmlDocument,
@@ -308,6 +309,48 @@ Table public.memberships {
     expect(getPgmlSiblingVersions(branchBDocument, branchBDocument.versions[2]?.id || null).map(version => version.name)).toEqual([
       'Orders branch'
     ])
+  })
+
+  it('serializes versions in deterministic topological order', () => {
+    const parsed = parsePgmlDocument(`VersionSet "Billing" {
+  Workspace {
+    based_on: v2
+
+    Snapshot {
+      Table public.users {
+        id uuid [pk]
+      }
+    }
+  }
+
+  Version v2 {
+    name: "Orders branch"
+    role: design
+    parent: v1
+    created_at: "2026-03-29T12:05:00.000Z"
+
+    Snapshot {
+      Table public.users {
+        id uuid [pk]
+      }
+    }
+  }
+
+  Version v1 {
+    name: "Root"
+    role: implementation
+    created_at: "2026-03-29T12:00:00.000Z"
+
+    Snapshot {
+      Table public.users {
+        id uuid [pk]
+      }
+    }
+  }
+}`)
+
+    expect(getPgmlVersionsInTopologicalOrder(parsed).map(version => version.id)).toEqual(['v1', 'v2'])
+    expect(serializePgmlDocument(parsed).indexOf('Version v1')).toBeLessThan(serializePgmlDocument(parsed).indexOf('Version v2'))
   })
 
   it('rejects invalid VersionSet documents that reference missing parent or base versions', () => {
