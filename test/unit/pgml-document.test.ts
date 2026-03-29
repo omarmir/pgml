@@ -32,6 +32,7 @@ import {
   getPgmlNearestCommonAncestor,
   getPgmlVersionById,
   getPgmlVersionCount,
+  getPgmlVersionAncestorCount,
   getPgmlVersionDepth,
   getPgmlVersionLineage,
   getPgmlVersionLineageIds,
@@ -175,6 +176,7 @@ Table public.orders {
       'Add orders'
     ])
     expect(getPgmlVersionLineageIds(secondVersion, targetVersion?.id || null)).toHaveLength(2)
+    expect(getPgmlVersionAncestorCount(secondVersion, targetVersion?.id || null)).toBe(1)
     expect(getPgmlVersionLineage(secondVersion, null)).toEqual([])
   })
 
