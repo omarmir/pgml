@@ -124,6 +124,9 @@ const workspaceBaseVersionId = computed(() => {
 const latestImplementationVersionId = computed(() => {
   return versions.find(version => version.role === 'implementation' && version.isLatestByRole)?.id || null
 })
+const latestDesignVersionId = computed(() => {
+  return versions.find(version => version.role === 'design' && version.isLatestByRole)?.id || null
+})
 const migrationLineCount = computed(() => {
   return hasMigrationSql.value ? migrationSql.trim().split('\n').length : 0
 })
@@ -377,6 +380,15 @@ const swapComparePair = () => {
           :class="secondaryButtonClass"
           :disabled="latestImplementationVersionId === null"
           @click="applyComparePreset({ baseId: latestImplementationVersionId, targetId: 'workspace' })"
+        />
+        <UButton
+          label="Latest design to draft"
+          color="neutral"
+          variant="outline"
+          size="xs"
+          :class="secondaryButtonClass"
+          :disabled="latestDesignVersionId === null"
+          @click="applyComparePreset({ baseId: latestDesignVersionId, targetId: 'workspace' })"
         />
         <UButton
           label="Swap"

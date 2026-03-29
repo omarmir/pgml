@@ -15,5 +15,6 @@ describe('diagram versions panel source', () => {
     expect(file).toContain('Leaf')
     expect(file).toContain('Latest {{ version.role }}')
     expect(file).toContain('Latest impl to draft')
+    expect(file).toContain('Latest design to draft')
   })
 })
