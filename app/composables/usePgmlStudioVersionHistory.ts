@@ -164,6 +164,10 @@ export const usePgmlStudioVersionHistory = (
         branchRootLabel: getPgmlBranchRootLabel(document.value, version.id),
         depth: getPgmlVersionDepth(document.value, version.id),
         ...version,
+        parentVersionLabel: version.parentVersionId
+          ? getPgmlVersionById(document.value, version.parentVersionId)?.name
+            || version.parentVersionId
+          : null,
         isLeaf: isPgmlLeafVersion(document.value, version.id),
         isLatestByRole: version.id === (
           version.role === 'design'

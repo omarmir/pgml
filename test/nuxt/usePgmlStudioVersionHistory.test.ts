@@ -234,7 +234,8 @@ Properties "public.users" {
       isLatestByRole: true,
       isRoot: false,
       lineageIds: expect.arrayContaining([rootVersion.id]),
-      lineageLabel: 'Initial design -> Add status'
+      lineageLabel: 'Initial design -> Add status',
+      parentVersionLabel: 'Initial design'
     }))
   })
 
