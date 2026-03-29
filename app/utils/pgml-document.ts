@@ -853,6 +853,15 @@ export const getPgmlDescendantVersionCount = (
   return getPgmlDescendantVersions(document, versionId).length
 }
 
+export const getPgmlBranchVersionCount = (
+  document: PgmlVersionSetDocument,
+  versionId: string | null
+) => {
+  return getPgmlVersionById(document, versionId)
+    ? getPgmlDescendantVersionCount(document, versionId) + 1
+    : 0
+}
+
 export const getPgmlVersionDepth = (
   document: PgmlVersionSetDocument,
   versionId: string | null
