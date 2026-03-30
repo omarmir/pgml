@@ -71,6 +71,16 @@ type PgmlVersionMetricBadge = {
   label: string
 }
 
+type PgmlMigrationFormat = 'sql' | 'kysely'
+
+type PgmlVersionMigrationArtifact = {
+  content: string
+  fileName: string
+  hasChanges: boolean
+  label: string
+  mimeType: string
+}
+
 const {
   canCreateCheckpoint = true,
   compareBaseId = null,
@@ -122,7 +132,7 @@ const emit = defineEmits<{
 }>()
 
 const copyState: Ref<'idle' | 'success' | 'error'> = ref('idle')
-const activeMigrationFormat: Ref<'sql' | 'kysely'> = ref('sql')
+const activeMigrationFormat: Ref<PgmlMigrationFormat> = ref('sql')
 const copyButtonClass = joinStudioClasses(studioButtonClasses.secondary, 'text-[0.65rem]')
 const primaryButtonClass = joinStudioClasses(studioButtonClasses.primary, 'text-[0.65rem]')
 const secondaryButtonClass = joinStudioClasses(studioButtonClasses.secondary, 'text-[0.65rem]')
@@ -263,38 +273,51 @@ const comparePresetButtons = computed(() => {
     })
   ] satisfies PgmlComparePresetButton[]
 })
+// The migration preview, copy, and download controls all point at the same
+// active artifact. Keeping the SQL/Kysely metadata together avoids repeating
+// format branches across every derived computed.
+const migrationArtifacts = computed<Record<PgmlMigrationFormat, PgmlVersionMigrationArtifact>>(() => {
+  return {
+    kysely: {
+      content: migrationKysely,
+      fileName: migrationKyselyFileName,
+      hasChanges: hasMigrationKysely.value,
+      label: 'Kysely',
+      mimeType: 'text/plain;charset=utf-8'
+    },
+    sql: {
+      content: migrationSql,
+      fileName: migrationFileName,
+      hasChanges: hasMigrationSql.value,
+      label: 'SQL',
+      mimeType: 'text/sql;charset=utf-8'
+    }
+  }
+})
+const activeMigrationArtifact = computed(() => {
+  return migrationArtifacts.value[activeMigrationFormat.value]
+})
 const migrationLineCount = computed(() => {
-  const migrationContent = activeMigrationFormat.value === 'sql'
-    ? migrationSql
-    : migrationKysely
+  const migrationContent = activeMigrationArtifact.value.content
 
   return migrationContent.trim().length > 0
     ? migrationContent.trim().split('\n').length
     : 0
 })
 const activeMigrationFileName = computed(() => {
-  return activeMigrationFormat.value === 'sql'
-    ? migrationFileName
-    : migrationKyselyFileName
+  return activeMigrationArtifact.value.fileName
 })
-const isSqlMigrationFormat = computed(() => activeMigrationFormat.value === 'sql')
 const activeMigrationLabel = computed(() => {
-  return isSqlMigrationFormat.value ? 'SQL' : 'Kysely'
+  return activeMigrationArtifact.value.label
 })
 const activeMigrationContent = computed(() => {
-  return isSqlMigrationFormat.value
-    ? migrationSql
-    : migrationKysely
+  return activeMigrationArtifact.value.content
 })
 const hasActiveMigration = computed(() => {
-  return isSqlMigrationFormat.value
-    ? hasMigrationSql.value
-    : hasMigrationKysely.value
+  return activeMigrationArtifact.value.hasChanges
 })
 const getActiveMigrationMimeType = () => {
-  return isSqlMigrationFormat.value
-    ? 'text/sql;charset=utf-8'
-    : 'text/plain;charset=utf-8'
+  return activeMigrationArtifact.value.mimeType
 }
 const compareSummary = computed(() => {
   return buildPgmlVersionCompareSummary({
