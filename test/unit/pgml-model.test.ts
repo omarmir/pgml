@@ -103,6 +103,36 @@ describe('PGML model parsing', () => {
     ]))
     expect(archiveOrders?.docs?.summary).toContain('Moves stale orders')
     expect(archiveOrders?.affects?.writes).toEqual(['public.orders_archive', 'public.order_item_archive'])
+    expect(archiveOrders?.details).toEqual(expect.arrayContaining([
+      expect.stringContaining('source:\nCREATE OR REPLACE PROCEDURE public.archive_orders(retention_days integer)\nLANGUAGE plpgsql')
+    ]))
+  })
+
+  it('dedents executable source in detail previews while keeping nested SQL indentation', () => {
+    const model = parsePgml(`Procedure public.archive_orders(retention_days integer) {
+  source: $sql$
+        CREATE OR REPLACE PROCEDURE public.archive_orders(retention_days integer)
+        LANGUAGE plpgsql
+        AS $$
+        BEGIN
+          INSERT INTO public.orders_archive
+          SELECT * FROM public.orders;
+        END;
+        $$;
+  $sql$
+}`)
+    const procedure = model.procedures.find(entry => entry.name.endsWith('archive_orders')) || null
+    const sourceDetail = procedure?.details.find(detail => detail.startsWith('source:\n')) || null
+
+    expect(sourceDetail?.trimEnd()).toBe(`source:
+CREATE OR REPLACE PROCEDURE public.archive_orders(retention_days integer)
+LANGUAGE plpgsql
+AS $$
+BEGIN
+  INSERT INTO public.orders_archive
+  SELECT * FROM public.orders;
+END;
+$$;`)
   })
 
   it('derives trigger execution metadata and called routines from trigger source', () => {

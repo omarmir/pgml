@@ -192,7 +192,7 @@ test('selecting a standalone routine opens a detail popover beside its object ca
 Function orphan_report() {
   language: sql
   source: $sql$
-    select 1;
+\tselect 1;
   $sql$
 }`)
 
@@ -209,5 +209,39 @@ Function orphan_report() {
   await expect(popover).toContainText('language: sql')
   await expect(popover).toContainText('source:')
   await expect(popover).toContainText('select 1;')
+  await expect.poll(async () => {
+    return popover
+      .locator('[data-detail-popover-detail="true"]')
+      .filter({ hasText: 'select 1;' })
+      .first()
+      .evaluate(node => getComputedStyle(node).tabSize)
+  }).toBe('2')
   expectPopoverBesideTarget(await popover.boundingBox(), objectRect)
+})
+
+test('procedure attachment popovers render dedented source previews', async ({ goto, page }) => {
+  await goto('/diagram')
+
+  await page.locator('[data-diagram-panel-tab="entities"]').click()
+
+  const procedureRow = page.locator('[data-browser-entity-row="procedure:archive_orders"] button').first()
+
+  await expect(procedureRow).toBeVisible()
+  await procedureRow.click()
+
+  const popover = page.locator('[data-attachment-popover="procedure:archive_orders"]')
+  const sourceDetail = popover
+    .locator('[data-detail-popover-detail="true"]')
+    .filter({ hasText: 'CREATE OR REPLACE PROCEDURE public.archive_orders(retention_days integer)' })
+    .first()
+
+  await expect(popover).toBeVisible()
+  await expect(popover).toContainText('LANGUAGE plpgsql')
+  await expect.poll(async () => {
+    return sourceDetail.innerText()
+  }).toContain(`source:
+CREATE OR REPLACE PROCEDURE public.archive_orders(retention_days integer)
+LANGUAGE plpgsql
+AS $$
+BEGIN`)
 })

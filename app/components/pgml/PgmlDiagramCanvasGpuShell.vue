@@ -363,6 +363,10 @@ const sidePanelActionButtonClass = joinStudioClasses(studioButtonClasses.seconda
 const sidePanelCloseButtonClass = joinStudioClasses(studioButtonClasses.iconGhost, 'h-7 w-7 justify-center px-0')
 const detailPopoverKindBadgeClass = 'inline-flex items-center border px-1.5 font-mono text-[0.56rem] uppercase tracking-[0.08em]'
 const detailPopoverFlagBadgeClass = 'inline-flex items-center border px-1.5 py-0.5 font-mono text-[0.54rem] uppercase tracking-[0.06em]'
+// Imported routine and sequence bodies often preserve hard tabs from the source
+// SQL. Keep the tab width compact in the floating popover so mobile previews do
+// not waste horizontal space on indentation alone.
+const detailPopoverDetailTextClass = 'break-words whitespace-pre-wrap font-mono text-[0.62rem] leading-5 text-[color:var(--studio-shell-muted)] [overflow-wrap:anywhere] [tab-size:2]'
 const browserItemActionButtonBaseClass = 'inline-flex shrink-0 items-center justify-center px-2 leading-none'
 const browserItemActionButtonClass = getStudioStateButtonClass({
   extraClass: joinStudioClasses(browserItemActionButtonBaseClass, 'h-7 min-w-[3.5rem]')
@@ -3988,7 +3992,8 @@ defineExpose<{
           <p
             v-for="detail in selectedDetailPopover.details"
             :key="detail"
-            class="break-words whitespace-pre-wrap font-mono text-[0.62rem] leading-5 text-[color:var(--studio-shell-muted)] [overflow-wrap:anywhere]"
+            data-detail-popover-detail="true"
+            :class="detailPopoverDetailTextClass"
           >
             {{ detail }}
           </p>

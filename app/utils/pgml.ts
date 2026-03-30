@@ -227,6 +227,37 @@ const cleanName = (value: string) => value.replaceAll('"', '').trim()
 const cleanText = (value: string) => value.trim().replace(/^"(.*)"$/, '$1').replace(/^'(.*)'$/, '$1')
 const readMatch = (value: string | undefined) => value || ''
 const trimMultiline = (value: string) => value.replace(/^\n+|\n+$/g, '')
+const getLeadingWhitespaceWidth = (value: string) => {
+  const match = value.match(/^[\t ]+/)
+
+  return match ? match[0].length : 0
+}
+const normalizeExecutableDetailSource = (value: string) => {
+  const trimmedSource = trimMultiline(value)
+
+  if (trimmedSource.length === 0) {
+    return 'source:'
+  }
+
+  const lines = trimmedSource
+    .split('\n')
+    .map(line => line.replace(/[ \t]+$/g, ''))
+  const nonEmptyLines = lines.filter(line => line.trim().length > 0)
+  const sharedIndent = nonEmptyLines.reduce((minimumIndent, line) => {
+    return Math.min(minimumIndent, getLeadingWhitespaceWidth(line))
+  }, Number.POSITIVE_INFINITY)
+  const normalizedLines = Number.isFinite(sharedIndent)
+    ? lines.map((line) => {
+        if (line.trim().length === 0) {
+          return ''
+        }
+
+        return line.slice(sharedIndent)
+      })
+    : lines
+
+  return `source:\n${normalizedLines.join('\n')}`
+}
 const normalizeEffectKey = (value: string) => cleanName(value).toLowerCase().replaceAll(/[^\w]+/g, '_')
 const normalizeSource = (value: string) => value.replaceAll('\n', ' ').replace(/\s+/g, ' ').trim()
 const lower = (value: string) => value.toLowerCase()
@@ -1330,8 +1361,9 @@ const buildExecutableDetails = (
   }
 
   if (source) {
-    details.push('source:')
-    details.push(...source.split('\n'))
+    // The detail popover should show executable source as one readable block,
+    // with shared PGML indentation stripped while preserving nested SQL.
+    details.push(normalizeExecutableDetailSource(source))
   }
 
   return details.filter(detail => detail.length > 0)
