@@ -64,6 +64,20 @@ const openComparator = async (page: Page) => {
   await expect(getComparePanel(page)).toBeVisible()
 }
 
+const expectEditorValueToContain = async (
+  editor: ReturnType<typeof getPgmlEditor>,
+  text: string
+) => {
+  await expect.poll(async () => readPgmlEditorValue(editor)).toContain(text)
+}
+
+const expectEditorValueNotToContain = async (
+  editor: ReturnType<typeof getPgmlEditor>,
+  text: string
+) => {
+  await expect.poll(async () => readPgmlEditorValue(editor)).not.toContain(text)
+}
+
 const viewVersion = async (
   page: Page,
   versionLabel: string
@@ -151,7 +165,7 @@ test('versions panel generates history-aware SQL and Kysely migrations across ch
   await setPgmlEditorValue(editor, `Table public.users {
   id uuid [pk]
 }`)
-  await expect.poll(async () => readPgmlEditorValue(editor)).toContain('Table public.users')
+  await expectEditorValueToContain(editor, 'Table public.users')
 
   await createCheckpoint(page, 'Initial users')
 
@@ -171,7 +185,7 @@ Table public.orders {
 }
 
 Ref: public.orders.user_id > public.users.id`)
-  await expect.poll(async () => readPgmlEditorValue(editor)).toContain('Table public.orders')
+  await expectEditorValueToContain(editor, 'Table public.orders')
 
   await createCheckpoint(page, 'Orders baseline')
 
@@ -212,7 +226,7 @@ Trigger trg_touch_orders on public.orders {
       EXECUTE FUNCTION public.touch_orders();
   $sql$
 }`)
-  await expect.poll(async () => readPgmlEditorValue(editor)).toContain('Trigger trg_touch_orders on public.orders')
+  await expectEditorValueToContain(editor, 'Trigger trg_touch_orders on public.orders')
 
   await compareFromVersion(page, 'Initial users')
 
@@ -486,21 +500,21 @@ test('versioned document mode can scope the editor to the full document, workspa
 
   await page.getByRole('button', { name: 'Versioned document' }).click()
   await expect(page.locator('[data-document-scope-select="true"]')).toBeVisible()
-  await expect.poll(async () => readPgmlEditorValue(editor)).toContain('VersionSet ')
+  await expectEditorValueToContain(editor, 'VersionSet ')
 
   await page.locator('[data-document-scope-select="true"]').click()
   await page.getByText('Workspace block', { exact: true }).click()
-  await expect.poll(async () => readPgmlEditorValue(editor)).toContain('Workspace {')
-  await expect.poll(async () => readPgmlEditorValue(editor)).not.toContain('VersionSet ')
+  await expectEditorValueToContain(editor, 'Workspace {')
+  await expectEditorValueNotToContain(editor, 'VersionSet ')
 
   await page.locator('[data-document-scope-select="true"]').click()
   await page.getByText('Design · Scope baseline', { exact: true }).click()
-  await expect.poll(async () => readPgmlEditorValue(editor)).toContain('name: "Scope baseline"')
-  await expect.poll(async () => readPgmlEditorValue(editor)).toContain('Version v_')
-  await expect.poll(async () => readPgmlEditorValue(editor)).not.toContain('Workspace {')
+  await expectEditorValueToContain(editor, 'name: "Scope baseline"')
+  await expectEditorValueToContain(editor, 'Version v_')
+  await expectEditorValueNotToContain(editor, 'Workspace {')
 
   await page.locator('[data-document-scope-select="true"]').click()
   await page.getByText('All VersionSet blocks', { exact: true }).click()
-  await expect.poll(async () => readPgmlEditorValue(editor)).toContain('VersionSet ')
-  await expect.poll(async () => readPgmlEditorValue(editor)).toContain('Workspace {')
+  await expectEditorValueToContain(editor, 'VersionSet ')
+  await expectEditorValueToContain(editor, 'Workspace {')
 })
