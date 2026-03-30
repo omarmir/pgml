@@ -277,16 +277,17 @@ const activeMigrationFileName = computed(() => {
     ? migrationFileName
     : migrationKyselyFileName
 })
+const isSqlMigrationFormat = computed(() => activeMigrationFormat.value === 'sql')
 const activeMigrationLabel = computed(() => {
-  return activeMigrationFormat.value === 'sql' ? 'SQL' : 'Kysely'
+  return isSqlMigrationFormat.value ? 'SQL' : 'Kysely'
 })
 const activeMigrationContent = computed(() => {
-  return activeMigrationFormat.value === 'sql'
+  return isSqlMigrationFormat.value
     ? migrationSql
     : migrationKysely
 })
 const hasActiveMigration = computed(() => {
-  return activeMigrationFormat.value === 'sql'
+  return isSqlMigrationFormat.value
     ? hasMigrationSql.value
     : hasMigrationKysely.value
 })
@@ -329,7 +330,7 @@ const handleDownloadMigration = () => {
   }
 
   const blob = new Blob([activeMigrationContent.value], {
-    type: activeMigrationFormat.value === 'sql'
+    type: isSqlMigrationFormat.value
       ? 'text/sql;charset=utf-8'
       : 'text/plain;charset=utf-8'
   })
