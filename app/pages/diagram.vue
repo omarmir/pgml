@@ -379,27 +379,30 @@ const editorReadOnlyLabel = computed(() => {
     mode: versionedEditorMode.value
   })
 })
-const editorModeDescription = computed(() => {
-  if (versionedEditorMode.value === 'document') {
-    if (documentEditorScope.value === 'workspace-block') {
-      return buildPgmlDocumentEditorModeDescription({
-        scope: 'workspace'
-      })
-    }
+const buildDocumentEditorModeDescription = () => {
+  if (documentEditorScope.value === 'workspace-block') {
+    return buildPgmlDocumentEditorModeDescription({
+      scope: 'workspace'
+    })
+  }
 
-    if (documentEditorScope.value.startsWith('version:')) {
-      const scopedVersionId = documentEditorScope.value.replace(/^version:/, '')
-      const scopedVersion = versions.value.find(version => version.id === scopedVersionId) || null
-
-      return buildPgmlDocumentEditorModeDescription({
-        scope: 'version',
-        scopeLabel: scopedVersion ? getVersionLabel(scopedVersion) : null
-      })
-    }
+  if (documentEditorScope.value.startsWith('version:')) {
+    const scopedVersionId = documentEditorScope.value.replace(/^version:/, '')
+    const scopedVersion = versions.value.find(version => version.id === scopedVersionId) || null
 
     return buildPgmlDocumentEditorModeDescription({
-      scope: 'all'
+      scope: 'version',
+      scopeLabel: scopedVersion ? getVersionLabel(scopedVersion) : null
     })
+  }
+
+  return buildPgmlDocumentEditorModeDescription({
+    scope: 'all'
+  })
+}
+const editorModeDescription = computed(() => {
+  if (versionedEditorMode.value === 'document') {
+    return buildDocumentEditorModeDescription()
   }
 
   if (!isWorkspacePreview.value) {
