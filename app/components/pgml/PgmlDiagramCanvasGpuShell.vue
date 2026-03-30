@@ -81,6 +81,7 @@ import {
   replacePgmlRoutineBodyInBlock,
   getSequenceAttachedTableIds
 } from '~/utils/pgml'
+import type { PgmlVersionMigrationStepBundle } from '~/utils/pgml-version-migration'
 import { normalizeSvgPaint } from '~/utils/svg-paint'
 import {
   defaultStudioMobilePanelTab,
@@ -282,6 +283,7 @@ const {
   migrationKysely = '',
   migrationKyselyFileName = 'pgml-version.migration.ts',
   migrationSql = '',
+  migrationSteps = [],
   migrationWarnings = [],
   model,
   previewTargetId = 'workspace',
@@ -314,6 +316,7 @@ const {
   migrationKysely?: string
   migrationKyselyFileName?: string
   migrationSql?: string
+  migrationSteps?: PgmlVersionMigrationStepBundle[]
   migrationWarnings?: string[]
   model: PgmlSchemaModel
   previewTargetId?: string
@@ -5462,6 +5465,7 @@ defineExpose<{
         :migration-kysely="migrationKysely"
         :migration-kysely-file-name="migrationKyselyFileName"
         :migration-sql="migrationSql"
+        :migration-steps="migrationSteps"
         :migration-warnings="migrationWarnings"
         :preview-target-id="previewTargetId"
         :versions="versionItems"

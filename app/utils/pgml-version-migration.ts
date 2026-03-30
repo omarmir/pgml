@@ -30,19 +30,28 @@ type PgmlPlannedVersionMigrationStep = {
   plan: PgmlMigrationDiffPlan
 }
 
+type PgmlVersionMigrationValidation = {
+  isValid: boolean
+  issues: string[]
+}
+
 export type PgmlVersionMigrationStepBundle = PgmlMigrationDiffBundle & {
+  index: number
+  label: string
   target: {
     baseId: string
     baseLabel: string
     targetId: PgmlVersionMigrationTargetId
     targetLabel: string
   }
+  validation: PgmlVersionMigrationValidation
 }
 
 export type PgmlVersionMigrationBundle = PgmlMigrationDiffBundle & {
   meta: PgmlMigrationDiffBundle['meta'] & {
     historyAware: boolean
     stepCount: number
+    validation: PgmlVersionMigrationValidation
   }
   steps: PgmlVersionMigrationStepBundle[]
 }
@@ -124,6 +133,172 @@ export const down = async (): Promise<void> => {
   throw new Error('PGML exports generate forward-only migrations. Write the down migration manually.')
 }
 `
+}
+
+const validateOrderedContentSnippets = (
+  content: string,
+  snippets: string[]
+) => {
+  let searchIndex = 0
+
+  for (const snippet of snippets) {
+    if (snippet.trim().length === 0) {
+      continue
+    }
+
+    const snippetIndex = content.indexOf(snippet, searchIndex)
+
+    if (snippetIndex < 0) {
+      return false
+    }
+
+    searchIndex = snippetIndex + snippet.length
+  }
+
+  return true
+}
+
+const createMigrationValidation = (
+  issues: string[]
+) => {
+  return {
+    isValid: issues.length === 0,
+    issues
+  } satisfies PgmlVersionMigrationValidation
+}
+
+const validateMigrationWarnings = (
+  actualWarnings: string[],
+  expectedWarnings: string[],
+  message: string
+) => {
+  // History-aware exports need warning parity as much as statement parity.
+  // A "successful" step file is still misleading if it silently drops the
+  // manual follow-up notes that PGML diffing surfaced for that transition.
+  const normalizedActual = JSON.stringify(actualWarnings)
+  const normalizedExpected = JSON.stringify(expectedWarnings)
+
+  if (normalizedActual === normalizedExpected) {
+    return []
+  }
+
+  return [message]
+}
+
+const validateStepMigrationArtifacts = (input: {
+  index: number
+  label: string
+  plan: PgmlMigrationDiffPlan
+  stepBundle: PgmlMigrationDiffBundle
+}) => {
+  // Validate the persisted artifact content against the underlying PGML diff
+  // plan so each generated file continues to represent exactly one version
+  // transition in the expected order.
+  const issues: string[] = []
+  const expectedSqlSnippets = input.plan.statements
+  const expectedKyselySnippets = input.plan.statements.map(statement => escapeTemplateLiteralContent(statement))
+
+  if (
+    !validateOrderedContentSnippets(
+      input.stepBundle.sql.migration.content,
+      expectedSqlSnippets
+    )
+  ) {
+    issues.push(`SQL step ${input.index + 1} does not contain the expected statements for ${input.label}.`)
+  }
+
+  if (
+    !validateOrderedContentSnippets(
+      input.stepBundle.kysely.migration.content,
+      expectedKyselySnippets
+    )
+  ) {
+    issues.push(`Kysely step ${input.index + 1} does not contain the expected statements for ${input.label}.`)
+  }
+
+  issues.push(...validateMigrationWarnings(
+    input.stepBundle.sql.migration.warnings,
+    input.plan.warnings,
+    `SQL step ${input.index + 1} does not report the expected warnings for ${input.label}.`
+  ))
+  issues.push(...validateMigrationWarnings(
+    input.stepBundle.kysely.migration.warnings,
+    input.plan.warnings,
+    `Kysely step ${input.index + 1} does not report the expected warnings for ${input.label}.`
+  ))
+
+  return createMigrationValidation(issues)
+}
+
+const validateCombinedHistoryArtifacts = (input: {
+  combinedArtifacts: ReturnType<typeof buildCombinedHistoryArtifacts>
+  stepDescriptors: PgmlPlannedVersionMigrationStep[]
+}) => {
+  // Combined history exports are intentionally synthesized from the ordered
+  // step descriptors. The validation keeps the aggregate view honest by
+  // proving the rendered file preserves that same lineage sequence.
+  const issues: string[] = []
+  const expectedSqlSnippets = input.stepDescriptors.flatMap((step) => {
+    return [
+      `-- Step ${step.index + 1}: ${step.label}`,
+      ...step.plan.warnings.map(warning => `-- Warning: ${warning}`),
+      ...(step.plan.statements.length > 0
+        ? step.plan.statements
+        : ['-- No automatic SQL statements were generated for this step. Review warnings.'])
+    ]
+  })
+  const expectedKyselySnippets = input.stepDescriptors.flatMap((step) => {
+    return [
+      `  // Step ${step.index + 1}: ${step.label}`,
+      ...step.plan.warnings.map(warning => `  // Warning: ${warning}`),
+      ...(step.plan.statements.length > 0
+        ? step.plan.statements.map(statement => escapeTemplateLiteralContent(statement))
+        : ['  // No automatic SQL statements were generated for this step. Review warnings.'])
+    ]
+  })
+
+  if (!validateOrderedContentSnippets(input.combinedArtifacts.sql.content, expectedSqlSnippets)) {
+    issues.push('Combined SQL history migration does not match the expected PGML version sequence.')
+  }
+
+  if (!validateOrderedContentSnippets(input.combinedArtifacts.kysely.content, expectedKyselySnippets)) {
+    issues.push('Combined Kysely history migration does not match the expected PGML version sequence.')
+  }
+
+  return createMigrationValidation(issues)
+}
+
+const validateFallbackMigrationArtifacts = (
+  artifactBundle: PgmlMigrationDiffBundle,
+  plan: PgmlMigrationDiffPlan
+) => {
+  const issues: string[] = []
+
+  if (!validateOrderedContentSnippets(artifactBundle.sql.migration.content, plan.statements)) {
+    issues.push('Fallback SQL migration does not match the expected PGML diff output.')
+  }
+
+  if (
+    !validateOrderedContentSnippets(
+      artifactBundle.kysely.migration.content,
+      plan.statements.map(statement => escapeTemplateLiteralContent(statement))
+    )
+  ) {
+    issues.push('Fallback Kysely migration does not match the expected PGML diff output.')
+  }
+
+  issues.push(...validateMigrationWarnings(
+    artifactBundle.sql.migration.warnings,
+    plan.warnings,
+    'Fallback SQL migration warnings do not match the expected PGML diff output.'
+  ))
+  issues.push(...validateMigrationWarnings(
+    artifactBundle.kysely.migration.warnings,
+    plan.warnings,
+    'Fallback Kysely migration warnings do not match the expected PGML diff output.'
+  ))
+
+  return createMigrationValidation(issues)
 }
 
 const prefixStepWarnings = (
@@ -328,6 +503,9 @@ const buildFallbackVersionMigrationBundle = (
     historyWarning?: string | null
   } = {}
 ): PgmlVersionMigrationBundle => {
+  // When the compare pair is not a simple forward lineage, the app falls back
+  // to the aggregate diff so users still get a usable forward migration. The
+  // fallback remains validated so regression tests catch mismatches here too.
   const plan = buildPgmlMigrationDiffPlan(
     parsePgml(input.baseSource),
     parsePgml(input.targetSource)
@@ -341,23 +519,31 @@ const buildFallbackVersionMigrationBundle = (
     statements: plan.statements,
     warnings
   }, options)
+  const validation = validateFallbackMigrationArtifacts(artifactBundle, {
+    statements: plan.statements,
+    warnings
+  })
 
   return {
     ...artifactBundle,
     meta: {
       ...artifactBundle.meta,
       historyAware: false,
-      stepCount: artifactBundle.meta.hasChanges ? 1 : 0
+      stepCount: artifactBundle.meta.hasChanges ? 1 : 0,
+      validation
     },
     steps: artifactBundle.meta.hasChanges
       ? [{
           ...artifactBundle,
+          index: 0,
+          label: 'Selected base -> Selected target',
           target: {
             baseId: input.hasSelectedBase ? 'selected-base' : 'empty',
             baseLabel: input.hasSelectedBase ? 'Selected base' : 'Empty schema',
             targetId: 'workspace',
             targetLabel: 'Selected target'
-          }
+          },
+          validation
         }]
       : []
   }
@@ -394,6 +580,9 @@ export const buildPgmlVersionMigrationBundle = (
     })
   }
 
+  // Each resolved step represents one predecessor -> successor transition in
+  // the chosen version lineage. The UI can then expose those as individual
+  // SQL/Kysely files while the combined artifact remains available for review.
   const stepBundles = resolvedSteps.map((step, stepIndex) => {
     const plan = buildPgmlMigrationDiffPlan(
       parsePgml(step.baseSource),
@@ -403,16 +592,29 @@ export const buildPgmlVersionMigrationBundle = (
     const artifactBundle = buildPgmlMigrationArtifactsFromPlan(plan, {
       baseName: buildStepBaseName(normalizedBaseName, stepIndex, step)
     })
+    const label = buildMigrationStepLabel({
+      baseLabel: step.baseLabel,
+      targetLabel: step.targetLabel
+    })
+    const validation = validateStepMigrationArtifacts({
+      index: stepIndex,
+      label,
+      plan,
+      stepBundle: artifactBundle
+    })
 
     return {
       ...artifactBundle,
+      index: stepIndex,
+      label,
       plan,
       target: {
         baseId: step.baseId,
         baseLabel: step.baseLabel,
         targetId: step.targetId,
         targetLabel: step.targetLabel
-      }
+      },
+      validation
     }
   }).filter(step => step.meta.hasChanges || step.meta.warningCount > 0)
   const stepDescriptors = buildPlannedStepDescriptors(stepBundles)
@@ -429,6 +631,13 @@ export const buildPgmlVersionMigrationBundle = (
     prefixedWarnings,
     stepDescriptors
   )
+  const combinedValidation = createMigrationValidation([
+    ...stepBundles.flatMap(step => step.validation.issues),
+    ...validateCombinedHistoryArtifacts({
+      combinedArtifacts,
+      stepDescriptors
+    }).issues
+  ])
 
   return {
     kysely: {
@@ -439,6 +648,7 @@ export const buildPgmlVersionMigrationBundle = (
       historyAware: true,
       statementCount: combinedStatements.length,
       stepCount: stepBundles.length,
+      validation: combinedValidation,
       warningCount: prefixedWarnings.length
     },
     sql: {

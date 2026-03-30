@@ -79,14 +79,51 @@ describe('PGML version migration helpers', () => {
 
     expect(bundle.meta.historyAware).toBe(true)
     expect(bundle.meta.stepCount).toBe(2)
+    expect(bundle.meta.validation.isValid).toBe(true)
     expect(bundle.steps).toHaveLength(2)
+    expect(bundle.steps[0]!.index).toBe(0)
+    expect(bundle.steps[0]!.label).toBe('Initial users -> Add user email')
     expect(bundle.steps[0]!.target.baseId).toBe('v1')
     expect(bundle.steps[0]!.target.targetId).toBe('v2')
+    expect(bundle.steps[0]!.validation.isValid).toBe(true)
+    expect(bundle.steps[1]!.index).toBe(1)
+    expect(bundle.steps[1]!.label).toBe('Add user email -> Current workspace')
     expect(bundle.steps[1]!.target.targetId).toBe('workspace')
+    expect(bundle.steps[1]!.validation.isValid).toBe(true)
     expect(bundle.steps[0]!.sql.migration.fileName).toContain('-step-1-')
     expect(bundle.steps[0]!.kysely.migration.fileName).toContain('-step-1-')
     expect(bundle.steps[1]!.sql.migration.fileName).toContain('-step-2-')
     expect(bundle.steps[1]!.kysely.migration.fileName).toContain('-step-2-')
+    expect(bundle.steps[0]!.sql.migration.content).toContain(
+      'ALTER TABLE "public"."users" ADD COLUMN "email" text;'
+    )
+    expect(bundle.steps[0]!.sql.migration.content).not.toContain(
+      'CREATE TABLE "public"."orders" ('
+    )
+    expect(bundle.steps[0]!.kysely.migration.content).toContain(
+      'ALTER TABLE "public"."users" ADD COLUMN "email" text;'
+    )
+    expect(bundle.steps[0]!.kysely.migration.content).not.toContain(
+      'CREATE TABLE "public"."orders" ('
+    )
+    expect(bundle.steps[1]!.sql.migration.content).toContain(
+      'CREATE TABLE "public"."orders" ('
+    )
+    expect(bundle.steps[1]!.sql.migration.content).toContain(
+      'ALTER TABLE "public"."orders" ADD FOREIGN KEY ("user_id") REFERENCES "public"."users" ("id");'
+    )
+    expect(bundle.steps[1]!.sql.migration.content).not.toContain(
+      'ALTER TABLE "public"."users" ADD COLUMN "email" text;'
+    )
+    expect(bundle.steps[1]!.kysely.migration.content).toContain(
+      'CREATE TABLE "public"."orders" ('
+    )
+    expect(bundle.steps[1]!.kysely.migration.content).toContain(
+      'ALTER TABLE "public"."orders" ADD FOREIGN KEY ("user_id") REFERENCES "public"."users" ("id");'
+    )
+    expect(bundle.steps[1]!.kysely.migration.content).not.toContain(
+      'ALTER TABLE "public"."users" ADD COLUMN "email" text;'
+    )
     expect(bundle.sql.migration.content).toContain('-- Step 1: Initial users -> Add user email')
     expect(bundle.sql.migration.content).toContain('-- Step 2: Add user email -> Current workspace')
     expect(bundle.sql.migration.content).toContain(
@@ -241,10 +278,21 @@ describe('PGML version migration helpers', () => {
 
     expect(bundle.meta.historyAware).toBe(true)
     expect(bundle.meta.stepCount).toBe(2)
+    expect(bundle.meta.validation.isValid).toBe(true)
     expect(bundle.steps).toHaveLength(2)
     expect(bundle.steps[0]!.meta.hasChanges).toBe(false)
     expect(bundle.steps[0]!.meta.warningCount).toBeGreaterThan(0)
+    expect(bundle.steps[0]!.validation.isValid).toBe(true)
+    expect(bundle.steps[0]!.sql.migration.warnings[0]).toContain(
+      'Enum public.order_status changed in a way that cannot be migrated safely'
+    )
+    expect(bundle.steps[0]!.kysely.migration.warnings[0]).toContain(
+      'Enum public.order_status changed in a way that cannot be migrated safely'
+    )
     expect(bundle.steps[1]!.meta.hasChanges).toBe(true)
+    expect(bundle.steps[1]!.validation.isValid).toBe(true)
+    expect(bundle.steps[1]!.sql.migration.content).toContain('CREATE TABLE "public"."audit_log" (')
+    expect(bundle.steps[1]!.sql.migration.content).not.toContain('Enum public.order_status')
     expect(bundle.sql.migration.content).toContain('-- Step 1: Full status -> Trim status')
     expect(bundle.sql.migration.content).toContain('-- No automatic SQL statements were generated for this step. Review warnings.')
     expect(bundle.sql.migration.content).toContain('-- Warning: Enum public.order_status changed in a way that cannot be migrated safely')

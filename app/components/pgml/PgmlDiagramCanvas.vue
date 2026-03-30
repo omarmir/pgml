@@ -4,6 +4,7 @@ import { ref } from 'vue'
 import PgmlDiagramCanvasGpuShell from '~/components/pgml/PgmlDiagramCanvasGpuShell.vue'
 import type { PgmlDiagramCompareEntry } from '~/utils/pgml-diagram-compare'
 import type { PgmlNodeProperties, PgmlSchemaModel, PgmlSourceRange } from '~/utils/pgml'
+import type { PgmlVersionMigrationStepBundle } from '~/utils/pgml-version-migration'
 import type { DiagramPanelTab, StudioMobileCanvasView } from '~/utils/studio-workspace'
 
 type CanvasHandle = {
@@ -74,6 +75,7 @@ const {
   migrationKysely = '',
   migrationKyselyFileName = 'pgml-version.migration.ts',
   migrationSql = '',
+  migrationSteps = [],
   migrationWarnings = [],
   previewTargetId = 'workspace',
   sourceText = '',
@@ -105,6 +107,7 @@ const {
   migrationKysely?: string
   migrationKyselyFileName?: string
   migrationSql?: string
+  migrationSteps?: PgmlVersionMigrationStepBundle[]
   migrationWarnings?: string[]
   model: PgmlSchemaModel
   previewTargetId?: string
@@ -176,6 +179,7 @@ defineExpose<CanvasHandle>({
     :migration-kysely="migrationKysely"
     :migration-kysely-file-name="migrationKyselyFileName"
     :migration-sql="migrationSql"
+    :migration-steps="migrationSteps"
     :migration-warnings="migrationWarnings"
     :model="model"
     :preview-target-id="previewTargetId"

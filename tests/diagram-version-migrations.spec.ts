@@ -276,12 +276,35 @@ Trigger trg_touch_orders on public.orders {
   expect(sqlDownload.suggestedFilename()).toContain('.migration.sql')
   expect(readFileSync(sqlDownloadPath!, 'utf8')).toContain('-- Step 2: Orders baseline -> Current workspace')
 
+  await versionsPanel.locator('[data-version-migration-scope="step:0"]').click()
+  await expect(migrationArtifact).toContainText('CREATE TABLE "public"."orders"')
+  await expect(migrationArtifact).toContainText('ALTER TABLE "public"."orders" ADD FOREIGN KEY ("user_id") REFERENCES "public"."users" ("id");')
+  await expect(migrationArtifact).not.toContainText(`ALTER TYPE "public"."order_status" ADD VALUE IF NOT EXISTS 'submitted' BEFORE 'paid';`)
+  await expect(migrationArtifact).not.toContainText('CREATE TRIGGER trg_touch_orders')
+
+  const stepOneSqlDownloadPromise = page.waitForEvent('download')
+
+  await versionsPanel.locator('[data-version-migration-download="sql"]').click()
+
+  const stepOneSqlDownload = await stepOneSqlDownloadPromise
+  const stepOneSqlDownloadPath = await stepOneSqlDownload.path()
+  const stepOneSqlContent = readFileSync(stepOneSqlDownloadPath!, 'utf8')
+
+  expect(stepOneSqlDownload.suggestedFilename()).toContain('-step-1-')
+  expect(stepOneSqlContent).toContain('CREATE TABLE "public"."orders"')
+  expect(stepOneSqlContent).not.toContain(`ALTER TYPE "public"."order_status" ADD VALUE IF NOT EXISTS 'submitted' BEFORE 'paid';`)
+
   await versionsPanel.locator('[data-version-migration-format="kysely"]').click()
   await expect(migrationArtifact).toHaveAttribute('data-version-migration-format-active', 'kysely')
-  await expect(migrationArtifact).toContainText('// Step 1: Initial users -> Orders baseline')
-  await expect(migrationArtifact).toContainText('// Step 2: Orders baseline -> Current workspace')
   await expect(migrationArtifact).toContainText('await sql`')
+  await expect(migrationArtifact).toContainText('CREATE TABLE "public"."orders"')
+  await expect(migrationArtifact).not.toContainText('CREATE OR REPLACE FUNCTION public.touch_orders()')
+
+  await versionsPanel.locator('[data-version-migration-scope="step:1"]').click()
+  await expect(migrationArtifact).toContainText(`ALTER TYPE "public"."order_status" ADD VALUE IF NOT EXISTS 'submitted' BEFORE 'paid';`)
   await expect(migrationArtifact).toContainText('CREATE OR REPLACE FUNCTION public.touch_orders()')
+  await expect(migrationArtifact).toContainText('CREATE TRIGGER trg_touch_orders')
+  await expect(migrationArtifact).not.toContainText('CREATE TABLE "public"."orders"')
 
   const kyselyDownloadPromise = page.waitForEvent('download')
 
@@ -289,9 +312,12 @@ Trigger trg_touch_orders on public.orders {
 
   const kyselyDownload = await kyselyDownloadPromise
   const kyselyDownloadPath = await kyselyDownload.path()
+  const kyselyDownloadContent = readFileSync(kyselyDownloadPath!, 'utf8')
 
-  expect(kyselyDownload.suggestedFilename()).toContain('.migration.ts')
-  expect(readFileSync(kyselyDownloadPath!, 'utf8')).toContain('// Step 2: Orders baseline -> Current workspace')
+  expect(kyselyDownload.suggestedFilename()).toContain('-step-2-')
+  expect(kyselyDownloadContent).toContain(`ALTER TYPE "public"."order_status" ADD VALUE IF NOT EXISTS 'submitted' BEFORE 'paid';`)
+  expect(kyselyDownloadContent).toContain('CREATE OR REPLACE FUNCTION public.touch_orders()')
+  expect(kyselyDownloadContent).not.toContain('CREATE TABLE "public"."orders"')
 })
 
 test('versions panel keeps warning-only history steps visible in SQL and Kysely previews', async ({ goto, page }) => {
@@ -334,12 +360,17 @@ Table public.audit_log {
   await expect(migrationArtifact).toContainText('CREATE TABLE "public"."audit_log"')
   await expect(warningsPanel).toContainText('Enum public.order_status changed in a way that cannot be migrated safely')
 
+  await versionsPanel.locator('[data-version-migration-scope="step:0"]').click()
+  await expect(migrationArtifact).not.toContainText('CREATE TABLE "public"."audit_log"')
+  await expect(warningsPanel).toContainText('Enum public.order_status changed in a way that cannot be migrated safely')
+
+  await versionsPanel.locator('[data-version-migration-scope="step:1"]').click()
+  await expect(migrationArtifact).toContainText('CREATE TABLE "public"."audit_log"')
+  await expect(warningsPanel).toHaveCount(0)
+
   await versionsPanel.locator('[data-version-migration-format="kysely"]').click()
 
   await expect(migrationArtifact).toHaveAttribute('data-version-migration-format-active', 'kysely')
-  await expect(migrationArtifact).toContainText('// Step 1: Full status -> Trim status')
-  await expect(migrationArtifact).toContainText('// No automatic SQL statements were generated for this step. Review warnings.')
-  await expect(migrationArtifact).toContainText('// Warning: Enum public.order_status changed in a way that cannot be migrated safely')
   await expect(migrationArtifact).toContainText('CREATE TABLE "public"."audit_log"')
 })
 

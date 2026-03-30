@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import type { Ref } from 'vue'
+import type { PgmlVersionMigrationStepBundle } from '~/utils/pgml-version-migration'
 import {
   studioSelectUi
 } from '~/constants/ui'
@@ -72,6 +73,7 @@ type PgmlVersionMetricBadge = {
 }
 
 type PgmlMigrationFormat = 'sql' | 'kysely'
+type PgmlMigrationSelectionScope = 'combined' | `step:${number}`
 
 type PgmlVersionMigrationArtifact = {
   content: string
@@ -79,6 +81,7 @@ type PgmlVersionMigrationArtifact = {
   hasChanges: boolean
   label: string
   mimeType: string
+  warnings: string[]
 }
 
 const {
@@ -95,6 +98,7 @@ const {
   migrationKysely = '',
   migrationKyselyFileName = 'pgml-version.migration.ts',
   migrationSql = '',
+  migrationSteps = [],
   migrationWarnings = [],
   previewTargetId = 'workspace',
   versions,
@@ -114,6 +118,7 @@ const {
   migrationKysely?: string
   migrationKyselyFileName?: string
   migrationSql?: string
+  migrationSteps?: PgmlVersionMigrationStepBundle[]
   migrationWarnings?: string[]
   previewTargetId?: string
   versions: PgmlVersionPanelItem[]
@@ -133,6 +138,7 @@ const emit = defineEmits<{
 
 const copyState: Ref<'idle' | 'success' | 'error'> = ref('idle')
 const activeMigrationFormat: Ref<PgmlMigrationFormat> = ref('sql')
+const activeMigrationScope: Ref<PgmlMigrationSelectionScope> = ref('combined')
 const copyButtonClass = joinStudioClasses(studioButtonClasses.secondary, 'text-[0.65rem]')
 const primaryButtonClass = joinStudioClasses(studioButtonClasses.primary, 'text-[0.65rem]')
 const secondaryButtonClass = joinStudioClasses(studioButtonClasses.secondary, 'text-[0.65rem]')
@@ -198,8 +204,7 @@ const compareTargetOption = computed(() => {
   return compareOptions.find(option => option.value === compareTargetId) || null
 })
 const hasDiffSections = computed(() => diffSections.length > 0 || layoutChanged > 0)
-const hasMigrationSql = computed(() => migrationHasChanges && migrationSql.trim().length > 0)
-const hasMigrationKysely = computed(() => migrationHasChanges && migrationKysely.trim().length > 0)
+const hasStepMigrationFiles = computed(() => migrationSteps.length > 0)
 const hasVersions = computed(() => versions.length > 0)
 const designVersionCount = computed(() => {
   return versions.filter(version => version.role === 'design').length
@@ -276,26 +281,83 @@ const comparePresetButtons = computed(() => {
 // The migration preview, copy, and download controls all point at the same
 // active artifact. Keeping the SQL/Kysely metadata together avoids repeating
 // format branches across every derived computed.
-const migrationArtifacts = computed<Record<PgmlMigrationFormat, PgmlVersionMigrationArtifact>>(() => {
+const createVersionMigrationArtifact = (input: {
+  content: string
+  fileName: string
+  hasChanges: boolean
+  label: string
+  mimeType: string
+  warnings: string[]
+}) => {
   return {
-    kysely: {
+    content: input.content,
+    fileName: input.fileName,
+    hasChanges: input.hasChanges,
+    label: input.label,
+    mimeType: input.mimeType,
+    warnings: input.warnings
+  } satisfies PgmlVersionMigrationArtifact
+}
+const combinedMigrationArtifacts = computed<Record<PgmlMigrationFormat, PgmlVersionMigrationArtifact>>(() => {
+  // The combined view stays selectable even for warning-only transitions so
+  // users can download the synthesized history file without needing DDL.
+  const hasCombinedMigration = migrationHasChanges || migrationWarnings.length > 0
+
+  return {
+    kysely: createVersionMigrationArtifact({
       content: migrationKysely,
       fileName: migrationKyselyFileName,
-      hasChanges: hasMigrationKysely.value,
+      hasChanges: hasCombinedMigration && migrationKysely.trim().length > 0,
       label: 'Kysely',
-      mimeType: 'text/plain;charset=utf-8'
-    },
-    sql: {
+      mimeType: 'text/plain;charset=utf-8',
+      warnings: migrationWarnings
+    }),
+    sql: createVersionMigrationArtifact({
       content: migrationSql,
       fileName: migrationFileName,
-      hasChanges: hasMigrationSql.value,
+      hasChanges: hasCombinedMigration && migrationSql.trim().length > 0,
       label: 'SQL',
-      mimeType: 'text/sql;charset=utf-8'
-    }
+      mimeType: 'text/sql;charset=utf-8',
+      warnings: migrationWarnings
+    })
   }
 })
+const selectedMigrationStep = computed(() => {
+  if (activeMigrationScope.value === 'combined') {
+    return null
+  }
+
+  const selectedIndex = Number.parseInt(activeMigrationScope.value.replace('step:', ''), 10)
+
+  return migrationSteps.find(step => step.index === selectedIndex) || null
+})
+const getMigrationArtifactForFormat = (format: PgmlMigrationFormat) => {
+  if (!selectedMigrationStep.value) {
+    return combinedMigrationArtifacts.value[format]
+  }
+
+  // Step-scoped previews intentionally switch both the visible artifact and
+  // the copy/download metadata so each button maps to one lineage file.
+  const stepArtifact = format === 'sql'
+    ? selectedMigrationStep.value.sql.migration
+    : selectedMigrationStep.value.kysely.migration
+  const hasArtifact = selectedMigrationStep.value.meta.hasChanges || selectedMigrationStep.value.meta.warningCount > 0
+
+  return createVersionMigrationArtifact({
+    content: stepArtifact.content,
+    fileName: stepArtifact.fileName,
+    hasChanges: hasArtifact && stepArtifact.content.trim().length > 0,
+    label: stepArtifact.label,
+    mimeType: format === 'sql'
+      ? 'text/sql;charset=utf-8'
+      : 'text/plain;charset=utf-8',
+    warnings: stepArtifact.warnings
+  })
+}
+const hasMigrationSql = computed(() => getMigrationArtifactForFormat('sql').hasChanges)
+const hasMigrationKysely = computed(() => getMigrationArtifactForFormat('kysely').hasChanges)
 const activeMigrationArtifact = computed(() => {
-  return migrationArtifacts.value[activeMigrationFormat.value]
+  return getMigrationArtifactForFormat(activeMigrationFormat.value)
 })
 const migrationLineCount = computed(() => {
   const migrationContent = activeMigrationArtifact.value.content
@@ -316,6 +378,22 @@ const activeMigrationContent = computed(() => {
 const hasActiveMigration = computed(() => {
   return activeMigrationArtifact.value.hasChanges
 })
+const selectedMigrationScopeLabel = computed(() => {
+  if (!selectedMigrationStep.value) {
+    return 'Combined history sequence'
+  }
+
+  return `Step ${selectedMigrationStep.value.index + 1}: ${selectedMigrationStep.value.label}`
+})
+const displayedMigrationWarnings = computed(() => {
+  return activeMigrationArtifact.value.warnings
+})
+const isMigrationScopeActive = (scope: PgmlMigrationSelectionScope) => {
+  return activeMigrationScope.value === scope
+}
+const selectMigrationScope = (scope: PgmlMigrationSelectionScope) => {
+  activeMigrationScope.value = scope
+}
 const getActiveMigrationMimeType = () => {
   return activeMigrationArtifact.value.mimeType
 }
@@ -427,6 +505,18 @@ const swapComparePair = () => {
     targetId: compareBaseId
   })
 }
+
+watchEffect(() => {
+  if (activeMigrationScope.value === 'combined') {
+    return
+  }
+
+  // Compare selections can invalidate the currently viewed step. Falling back
+  // to the combined sequence avoids leaving the panel pointed at a dead scope.
+  if (!selectedMigrationStep.value) {
+    activeMigrationScope.value = 'combined'
+  }
+})
 </script>
 
 <template>
@@ -821,7 +911,7 @@ const swapComparePair = () => {
             Migration Output
           </div>
           <div class="mt-1 text-[0.66rem] text-[color:var(--studio-shell-muted)]">
-            {{ hasActiveMigration ? `${activeMigrationLabel} · ${migrationLineCount} line${migrationLineCount === 1 ? '' : 's'} ready · ${activeMigrationFileName}` : `No forward ${activeMigrationLabel.toLowerCase()} migration generated yet.` }}
+            {{ hasActiveMigration ? `${selectedMigrationScopeLabel} · ${activeMigrationLabel} · ${migrationLineCount} line${migrationLineCount === 1 ? '' : 's'} ready · ${activeMigrationFileName}` : `No forward ${activeMigrationLabel.toLowerCase()} migration generated yet.` }}
           </div>
         </div>
         <div class="flex flex-wrap gap-1">
@@ -869,7 +959,58 @@ const swapComparePair = () => {
       </div>
 
       <div
-        v-if="migrationWarnings.length > 0"
+        v-if="hasStepMigrationFiles"
+        class="grid gap-2 border border-[color:var(--studio-divider)] bg-[color:var(--studio-input-bg)] px-3 py-3"
+      >
+        <div class="font-mono text-[0.58rem] uppercase tracking-[0.08em] text-[color:var(--studio-shell-label)]">
+          Generated files
+        </div>
+        <button
+          type="button"
+          data-version-migration-scope="combined"
+          class="grid gap-1 border border-[color:var(--studio-divider)] bg-[color:var(--studio-control-bg)] px-3 py-2 text-left"
+          :class="isMigrationScopeActive('combined') ? 'border-[color:var(--studio-ring)]' : ''"
+          @click="selectMigrationScope('combined')"
+        >
+          <span class="text-[0.74rem] font-semibold text-[color:var(--studio-shell-text)]">
+            Combined history sequence
+          </span>
+          <span class="text-[0.64rem] text-[color:var(--studio-shell-muted)]">
+            Consolidated SQL and Kysely previews across every selected version transition.
+          </span>
+          <span class="font-mono text-[0.58rem] uppercase tracking-[0.08em] text-[color:var(--studio-shell-muted)]">
+            {{ migrationFileName }} · {{ migrationKyselyFileName }}
+          </span>
+        </button>
+        <button
+          v-for="step in migrationSteps"
+          :key="step.sql.migration.fileName"
+          type="button"
+          :data-version-migration-scope="`step:${step.index}`"
+          class="grid gap-1 border border-[color:var(--studio-divider)] bg-[color:var(--studio-control-bg)] px-3 py-2 text-left"
+          :class="isMigrationScopeActive(`step:${step.index}`) ? 'border-[color:var(--studio-ring)]' : ''"
+          @click="selectMigrationScope(`step:${step.index}`)"
+        >
+          <span class="text-[0.74rem] font-semibold text-[color:var(--studio-shell-text)]">
+            Step {{ step.index + 1 }}: {{ step.label }}
+          </span>
+          <span class="text-[0.64rem] text-[color:var(--studio-shell-muted)]">
+            {{ step.meta.statementCount }} statement{{ step.meta.statementCount === 1 ? '' : 's' }} · {{ step.meta.warningCount }} warning{{ step.meta.warningCount === 1 ? '' : 's' }}
+          </span>
+          <span class="font-mono text-[0.58rem] uppercase tracking-[0.08em] text-[color:var(--studio-shell-muted)]">
+            {{ step.sql.migration.fileName }} · {{ step.kysely.migration.fileName }}
+          </span>
+          <span
+            v-if="!step.validation.isValid"
+            class="text-[0.64rem] text-[color:var(--studio-shell-error)]"
+          >
+            Validation issue: {{ step.validation.issues[0] }}
+          </span>
+        </button>
+      </div>
+
+      <div
+        v-if="displayedMigrationWarnings.length > 0"
         data-version-migration-warnings="true"
         class="grid gap-1 border border-[color:var(--studio-shell-error)]/30 bg-[color:var(--studio-shell-error)]/8 px-3 py-3 text-[0.68rem] text-[color:var(--studio-shell-text)]"
       >
@@ -877,7 +1018,7 @@ const swapComparePair = () => {
           Warnings
         </div>
         <div
-          v-for="warning in migrationWarnings"
+          v-for="warning in displayedMigrationWarnings"
           :key="warning"
         >
           {{ warning }}
