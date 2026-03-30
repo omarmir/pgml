@@ -189,6 +189,13 @@ const validateMigrationWarnings = (
 
   return [message]
 }
+const buildExpectedSqlSnippets = (plan: PgmlMigrationDiffPlan) => {
+  return plan.statements
+}
+
+const buildExpectedKyselySnippets = (plan: PgmlMigrationDiffPlan) => {
+  return plan.statements.map(statement => escapeTemplateLiteralContent(statement))
+}
 
 const validateStepMigrationArtifacts = (input: {
   index: number
@@ -200,8 +207,8 @@ const validateStepMigrationArtifacts = (input: {
   // plan so each generated file continues to represent exactly one version
   // transition in the expected order.
   const issues: string[] = []
-  const expectedSqlSnippets = input.plan.statements
-  const expectedKyselySnippets = input.plan.statements.map(statement => escapeTemplateLiteralContent(statement))
+  const expectedSqlSnippets = buildExpectedSqlSnippets(input.plan)
+  const expectedKyselySnippets = buildExpectedKyselySnippets(input.plan)
 
   if (
     !validateOrderedContentSnippets(
@@ -279,14 +286,14 @@ const validateFallbackMigrationArtifacts = (
 ) => {
   const issues: string[] = []
 
-  if (!validateOrderedContentSnippets(artifactBundle.sql.migration.content, plan.statements)) {
+  if (!validateOrderedContentSnippets(artifactBundle.sql.migration.content, buildExpectedSqlSnippets(plan))) {
     issues.push('Fallback SQL migration does not match the expected PGML diff output.')
   }
 
   if (
     !validateOrderedContentSnippets(
       artifactBundle.kysely.migration.content,
-      plan.statements.map(statement => escapeTemplateLiteralContent(statement))
+      buildExpectedKyselySnippets(plan)
     )
   ) {
     issues.push('Fallback Kysely migration does not match the expected PGML diff output.')
