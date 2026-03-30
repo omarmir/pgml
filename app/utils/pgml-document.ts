@@ -1,5 +1,9 @@
 import { nanoid } from 'nanoid'
-import { stripPgmlPropertiesBlocks } from './pgml'
+import {
+  dedentPgmlSourceForEditor,
+  normalizePgmlSourceIndentation,
+  stripPgmlPropertiesBlocks
+} from './pgml'
 
 export type PgmlVersionRole = 'design' | 'implementation'
 
@@ -51,7 +55,7 @@ const normalizeLineEndings = (value: string) => {
 }
 
 export const normalizePgmlSnapshotSource = (value: string) => {
-  return normalizeLineEndings(value).trim()
+  return normalizePgmlSourceIndentation(normalizeLineEndings(value)).trim()
 }
 
 export const getPgmlVersionRoleDisplayLabel = (role: PgmlVersionRole) => {
@@ -478,7 +482,10 @@ const parseSnapshotBlock = (block: PgmlNamedBlock, context: string) => {
   }
 
   return {
-    source: normalizePgmlSnapshotSource(block.body.join('\n'))
+    // Snapshot blocks are serialized inside Workspace/Version wrappers, so the
+    // parser must remove that wrapper indentation before handing the snapshot
+    // back to the live workspace editor.
+    source: normalizePgmlSnapshotSource(dedentPgmlSourceForEditor(block.body.join('\n')))
   } satisfies PgmlDocumentSnapshot
 }
 
@@ -732,7 +739,7 @@ export const getPgmlVersionMap = (document: PgmlVersionSetDocument) => {
 
 const cloneDocumentSnapshot = (snapshot: PgmlDocumentSnapshot) => {
   return {
-    source: snapshot.source
+    source: normalizePgmlSnapshotSource(snapshot.source)
   } satisfies PgmlDocumentSnapshot
 }
 
@@ -1126,7 +1133,7 @@ export const createInitialPgmlDocument = (input?: {
     workspace: {
       basedOnVersionId: initialVersion ? versions[0]!.id : input?.basedOnVersionId || null,
       snapshot: {
-        source: input?.workspaceSource ?? initialVersion?.snapshot.source ?? ''
+        source: normalizePgmlSnapshotSource(input?.workspaceSource ?? initialVersion?.snapshot.source ?? '')
       },
       updatedAt: null
     }

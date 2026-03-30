@@ -2,15 +2,20 @@ import { describe, expect, it } from 'vitest'
 
 import {
   dedentPgmlSourceForEditor,
+  extractPgmlRoutineBodyFromExecutableSource,
   getOrderedGroupTables,
   getPgmlSourceScrollTop,
   getPgmlSourceSelectionRange,
+  normalizePgmlBlockSourceForEditor,
+  normalizePgmlSourceIndentation,
   parsePgml,
   pgmlExample,
   pgmlVersionedExample,
+  reindentPgmlBlockEditorText,
   reindentPgmlEditorText,
   replacePgmlConstraintExpressionInBlock,
   replacePgmlExecutableSourceInBlock,
+  replacePgmlRoutineBodyInExecutableSource,
   replacePgmlSourceRange
 } from '../../app/utils/pgml'
 import { parsePgmlDocument } from '../../app/utils/pgml-document'
@@ -327,6 +332,53 @@ Table public.audit_log {
     )
   })
 
+  it('normalizes over-indented PGML blocks for popup editing and writes them back with stable indentation', () => {
+    const originalBlock = `TableGroup Core {
+                                                                                                        public.tenants
+                                                                                                        public.accounts
+}`
+
+    expect(normalizePgmlBlockSourceForEditor(originalBlock)).toBe(`TableGroup Core {
+  public.tenants
+  public.accounts
+}`)
+    expect(reindentPgmlBlockEditorText(`TableGroup Core {
+  public.tenants
+  public.audit_log
+}`, originalBlock)).toBe(`TableGroup Core {
+  public.tenants
+  public.audit_log
+}`)
+  })
+
+  it('normalizes pathological document indentation while keeping nested SQL structure intact', () => {
+    expect(normalizePgmlSourceIndentation(`TableGroup Core {
+                                                                                                        public.tenants
+}
+
+Function sync_users() returns trigger {
+  source: $sql$
+        CREATE FUNCTION public.sync_users() RETURNS trigger LANGUAGE plpgsql AS $$
+        BEGIN
+                RETURN NEW;
+        END;
+        $$;
+  $sql$
+}`)).toBe(`TableGroup Core {
+  public.tenants
+}
+
+Function sync_users() returns trigger {
+  source: $sql$
+    CREATE FUNCTION public.sync_users() RETURNS trigger LANGUAGE plpgsql AS $$
+    BEGIN
+            RETURN NEW;
+    END;
+    $$;
+  $sql$
+}`)
+  })
+
   it('replaces executable source bodies without exposing the PGML wrapper to the popup editor', () => {
     const nextBlock = replacePgmlExecutableSourceInBlock(`Function orphan_report() {
   language: sql
@@ -343,6 +395,70 @@ Table public.audit_log {
       2;
   $sql$
 }`)
+  })
+
+  it('rewrites malformed executable source bodies with the expected PGML indentation level', () => {
+    const nextBlock = replacePgmlExecutableSourceInBlock(`Function sync_users() returns trigger {
+  source: $sql$
+                                                                                                        CREATE FUNCTION public.sync_users() RETURNS trigger LANGUAGE plpgsql AS $$
+                                                                                                        BEGIN
+                                                                                                          RETURN NEW;
+                                                                                                        END;
+                                                                                                        $$;
+  $sql$
+}`, `CREATE FUNCTION public.sync_users() RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+  RETURN NEW;
+END;
+$$;`)
+
+    expect(nextBlock).toBe(`Function sync_users() returns trigger {
+  source: $sql$
+    CREATE FUNCTION public.sync_users() RETURNS trigger LANGUAGE plpgsql AS $$
+    BEGIN
+      RETURN NEW;
+    END;
+    $$;
+  $sql$
+}`)
+  })
+
+  it('extracts only the routine body from wrapped function SQL for popup editing', () => {
+    expect(extractPgmlRoutineBodyFromExecutableSource(`CREATE OR REPLACE FUNCTION public.demo()
+RETURNS void AS $$
+BEGIN
+  PERFORM 1;
+END;
+$$ LANGUAGE plpgsql;`)).toBe(`BEGIN
+  PERFORM 1;
+END;`)
+
+    expect(extractPgmlRoutineBodyFromExecutableSource(`CREATE FUNCTION public.touch_users()
+RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+  RETURN NEW;
+END;
+$$;`)).toBe(`BEGIN
+  RETURN NEW;
+END;`)
+  })
+
+  it('reapplies routine body edits while preserving the surrounding language wrapper', () => {
+    const nextExecutableSource = replacePgmlRoutineBodyInExecutableSource(`CREATE OR REPLACE FUNCTION public.demo()
+RETURNS void AS $$
+BEGIN
+  PERFORM 1;
+END;
+$$ LANGUAGE plpgsql;`, `BEGIN
+  PERFORM 2;
+END;`)
+
+    expect(nextExecutableSource).toBe(`CREATE OR REPLACE FUNCTION public.demo()
+RETURNS void AS $$
+BEGIN
+  PERFORM 2;
+END;
+$$ LANGUAGE plpgsql;`)
   })
 
   it('replaces constraint expressions directly for popup SQL editing', () => {

@@ -4,6 +4,7 @@ import type { Diagnostic as CodeMirrorDiagnostic } from '@codemirror/lint'
 import type { StringStream } from '@codemirror/language'
 import { autocompletion, completionKeymap } from '@codemirror/autocomplete'
 import { defaultKeymap, history, historyKeymap, indentWithTab } from '@codemirror/commands'
+import { EditorState } from '@codemirror/state'
 import {
   HighlightStyle,
   StreamLanguage,
@@ -35,6 +36,7 @@ type PgmlStreamState = {
 }
 
 export type PgmlCodeMirrorOptions = {
+  enableDiagnostics?: boolean
   placeholder?: string
 }
 
@@ -67,12 +69,16 @@ export const studioCodeMirrorTheme = EditorView.theme({
   '.cm-scroller': {
     overflow: 'auto',
     lineHeight: '1.9',
-    fontFamily: 'inherit'
+    fontFamily: 'inherit',
+    // Imported PGML and SQL commonly contain hard tabs. Clamp them so large
+    // nested blocks remain readable in the embedded editor surfaces.
+    tabSize: '2'
   },
   '.cm-content': {
     minHeight: '100%',
     padding: '0.75rem 0.875rem 2rem',
-    caretColor: 'var(--studio-shell-label)'
+    caretColor: 'var(--studio-shell-label)',
+    tabSize: '2'
   },
   '.cm-line': {
     padding: '0 0.1rem'
@@ -496,6 +502,7 @@ export const createPgmlCodeMirrorExtensions = (options: PgmlCodeMirrorOptions = 
   const placeholderText = typeof options.placeholder === 'string' && options.placeholder.length > 0
     ? options.placeholder
     : 'Paste PGML here...'
+  const enableDiagnostics = options.enableDiagnostics !== false
 
   const extensions: Extension[] = [
     history(),
@@ -504,6 +511,7 @@ export const createPgmlCodeMirrorExtensions = (options: PgmlCodeMirrorOptions = 
     highlightActiveLineGutter(),
     lineNumbers(),
     bracketMatching(),
+    EditorState.tabSize.of(2),
     indentUnit.of('  '),
     keymap.of([
       indentWithTab,
@@ -518,12 +526,6 @@ export const createPgmlCodeMirrorExtensions = (options: PgmlCodeMirrorOptions = 
       defaultKeymap: true,
       override: [pgmlCompletionSource]
     }),
-    linter((view) => {
-      return createCodeMirrorDiagnostics(view.state.doc.toString())
-    }, {
-      delay: 150
-    }),
-    lintGutter(),
     placeholder(placeholderText),
     studioCodeMirrorTheme,
     EditorView.contentAttributes.of({
@@ -532,6 +534,17 @@ export const createPgmlCodeMirrorExtensions = (options: PgmlCodeMirrorOptions = 
       'data-pgml-editor-content': 'true'
     })
   ]
+
+  if (enableDiagnostics) {
+    extensions.push(
+      linter((view) => {
+        return createCodeMirrorDiagnostics(view.state.doc.toString())
+      }, {
+        delay: 150
+      }),
+      lintGutter()
+    )
+  }
 
   return extensions
 }

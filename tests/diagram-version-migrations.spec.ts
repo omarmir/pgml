@@ -522,17 +522,21 @@ test('versioned document mode can scope the editor to the full document, workspa
   await page.getByRole('button', { name: 'Versioned document' }).click()
   await expect(getDocumentScopeSelect(page)).toBeVisible()
   await expectEditorValueToContain(editor, 'VersionSet ')
+  await expect(page.locator('[data-pgml-diagnostics="true"]')).toHaveCount(0)
 
   await selectDocumentScope(page, 'Workspace block')
   await expectEditorValueToContain(editor, 'Workspace {')
   await expectEditorValueNotToContain(editor, 'VersionSet ')
+  await expect(page.locator('[data-pgml-diagnostics="true"]')).toHaveCount(0)
 
   await selectDocumentScope(page, 'Design · Scope baseline')
   await expectEditorValueToContain(editor, 'name: "Scope baseline"')
   await expectEditorValueToContain(editor, 'Version v_')
   await expectEditorValueNotToContain(editor, 'Workspace {')
+  await expect(page.locator('[data-pgml-diagnostics="true"]')).toHaveCount(0)
 
   await selectDocumentScope(page, 'All VersionSet blocks')
   await expectEditorValueToContain(editor, 'VersionSet ')
   await expectEditorValueToContain(editor, 'Workspace {')
+  await expect(page.locator('[data-pgml-diagnostics="true"]')).toHaveCount(0)
 })

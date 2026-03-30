@@ -17,7 +17,7 @@ const {
   readOnly = false
 } = defineProps<{
   description?: string
-  languageMode?: 'pgml' | 'sql'
+  languageMode?: 'pgml' | 'pgml-snippet' | 'sql'
   modelValue: string
   originalValue: string
   title?: string
@@ -61,7 +61,11 @@ const editorStateLabel = computed(() => {
   return 'Ready to apply'
 })
 const editorLanguageLabel = computed(() => {
-  return languageMode === 'sql' ? 'SQL source' : 'PGML block'
+  if (languageMode === 'sql') {
+    return 'SQL source'
+  }
+
+  return languageMode === 'pgml-snippet' ? 'PGML snippet' : 'PGML block'
 })
 const helperDescription = computed(() => {
   if (description.trim().length > 0) {
@@ -70,10 +74,16 @@ const helperDescription = computed(() => {
 
   return languageMode === 'sql'
     ? 'Edit the executable SQL directly with syntax highlighting, bracket pairing, and SQL-aware editing behaviors.'
-    : 'Edit the selected PGML block directly with the same editor engine used in the main source workspace.'
+    : languageMode === 'pgml-snippet'
+      ? 'Edit the selected inline PGML snippet with syntax highlighting and completions without full-document validation.'
+      : 'Edit the selected PGML block directly with the same editor engine used in the main source workspace.'
 })
 const editorPlaceholder = computed(() => {
-  return languageMode === 'sql' ? 'Edit the SQL source' : 'Edit the selected PGML block'
+  if (languageMode === 'sql') {
+    return 'Edit the SQL source'
+  }
+
+  return languageMode === 'pgml-snippet' ? 'Edit the selected PGML snippet' : 'Edit the selected PGML block'
 })
 </script>
 
@@ -141,7 +151,13 @@ const editorPlaceholder = computed(() => {
       v-else
       :class="studioEmptyStateClass"
     >
-      {{ languageMode === 'sql' ? 'SQL syntax highlighting is active for this source block.' : 'No diagnostics for this block.' }}
+      {{
+        languageMode === 'sql'
+          ? 'SQL syntax highlighting is active for this source block.'
+          : languageMode === 'pgml-snippet'
+            ? 'PGML snippet highlighting is active without full-document validation.'
+            : 'No diagnostics for this block.'
+      }}
     </div>
   </div>
 </template>

@@ -138,6 +138,39 @@ Enum public.language_preference {
     expect(analysis.diagnostics).toEqual([])
   })
 
+  it('collects no diagnostics for standalone workspace and version document scopes', () => {
+    const workspaceScopeSource = `Workspace {
+  based_on: v2
+  updated_at: "2026-03-29T14:12:00.000Z"
+
+  Snapshot {
+    Table public.users {
+      id uuid [pk]
+    }
+  }
+}`
+    const versionScopeSource = `Version v2 {
+  name: "Workspace base"
+  role: design
+  parent: v1
+  created_at: "2026-03-24T10:30:00.000Z"
+
+  Snapshot {
+    Table public.users {
+      id uuid [pk]
+    }
+  }
+}`
+
+    const workspaceAnalysis = analyzePgmlDocument(workspaceScopeSource)
+    const versionAnalysis = analyzePgmlDocument(versionScopeSource)
+
+    expect(workspaceAnalysis.isVersionedDocument).toBe(true)
+    expect(workspaceAnalysis.diagnostics).toEqual([])
+    expect(versionAnalysis.isVersionedDocument).toBe(true)
+    expect(versionAnalysis.diagnostics).toEqual([])
+  })
+
   it('offers table width scale as a properties completion', () => {
     const source = `TableGroup Core {
   public.users
@@ -323,6 +356,44 @@ Ref: public.users.id > public.u`
       expect.objectContaining({
         label: 'v1',
         kind: 'symbol'
+      })
+    ]))
+  })
+
+  it('offers workspace and version completions when those blocks are the scoped root', () => {
+    const workspaceScopeSource = `Workspace {
+  ba
+
+  Snapshot {
+    Table public.users {
+      id uuid [pk]
+    }
+  }
+}`
+    const versionScopeSource = `Version v2 {
+  role: im
+  created_at: "2026-03-24T10:30:00.000Z"
+
+  Snapshot {
+    Table public.users {
+      id uuid [pk]
+    }
+  }
+}`
+
+    const workspaceItems = getPgmlCompletionItems(workspaceScopeSource, workspaceScopeSource.indexOf('ba') + 'ba'.length)
+    const versionItems = getPgmlCompletionItems(versionScopeSource, versionScopeSource.indexOf('im') + 'im'.length)
+
+    expect(workspaceItems).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        label: 'based_on',
+        kind: 'property'
+      })
+    ]))
+    expect(versionItems).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        label: 'implementation',
+        kind: 'value'
       })
     ]))
   })

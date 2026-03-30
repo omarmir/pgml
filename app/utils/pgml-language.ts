@@ -300,6 +300,8 @@ type PgmlAnalysisState = {
   versionIds: PgmlNamedRange[]
 }
 
+type PgmlDocumentRootMode = 'snapshot' | 'version-set' | 'workspace' | 'version'
+
 type CollectRawBlocksOptions = {
   topLevelContextKind?: PgmlContextKind | null
   topLevelBlockKind?: PgmlBlockKind
@@ -2236,6 +2238,122 @@ const analyzeVersionedDocumentBlocks = (
   })
 }
 
+const analyzeWorkspaceDocumentBlocks = (
+  blocks: PgmlRawBlock[],
+  topLevelLines: PgmlLineInfo[],
+  diagnostics: PgmlLanguageDiagnostic[],
+  contexts: PgmlContextRange[],
+  analysisState: PgmlAnalysisState
+) => {
+  topLevelLines.forEach((line) => {
+    createDiagnostic(
+      diagnostics,
+      'pgml/workspace-root-entry',
+      'error',
+      'Scoped Workspace documents only allow Workspace at the top level.',
+      line
+    )
+  })
+
+  if (blocks.length !== 1 || blocks[0]?.kind !== 'Workspace') {
+    blocks.forEach((block) => {
+      if (block.kind !== 'Workspace') {
+        createDiagnostic(
+          diagnostics,
+          'pgml/workspace-root-block-kind',
+          'error',
+          'Scoped Workspace documents only allow Workspace at the top level.',
+          block.headerLine
+        )
+      }
+    })
+  }
+
+  blocks.forEach((block) => {
+    if (block.kind === 'Workspace') {
+      analyzeWorkspaceBlock(block, diagnostics, contexts, analysisState)
+      return
+    }
+
+    if (block.kind === 'Unknown') {
+      createDiagnostic(
+        diagnostics,
+        'pgml/block-kind',
+        'error',
+        'Unsupported block header.',
+        block.headerLine
+      )
+    }
+  })
+}
+
+const analyzeVersionDocumentBlocks = (
+  blocks: PgmlRawBlock[],
+  topLevelLines: PgmlLineInfo[],
+  diagnostics: PgmlLanguageDiagnostic[],
+  contexts: PgmlContextRange[],
+  analysisState: PgmlAnalysisState
+) => {
+  topLevelLines.forEach((line) => {
+    createDiagnostic(
+      diagnostics,
+      'pgml/version-root-entry',
+      'error',
+      'Scoped Version documents only allow a single Version block at the top level.',
+      line
+    )
+  })
+
+  if (blocks.length !== 1 || blocks[0]?.kind !== 'Version') {
+    blocks.forEach((block) => {
+      if (block.kind !== 'Version') {
+        createDiagnostic(
+          diagnostics,
+          'pgml/version-root-block-kind',
+          'error',
+          'Scoped Version documents only allow a single Version block at the top level.',
+          block.headerLine
+        )
+      }
+    })
+  }
+
+  blocks.forEach((block) => {
+    if (block.kind === 'Version') {
+      analyzeVersionBlock(block, diagnostics, contexts, analysisState)
+      return
+    }
+
+    if (block.kind === 'Unknown') {
+      createDiagnostic(
+        diagnostics,
+        'pgml/block-kind',
+        'error',
+        'Unsupported block header.',
+        block.headerLine
+      )
+    }
+  })
+}
+
+const getPgmlDocumentRootMode = (
+  blocks: PgmlRawBlock[]
+): PgmlDocumentRootMode => {
+  if (blocks.some(block => block.kind === 'VersionSet')) {
+    return 'version-set'
+  }
+
+  if (blocks.length === 1 && blocks[0]?.kind === 'Workspace') {
+    return 'workspace'
+  }
+
+  if (blocks.length === 1 && blocks[0]?.kind === 'Version') {
+    return 'version'
+  }
+
+  return 'snapshot'
+}
+
 export const analyzePgmlDocument = (source: string) => {
   if (analysisCache && analysisCache.source === source) {
     return analysisCache.analysis
@@ -2267,14 +2385,19 @@ export const analyzePgmlDocument = (source: string) => {
     propertyTargets,
     versionIds
   }
-  const isVersionedDocument = blocks.some(block => block.kind === 'VersionSet')
+  const rootMode = getPgmlDocumentRootMode(blocks)
+  const isVersionedDocument = rootMode !== 'snapshot'
 
   buildContexts(blocks, contexts)
 
-  if (isVersionedDocument) {
+  if (rootMode === 'version-set') {
     // Versioned documents are parsed from the root downward so invalid root
     // siblings can be flagged before nested Snapshot blocks reuse schema rules.
     analyzeVersionedDocumentBlocks(blocks, topLevelLines, diagnostics, contexts, analysisState)
+  } else if (rootMode === 'workspace') {
+    analyzeWorkspaceDocumentBlocks(blocks, topLevelLines, diagnostics, contexts, analysisState)
+  } else if (rootMode === 'version') {
+    analyzeVersionDocumentBlocks(blocks, topLevelLines, diagnostics, contexts, analysisState)
   } else {
     analyzeSnapshotBlocks(blocks, topLevelLines, diagnostics, contexts, analysisState)
   }

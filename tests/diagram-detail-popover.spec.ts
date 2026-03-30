@@ -293,6 +293,63 @@ Function orphan_report() {
   $sql$`)
 })
 
+test('function popovers edit only the routine body instead of the trailing language wrapper', async ({ goto, page }) => {
+  await goto('/diagram')
+
+  const mainEditor = getPgmlEditor(page).first()
+
+  await setPgmlEditorValue(mainEditor, `Table public.orders {
+  id integer [pk]
+}
+
+Function demo() returns void [replace] {
+  source: $sql$
+    CREATE OR REPLACE FUNCTION public.demo()
+    RETURNS void AS $$
+    BEGIN
+      PERFORM 1;
+    END;
+    $$ LANGUAGE plpgsql;
+  $sql$
+}`)
+
+  await page.locator('[data-diagram-panel-tab="entities"]').click()
+  await page.locator('[data-browser-entity-row="function:demo"] button').first().click()
+
+  const popover = page.locator('[data-object-popover="function:demo"]')
+
+  await expect(popover).toBeVisible()
+  await expect(popover.locator('[data-detail-popover-edit-source="true"]')).toContainText('Edit SQL')
+  await popover.locator('[data-detail-popover-edit-source="true"]').click()
+
+  const popupEditor = popover.locator('[data-detail-popover-source-editor="true"] [data-pgml-editor="true"]')
+
+  await expect(popupEditor).toHaveAttribute('data-pgml-editor-language', 'sql')
+  await expect.poll(async () => {
+    return readPgmlEditorValue(popupEditor)
+  }).toBe(`BEGIN
+  PERFORM 1;
+END;`)
+  await expect(popover).not.toContainText('CREATE OR REPLACE FUNCTION public.demo()')
+  await expect(popover).not.toContainText('LANGUAGE plpgsql')
+
+  await setPgmlEditorValue(popupEditor, `BEGIN
+  PERFORM 2;
+END;`)
+  await popover.locator('[data-detail-popover-apply-source="true"]').click()
+
+  await expect.poll(async () => {
+    return readPgmlEditorValue(mainEditor)
+  }).toContain(`source: $sql$
+    CREATE OR REPLACE FUNCTION public.demo()
+    RETURNS void AS $$
+    BEGIN
+      PERFORM 2;
+    END;
+    $$ LANGUAGE plpgsql;
+  $sql$`)
+})
+
 test('constraint popovers edit a trimmed SQL expression instead of the indented table row', async ({ goto, page }) => {
   await goto('/diagram')
   await page.locator('[data-diagram-panel-tab="entities"]').click()
@@ -310,4 +367,28 @@ test('constraint popovers edit a trimmed SQL expression instead of the indented 
   await expect.poll(async () => {
     return readPgmlEditorValue(popupEditor)
   }).toBe('total_cents >= 0')
+})
+
+test('index popovers edit inline PGML snippets without full-document top-level errors', async ({ goto, page }) => {
+  await goto('/diagram')
+  await page.locator('[data-diagram-panel-tab="entities"]').click()
+  await page.locator('[data-browser-entity-row="index:idx_products_search"] button').first().click()
+
+  const popover = page.locator('[data-attachment-popover="index:idx_products_search"]')
+
+  await expect(popover).toBeVisible()
+  await expect(popover.locator('[data-detail-popover-edit-source="true"]')).toContainText('Edit block')
+  await popover.locator('[data-detail-popover-edit-source="true"]').click()
+
+  const popupEditor = popover.locator('[data-detail-popover-source-editor="true"] [data-pgml-editor="true"]')
+  const popupEditorScroller = popover.locator('[data-detail-popover-source-editor="true"] [data-pgml-editor-scroller="true"]')
+
+  await expect(popupEditor).toHaveAttribute('data-pgml-editor-language', 'pgml-snippet')
+  await expect(popover.locator('[data-detail-popover-source-editor="true"]')).toContainText('PGML snippet highlighting is active without full-document validation.')
+  await expect.poll(async () => {
+    return readPgmlEditorValue(popupEditor)
+  }).toBe('Index idx_products_search (search) [type: gin]')
+  await expect.poll(async () => {
+    return popupEditorScroller.evaluate(node => getComputedStyle(node).tabSize)
+  }).toBe('2')
 })

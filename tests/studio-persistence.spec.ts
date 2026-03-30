@@ -225,6 +225,94 @@ test('studio autosaves changes to local storage and updates the header status ic
   })
 })
 
+test('studio reloads malformed workspace indentation as normalized PGML in the raw editor', async ({ goto, page }) => {
+  await goto('/diagram')
+
+  const editor = getPgmlEditor(page)
+  const malformedSource = `TableGroup Core {
+                                                                                                        public.tenants
+                                                                                                        public.accounts
+}`
+
+  await setPgmlEditorValue(editor, malformedSource)
+  await expect(page.locator('[data-studio-schema-status]')).toHaveAttribute('data-studio-schema-status', 'pending')
+
+  await expect.poll(async () => {
+    const savedSchemas = await page.evaluate(() => {
+      return JSON.parse(window.localStorage.getItem('pgml-studio-schemas-v1') || '[]')
+    })
+    const status = await page.locator('[data-studio-schema-status]').getAttribute('data-studio-schema-status')
+
+    return {
+      count: savedSchemas.length,
+      status
+    }
+  }, {
+    timeout: 8000
+  }).toEqual({
+    count: 1,
+    status: 'saved'
+  })
+
+  await page.reload()
+
+  await expect.poll(async () => {
+    return readPgmlEditorValue(getPgmlEditor(page))
+  }).toBe(`TableGroup Core {
+  public.tenants
+  public.accounts
+}`)
+})
+
+test('studio reloads malformed embedded SQL indentation as normalized PGML in the raw editor', async ({ goto, page }) => {
+  await goto('/diagram')
+
+  const editor = getPgmlEditor(page)
+  const malformedSource = `Function sync_users() returns trigger {
+  source: $sql$
+                                                                                                        CREATE FUNCTION public.sync_users() RETURNS trigger LANGUAGE plpgsql AS $$
+                                                                                                        BEGIN
+                                                                                                          RETURN NEW;
+                                                                                                        END;
+                                                                                                        $$;
+  $sql$
+}`
+
+  await setPgmlEditorValue(editor, malformedSource)
+  await expect(page.locator('[data-studio-schema-status]')).toHaveAttribute('data-studio-schema-status', 'pending')
+
+  await expect.poll(async () => {
+    const savedSchemas = await page.evaluate(() => {
+      return JSON.parse(window.localStorage.getItem('pgml-studio-schemas-v1') || '[]')
+    })
+    const status = await page.locator('[data-studio-schema-status]').getAttribute('data-studio-schema-status')
+
+    return {
+      count: savedSchemas.length,
+      status
+    }
+  }, {
+    timeout: 8000
+  }).toEqual({
+    count: 1,
+    status: 'saved'
+  })
+
+  await page.reload()
+
+  await expect.poll(async () => {
+    return readPgmlEditorValue(getPgmlEditor(page))
+  }).toBe(`Function sync_users() returns trigger {
+  source: $sql$
+    CREATE FUNCTION public.sync_users() RETURNS trigger LANGUAGE plpgsql AS $$
+    BEGIN
+      RETURN NEW;
+    END;
+    $$;
+  $sql$
+}`)
+})
+
 test('standalone function collapse toggles autosave and persists embedded PGML properties', async ({ goto, page }) => {
   await goto('/diagram')
 

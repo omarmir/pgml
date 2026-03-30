@@ -7,7 +7,7 @@ import { createPgmlCodeMirrorExtensions } from '~/utils/pgml-codemirror'
 import { createSqlCodeMirrorExtensions } from '~/utils/sql-codemirror'
 import { getPgmlSourceSelectionRange } from '~/utils/pgml'
 
-type SourceEditorLanguageMode = 'pgml' | 'sql'
+type SourceEditorLanguageMode = 'pgml' | 'pgml-snippet' | 'sql'
 
 type PgmlEditorHostElement = HTMLDivElement & {
   __pgmlEditorView?: EditorView
@@ -42,6 +42,7 @@ const buildLanguageExtensions = () => {
         placeholder
       })
     : createPgmlCodeMirrorExtensions({
+        enableDiagnostics: languageMode === 'pgml',
         placeholder
       })
 }

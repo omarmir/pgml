@@ -71,11 +71,14 @@ import type {
 } from '~/utils/pgml'
 import {
   dedentPgmlSourceForEditor,
+  extractPgmlRoutineBodyFromExecutableSource,
   getOrderedGroupTables,
   getPgmlSourceSelectionRange,
-  reindentPgmlEditorText,
+  normalizePgmlBlockSourceForEditor,
+  reindentPgmlBlockEditorText,
   replacePgmlConstraintExpressionInBlock,
   replacePgmlExecutableSourceInBlock,
+  replacePgmlRoutineBodyInBlock,
   getSequenceAttachedTableIds
 } from '~/utils/pgml'
 import { normalizeSvgPaint } from '~/utils/svg-paint'
@@ -253,7 +256,7 @@ type DiagramCompareNodeHighlight = {
 
 type DetailPopoverEditorSpec = {
   description: string
-  languageMode: 'pgml' | 'sql'
+  languageMode: 'pgml' | 'pgml-snippet' | 'sql'
   source: string
   title: string
   toReplacementText: (nextSource: string) => string | null
@@ -2730,11 +2733,11 @@ const buildPgmlBlockEditorSpec = (
   kindLabel: string
 ): DetailPopoverEditorSpec => {
   return {
-    description: `Edit the selected ${kindLabel.toLowerCase()} block directly in PGML syntax.`,
-    languageMode: 'pgml',
-    source: dedentPgmlSourceForEditor(blockSource),
-    title: `Editing ${kindLabel} PGML`,
-    toReplacementText: (nextSource: string) => reindentPgmlEditorText(nextSource, blockSource)
+    description: `Edit the selected ${kindLabel.toLowerCase()} snippet directly in PGML syntax without treating it as a standalone document.`,
+    languageMode: 'pgml-snippet',
+    source: normalizePgmlBlockSourceForEditor(blockSource),
+    title: `Editing ${kindLabel} snippet`,
+    toReplacementText: (nextSource: string) => reindentPgmlBlockEditorText(nextSource, blockSource)
   }
 }
 
@@ -2753,6 +2756,30 @@ const buildExecutableSqlEditorSpec = (
     source: dedentPgmlSourceForEditor(executableSource),
     title: `Editing ${kindLabel} SQL`,
     toReplacementText: (nextSource: string) => replacePgmlExecutableSourceInBlock(blockSource, nextSource)
+  }
+}
+
+const buildRoutineBodySqlEditorSpec = (
+  blockSource: string,
+  kindLabel: string,
+  executableSource: string | null
+) => {
+  if (!executableSource || executableSource.trim().length === 0) {
+    return null
+  }
+
+  const routineBody = extractPgmlRoutineBodyFromExecutableSource(executableSource)
+
+  if (!routineBody) {
+    return null
+  }
+
+  return {
+    description: `Edit the ${kindLabel.toLowerCase()} body directly without the surrounding CREATE statement or language wrapper.`,
+    languageMode: 'sql' as const,
+    source: routineBody,
+    title: `Editing ${kindLabel} body`,
+    toReplacementText: (nextSource: string) => replacePgmlRoutineBodyInBlock(blockSource, nextSource)
   }
 }
 
@@ -2783,7 +2810,11 @@ const selectedDetailEditorSpec = computed<DetailPopoverEditorSpec | null>(() => 
   }
 
   if (selectedAttachment.value?.kind === 'Function') {
-    return buildExecutableSqlEditorSpec(
+    return buildRoutineBodySqlEditorSpec(
+      blockSource,
+      selectedAttachment.value.kind,
+      resolveSelectedRoutineSource(selectedAttachment.value.id, model.functions, 'function:')
+    ) || buildExecutableSqlEditorSpec(
       blockSource,
       selectedAttachment.value.kind,
       resolveSelectedRoutineSource(selectedAttachment.value.id, model.functions, 'function:')
@@ -2791,7 +2822,11 @@ const selectedDetailEditorSpec = computed<DetailPopoverEditorSpec | null>(() => 
   }
 
   if (selectedAttachment.value?.kind === 'Procedure') {
-    return buildExecutableSqlEditorSpec(
+    return buildRoutineBodySqlEditorSpec(
+      blockSource,
+      selectedAttachment.value.kind,
+      resolveSelectedRoutineSource(selectedAttachment.value.id, model.procedures, 'procedure:')
+    ) || buildExecutableSqlEditorSpec(
       blockSource,
       selectedAttachment.value.kind,
       resolveSelectedRoutineSource(selectedAttachment.value.id, model.procedures, 'procedure:')
@@ -2815,7 +2850,11 @@ const selectedDetailEditorSpec = computed<DetailPopoverEditorSpec | null>(() => 
   }
 
   if (selectedObject.value?.kindLabel === 'Function') {
-    return buildExecutableSqlEditorSpec(
+    return buildRoutineBodySqlEditorSpec(
+      blockSource,
+      selectedObject.value.kindLabel,
+      resolveSelectedRoutineSource(selectedObject.value.id, model.functions, 'function:')
+    ) || buildExecutableSqlEditorSpec(
       blockSource,
       selectedObject.value.kindLabel,
       resolveSelectedRoutineSource(selectedObject.value.id, model.functions, 'function:')
@@ -2823,7 +2862,11 @@ const selectedDetailEditorSpec = computed<DetailPopoverEditorSpec | null>(() => 
   }
 
   if (selectedObject.value?.kindLabel === 'Procedure') {
-    return buildExecutableSqlEditorSpec(
+    return buildRoutineBodySqlEditorSpec(
+      blockSource,
+      selectedObject.value.kindLabel,
+      resolveSelectedRoutineSource(selectedObject.value.id, model.procedures, 'procedure:')
+    ) || buildExecutableSqlEditorSpec(
       blockSource,
       selectedObject.value.kindLabel,
       resolveSelectedRoutineSource(selectedObject.value.id, model.procedures, 'procedure:')

@@ -25,5 +25,21 @@ describe('diagram detail popover source', () => {
     expect(editorFile).toContain('data-detail-popover-source-editor="true"')
     expect(editorFile).toContain('<PgmlSourceCodeEditor')
     expect(editorFile).toContain(':language-mode="languageMode"')
+    expect(shellFile).toContain('languageMode: \'pgml-snippet\'')
+    expect(editorFile).toContain('languageMode === \'pgml-snippet\'')
+    expect(shellFile).toContain('buildRoutineBodySqlEditorSpec')
+    expect(shellFile).toContain('extractPgmlRoutineBodyFromExecutableSource')
+    expect(shellFile).toContain('replacePgmlRoutineBodyInBlock')
+    expect(shellFile).toContain('normalizePgmlBlockSourceForEditor')
+    expect(shellFile).toContain('reindentPgmlBlockEditorText')
+  })
+
+  it('clamps CodeMirror tab width so indented PGML and SQL stay readable', () => {
+    const pgmlCodeMirrorFile = readSourceFile('app/utils/pgml-codemirror.ts')
+    const sqlCodeMirrorFile = readSourceFile('app/utils/sql-codemirror.ts')
+
+    expect(pgmlCodeMirrorFile).toContain('EditorState.tabSize.of(2)')
+    expect(pgmlCodeMirrorFile).toContain('tabSize: \'2\'')
+    expect(sqlCodeMirrorFile).toContain('EditorState.tabSize.of(2)')
   })
 })

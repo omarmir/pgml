@@ -46,6 +46,7 @@ import {
   serializePgmlDocument,
   normalizePgmlDocumentEditorScope,
   getPgmlVersionRoleDisplayLabel,
+  normalizePgmlSnapshotSource,
   type PgmlVersionDocumentBlock,
   type PgmlDocumentEditorScope,
   type PgmlVersionRole,
@@ -65,7 +66,9 @@ export type PgmlVersionedDocumentScopeItem = {
 }
 
 const normalizeSnapshotSource = (value: string, includeLayout: boolean) => {
-  return includeLayout ? value.trim() : stripPgmlPropertiesBlocks(value).trim()
+  const normalizedSource = includeLayout ? value : stripPgmlPropertiesBlocks(value)
+
+  return normalizePgmlSnapshotSource(normalizedSource)
 }
 
 const buildDefaultCompareBaseId = (document: PgmlVersionSetDocument) => {
@@ -273,9 +276,15 @@ export const usePgmlStudioVersionHistory = (
     source: Ref<string>
   }
 ) => {
+  const initialWorkspaceSource = normalizeSnapshotSource(input.source.value, true)
+
+  if (input.source.value !== initialWorkspaceSource) {
+    input.source.value = initialWorkspaceSource
+  }
+
   const document: Ref<PgmlVersionSetDocument> = ref(createInitialPgmlDocument({
     name: input.documentName.value,
-    workspaceSource: input.source.value
+    workspaceSource: initialWorkspaceSource
   }))
   const previewTargetId: Ref<PgmlVersionPreviewTarget> = ref('workspace')
   const editorMode: Ref<PgmlVersionedDocumentEditorMode> = ref('head')
@@ -300,15 +309,30 @@ export const usePgmlStudioVersionHistory = (
   }
 
   const setDocument = (nextDocument: PgmlVersionSetDocument) => {
-    document.value = {
+    const normalizedDocument: PgmlVersionSetDocument = {
       ...nextDocument,
-      name: input.documentName.value
+      name: input.documentName.value,
+      versions: nextDocument.versions.map((version) => {
+        return {
+          ...version,
+          snapshot: {
+            source: normalizeSnapshotSource(version.snapshot.source, true)
+          }
+        }
+      }),
+      workspace: {
+        ...nextDocument.workspace,
+        snapshot: {
+          source: normalizeSnapshotSource(nextDocument.workspace.snapshot.source, true)
+        }
+      }
     }
-    input.source.value = nextDocument.workspace.snapshot.source
+    document.value = normalizedDocument
+    input.source.value = normalizedDocument.workspace.snapshot.source
     previewTargetId.value = 'workspace'
-    documentEditorScope.value = normalizePgmlDocumentEditorScope(nextDocument, documentEditorScope.value)
-    compareBaseId.value = buildDefaultCompareBaseId(nextDocument)
-    compareTargetId.value = buildDefaultCompareTargetId(nextDocument)
+    documentEditorScope.value = normalizePgmlDocumentEditorScope(normalizedDocument, documentEditorScope.value)
+    compareBaseId.value = buildDefaultCompareBaseId(normalizedDocument)
+    compareTargetId.value = buildDefaultCompareTargetId(normalizedDocument)
   }
 
   const normalizeSelectionState = () => {

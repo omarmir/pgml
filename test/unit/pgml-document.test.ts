@@ -103,6 +103,24 @@ Table public.orders {
     expect(reparsed.workspace.snapshot.source).toContain('Table public.orders')
   })
 
+  it('dedents snapshot bodies when parsing serialized VersionSet blocks back into workspace source', () => {
+    const parsed = parsePgmlDocument(`VersionSet "Billing" {
+  Workspace {
+    Snapshot {
+      TableGroup Core {
+        public.tenants
+        public.accounts
+      }
+    }
+  }
+}`)
+
+    expect(parsed.workspace.snapshot.source).toBe(`TableGroup Core {
+  public.tenants
+  public.accounts
+}`)
+  })
+
   it('serializes document editor scopes for the full VersionSet, workspace block, and selected version block', () => {
     const document = createInitialImplementationDocument(`${baseSnapshotSource}
 
@@ -433,6 +451,31 @@ Table public.memberships {
 
     expect(document.workspace.snapshot.source).toContain('Table public.users')
     expect(normalizePgmlSnapshotSource(`\r\n${baseSnapshotSource}\r\n`)).toBe(baseSnapshotSource)
+  })
+
+  it('normalizes malformed embedded SQL indentation when snapshot text enters the document model', () => {
+    const document = createInitialPgmlDocument({
+      name: 'Billing',
+      workspaceSource: `Function public.sync_users() returns trigger {
+  source: $sql$
+                                                                                                        CREATE FUNCTION public.sync_users() RETURNS trigger LANGUAGE plpgsql AS $$
+                                                                                                        BEGIN
+                                                                                                          RETURN NEW;
+                                                                                                        END;
+                                                                                                        $$;
+  $sql$
+}`
+    })
+
+    expect(document.workspace.snapshot.source).toBe(`Function public.sync_users() returns trigger {
+  source: $sql$
+    CREATE FUNCTION public.sync_users() RETURNS trigger LANGUAGE plpgsql AS $$
+    BEGIN
+      RETURN NEW;
+    END;
+    $$;
+  $sql$
+}`)
   })
 
   it('compares snapshots with optional layout stripping', () => {

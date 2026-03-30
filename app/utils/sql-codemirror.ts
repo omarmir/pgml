@@ -1,4 +1,5 @@
 import type { Extension } from '@codemirror/state'
+import { EditorState } from '@codemirror/state'
 import { autocompletion, closeBrackets, closeBracketsKeymap } from '@codemirror/autocomplete'
 import { defaultKeymap, history, historyKeymap, indentWithTab } from '@codemirror/commands'
 import { bracketMatching, indentUnit } from '@codemirror/language'
@@ -31,6 +32,7 @@ export const createSqlCodeMirrorExtensions = (options: SqlCodeMirrorOptions = {}
     lineNumbers(),
     bracketMatching(),
     closeBrackets(),
+    EditorState.tabSize.of(2),
     indentUnit.of('  '),
     keymap.of([
       indentWithTab,

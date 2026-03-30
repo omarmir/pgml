@@ -78,6 +78,48 @@ const createSerializedImplementationDocument = (workspaceSource = importedWorksp
 }
 
 describe('usePgmlStudioVersionHistory', () => {
+  it('normalizes malformed workspace indentation when the history composable boots', async () => {
+    const malformedWorkspaceSource = `TableGroup Core {
+                                                                                                        public.tenants
+                                                                                                        public.accounts
+}`
+    const { api, source } = await mountVersionHistoryComposable({
+      source: malformedWorkspaceSource
+    })
+
+    expect(source.value).toBe(`TableGroup Core {
+  public.tenants
+  public.accounts
+}`)
+    expect(api.document.value.workspace.snapshot.source).toBe(source.value)
+  })
+
+  it('normalizes malformed embedded SQL indentation when the history composable boots', async () => {
+    const malformedWorkspaceSource = `Function sync_users() returns trigger {
+  source: $sql$
+                                                                                                        CREATE FUNCTION public.sync_users() RETURNS trigger LANGUAGE plpgsql AS $$
+                                                                                                        BEGIN
+                                                                                                          RETURN NEW;
+                                                                                                        END;
+                                                                                                        $$;
+  $sql$
+}`
+    const { api, source } = await mountVersionHistoryComposable({
+      source: malformedWorkspaceSource
+    })
+
+    expect(source.value).toBe(`Function sync_users() returns trigger {
+  source: $sql$
+    CREATE FUNCTION public.sync_users() RETURNS trigger LANGUAGE plpgsql AS $$
+    BEGIN
+      RETURN NEW;
+    END;
+    $$;
+  $sql$
+}`)
+    expect(api.document.value.workspace.snapshot.source).toBe(source.value)
+  })
+
   it('creates checkpoints, previews locked versions, restores them, and replaces the workspace from imports', async () => {
     const { api, source } = await mountVersionHistoryComposable()
 

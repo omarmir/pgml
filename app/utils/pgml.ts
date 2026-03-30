@@ -228,6 +228,7 @@ const cleanText = (value: string) => value.trim().replace(/^"(.*)"$/, '$1').repl
 const readMatch = (value: string | undefined) => value || ''
 const trimMultiline = (value: string) => value.replace(/^\n+|\n+$/g, '')
 const splitNormalizedLines = (value: string) => value.replaceAll('\r\n', '\n').split('\n')
+const pgmlEmbeddedSourceDelimiterPattern = /^\s*(?:source|definition):\s*(\$(?:[A-Za-z0-9_]+)?\$)(.*)$/
 const getLeadingWhitespaceWidth = (value: string) => {
   const match = value.match(/^[\t ]+/)
 
@@ -251,6 +252,59 @@ const getCommonLeadingWhitespace = (value: string) => {
   const anchorLine = nonEmptyLines.find(line => getLeadingWhitespaceWidth(line) >= minimumWhitespaceWidth) || nonEmptyLines[0] || ''
 
   return anchorLine.slice(0, minimumWhitespaceWidth)
+}
+const indentNonEmptyLines = (
+  value: string,
+  indent: string
+) => {
+  if (value.length === 0) {
+    return []
+  }
+
+  return splitNormalizedLines(value).map((line) => {
+    return line.trim().length > 0 ? `${indent}${line}` : ''
+  })
+}
+const normalizePgmlEmbeddedSourceBodyLines = (
+  lines: string[],
+  sourceIndent: string
+) => {
+  // Embedded SQL often inherits the surrounding PGML indentation repeatedly
+  // when it has been serialized or pasted through nested wrappers. Strip the
+  // shared indentation once, then reapply one PGML level under `source:`.
+  const normalizedBody = dedentPgmlSourceForEditor(lines.join('\n'))
+
+  return indentNonEmptyLines(normalizedBody, `${sourceIndent}  `)
+}
+const collectNormalizedPgmlEmbeddedSourceBlock = (
+  lines: string[],
+  startIndex: number,
+  delimiter: string,
+  sourceIndent: string
+) => {
+  const bodyLines: string[] = []
+  let index = startIndex + 1
+
+  while (index < lines.length) {
+    const nextLine = lines[index] || ''
+
+    if (nextLine.trim() === delimiter) {
+      return {
+        bodyLines: normalizePgmlEmbeddedSourceBodyLines(bodyLines, sourceIndent),
+        closingLine: `${sourceIndent}${delimiter}`,
+        nextIndex: index + 1
+      }
+    }
+
+    bodyLines.push(nextLine.replace(/[ \t]+$/g, ''))
+    index += 1
+  }
+
+  return {
+    bodyLines: normalizePgmlEmbeddedSourceBodyLines(bodyLines, sourceIndent),
+    closingLine: null,
+    nextIndex: lines.length
+  }
 }
 const normalizeExecutableDetailSource = (value: string) => {
   const trimmedSource = trimMultiline(value)
@@ -1052,11 +1106,129 @@ export const dedentPgmlSourceForEditor = (value: string) => {
   return dedentedLines.join('\n')
 }
 
+export const normalizePgmlSourceIndentation = (value: string) => {
+  const sourceLines = splitNormalizedLines(value.replaceAll('\r\n', '\n'))
+  const normalizedLines: string[] = []
+  let blockDepth = 0
+  let index = 0
+
+  while (index < sourceLines.length) {
+    const line = sourceLines[index] || ''
+    const trimmedLine = line.trim()
+    const nextLine = line.replace(/[ \t]+$/g, '')
+
+    if (trimmedLine.length === 0) {
+      normalizedLines.push('')
+      index += 1
+      continue
+    }
+
+    const closingBracePrefix = trimmedLine.match(/^}+/)?.[0].length || 0
+    const effectiveDepth = Math.max(0, blockDepth - closingBracePrefix)
+    const expectedIndentWidth = effectiveDepth * 2
+    const actualIndentWidth = getLeadingWhitespaceWidth(line)
+    const normalizedLine = actualIndentWidth > expectedIndentWidth + 8
+      ? `${' '.repeat(expectedIndentWidth)}${trimmedLine}`
+      : nextLine
+    const embeddedSourceMatch = trimmedLine.match(pgmlEmbeddedSourceDelimiterPattern)
+
+    normalizedLines.push(normalizedLine)
+
+    if (embeddedSourceMatch && !embeddedSourceMatch[2]?.includes(embeddedSourceMatch[1] || '')) {
+      const embeddedSourceBlock = collectNormalizedPgmlEmbeddedSourceBlock(
+        sourceLines,
+        index,
+        embeddedSourceMatch[1] || '',
+        normalizedLine.match(/^[\t ]*/)?.[0] || ''
+      )
+
+      normalizedLines.push(...embeddedSourceBlock.bodyLines)
+
+      if (embeddedSourceBlock.closingLine) {
+        normalizedLines.push(embeddedSourceBlock.closingLine)
+      }
+
+      index = embeddedSourceBlock.nextIndex
+    } else {
+      index += 1
+    }
+
+    const openingBraceCount = (trimmedLine.match(/{/g) || []).length
+    const closingBraceCount = (trimmedLine.match(/}/g) || []).length
+
+    blockDepth = Math.max(0, blockDepth + openingBraceCount - closingBraceCount)
+  }
+
+  return normalizedLines.join('\n')
+}
+
+export const normalizePgmlBlockSourceForEditor = (value: string) => {
+  const dedentedValue = dedentPgmlSourceForEditor(value)
+  const lines = splitNormalizedLines(dedentedValue)
+
+  if (lines.length < 3) {
+    return dedentedValue
+  }
+
+  const bodyLines = lines.slice(1, -1)
+  const minimumBodyIndent = bodyLines.reduce((minimum, line) => {
+    if (line.trim().length === 0) {
+      return minimum
+    }
+
+    return Math.min(minimum, getLeadingWhitespaceWidth(line))
+  }, Number.POSITIVE_INFINITY)
+
+  if (!Number.isFinite(minimumBodyIndent) || minimumBodyIndent <= 2) {
+    return dedentedValue
+  }
+
+  // Some snippets are sliced from already-malformed source where the block body
+  // drifted far to the right. Normalize the first body indentation level back
+  // to two spaces while preserving any deeper nesting under it.
+  const trimWidth = minimumBodyIndent - 2
+  const normalizedLines = lines.map((line, index) => {
+    if (line.trim().length === 0) {
+      return ''
+    }
+
+    if (index === 0 || index === lines.length - 1) {
+      return line.replace(/[ \t]+$/g, '')
+    }
+
+    const removableWidth = Math.min(trimWidth, getLeadingWhitespaceWidth(line))
+
+    return line.slice(removableWidth).replace(/[ \t]+$/g, '')
+  })
+
+  return normalizedLines.join('\n')
+}
+
 export const reindentPgmlEditorText = (
   value: string,
   referenceText: string
 ) => {
   const normalizedValue = trimMultiline(value.replaceAll('\r\n', '\n'))
+  const sharedIndent = getCommonLeadingWhitespace(referenceText)
+
+  if (sharedIndent.length === 0) {
+    return normalizedValue
+  }
+
+  return splitNormalizedLines(normalizedValue)
+    .map((line) => {
+      return line.trim().length > 0 ? `${sharedIndent}${line}` : ''
+    })
+    .join('\n')
+}
+
+export const reindentPgmlBlockEditorText = (
+  value: string,
+  referenceText: string
+) => {
+  // Block snippets should round-trip into a clean two-space hierarchy instead
+  // of preserving pathological inner indentation from the original source.
+  const normalizedValue = normalizePgmlBlockSourceForEditor(value)
   const sharedIndent = getCommonLeadingWhitespace(referenceText)
 
   if (sharedIndent.length === 0) {
@@ -1084,23 +1256,91 @@ export const replacePgmlExecutableSourceInBlock = (
   }
 
   const header = sourceMatch[1] || ''
-  const currentBody = sourceMatch[3] || ''
   const closingLine = sourceMatch[4] || ''
   const propertyIndent = sourceMatch[5] || ''
-  const bodyIndent = getCommonLeadingWhitespace(currentBody) || `${propertyIndent}  `
-  const normalizedExecutableSource = trimMultiline(nextExecutableSource.replaceAll('\r\n', '\n'))
-  const indentedBody = normalizedExecutableSource.length === 0
+  const normalizedExecutableSource = dedentPgmlSourceForEditor(nextExecutableSource.replaceAll('\r\n', '\n'))
+  const indentedBody = indentNonEmptyLines(normalizedExecutableSource, `${propertyIndent}  `).join('\n')
+
+  const nextStoredSource = indentedBody.length > 0
+    ? `${header}${indentedBody}${closingLine}`
+    : `${header}${closingLine}`
+
+  return normalizedBlockSource.replace(sourceMatch[0], () => nextStoredSource)
+}
+
+// Routine sources can arrive from hand-authored PGML or pg_dump-style SQL, so
+// the body extractor accepts both `AS $$\n...` and `AS $$ ...` forms while
+// preserving any trailing wrapper such as `$$ LANGUAGE plpgsql;`.
+const pgmlRoutineBodyPattern = /^([\s\S]*?\bAS\s+(\$(?:[A-Za-z0-9_]+)?\$)[ \t]*\r?\n?)([\s\S]*?)(\r?\n?[ \t]*\2[\s\S]*)$/i
+
+export const extractPgmlRoutineBodyFromExecutableSource = (value: string) => {
+  const normalizedValue = value.replaceAll('\r\n', '\n')
+  const bodyMatch = normalizedValue.match(pgmlRoutineBodyPattern)
+
+  if (!bodyMatch) {
+    return null
+  }
+
+  return dedentPgmlSourceForEditor(bodyMatch[3] || '')
+}
+
+export const replacePgmlRoutineBodyInExecutableSource = (
+  value: string,
+  nextBody: string
+) => {
+  const normalizedValue = value.replaceAll('\r\n', '\n')
+  const bodyMatch = normalizedValue.match(pgmlRoutineBodyPattern)
+
+  if (!bodyMatch) {
+    return null
+  }
+
+  const beforeBody = bodyMatch[1] || ''
+  const currentBody = bodyMatch[3] || ''
+  const afterBody = bodyMatch[4] || ''
+  const bodyIndent = currentBody.trim().length > 0 ? getCommonLeadingWhitespace(currentBody) : ''
+  const normalizedNextBody = trimMultiline(nextBody.replaceAll('\r\n', '\n'))
+  const indentedBody = normalizedNextBody.length === 0
     ? ''
-    : splitNormalizedLines(normalizedExecutableSource)
+    : splitNormalizedLines(normalizedNextBody)
         .map((line) => {
           return line.trim().length > 0 ? `${bodyIndent}${line}` : ''
         })
         .join('\n')
 
-  return normalizedBlockSource.replace(
-    sourceMatch[0],
-    indentedBody.length > 0 ? `${header}${indentedBody}${closingLine}` : `${header}${closingLine}`
+  const nextExecutableSource = indentedBody.length > 0
+    ? `${beforeBody}${indentedBody}${afterBody}`
+    : `${beforeBody}${afterBody.trimStart()}`
+
+  return normalizedValue.replace(bodyMatch[0], () => nextExecutableSource)
+}
+
+export const replacePgmlRoutineBodyInBlock = (
+  blockSource: string,
+  nextBody: string
+) => {
+  const normalizedBlockSource = blockSource.replaceAll('\r\n', '\n')
+  const sourceMatch = normalizedBlockSource.match(
+    /^([ \t]*(?:source|definition):\s*(\$(?:[A-Za-z0-9_]+)?\$)\s*\n)([\s\S]*?)(\n([ \t]*)\2)/m
   )
+
+  if (!sourceMatch) {
+    return null
+  }
+
+  // The stored PGML block keeps the executable SQL indented under `source:`.
+  // Strip that wrapper indentation before editing the inner routine body, then
+  // let the block rewriter apply the PGML indentation once on the way back out.
+  const nextExecutableSource = replacePgmlRoutineBodyInExecutableSource(
+    dedentPgmlSourceForEditor(sourceMatch[3] || ''),
+    nextBody
+  )
+
+  if (nextExecutableSource === null) {
+    return null
+  }
+
+  return replacePgmlExecutableSourceInBlock(normalizedBlockSource, nextExecutableSource)
 }
 
 export const replacePgmlConstraintExpressionInBlock = (
