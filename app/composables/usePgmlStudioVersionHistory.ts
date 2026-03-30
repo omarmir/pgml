@@ -45,6 +45,7 @@ import {
   serializePgmlDocumentScope,
   serializePgmlDocument,
   normalizePgmlDocumentEditorScope,
+  getPgmlVersionDisplayLabel,
   getPgmlVersionRoleDisplayLabel,
   normalizePgmlSnapshotSource,
   type PgmlVersionDocumentBlock,
@@ -163,6 +164,21 @@ const normalizeCompareTargetSelection = (
     : buildDefaultCompareTargetId(document)
 }
 
+const getVersionDisplayLabelById = (
+  document: PgmlVersionSetDocument,
+  versionId: string | null
+) => {
+  // Scope selectors and relationship copy should show the same human-friendly
+  // label regardless of whether they start from a concrete version or an id.
+  if (!versionId) {
+    return null
+  }
+
+  const version = getPgmlVersionById(document, versionId)
+
+  return version ? getPgmlVersionDisplayLabel(version) : versionId
+}
+
 const buildVersionHistoryItem = (
   document: PgmlVersionSetDocument,
   version: PgmlVersionDocumentBlock,
@@ -172,6 +188,8 @@ const buildVersionHistoryItem = (
     latestOverallVersionId: string | null
   }
 ) => {
+  const parentVersionLabel = getVersionDisplayLabelById(document, version.parentVersionId)
+
   return {
     ancestorCount: getPgmlVersionAncestorCount(document, version.id),
     branchLeafCount: getPgmlBranchLeafVersionCount(document, version.id),
@@ -183,9 +201,7 @@ const buildVersionHistoryItem = (
     descendantCount: getPgmlDescendantVersionCount(document, version.id),
     depth: getPgmlVersionDepth(document, version.id),
     ...version,
-    parentVersionLabel: version.parentVersionId
-      ? (getPgmlVersionById(document, version.parentVersionId)?.name || version.parentVersionId)
-      : null,
+    parentVersionLabel,
     isLeaf: isPgmlLeafVersion(document, version.id),
     isLatestByRole: version.id === (
       version.role === 'design'
@@ -217,12 +233,12 @@ const buildCompareRelationshipSummary = (input: {
 
     if (input.compareBaseVersion.id === input.workspaceBaseVersion?.id) {
       return buildPgmlWorkspaceBaseCompareRelationshipSummary(
-        input.compareBaseVersion.name || input.compareBaseVersion.id
+        getPgmlVersionDisplayLabel(input.compareBaseVersion)
       )
     }
 
     return buildPgmlWorkspaceCompareRelationshipSummary(
-      input.compareBaseVersion.name || input.compareBaseVersion.id
+      getPgmlVersionDisplayLabel(input.compareBaseVersion)
     )
   }
 
@@ -232,8 +248,8 @@ const buildCompareRelationshipSummary = (input: {
 
   if (input.compareTargetVersion.parentVersionId === input.compareBaseVersion.id) {
     return buildPgmlDirectIncrementCompareRelationshipSummary(
-      input.compareTargetVersion.name || input.compareTargetVersion.id,
-      input.compareBaseVersion.name || input.compareBaseVersion.id
+      getPgmlVersionDisplayLabel(input.compareTargetVersion),
+      getPgmlVersionDisplayLabel(input.compareBaseVersion)
     )
   }
 
@@ -244,7 +260,7 @@ const buildCompareRelationshipSummary = (input: {
   )
 
   if (commonAncestor) {
-    return buildPgmlDivergedCompareRelationshipSummary(commonAncestor.name || commonAncestor.id)
+    return buildPgmlDivergedCompareRelationshipSummary(getPgmlVersionDisplayLabel(commonAncestor))
   }
 
   return buildPgmlNoCommonAncestorCompareRelationshipSummary()
@@ -268,7 +284,7 @@ const buildVersionedDocumentScopeItems = (
     buildDocumentScopeItem('Workspace block', 'workspace-block'),
     ...document.versions.map((version) => {
       return buildDocumentScopeItem(
-        `${getPgmlVersionRoleDisplayLabel(version.role)} · ${version.name || version.id}`,
+        `${getPgmlVersionRoleDisplayLabel(version.role)} · ${getPgmlVersionDisplayLabel(version)}`,
         `version:${version.id}`
       )
     })
