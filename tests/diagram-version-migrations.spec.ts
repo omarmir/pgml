@@ -43,6 +43,9 @@ const selectMigrationScope = async (
   page: Page,
   scope: 'combined' | `step:${number}`
 ) => {
+  // The versions panel exposes one selectable file card per history step.
+  // Routing scope changes through one helper keeps those browser interactions
+  // aligned with the current data-version-migration-scope contract.
   await getMigrationScopeButton(page, scope).click()
 }
 
@@ -98,6 +101,8 @@ const downloadMigrationArtifact = async (
   page: Page,
   format: 'sql' | 'kysely'
 ) => {
+  // Download assertions intentionally return both the file name and file body
+  // so the tests can prove step selection affects artifact naming and content.
   const downloadPromise = page.waitForEvent('download')
 
   await getVersionsPanel(page).locator(`[data-version-migration-download="${format}"]`).click()
