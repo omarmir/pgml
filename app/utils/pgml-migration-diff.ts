@@ -178,17 +178,19 @@ const escapeTemplateLiteralContent = (value: string) => {
     .replaceAll('${', '\\${')
 }
 
+const buildKyselyStatementBlock = (statement: string) => {
+  return `  await sql\`
+${escapeTemplateLiteralContent(statement)}
+\`.execute(db)`
+}
+
 const buildKyselyMigrationContent = (
   baseName: string,
   statements: string[]
 ) => {
   // Kysely exports intentionally mirror the SQL statement order one-for-one so
   // history-aware validation can compare the two artifacts mechanically.
-  const statementBlocks = statements.map((statement) => {
-    return `  await sql\`
-${escapeTemplateLiteralContent(statement)}
-\`.execute(db)`
-  }).join('\n\n')
+  const statementBlocks = statements.map(statement => buildKyselyStatementBlock(statement)).join('\n\n')
 
   return `${kyselyMigrationHeader}
 import type { Kysely } from 'kysely'
