@@ -19,6 +19,10 @@ const getComparePanel = (page: Page) => {
   return page.locator('[data-diagram-compare-panel="true"]')
 }
 
+const getHistoryToolsPanel = (page: Page) => {
+  return page.locator('[data-diagram-tool-panel="true"]')
+}
+
 const getMigrationArtifact = (page: Page) => {
   return page.locator('[data-version-migration-artifact="true"]')
 }
@@ -35,7 +39,18 @@ const getDocumentScopeSelect = (page: Page) => {
 }
 
 const openVersionsPanel = async (page: Page) => {
-  await page.locator('[data-diagram-panel-tab="versions"]').click()
+  const historyToolsPanel = getHistoryToolsPanel(page)
+
+  if (await historyToolsPanel.isVisible()) {
+    if ((await historyToolsPanel.getAttribute('data-diagram-tool-panel-mode')) !== 'versions') {
+      await historyToolsPanel.locator('[data-diagram-tool-panel-tab="versions"]').click()
+    }
+  } else {
+    await page.locator('[data-diagram-tool-toggle="versions"]').click()
+  }
+
+  await expect(historyToolsPanel).toBeVisible()
+  await expect(historyToolsPanel).toHaveAttribute('data-diagram-tool-panel-mode', 'versions')
   await expect(getVersionsPanel(page)).toBeVisible()
 }
 
@@ -92,8 +107,18 @@ const compareFromVersion = async (
 }
 
 const openComparator = async (page: Page) => {
-  await openVersionsPanel(page)
-  await page.locator('[data-version-open-comparator="true"]').click()
+  const historyToolsPanel = getHistoryToolsPanel(page)
+
+  if (await historyToolsPanel.isVisible()) {
+    if ((await historyToolsPanel.getAttribute('data-diagram-tool-panel-mode')) !== 'compare') {
+      await historyToolsPanel.locator('[data-diagram-tool-panel-tab="compare"]').click()
+    }
+  } else {
+    await page.locator('[data-diagram-tool-toggle="compare"]').click()
+  }
+
+  await expect(historyToolsPanel).toBeVisible()
+  await expect(historyToolsPanel).toHaveAttribute('data-diagram-tool-panel-mode', 'compare')
   await expect(getComparePanel(page)).toBeVisible()
 }
 

@@ -187,7 +187,7 @@ test('studio header includes a Home link back to the source chooser', async ({ g
   await page.locator('[data-source-card="browser-local-storage"]').getByRole('link', { name: 'Open bundled example' }).click()
 
   await expect.poll(async () => readPgmlEditorValue(getPgmlEditor(page))).toContain('TableGroup Core')
-  await page.locator('[data-diagram-panel-tab="versions"]').click()
+  await page.locator('[data-diagram-tool-toggle="versions"]').click()
   await expect(page.locator('[data-diagram-versions-panel="true"]')).toContainText('Locked')
   await expect(page.locator('[data-version-card="workspace"]')).toContainText('Programs implementation sync')
   await expect(page.locator('[data-diagram-versions-panel="true"]').locator('[data-version-card]')).toHaveCount(5)

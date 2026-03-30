@@ -85,7 +85,10 @@ import type { PgmlVersionMigrationStepBundle } from '~/utils/pgml-version-migrat
 import { normalizeSvgPaint } from '~/utils/svg-paint'
 import {
   defaultStudioMobilePanelTab,
+  diagramToolPanelTabIconByValue,
+  diagramToolPanelTabLabelByValue,
   type DiagramPanelTab,
+  type DiagramToolPanelTab,
   type StudioMobileCanvasView
 } from '~/utils/studio-workspace'
 import {
@@ -361,7 +364,9 @@ const selectedCompareEntryId: Ref<string | null> = ref(null)
 const isEditingDetailSource: Ref<boolean> = ref(false)
 const detailPopoverEditorSource: Ref<string> = ref('')
 const activePanelTab: Ref<DiagramPanelTab> = ref('inspector')
+const activeToolPanelTab: Ref<DiagramToolPanelTab> = ref('versions')
 const isDesktopSidePanelOpen: Ref<boolean> = ref(true)
+const isToolPanelOpen: Ref<boolean> = ref(false)
 const showRelationshipLines: Ref<boolean> = ref(true)
 const snapToGrid: Ref<boolean> = ref(true)
 const currentScale: Ref<number> = ref(1)
@@ -394,6 +399,7 @@ const pendingRoutingRequests = new Map<number, {
 }>()
 
 const panelToggleButtonClass = joinStudioClasses(studioButtonClasses.secondary, studioToolbarButtonClass)
+const toolPanelToggleButtonClass = joinStudioClasses(studioButtonClasses.secondary, studioToolbarButtonClass)
 const sidePanelActionButtonClass = joinStudioClasses(studioButtonClasses.secondary, studioToolbarButtonClass)
 const sidePanelCloseButtonClass = joinStudioClasses(studioButtonClasses.iconGhost, 'h-7 w-7 justify-center px-0')
 const detailPopoverKindBadgeClass = 'inline-flex items-center border px-1.5 font-mono text-[0.56rem] uppercase tracking-[0.08em]'
@@ -2011,7 +2017,9 @@ const createBounds = (x: number, y: number, width: number, height: number): Meas
   }
 }
 
-const isComparePanelActive = computed(() => activePanelTab.value === 'compare')
+const isComparePanelActive = computed(() => {
+  return isToolPanelOpen.value && activeToolPanelTab.value === 'compare'
+})
 const isCompareDiagramActive = computed(() => {
   return isComparePanelActive.value
     && previewTargetId === versionCompareTargetId
@@ -2332,9 +2340,34 @@ const syncComparePreviewTarget = () => {
   emit('viewVersionTarget', versionCompareTargetId)
 }
 
+const openToolPanel = (tab: DiagramToolPanelTab) => {
+  activeToolPanelTab.value = tab
+  isToolPanelOpen.value = true
+
+  if (tab === 'compare') {
+    syncComparePreviewTarget()
+  }
+}
+
+const closeToolPanel = () => {
+  isToolPanelOpen.value = false
+}
+
+const toggleToolPanel = (tab: DiagramToolPanelTab) => {
+  if (isToolPanelOpen.value && activeToolPanelTab.value === tab) {
+    closeToolPanel()
+    return
+  }
+
+  openToolPanel(tab)
+}
+
 const openComparator = () => {
-  activePanelTab.value = 'compare'
-  syncComparePreviewTarget()
+  openToolPanel('compare')
+}
+
+const openVersionsPanel = () => {
+  openToolPanel('versions')
 }
 
 const focusCompareEntry = (entryId: string) => {
@@ -2344,9 +2377,8 @@ const focusCompareEntry = (entryId: string) => {
     return
   }
 
-  syncComparePreviewTarget()
+  openToolPanel('compare')
   selectedCompareEntryId.value = entryId
-  activePanelTab.value = 'compare'
 
   const nextSelection = entry.selectionCandidates[0] || null
 
@@ -2919,7 +2951,14 @@ const shouldShowDetailPopover = computed(() => {
 })
 
 const detailPopoverViewportInsetRight = computed(() => {
-  return !isMobilePanelView.value && isDiagramPanelVisible.value ? 336 : 0
+  if (isMobilePanelView.value) {
+    return 0
+  }
+
+  const diagramPanelInset = isDiagramPanelVisible.value ? 336 : 0
+  const toolPanelInset = isToolPanelOpen.value ? 684 : 0
+
+  return Math.max(diagramPanelInset, toolPanelInset)
 })
 
 const selectedDetailAnchorBounds = computed<MeasuredBounds | null>(() => {
@@ -3296,20 +3335,12 @@ const getBrowserItemVisibilityId = (item: EntityBrowserItem) => {
 }
 
 const diagramPanelTitle = computed(() => {
-  if (activePanelTab.value === 'compare') {
-    return selectedCompareEntry.value ? selectedCompareEntry.value.label : 'Comparator'
-  }
-
   if (activePanelTab.value === 'entities') {
     return 'Entities'
   }
 
   if (activePanelTab.value === 'export') {
     return 'Export'
-  }
-
-  if (activePanelTab.value === 'versions') {
-    return 'Versions'
   }
 
   if (selectedColumn.value) {
@@ -3336,14 +3367,6 @@ const diagramPanelTitle = computed(() => {
 })
 
 const diagramPanelDescription = computed(() => {
-  if (activePanelTab.value === 'compare') {
-    if (selectedCompareEntry.value) {
-      return selectedCompareEntry.value.description
-    }
-
-    return `${compareEntries.length} highlighted change${compareEntries.length === 1 ? '' : 's'} between ${compareBaseLabel} and ${compareTargetLabel}.`
-  }
-
   if (activePanelTab.value === 'entities') {
     const entitySummaryLabel = normalizedEntitySearchQuery.value
       ? `${filteredEntityResultCount.value} matches`
@@ -3354,10 +3377,6 @@ const diagramPanelDescription = computed(() => {
 
   if (activePanelTab.value === 'export') {
     return 'Export the current accelerated diagram view.'
-  }
-
-  if (activePanelTab.value === 'versions') {
-    return 'Preview checkpoints, compare snapshots, and generate forward migrations.'
   }
 
   if (selectedColumn.value) {
@@ -3383,6 +3402,26 @@ const diagramPanelDescription = computed(() => {
   return 'Select a group, table, row, or object.'
 })
 
+const toolPanelTitle = computed(() => {
+  if (activeToolPanelTab.value === 'compare') {
+    return selectedCompareEntry.value ? selectedCompareEntry.value.label : 'Compare changes'
+  }
+
+  return 'Versions and migrations'
+})
+
+const toolPanelDescription = computed(() => {
+  if (activeToolPanelTab.value === 'compare') {
+    if (selectedCompareEntry.value) {
+      return selectedCompareEntry.value.description
+    }
+
+    return `${compareEntries.length} highlighted change${compareEntries.length === 1 ? '' : 's'} between ${compareBaseLabel} and ${compareTargetLabel}.`
+  }
+
+  return 'Lock checkpoints, compare snapshots, and export SQL or Kysely migrations for each version step.'
+})
+
 const diagramViewportStyle: CSSProperties = {
   backgroundColor: 'var(--studio-canvas-bg)',
   borderColor: 'var(--studio-divider)'
@@ -3399,6 +3438,19 @@ const diagramPanelSurfaceClass = computed(() => {
   return isMobilePanelView.value
     ? 'absolute inset-0 z-[3] grid min-h-0 w-full grid-rows-[auto_auto_minmax(0,1fr)] overflow-hidden'
     : 'absolute bottom-3 right-3 top-14 z-[3] grid w-[320px] grid-rows-[auto_auto_minmax(0,1fr)] overflow-hidden border max-[900px]:left-3 max-[900px]:w-auto'
+})
+
+const toolPanelSurfaceClass = computed(() => {
+  return isMobileCanvasShell.value
+    ? 'absolute inset-0 z-[5] grid min-h-0 w-full grid-rows-[auto_auto_minmax(0,1fr)] overflow-hidden'
+    : 'absolute bottom-3 right-3 top-14 z-[4] grid min-h-0 grid-rows-[auto_auto_minmax(0,1fr)] overflow-hidden border max-[900px]:left-3'
+})
+
+const toolPanelSurfaceStyle = computed<CSSProperties>(() => {
+  return {
+    ...floatingPanelStyle,
+    width: isMobileCanvasShell.value ? '100%' : 'min(42rem, calc(100% - 1.5rem))'
+  }
 })
 
 const toggleSidePanel = () => {
@@ -3565,7 +3617,7 @@ const handleSceneTransformChange = (nextTransform: DiagramCanvasViewportTransfor
 const handleSceneSelect = (nextSelection: DiagramGpuSelection | null) => {
   selectedSelection.value = nextSelection
 
-  if (activePanelTab.value !== 'compare') {
+  if (activePanelTab.value !== 'inspector') {
     activePanelTab.value = 'inspector'
   }
 }
@@ -3953,11 +4005,6 @@ watch(
   async (nextTab) => {
     emit('panelTabChange', nextTab)
 
-    if (nextTab === 'compare') {
-      syncComparePreviewTarget()
-      return
-    }
-
     if (nextTab === 'entities') {
       await nextTick()
       entitySearchInputRef.value?.focus()
@@ -4013,7 +4060,7 @@ watch(
 watch(
   () => selectedDiagramCompareEntryIds.value,
   (nextEntryIds) => {
-    if (activePanelTab.value !== 'compare' || nextEntryIds.length === 0) {
+    if (!isComparePanelActive.value || nextEntryIds.length === 0) {
       return
     }
 
@@ -4031,7 +4078,7 @@ watch(
 watch(
   () => versionCompareTargetId,
   () => {
-    if (activePanelTab.value !== 'compare') {
+    if (!isComparePanelActive.value) {
       return
     }
 
@@ -4440,10 +4487,33 @@ defineExpose<{
     </div>
 
     <div
-      v-if="shouldShowDiagramPanelToggle"
+      v-if="!isMobilePanelView"
       class="pointer-events-none absolute right-3 top-3 z-[4] flex justify-end gap-2"
     >
       <UButton
+        data-diagram-tool-toggle="versions"
+        :label="diagramToolPanelTabLabelByValue.versions"
+        :leading-icon="diagramToolPanelTabIconByValue.versions"
+        :variant="isToolPanelOpen && activeToolPanelTab === 'versions' ? 'soft' : 'outline'"
+        color="neutral"
+        size="xs"
+        class="pointer-events-auto"
+        :class="toolPanelToggleButtonClass"
+        @click="toggleToolPanel('versions')"
+      />
+      <UButton
+        data-diagram-tool-toggle="compare"
+        :label="diagramToolPanelTabLabelByValue.compare"
+        :leading-icon="diagramToolPanelTabIconByValue.compare"
+        :variant="isToolPanelOpen && activeToolPanelTab === 'compare' ? 'soft' : 'outline'"
+        color="neutral"
+        size="xs"
+        class="pointer-events-auto"
+        :class="toolPanelToggleButtonClass"
+        @click="toggleToolPanel('compare')"
+      />
+      <UButton
+        v-if="shouldShowDiagramPanelToggle"
         data-diagram-panel-toggle="true"
         :label="isDiagramPanelVisible ? 'Hide panel' : 'Show panel'"
         :leading-icon="isDiagramPanelVisible ? 'i-lucide-panel-right-close' : 'i-lucide-panel-right-open'"
@@ -4490,17 +4560,6 @@ defineExpose<{
               />
 
               <UButton
-                v-if="activePanelTab === 'compare' && selectedCompareEntry"
-                data-compare-clear-selection="true"
-                label="Clear"
-                color="neutral"
-                variant="ghost"
-                size="xs"
-                :class="sidePanelActionButtonClass"
-                @click="selectedCompareEntryId = null"
-              />
-
-              <UButton
                 v-if="shouldShowDiagramPanelToggle"
                 icon="i-lucide-x"
                 color="neutral"
@@ -4538,7 +4597,7 @@ defineExpose<{
         </div>
       </div>
 
-      <div class="grid grid-cols-5 border-b border-[color:var(--studio-divider)]">
+      <div class="grid grid-cols-3 border-b border-[color:var(--studio-divider)]">
         <button
           type="button"
           data-diagram-panel-tab="inspector"
@@ -4557,27 +4616,11 @@ defineExpose<{
         </button>
         <button
           type="button"
-          data-diagram-panel-tab="compare"
-          :class="getStudioTabButtonClass({ active: activePanelTab === 'compare', withTrailingBorder: true })"
-          @click="openComparator"
-        >
-          Compare
-        </button>
-        <button
-          type="button"
           data-diagram-panel-tab="export"
-          :class="getStudioTabButtonClass({ active: activePanelTab === 'export', withTrailingBorder: true })"
+          :class="getStudioTabButtonClass({ active: activePanelTab === 'export' })"
           @click="activePanelTab = 'export'"
         >
           Export
-        </button>
-        <button
-          type="button"
-          data-diagram-panel-tab="versions"
-          :class="getStudioTabButtonClass({ active: activePanelTab === 'versions' })"
-          @click="activePanelTab = 'versions'"
-        >
-          Versions
         </button>
       </div>
 
@@ -5404,24 +5447,6 @@ defineExpose<{
       </div>
 
       <div
-        v-else-if="activePanelTab === 'compare'"
-        data-studio-scrollable="true"
-        class="min-h-0 overflow-auto"
-      >
-        <PgmlDiagramComparePanel
-          :base-label="compareBaseLabel"
-          :entries="compareEntries"
-          :relationship-summary="compareRelationshipSummary"
-          :selected-diagram-context-ids="selectedDiagramCompareEntryIds"
-          :selected-entry-id="selectedCompareEntryId"
-          :target-label="compareTargetLabel"
-          @focus-source="focusSourceRange"
-          @focus-target="focusCompareEntry"
-          @select-entry="selectedCompareEntryId = $event"
-        />
-      </div>
-
-      <div
         v-else-if="activePanelTab === 'export'"
         data-studio-scrollable="true"
         class="grid content-start gap-3 overflow-auto px-3 py-3"
@@ -5453,6 +5478,89 @@ defineExpose<{
             @click="exportSvg"
           />
         </div>
+      </div>
+    </aside>
+
+    <aside
+      v-if="isToolPanelOpen"
+      data-diagram-tool-panel="true"
+      :data-diagram-tool-panel-mode="activeToolPanelTab"
+      :class="toolPanelSurfaceClass"
+      :style="toolPanelSurfaceStyle"
+    >
+      <div class="flex items-start justify-between gap-3 border-b border-[color:var(--studio-divider)] px-3 py-2.5">
+        <div class="min-w-0 flex-1">
+          <div class="font-mono text-[0.6rem] uppercase tracking-[0.08em] text-[color:var(--studio-shell-label)]">
+            History tools
+          </div>
+          <h3 class="truncate text-[0.88rem] font-semibold leading-5 text-[color:var(--studio-shell-text)]">
+            {{ toolPanelTitle }}
+          </h3>
+          <p class="mt-1 text-[0.66rem] leading-5 text-[color:var(--studio-shell-muted)]">
+            {{ toolPanelDescription }}
+          </p>
+        </div>
+
+        <div class="flex shrink-0 items-start gap-1">
+          <UButton
+            v-if="activeToolPanelTab === 'compare' && selectedCompareEntry"
+            data-compare-clear-selection="true"
+            label="Clear"
+            color="neutral"
+            variant="ghost"
+            size="xs"
+            :class="sidePanelActionButtonClass"
+            @click="selectedCompareEntryId = null"
+          />
+
+          <UButton
+            data-diagram-tool-panel-close="true"
+            icon="i-lucide-x"
+            color="neutral"
+            variant="ghost"
+            size="xs"
+            :class="sidePanelCloseButtonClass"
+            aria-label="Close history tools"
+            @click="closeToolPanel"
+          />
+        </div>
+      </div>
+
+      <div class="grid grid-cols-2 border-b border-[color:var(--studio-divider)]">
+        <button
+          type="button"
+          data-diagram-tool-panel-tab="versions"
+          :class="getStudioTabButtonClass({ active: activeToolPanelTab === 'versions', withTrailingBorder: true })"
+          @click="openVersionsPanel"
+        >
+          Versions
+        </button>
+        <button
+          type="button"
+          data-diagram-tool-panel-tab="compare"
+          :class="getStudioTabButtonClass({ active: activeToolPanelTab === 'compare' })"
+          @click="openComparator"
+        >
+          Compare
+        </button>
+      </div>
+
+      <div
+        v-if="activeToolPanelTab === 'compare'"
+        data-studio-scrollable="true"
+        class="min-h-0 overflow-auto"
+      >
+        <PgmlDiagramComparePanel
+          :base-label="compareBaseLabel"
+          :entries="compareEntries"
+          :relationship-summary="compareRelationshipSummary"
+          :selected-diagram-context-ids="selectedDiagramCompareEntryIds"
+          :selected-entry-id="selectedCompareEntryId"
+          :target-label="compareTargetLabel"
+          @focus-source="focusSourceRange"
+          @focus-target="focusCompareEntry"
+          @select-entry="selectedCompareEntryId = $event"
+        />
       </div>
 
       <PgmlDiagramVersionsPanel

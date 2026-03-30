@@ -1,4 +1,6 @@
-export type DiagramPanelTab = 'inspector' | 'entities' | 'compare' | 'export' | 'versions'
+export type DiagramPanelTab = 'inspector' | 'entities' | 'export'
+
+export type DiagramToolPanelTab = 'compare' | 'versions'
 
 export type StudioMobileCanvasView = 'diagram' | 'panel'
 
@@ -7,18 +9,24 @@ export type StudioMobileWorkspaceView = StudioMobileCanvasView | 'pgml'
 export const defaultStudioMobilePanelTab: DiagramPanelTab = 'entities'
 
 export const diagramPanelTabLabelByValue: Readonly<Record<DiagramPanelTab, string>> = Object.freeze({
-  compare: 'Compare',
   entities: 'Entities',
   export: 'Export',
-  inspector: 'Inspector',
-  versions: 'Versions'
+  inspector: 'Inspector'
 })
 
 export const diagramPanelTabIconByValue: Readonly<Record<DiagramPanelTab, string>> = Object.freeze({
-  compare: 'i-lucide-scan-search',
   entities: 'i-lucide-table-of-contents',
   export: 'i-lucide-file-output',
-  inspector: 'i-lucide-sliders-horizontal',
+  inspector: 'i-lucide-sliders-horizontal'
+})
+
+export const diagramToolPanelTabLabelByValue: Readonly<Record<DiagramToolPanelTab, string>> = Object.freeze({
+  compare: 'Compare',
+  versions: 'Versions'
+})
+
+export const diagramToolPanelTabIconByValue: Readonly<Record<DiagramToolPanelTab, string>> = Object.freeze({
+  compare: 'i-lucide-scan-search',
   versions: 'i-lucide-git-compare'
 })
 
