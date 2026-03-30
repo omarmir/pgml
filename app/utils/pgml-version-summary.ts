@@ -31,6 +31,8 @@ const emptyCompareDeltaDescription = 'No visible delta in the selected compariso
 const currentWorkspacePreviewLabel = 'Current workspace'
 const selectedVersionPreviewLabel = 'Selected version'
 const noWorkspaceBaseLabel = 'No locked base version yet.'
+const pendingCheckpointWorkspaceStatus = 'Draft changes are waiting to be checkpointed.'
+const syncedWorkspaceStatus = 'Draft matches the current locked base version.'
 
 const buildCountLabel = (count: number, singularLabel: string, pluralLabel?: string) => {
   return `${count} ${count === 1 ? singularLabel : pluralLabel || `${singularLabel}s`}`
@@ -175,8 +177,8 @@ export const buildPgmlWorkspaceStatus = (input: {
   canCheckpoint: boolean
 }) => {
   return input.canCheckpoint
-    ? 'Draft changes are waiting to be checkpointed.'
-    : 'Draft matches the current locked base version.'
+    ? pendingCheckpointWorkspaceStatus
+    : syncedWorkspaceStatus
 }
 
 export const buildPgmlEditorReadOnlyLabel = (input: {
