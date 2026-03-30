@@ -329,6 +329,13 @@ const getMigrationScopeStepIndex = (scope: PgmlMigrationSelectionScope) => {
 
   return Number.parseInt(scope.replace('step:', ''), 10)
 }
+const buildMigrationScopeLabel = (step: PgmlVersionMigrationStepBundle | null) => {
+  if (!step) {
+    return 'Combined history sequence'
+  }
+
+  return `Step ${step.index + 1}: ${step.label}`
+}
 const selectedMigrationStep = computed(() => {
   const selectedIndex = getMigrationScopeStepIndex(activeMigrationScope.value)
 
@@ -386,11 +393,7 @@ const hasActiveMigration = computed(() => {
   return activeMigrationArtifact.value.hasChanges
 })
 const selectedMigrationScopeLabel = computed(() => {
-  if (!selectedMigrationStep.value) {
-    return 'Combined history sequence'
-  }
-
-  return `Step ${selectedMigrationStep.value.index + 1}: ${selectedMigrationStep.value.label}`
+  return buildMigrationScopeLabel(selectedMigrationStep.value)
 })
 const displayedMigrationWarnings = computed(() => {
   return activeMigrationArtifact.value.warnings
