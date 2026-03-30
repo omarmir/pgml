@@ -66,6 +66,13 @@ const entryMatchesCurrentFilters = (
 
   return buildEntrySearchHaystack(entry).includes(normalizedQuery)
 }
+const buildCompareStats = (items: PgmlDiagramCompareEntry[]) => {
+  return {
+    added: items.filter(entry => entry.changeKind === 'added').length,
+    modified: items.filter(entry => entry.changeKind === 'modified').length,
+    removed: items.filter(entry => entry.changeKind === 'removed').length
+  }
+}
 
 const filteredEntries = computed(() => {
   const normalizedQuery = searchQuery.value.trim().toLowerCase()
@@ -92,11 +99,7 @@ const selectedEntry = computed(() => {
 })
 
 const compareStats = computed(() => {
-  return {
-    added: entries.filter(entry => entry.changeKind === 'added').length,
-    modified: entries.filter(entry => entry.changeKind === 'modified').length,
-    removed: entries.filter(entry => entry.changeKind === 'removed').length
-  }
+  return buildCompareStats(entries)
 })
 
 // Keep the active detail selection valid when filters or compare sources change.
