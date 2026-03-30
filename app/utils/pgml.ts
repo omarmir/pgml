@@ -4,6 +4,7 @@ import {
 } from './pgml-node-properties'
 
 export type PgmlColumn = {
+  customMetadata: PgmlMetadataEntry[]
   name: string
   type: string
   modifiers: string[]
@@ -21,6 +22,7 @@ export type PgmlTable = {
   schema: string
   fullName: string
   groupName: string | null
+  customMetadata: PgmlMetadataEntry[]
   note: string | null
   columns: PgmlColumn[]
   indexes: PgmlIndex[]
@@ -1247,6 +1249,158 @@ export const reindentPgmlBlockEditorText = (
     .join('\n')
 }
 
+const reindentPgmlSnippetWithIndent = (
+  value: string,
+  indent: string
+) => {
+  return splitNormalizedLines(dedentPgmlSourceForEditor(value))
+    .map((line) => {
+      return line.trim().length > 0 ? `${indent}${line}` : ''
+    })
+    .join('\n')
+}
+
+const extractPgmlExecutableSourcePropertyBlock = (blockSource: string) => {
+  const normalizedBlockSource = blockSource.replaceAll('\r\n', '\n')
+  const sourceMatch = normalizedBlockSource.match(
+    /^([ \t]*(?:source|definition):\s*(\$(?:[A-Za-z0-9_]+)?\$)\s*\n[\s\S]*?\n[ \t]*\2)/m
+  )
+
+  return sourceMatch?.[1] || sourceMatch?.[0] || null
+}
+
+const buildExecutableMetadataBodySections = (
+  sections: {
+    affects: {
+      calls: string[]
+      dependsOn: string[]
+      extras: Array<{ key: string, values: string[] }>
+      ownedBy: string[]
+      reads: string[]
+      sets: string[]
+      uses: string[]
+      writes: string[]
+    }
+    docsEntries: Array<{ key: string, value: string }>
+    docsSummary: string
+    metadata: Array<{ key: string, value: string }>
+  },
+  propertyIndent: string
+) => {
+  const bodyLines: string[] = []
+  const pushSpacer = () => {
+    if (bodyLines.length > 0 && bodyLines.at(-1) !== '') {
+      bodyLines.push('')
+    }
+  }
+  const pushDocs = () => {
+    const docsSummary = sections.docsSummary.trim()
+    const docsEntries = sections.docsEntries
+      .map((entry) => {
+        return {
+          key: entry.key.trim(),
+          value: entry.value.trim()
+        }
+      })
+      .filter(entry => entry.key.length > 0 && entry.value.length > 0)
+
+    if (docsSummary.length === 0 && docsEntries.length === 0) {
+      return
+    }
+
+    pushSpacer()
+    bodyLines.push(`${propertyIndent}docs {`)
+
+    if (docsSummary.length > 0) {
+      bodyLines.push(`${propertyIndent}  summary: ${docsSummary}`)
+    }
+
+    docsEntries.forEach((entry) => {
+      bodyLines.push(`${propertyIndent}  ${entry.key}: ${entry.value}`)
+    })
+
+    bodyLines.push(`${propertyIndent}}`)
+  }
+  const pushAffects = () => {
+    const affectEntries = [
+      ['writes', sections.affects.writes],
+      ['sets', sections.affects.sets],
+      ['depends_on', sections.affects.dependsOn],
+      ['reads', sections.affects.reads],
+      ['calls', sections.affects.calls],
+      ['uses', sections.affects.uses],
+      ['owned_by', sections.affects.ownedBy]
+    ] as const
+    const normalizedAffectEntries = affectEntries
+      .map(([key, values]) => {
+        return {
+          key,
+          values: values.map(value => value.trim()).filter(value => value.length > 0)
+        }
+      })
+      .filter(entry => entry.values.length > 0)
+    const extraEntries = sections.affects.extras
+      .map((entry) => {
+        return {
+          key: entry.key.trim(),
+          values: entry.values.map(value => value.trim()).filter(value => value.length > 0)
+        }
+      })
+      .filter(entry => entry.key.length > 0 && entry.values.length > 0)
+
+    if (normalizedAffectEntries.length === 0 && extraEntries.length === 0) {
+      return
+    }
+
+    pushSpacer()
+    bodyLines.push(`${propertyIndent}affects {`)
+
+    normalizedAffectEntries.forEach((entry) => {
+      bodyLines.push(`${propertyIndent}  ${entry.key}: [${entry.values.join(', ')}]`)
+    })
+
+    extraEntries.forEach((entry) => {
+      bodyLines.push(`${propertyIndent}  ${entry.key}: [${entry.values.join(', ')}]`)
+    })
+
+    bodyLines.push(`${propertyIndent}}`)
+  }
+  const pushMetadata = () => {
+    const metadataEntries = sections.metadata
+      .map((entry) => {
+        return {
+          key: entry.key.trim(),
+          value: entry.value.trim()
+        }
+      })
+      .filter(entry => entry.key.length > 0 && entry.value.length > 0)
+
+    if (metadataEntries.length === 0) {
+      return
+    }
+
+    pushSpacer()
+
+    metadataEntries.forEach((entry) => {
+      bodyLines.push(`${propertyIndent}${entry.key}: ${entry.value}`)
+    })
+  }
+
+  pushDocs()
+  pushAffects()
+  pushMetadata()
+
+  if (bodyLines[0] === '') {
+    bodyLines.shift()
+  }
+
+  if (bodyLines.at(-1) === '') {
+    bodyLines.pop()
+  }
+
+  return bodyLines
+}
+
 export const replacePgmlExecutableSourceInBlock = (
   blockSource: string,
   nextExecutableSource: string
@@ -1363,6 +1517,100 @@ export const replacePgmlConstraintExpressionInBlock = (
     /^(\s*Constraint\s+[^:]+:\s*)(.+)$/m,
     `$1${trimmedExpression}`
   )
+}
+
+export const replacePgmlExecutableMetadataInBlock = (
+  blockSource: string,
+  sections: {
+    affects: {
+      calls: string[]
+      dependsOn: string[]
+      extras: Array<{ key: string, values: string[] }>
+      ownedBy: string[]
+      reads: string[]
+      sets: string[]
+      uses: string[]
+      writes: string[]
+    }
+    docsEntries: Array<{ key: string, value: string }>
+    docsSummary: string
+    metadata: Array<{ key: string, value: string }>
+  }
+) => {
+  const normalizedBlockSource = blockSource.replaceAll('\r\n', '\n')
+  const lines = splitNormalizedLines(normalizedBlockSource)
+  const headerLine = lines[0] || ''
+  const closingLine = lines.at(-1)?.trim() === '}'
+    ? `${headerLine.match(/^[ \t]*/)?.[0] || ''}}`
+    : '}'
+
+  if (!headerLine.trim().endsWith('{')) {
+    return null
+  }
+
+  const blockIndent = headerLine.match(/^[ \t]*/)?.[0] || ''
+  const propertyIndent = `${blockIndent}  `
+  const bodyLines = buildExecutableMetadataBodySections(sections, propertyIndent)
+  const sourceSnippet = extractPgmlExecutableSourcePropertyBlock(normalizedBlockSource)
+  const nextLines = [headerLine]
+
+  if (bodyLines.length > 0) {
+    nextLines.push(...bodyLines)
+  }
+
+  if (sourceSnippet) {
+    if (nextLines.at(-1) !== headerLine && nextLines.at(-1) !== '') {
+      nextLines.push('')
+    }
+
+    nextLines.push(reindentPgmlSnippetWithIndent(sourceSnippet, propertyIndent))
+  }
+
+  nextLines.push(closingLine)
+
+  return nextLines.join('\n')
+}
+
+export const replacePgmlIndexDefinitionInBlock = (
+  blockSource: string,
+  nextDefinition: {
+    columns: string[]
+    name: string
+    type: string
+  }
+) => {
+  const normalizedBlockSource = blockSource.replaceAll('\r\n', '\n')
+  const indent = normalizedBlockSource.match(/^[ \t]*/)?.[0] || ''
+  const columns = nextDefinition.columns
+    .map(value => value.trim())
+    .filter(value => value.length > 0)
+  const type = nextDefinition.type.trim() || 'btree'
+  const name = nextDefinition.name.trim()
+
+  if (name.length === 0 || columns.length === 0) {
+    return null
+  }
+
+  return `${indent}Index ${name} (${columns.join(', ')}) [type: ${type}]`
+}
+
+export const replacePgmlConstraintDefinitionInBlock = (
+  blockSource: string,
+  nextDefinition: {
+    expression: string
+    name: string
+  }
+) => {
+  const normalizedBlockSource = blockSource.replaceAll('\r\n', '\n')
+  const indent = normalizedBlockSource.match(/^[ \t]*/)?.[0] || ''
+  const expression = trimMultiline(nextDefinition.expression).trim()
+  const name = nextDefinition.name.trim()
+
+  if (name.length === 0 || expression.length === 0) {
+    return null
+  }
+
+  return `${indent}Constraint ${name}: ${expression}`
 }
 
 export const replacePgmlSourceRange = (
@@ -1913,6 +2161,7 @@ const parseTable = (block: NamedBlock) => {
     }
 
     columns.push({
+      customMetadata: [],
       name: cleanName(columnName),
       type: columnType.trim(),
       modifiers,
@@ -1926,6 +2175,7 @@ const parseTable = (block: NamedBlock) => {
     schema: nameTarget.schema,
     fullName: `${nameTarget.schema}.${nameTarget.table}`,
     groupName,
+    customMetadata: [],
     note,
     columns,
     indexes,

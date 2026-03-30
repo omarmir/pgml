@@ -7,6 +7,10 @@ import {
   serializePgmlDocument
 } from '../../app/utils/pgml-document'
 import { usePgmlStudioVersionHistory } from '../../app/composables/usePgmlStudioVersionHistory'
+import {
+  replacePgmlColumnSchemaMetadataEntries,
+  replacePgmlTableSchemaMetadataEntries
+} from '../../app/utils/pgml-schema-metadata'
 
 const baseWorkspaceSource = `Table public.users {
   id uuid [pk]
@@ -251,6 +255,130 @@ Properties "public.users" {
     expect(source.value).toBe('')
     expect(api.document.value.versions).toHaveLength(0)
     expect(api.previewTargetId.value).toBe('workspace')
+  })
+
+  it('persists document-level schema metadata outside workspace snapshots', async () => {
+    const { api, source } = await mountVersionHistoryComposable()
+
+    api.setSchemaMetadata(
+      replacePgmlColumnSchemaMetadataEntries(
+        replacePgmlTableSchemaMetadataEntries(
+          api.document.value.schemaMetadata,
+          'public.users',
+          [
+            {
+              key: 'owner',
+              value: 'identity'
+            }
+          ]
+        ),
+        'public.users',
+        'id',
+        [
+          {
+            key: 'classification',
+            value: 'identifier'
+          }
+        ]
+      )
+    )
+
+    expect(api.document.value.schemaMetadata.tables).toHaveLength(1)
+    expect(api.versionedDocumentSource.value).toContain('SchemaMetadata {')
+    expect(api.versionedDocumentSource.value).toContain('Table "public.users" {')
+    expect(api.versionedDocumentSource.value).toContain('Column "public.users.id" {')
+    expect(source.value).toBe(baseWorkspaceSource)
+  })
+
+  it('keeps document-level schema metadata while checkpointing and restoring versions', async () => {
+    const { api, source } = await mountVersionHistoryComposable()
+
+    api.setSchemaMetadata(
+      replacePgmlColumnSchemaMetadataEntries(
+        replacePgmlTableSchemaMetadataEntries(
+          api.document.value.schemaMetadata,
+          'public.users',
+          [
+            {
+              key: 'owner',
+              value: 'identity'
+            }
+          ]
+        ),
+        'public.users',
+        'id',
+        [
+          {
+            key: 'classification',
+            value: 'identifier'
+          }
+        ]
+      )
+    )
+
+    const initialVersion = createDesignCheckpoint(api, 'Initial design')
+
+    source.value = importedWorkspaceSource
+    const updatedVersion = api.createCheckpoint({
+      createdAt: '2026-03-30T12:00:00.000Z',
+      includeLayout: true,
+      name: 'Expanded design',
+      role: 'design'
+    })
+
+    expect(updatedVersion).not.toBeNull()
+    expect(api.document.value.schemaMetadata.tables).toEqual([
+      {
+        entries: [
+          {
+            key: 'owner',
+            value: 'identity'
+          }
+        ],
+        tableId: 'public.users'
+      }
+    ])
+    expect(api.document.value.schemaMetadata.columns).toEqual([
+      {
+        columnName: 'id',
+        entries: [
+          {
+            key: 'classification',
+            value: 'identifier'
+          }
+        ],
+        tableId: 'public.users'
+      }
+    ])
+
+    expect(api.replaceWorkspaceFromVersion(initialVersion.id)).toBe(true)
+    expect(source.value).toBe(baseWorkspaceSource)
+    expect(api.document.value.schemaMetadata.tables).toEqual([
+      {
+        entries: [
+          {
+            key: 'owner',
+            value: 'identity'
+          }
+        ],
+        tableId: 'public.users'
+      }
+    ])
+    expect(api.document.value.schemaMetadata.columns).toEqual([
+      {
+        columnName: 'id',
+        entries: [
+          {
+            key: 'classification',
+            value: 'identifier'
+          }
+        ],
+        tableId: 'public.users'
+      }
+    ])
+    expect(api.versionedDocumentSource.value).toContain('SchemaMetadata {')
+    expect(api.versionedDocumentSource.value).toContain('owner: "identity"')
+    expect(api.versionedDocumentSource.value).toContain('classification: "identifier"')
   })
 
   it('returns false when restoring a missing version id and keeps compare targets editable', async () => {

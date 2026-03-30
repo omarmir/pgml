@@ -34,6 +34,26 @@ describe('diagram detail popover source', () => {
     expect(shellFile).toContain('reindentPgmlBlockEditorText')
   })
 
+  it('adds a structured metadata editor next to the raw popup source editor', () => {
+    const shellFile = readSourceFile('app/components/pgml/PgmlDiagramCanvasGpuShell.vue')
+    const metadataEditorFile = readSourceFile('app/components/pgml/PgmlDetailPopoverMetadataEditor.vue')
+    const metadataUtilFile = readSourceFile('app/utils/pgml-detail-popover-metadata.ts')
+
+    expect(shellFile).toContain('import PgmlDetailPopoverMetadataEditor')
+    expect(shellFile).toContain('data-detail-popover-edit-metadata="true"')
+    expect(shellFile).toContain('data-detail-popover-apply-metadata="true"')
+    expect(shellFile).toContain('selectedDetailMetadataEditorSpec')
+    expect(shellFile).toContain('replacePgmlExecutableMetadataInBlock')
+    expect(shellFile).toContain('replacePgmlIndexDefinitionInBlock')
+    expect(shellFile).toContain('replacePgmlConstraintDefinitionInBlock')
+    expect(metadataEditorFile).toContain('data-detail-popover-metadata-editor="true"')
+    expect(metadataEditorFile).toContain('Language')
+    expect(metadataEditorFile).toContain('Documentation')
+    expect(metadataEditorFile).toContain('Custom metadata')
+    expect(metadataUtilFile).toContain('createPgmlDetailMetadataDraftFromRoutine')
+    expect(metadataUtilFile).toContain('createPgmlDetailMetadataDraftFromTrigger')
+  })
+
   it('clamps CodeMirror tab width so indented PGML and SQL stay readable', () => {
     const pgmlCodeMirrorFile = readSourceFile('app/utils/pgml-codemirror.ts')
     const sqlCodeMirrorFile = readSourceFile('app/utils/sql-codemirror.ts')

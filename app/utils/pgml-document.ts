@@ -4,6 +4,13 @@ import {
   normalizePgmlSourceIndentation,
   stripPgmlPropertiesBlocks
 } from './pgml'
+import {
+  clonePgmlDocumentSchemaMetadata,
+  createEmptyPgmlDocumentSchemaMetadata,
+  type PgmlDocumentColumnSchemaMetadata,
+  type PgmlDocumentSchemaMetadata,
+  type PgmlDocumentTableSchemaMetadata
+} from './pgml-schema-metadata'
 
 export type PgmlVersionRole = 'design' | 'implementation'
 
@@ -29,6 +36,7 @@ export type PgmlVersionDocumentBlock = {
 export type PgmlVersionSetDocument = {
   kind: 'versioned'
   name: string
+  schemaMetadata: PgmlDocumentSchemaMetadata
   versions: PgmlVersionDocumentBlock[]
   workspace: PgmlWorkspaceDocumentBlock
 }
@@ -45,6 +53,7 @@ type PgmlNamedBlock = {
 
 const workspaceKeyword = 'Workspace'
 const snapshotKeyword = 'Snapshot'
+const schemaMetadataKeyword = 'SchemaMetadata'
 
 const createPgmlVersionId = () => {
   return `v_${nanoid()}`
@@ -422,6 +431,19 @@ const parseMetadataEntry = (line: string) => {
   }
 }
 
+const parseSchemaMetadataEntry = (line: string) => {
+  const match = line.trim().match(/^([^:]+):\s*(.+)$/u)
+
+  if (!match) {
+    return null
+  }
+
+  return {
+    key: (match[1] || '').trim(),
+    value: trimQuotedValue(match[2] || '')
+  }
+}
+
 const assertNoUnexpectedTopLevelLines = (lines: string[], context: string) => {
   if (lines.length > 0) {
     throw new Error(`${context} only allows metadata entries and nested blocks.`)
@@ -482,6 +504,119 @@ const getVersionId = (header: string) => {
   }
 
   return match[1] || null
+}
+
+const getSchemaMetadataTarget = (
+  header: string,
+  keyword: 'Table' | 'Column'
+) => {
+  const match = header.match(new RegExp(`^${keyword}\\s+(.+)$`, 'u'))
+
+  if (!match) {
+    return null
+  }
+
+  return trimQuotedValue(match[1] || '')
+}
+
+const parseSchemaMetadataEntries = (
+  lines: string[],
+  context: string
+) => {
+  const entries = lines.reduce<Array<{ key: string, value: string }>>((nextEntries, line) => {
+    const entry = parseSchemaMetadataEntry(line)
+
+    if (entry) {
+      nextEntries.push(entry)
+    }
+
+    return nextEntries
+  }, [])
+
+  assertNoUnexpectedTopLevelLines(
+    lines.filter(line => parseSchemaMetadataEntry(line) === null),
+    context
+  )
+
+  return entries
+}
+
+const parseSchemaMetadataTableBlock = (
+  block: PgmlNamedBlock
+): PgmlDocumentTableSchemaMetadata => {
+  const tableId = getSchemaMetadataTarget(block.header, 'Table')
+
+  if (!tableId || tableId.trim().length === 0) {
+    throw new Error('SchemaMetadata Table blocks require a table identifier.')
+  }
+
+  const nested = collectBlocks(block.body.join('\n'))
+
+  if (nested.blocks.length > 0) {
+    throw new Error(`SchemaMetadata Table ${tableId} only allows metadata entries.`)
+  }
+
+  return {
+    entries: parseSchemaMetadataEntries(nested.topLevel, `SchemaMetadata Table ${tableId}`),
+    tableId
+  }
+}
+
+const parseSchemaMetadataColumnBlock = (
+  block: PgmlNamedBlock
+): PgmlDocumentColumnSchemaMetadata => {
+  const columnTarget = getSchemaMetadataTarget(block.header, 'Column')
+
+  if (!columnTarget || columnTarget.trim().length === 0) {
+    throw new Error('SchemaMetadata Column blocks require a column identifier.')
+  }
+
+  const normalizedTarget = columnTarget.trim()
+  const lastSeparatorIndex = normalizedTarget.lastIndexOf('.')
+
+  if (lastSeparatorIndex <= 0 || lastSeparatorIndex === normalizedTarget.length - 1) {
+    throw new Error(`SchemaMetadata Column ${columnTarget} must use schema.table.column syntax.`)
+  }
+
+  const nested = collectBlocks(block.body.join('\n'))
+
+  if (nested.blocks.length > 0) {
+    throw new Error(`SchemaMetadata Column ${columnTarget} only allows metadata entries.`)
+  }
+
+  return {
+    columnName: normalizedTarget.slice(lastSeparatorIndex + 1),
+    entries: parseSchemaMetadataEntries(nested.topLevel, `SchemaMetadata Column ${columnTarget}`),
+    tableId: normalizedTarget.slice(0, lastSeparatorIndex)
+  }
+}
+
+const parseSchemaMetadataBlock = (block: PgmlNamedBlock): PgmlDocumentSchemaMetadata => {
+  if (block.header !== schemaMetadataKeyword) {
+    throw new Error('VersionSet SchemaMetadata blocks must use `SchemaMetadata {`.')
+  }
+
+  const nested = collectBlocks(block.body.join('\n'))
+
+  if (nested.topLevel.length > 0) {
+    throw new Error('SchemaMetadata only allows Table and Column blocks.')
+  }
+
+  if (nested.blocks.some((nestedBlock) => {
+    return getSchemaMetadataTarget(nestedBlock.header, 'Table') === null
+      && getSchemaMetadataTarget(nestedBlock.header, 'Column') === null
+  })) {
+    throw new Error('SchemaMetadata only allows Table and Column blocks.')
+  }
+
+  return clonePgmlDocumentSchemaMetadata({
+    columns: nested.blocks
+      .filter(nestedBlock => getSchemaMetadataTarget(nestedBlock.header, 'Column') !== null)
+      .map(parseSchemaMetadataColumnBlock),
+    tables: nested.blocks
+      .filter(nestedBlock => getSchemaMetadataTarget(nestedBlock.header, 'Table') !== null)
+      .map(parseSchemaMetadataTableBlock)
+  })
 }
 
 const parseSnapshotBlock = (block: PgmlNamedBlock, context: string) => {
@@ -550,10 +685,12 @@ const parseVersionBlock = (block: PgmlNamedBlock): PgmlVersionDocumentBlock => {
 }
 
 const partitionVersionSetBlocks = (blocks: PgmlNamedBlock[]) => {
+  const schemaMetadataBlocks = blocks.filter(block => block.header === schemaMetadataKeyword)
   const workspaceBlocks = blocks.filter(block => block.header === workspaceKeyword)
   const versionBlocks = blocks.filter(block => getVersionId(block.header) !== null)
 
   return {
+    schemaMetadataBlocks,
     versionBlocks,
     workspaceBlocks
   }
@@ -561,8 +698,28 @@ const partitionVersionSetBlocks = (blocks: PgmlNamedBlock[]) => {
 
 const validateVersionSetDocument = (document: PgmlVersionSetDocument) => {
   const versionIds = new Set<string>()
+  const schemaMetadataTableIds = new Set<string>()
+  const schemaMetadataColumnIds = new Set<string>()
   const versionsById = new Map(document.versions.map(version => [version.id, version] as const))
   let rootVersionCount = 0
+
+  document.schemaMetadata.tables.forEach((entry) => {
+    if (schemaMetadataTableIds.has(entry.tableId)) {
+      throw new Error(`SchemaMetadata duplicates table metadata for ${entry.tableId}.`)
+    }
+
+    schemaMetadataTableIds.add(entry.tableId)
+  })
+
+  document.schemaMetadata.columns.forEach((entry) => {
+    const columnId = `${entry.tableId}.${entry.columnName}`
+
+    if (schemaMetadataColumnIds.has(columnId)) {
+      throw new Error(`SchemaMetadata duplicates column metadata for ${columnId}.`)
+    }
+
+    schemaMetadataColumnIds.add(columnId)
+  })
 
   document.versions.forEach((version) => {
     if (versionIds.has(version.id)) {
@@ -637,13 +794,14 @@ export const parsePgmlDocument = (source: string): PgmlVersionSetDocument => {
   const nested = collectBlocks(rootBlock.body.join('\n'))
 
   if (nested.topLevel.length > 0) {
-    throw new Error('VersionSet only allows Workspace and Version blocks.')
+    throw new Error('VersionSet only allows SchemaMetadata, Workspace, and Version blocks.')
   }
 
   // VersionSet is intentionally strict: the root only coordinates workspace
   // state and immutable Version blocks. All schema entities live inside nested
   // Snapshot blocks, never directly under the document root.
   const {
+    schemaMetadataBlocks,
     versionBlocks,
     workspaceBlocks
   } = partitionVersionSetBlocks(nested.blocks)
@@ -652,13 +810,20 @@ export const parsePgmlDocument = (source: string): PgmlVersionSetDocument => {
     throw new Error('VersionSet requires exactly one Workspace block.')
   }
 
-  if (workspaceBlocks.length + versionBlocks.length !== nested.blocks.length) {
-    throw new Error('VersionSet only allows Workspace and Version blocks.')
+  if (schemaMetadataBlocks.length > 1) {
+    throw new Error('VersionSet only allows one SchemaMetadata block.')
+  }
+
+  if (schemaMetadataBlocks.length + workspaceBlocks.length + versionBlocks.length !== nested.blocks.length) {
+    throw new Error('VersionSet only allows SchemaMetadata, Workspace, and Version blocks.')
   }
 
   const document: PgmlVersionSetDocument = {
     kind: 'versioned',
     name: documentName,
+    schemaMetadata: schemaMetadataBlocks[0]
+      ? parseSchemaMetadataBlock(schemaMetadataBlocks[0]!)
+      : createEmptyPgmlDocumentSchemaMetadata(),
     versions: versionBlocks.map(parseVersionBlock),
     workspace: parseWorkspaceBlock(workspaceBlocks[0]!)
   }
@@ -741,6 +906,67 @@ const buildVersionBlock = (
   return lines.join('\n')
 }
 
+const buildSchemaMetadataTargetBlock = (input: {
+  entries: Array<{ key: string, value: string }>
+  level: number
+  target: string
+  targetKeyword: 'Column' | 'Table'
+}) => {
+  const lines = [`${'  '.repeat(input.level)}${input.targetKeyword} ${quoteMetadataValue(input.target)} {`]
+
+  input.entries.forEach((entry) => {
+    lines.push(buildMetadataLine(entry.key, entry.value, input.level + 1, true))
+  })
+
+  lines.push(`${'  '.repeat(input.level)}}`)
+
+  return lines.join('\n')
+}
+
+const buildSchemaMetadataBlock = (
+  schemaMetadata: PgmlDocumentSchemaMetadata,
+  level = 1
+) => {
+  const normalizedSchemaMetadata = clonePgmlDocumentSchemaMetadata(schemaMetadata)
+
+  if (
+    normalizedSchemaMetadata.tables.length === 0
+    && normalizedSchemaMetadata.columns.length === 0
+  ) {
+    return null
+  }
+
+  const lines = [`${'  '.repeat(level)}${schemaMetadataKeyword} {`]
+  const nestedBlocks = [
+    ...normalizedSchemaMetadata.tables.map((entry) => {
+      return buildSchemaMetadataTargetBlock({
+        entries: entry.entries,
+        level: level + 1,
+        target: entry.tableId,
+        targetKeyword: 'Table'
+      })
+    }),
+    ...normalizedSchemaMetadata.columns.map((entry) => {
+      return buildSchemaMetadataTargetBlock({
+        entries: entry.entries,
+        level: level + 1,
+        target: `${entry.tableId}.${entry.columnName}`,
+        targetKeyword: 'Column'
+      })
+    })
+  ]
+
+  if (nestedBlocks.length > 0) {
+    lines.push('')
+    lines.push(nestedBlocks.join('\n\n'))
+    lines.push('')
+  }
+
+  lines.push(`${'  '.repeat(level)}}`)
+
+  return lines.join('\n')
+}
+
 export const getPgmlVersionMap = (document: PgmlVersionSetDocument) => {
   return new Map(document.versions.map(version => [version.id, version] as const))
 }
@@ -773,6 +999,7 @@ const getPgmlVersionLineageFromMap = (
 export const clonePgmlVersionSetDocument = (document: PgmlVersionSetDocument) => {
   return {
     ...document,
+    schemaMetadata: clonePgmlDocumentSchemaMetadata(document.schemaMetadata),
     versions: document.versions.map((version) => {
       return {
         ...version,
@@ -1053,13 +1280,19 @@ export const getPgmlVersionsInTopologicalOrder = (document: PgmlVersionSetDocume
 
 export const serializePgmlDocument = (document: PgmlVersionSetDocument) => {
   validateVersionSetDocument(document)
+  const schemaMetadataBlock = buildSchemaMetadataBlock(document.schemaMetadata)
 
-  const sections = [
-    `VersionSet ${quoteMetadataValue(document.name)} {`,
+  const sections = [`VersionSet ${quoteMetadataValue(document.name)} {`]
+
+  if (schemaMetadataBlock) {
+    sections.push(schemaMetadataBlock)
+  }
+
+  sections.push(
     buildWorkspaceBlock(document.workspace),
     ...getPgmlVersionsInTopologicalOrder(document).map(buildVersionBlock),
     '}'
-  ]
+  )
 
   return sections.join('\n\n')
 }
@@ -1137,6 +1370,7 @@ export const createInitialPgmlDocument = (input?: {
   return {
     kind: 'versioned',
     name: input?.name || 'Untitled schema',
+    schemaMetadata: createEmptyPgmlDocumentSchemaMetadata(),
     versions,
     workspace: {
       basedOnVersionId: initialVersion ? versions[0]!.id : input?.basedOnVersionId || null,
@@ -1197,6 +1431,16 @@ export const replacePgmlWorkspaceFromSnapshot = (
         ? document.workspace.updatedAt
         : normalizePgmlTimestamp(input.updatedAt, 'Workspace updated_at')
     }
+  } satisfies PgmlVersionSetDocument
+}
+
+export const replacePgmlDocumentSchemaMetadata = (
+  document: PgmlVersionSetDocument,
+  schemaMetadata: PgmlDocumentSchemaMetadata
+) => {
+  return {
+    ...document,
+    schemaMetadata: clonePgmlDocumentSchemaMetadata(schemaMetadata)
   } satisfies PgmlVersionSetDocument
 }
 

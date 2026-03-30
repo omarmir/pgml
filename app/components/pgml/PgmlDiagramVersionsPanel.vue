@@ -49,6 +49,7 @@ const {
 
 const emit = defineEmits<{
   'create-checkpoint': []
+  'import-dbml': []
   'import-dump': []
   'restore-version': [versionId: string]
   'view-target': [targetId: string]
@@ -91,6 +92,15 @@ const previewLabel = computed(() => {
           :class="primaryButtonClass"
           :disabled="!canCreateCheckpoint"
           @click="emit('create-checkpoint')"
+        />
+        <UButton
+          data-version-import-dbml="true"
+          label="Import DBML"
+          color="neutral"
+          variant="outline"
+          :class="secondaryButtonClass"
+          :disabled="!hasVersions"
+          @click="emit('import-dbml')"
         />
         <UButton
           data-version-import-dump="true"

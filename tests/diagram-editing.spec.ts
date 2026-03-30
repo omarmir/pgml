@@ -88,6 +88,48 @@ test('table editor uses searchable group selection and descriptive type presets'
   await expect.poll(async () => readPgmlEditorValue(editor)).toContain('id bigserial')
 })
 
+test('table editor persists table and column metadata into the VersionSet SchemaMetadata block', async ({ goto, page }) => {
+  await page.setViewportSize({
+    height: 1200,
+    width: 1440
+  })
+  await goto('/diagram')
+
+  const editor = getPgmlEditor(page)
+  const tableEditor = page.locator('[data-studio-modal-surface="table-editor"]')
+
+  await page.locator('[data-diagram-panel-tab="inspector"]').click()
+  await page.locator('[data-diagram-create-table="true"]').click()
+  await expect(tableEditor.locator('[data-table-editor-metadata="true"]')).toBeVisible()
+  await tableEditor.locator('[data-table-editor-name="true"]').fill('metadata_demo')
+
+  const tableMetadataAddFieldButton = tableEditor
+    .locator('[data-table-editor-metadata="true"]')
+    .getByRole('button', { name: 'Add field' })
+
+  await tableMetadataAddFieldButton.scrollIntoViewIfNeeded()
+  await tableMetadataAddFieldButton.dispatchEvent('click')
+  await tableEditor.getByLabel('Table metadata field name', { exact: true }).fill('owner')
+  await tableEditor.getByLabel('Table metadata field value', { exact: true }).fill('identity')
+
+  const idColumn = tableEditor.locator('[data-table-editor-column]').filter({ hasText: 'id' })
+  const columnMetadataAddFieldButton = idColumn.getByRole('button', { name: 'Add field' })
+
+  await columnMetadataAddFieldButton.scrollIntoViewIfNeeded()
+  await columnMetadataAddFieldButton.dispatchEvent('click')
+  await idColumn.getByLabel('Column metadata field name', { exact: true }).fill('classification')
+  await idColumn.getByLabel('Column metadata field value', { exact: true }).fill('identifier')
+  await tableEditor.locator('[data-table-editor-save="true"]').click()
+
+  await page.getByRole('button', { name: 'Versioned document' }).click()
+
+  await expect.poll(async () => readPgmlEditorValue(editor)).toContain('SchemaMetadata {')
+  await expect.poll(async () => readPgmlEditorValue(editor)).toContain('Table "public.metadata_demo" {')
+  await expect.poll(async () => readPgmlEditorValue(editor)).toContain('owner: "identity"')
+  await expect.poll(async () => readPgmlEditorValue(editor)).toContain('Column "public.metadata_demo.id" {')
+  await expect.poll(async () => readPgmlEditorValue(editor)).toContain('classification: "identifier"')
+})
+
 test('group editor can create and rename table groups from the diagram canvas', async ({ goto, page }) => {
   await goto('/diagram')
 

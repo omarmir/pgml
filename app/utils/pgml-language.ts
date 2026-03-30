@@ -32,6 +32,7 @@ type PgmlLineInfo = {
 }
 
 type PgmlBlockKind = 'Table'
+  | 'Column'
   | 'TableGroup'
   | 'Enum'
   | 'Domain'
@@ -41,6 +42,7 @@ type PgmlBlockKind = 'Table'
   | 'Trigger'
   | 'Sequence'
   | 'Properties'
+  | 'SchemaMetadata'
   | 'VersionSet'
   | 'Workspace'
   | 'Version'
@@ -61,6 +63,7 @@ type PgmlRawBlock = {
 
 type PgmlContextKind = 'top-level'
   | 'version-set'
+  | 'schema-metadata'
   | 'workspace'
   | 'version'
   | 'snapshot'
@@ -186,8 +189,14 @@ const rootKeywordTemplates = [
 ] as const
 
 const versionSetKeywordTemplates = [
+  { label: 'SchemaMetadata', detail: 'Persist table and column metadata outside version snapshots.', apply: 'SchemaMetadata {' },
   { label: 'Workspace', detail: 'Define the mutable working draft.', apply: 'Workspace {' },
   { label: 'Version', detail: 'Lock an immutable checkpoint.', apply: 'Version ' }
+] as const
+
+const schemaMetadataKeywordTemplates = [
+  { label: 'Table', detail: 'Attach custom fields to a table id.', apply: 'Table "' },
+  { label: 'Column', detail: 'Attach custom fields to a column id.', apply: 'Column "' }
 ] as const
 
 const workspaceMetadataKeywordTemplates = [
@@ -454,6 +463,10 @@ const parseBlockKind = (header: string): { kind: PgmlBlockKind, keyword: string 
     return { kind: 'Properties', keyword }
   }
 
+  if (keyword === 'SchemaMetadata') {
+    return { kind: 'SchemaMetadata', keyword }
+  }
+
   if (keyword === 'VersionSet') {
     return { kind: 'VersionSet', keyword }
   }
@@ -468,6 +481,10 @@ const parseBlockKind = (header: string): { kind: PgmlBlockKind, keyword: string 
 
   if (keyword === 'Snapshot') {
     return { kind: 'Snapshot', keyword }
+  }
+
+  if (keyword === 'Column') {
+    return { kind: 'Column', keyword }
   }
 
   return {
@@ -1601,6 +1618,18 @@ const buildContexts = (blocks: PgmlRawBlock[], contexts: PgmlContextRange[]) => 
       return
     }
 
+    if (block.kind === 'SchemaMetadata') {
+      contexts.push({
+        kind: 'schema-metadata',
+        blockKind: block.kind,
+        from: block.from,
+        to: block.to,
+        startLine: block.startLine,
+        endLine: block.endLine
+      })
+      return
+    }
+
     if (block.kind === 'Workspace') {
       contexts.push({
         kind: 'workspace',
@@ -1761,7 +1790,14 @@ const analyzeSnapshotBlocks = (
       return
     }
 
-    if (block.kind === 'VersionSet' || block.kind === 'Workspace' || block.kind === 'Version' || block.kind === 'Snapshot') {
+    if (
+      block.kind === 'Column'
+      || block.kind === 'SchemaMetadata'
+      || block.kind === 'VersionSet'
+      || block.kind === 'Workspace'
+      || block.kind === 'Version'
+      || block.kind === 'Snapshot'
+    ) {
       createDiagnostic(
         diagnostics,
         'pgml/snapshot-block-kind',
@@ -1935,6 +1971,81 @@ const collectParsedMetadataLines = (lines: PgmlLineInfo[]) => {
   })
 }
 
+const analyzeSchemaMetadataBlock = (
+  block: PgmlRawBlock,
+  diagnostics: PgmlLanguageDiagnostic[],
+  contexts: PgmlContextRange[]
+) => {
+  if (block.header !== 'SchemaMetadata') {
+    createDiagnostic(
+      diagnostics,
+      'pgml/schema-metadata-header',
+      'error',
+      'SchemaMetadata blocks must use `SchemaMetadata {`.',
+      block.headerLine
+    )
+    return
+  }
+
+  const nested = collectRawBlocks(block.body, diagnostics, contexts, {
+    topLevelContextKind: null
+  })
+
+  nested.topLevelLines.forEach((line) => {
+    createDiagnostic(
+      diagnostics,
+      'pgml/schema-metadata-entry',
+      'error',
+      'SchemaMetadata only allows nested Table and Column blocks.',
+      line
+    )
+  })
+
+  nested.blocks.forEach((nestedBlock) => {
+    if (nestedBlock.kind !== 'Table' && nestedBlock.kind !== 'Column') {
+      createDiagnostic(
+        diagnostics,
+        'pgml/schema-metadata-block-kind',
+        'error',
+        'SchemaMetadata only allows nested Table and Column blocks.',
+        nestedBlock.headerLine
+      )
+      return
+    }
+
+    const headerPattern = nestedBlock.kind === 'Table'
+      ? /^Table\s+(.+)$/
+      : /^Column\s+(.+)$/
+
+    if (!headerPattern.test(nestedBlock.header)) {
+      createDiagnostic(
+        diagnostics,
+        'pgml/schema-metadata-target-header',
+        'error',
+        `${nestedBlock.kind} metadata headers must use \`${nestedBlock.kind} "target" {\`.`,
+        nestedBlock.headerLine
+      )
+      return
+    }
+
+    nestedBlock.body.forEach((line) => {
+      if (line.trimmed.length === 0 || line.trimmed.startsWith('//')) {
+        return
+      }
+
+      if (!parseMetadataEntry(line.trimmed)) {
+        createDiagnostic(
+          diagnostics,
+          'pgml/schema-metadata-target-entry',
+          'error',
+          `${nestedBlock.kind} metadata blocks only allow \`key: value\` entries.`,
+          line
+        )
+      }
+    })
+  })
+}
+
 const validateSnapshotOnlyChildren = (
   nestedBlocks: PgmlRawBlock[],
   diagnostics: PgmlLanguageDiagnostic[],
@@ -1995,6 +2106,7 @@ const validateVersionSetChildren = (
   diagnostics: PgmlLanguageDiagnostic[],
   fallbackLine: PgmlLineInfo
 ) => {
+  const schemaMetadataBlocks = nestedBlocks.filter(nestedBlock => nestedBlock.kind === 'SchemaMetadata')
   const workspaceBlocks = nestedBlocks.filter(nestedBlock => nestedBlock.kind === 'Workspace')
   const versionBlocks = nestedBlocks.filter(nestedBlock => nestedBlock.kind === 'Version')
 
@@ -2020,19 +2132,36 @@ const validateVersionSetChildren = (
     })
   }
 
+  if (schemaMetadataBlocks.length > 1) {
+    schemaMetadataBlocks.slice(1).forEach((schemaMetadataBlock) => {
+      createDiagnostic(
+        diagnostics,
+        'pgml/version-set-schema-metadata-duplicate',
+        'error',
+        'VersionSet only allows one SchemaMetadata block.',
+        schemaMetadataBlock.headerLine
+      )
+    })
+  }
+
   nestedBlocks.forEach((nestedBlock) => {
-    if (nestedBlock.kind !== 'Workspace' && nestedBlock.kind !== 'Version') {
+    if (
+      nestedBlock.kind !== 'SchemaMetadata'
+      && nestedBlock.kind !== 'Workspace'
+      && nestedBlock.kind !== 'Version'
+    ) {
       createDiagnostic(
         diagnostics,
         'pgml/version-set-block-kind',
         'error',
-        'VersionSet only allows Workspace and Version blocks.',
+        'VersionSet only allows SchemaMetadata, Workspace, and Version blocks.',
         nestedBlock.headerLine
       )
     }
   })
 
   return {
+    schemaMetadataBlock: schemaMetadataBlocks[0] || null,
     versionBlocks,
     workspaceBlock: workspaceBlocks[0] || null
   }
@@ -2175,12 +2304,20 @@ const analyzeVersionSetBlock = (
       diagnostics,
       'pgml/version-set-entry',
       'error',
-      'VersionSet only allows Workspace and Version blocks.',
+      'VersionSet only allows SchemaMetadata, Workspace, and Version blocks.',
       line
     )
   })
 
-  const { workspaceBlock, versionBlocks } = validateVersionSetChildren(nested.blocks, diagnostics, block.headerLine)
+  const {
+    schemaMetadataBlock,
+    workspaceBlock,
+    versionBlocks
+  } = validateVersionSetChildren(nested.blocks, diagnostics, block.headerLine)
+
+  if (schemaMetadataBlock) {
+    analyzeSchemaMetadataBlock(schemaMetadataBlock, diagnostics, contexts)
+  }
 
   if (workspaceBlock) {
     analyzeWorkspaceBlock(workspaceBlock, diagnostics, contexts, analysisState)
@@ -2670,6 +2807,19 @@ const getVersionSetCompletionItems = (
   return filterCompletionTemplates(versionSetKeywordTemplates, 'keyword', fragment, from, to)
 }
 
+const getSchemaMetadataCompletionItems = (
+  beforeCursor: string,
+  fragment: string,
+  from: number,
+  to: number
+) => {
+  if (/^\s*(Table|Column)\s+/.test(beforeCursor)) {
+    return [] as PgmlLanguageCompletionItem[]
+  }
+
+  return filterCompletionTemplates(schemaMetadataKeywordTemplates, 'keyword', fragment, from, to)
+}
+
 const getWorkspaceCompletionItems = (
   analysis: PgmlDocumentAnalysis,
   beforeCursor: string,
@@ -2751,6 +2901,10 @@ const getCompletionItemsForLine = (analysis: PgmlDocumentAnalysis, offset: numbe
 
   if (context.kind === 'version-set') {
     return getVersionSetCompletionItems(fragment, from, to, beforeCursor)
+  }
+
+  if (context.kind === 'schema-metadata') {
+    return getSchemaMetadataCompletionItems(beforeCursor, fragment, from, to)
   }
 
   if (context.kind === 'workspace') {

@@ -8,6 +8,16 @@ const workspaceVersionSnapshot = `Table public.users {
 }`
 
 export const validVersionedEditorSource = `VersionSet "Billing" {
+  SchemaMetadata {
+    Table "public.users" {
+      owner: "identity"
+    }
+
+    Column "public.users.email" {
+      pii: "restricted"
+    }
+  }
+
   Workspace {
     based_on: v2
     updated_at: "2026-03-29T14:12:00.000Z"

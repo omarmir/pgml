@@ -128,6 +128,7 @@ const emit = defineEmits<{
   updateVersionCompareBaseId: [value: string | null]
   updateVersionCompareTargetId: [value: string]
   versionCheckpoint: []
+  versionImportDbml: []
   versionImportDump: []
   viewVersionTarget: [targetId: string]
 }>()
@@ -197,6 +198,7 @@ defineExpose<CanvasHandle>({
     @update-version-compare-base-id="emit('updateVersionCompareBaseId', $event)"
     @update-version-compare-target-id="emit('updateVersionCompareTargetId', $event)"
     @version-checkpoint="emit('versionCheckpoint')"
+    @version-import-dbml="emit('versionImportDbml')"
     @version-import-dump="emit('versionImportDump')"
     @view-version-target="emit('viewVersionTarget', $event)"
   />

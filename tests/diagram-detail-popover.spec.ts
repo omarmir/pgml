@@ -392,3 +392,61 @@ test('index popovers edit inline PGML snippets without full-document top-level e
     return popupEditorScroller.evaluate(node => getComputedStyle(node).tabSize)
   }).toBe('2')
 })
+
+test('function popovers edit structured metadata without dropping into raw PGML', async ({ goto, page }) => {
+  await goto('/diagram')
+
+  const mainEditor = getPgmlEditor(page).first()
+
+  await setPgmlEditorValue(mainEditor, `Table public.orders {
+  id integer [pk]
+}
+
+Function orphan_report() {
+  source: $sql$
+    select 1;
+  $sql$
+}`)
+
+  await page.locator('[data-diagram-panel-tab="entities"]').click()
+  await page.locator('[data-browser-entity-row="function:orphan_report"] button').first().click()
+
+  const popover = page.locator('[data-object-popover="function:orphan_report"]')
+
+  await expect(popover).toBeVisible()
+  await popover.locator('[data-detail-popover-edit-metadata="true"]').click()
+  await expect(popover.locator('[data-detail-popover-metadata-editor="true"]')).toBeVisible()
+  await expect(popover).toContainText('Language')
+
+  await popover.locator('[data-detail-metadata-summary="true"]').fill('Orphan report summary')
+  await expect(popover.locator('[data-detail-popover-apply-metadata="true"]')).toContainText('Apply metadata')
+  await popover.locator('[data-detail-popover-apply-metadata="true"]').click()
+
+  await expect.poll(async () => {
+    return readPgmlEditorValue(mainEditor)
+  }).toContain(`docs {
+    summary: Orphan report summary
+  }`)
+})
+
+test('index popovers expose structured metadata controls in the popup editor', async ({ goto, page }) => {
+  await goto('/diagram')
+
+  await setPgmlEditorValue(getPgmlEditor(page).first(), `Table public.products {
+  id integer [pk]
+  search tsvector
+  tenant_id integer
+  Index idx_products_search (search) [type: gin]
+}`)
+
+  await page.locator('[data-diagram-panel-tab="entities"]').click()
+  await page.locator('[data-browser-entity-row="index:idx_products_search"] button').first().click()
+
+  const popover = page.locator('[data-attachment-popover="index:idx_products_search"]')
+
+  await expect(popover).toBeVisible()
+  await popover.locator('[data-detail-popover-edit-metadata="true"]').click()
+  await expect(popover.locator('[data-detail-popover-metadata-editor="true"]')).toBeVisible()
+  await expect(popover).toContainText('Index type')
+  await expect(popover.locator('input[placeholder="Column name"]')).toHaveCount(1)
+})

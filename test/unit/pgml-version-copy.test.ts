@@ -6,6 +6,13 @@ import {
   buildPgmlCheckpointTargetLabel,
   buildPgmlImportBaseRequiredMessage,
   buildPgmlImportCheckpointRequiredDescription,
+  buildPgmlImportDbmlConfirmLabel,
+  buildPgmlImportDbmlDialogDescription,
+  buildPgmlImportDbmlDialogTitle,
+  buildPgmlImportDbmlFailureMessage,
+  buildPgmlImportDbmlInputDescription,
+  buildPgmlImportDbmlMissingInputMessage,
+  buildPgmlImportDbmlConflictMessage,
   buildPgmlImportDumpConfirmLabel,
   buildPgmlImportDumpDialogTitle,
   buildPgmlImportDumpDialogDescription,
@@ -50,6 +57,13 @@ describe('PGML version copy helpers', () => {
     expect(buildPgmlImportDumpDialogTitle()).toBe('Import pg_dump onto a version')
   })
 
+  it('builds the DBML import dialog copy', () => {
+    expect(buildPgmlImportDbmlDialogDescription('Implementation sync')).toContain('increment from Implementation sync')
+    expect(buildPgmlImportDbmlInputDescription()).toContain('Choose exactly one input method')
+    expect(buildPgmlImportDbmlDialogTitle()).toBe('Import DBML onto a version')
+    expect(buildPgmlImportDbmlConfirmLabel()).toBe('Replace workspace with import')
+  })
+
   it('builds the import dialog confirm label', () => {
     expect(buildPgmlImportDumpConfirmLabel()).toBe('Replace workspace with import')
   })
@@ -72,13 +86,19 @@ describe('PGML version copy helpers', () => {
 
   it('builds the import conflict validation message', () => {
     expect(buildPgmlImportConflictMessage()).toContain('not both')
+    expect(buildPgmlImportDbmlConflictMessage()).toContain('not both')
   })
 
   it('builds the missing import input message', () => {
     expect(buildPgmlImportMissingInputMessage()).toContain('choose a text dump file')
+    expect(buildPgmlImportDbmlMissingInputMessage()).toContain('choose a DBML file')
   })
 
   it('builds the restore success description', () => {
     expect(buildPgmlRestoreSuccessDescription()).toContain('active workspace draft')
+  })
+
+  it('builds the DBML import failure message', () => {
+    expect(buildPgmlImportDbmlFailureMessage()).toBe('Unable to import that DBML.')
   })
 })

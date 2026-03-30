@@ -1,3 +1,15 @@
+const buildPgmlImportDialogDescription = (input: {
+  baseVersionLabel: string
+  fileLabel: string
+  pasteLabel: string
+}) => {
+  return `Paste ${input.pasteLabel} or upload ${input.fileLabel}. PGML will convert the import into schema objects, replace the current workspace snapshot, and set the workspace to increment from ${input.baseVersionLabel}.`
+}
+
+const buildPgmlImportInputDescription = () => {
+  return 'Choose exactly one input method. This replaces the current draft workspace but does not create a locked version until you checkpoint it.'
+}
+
 export const buildPgmlCheckpointTargetLabel = (baseVersionLabel?: string | null) => {
   return baseVersionLabel
     ? `Branches from ${baseVersionLabel}`
@@ -17,11 +29,15 @@ export const buildPgmlRestoreVersionDescription = (hasPendingChanges: boolean) =
 }
 
 export const buildPgmlImportDumpDialogDescription = (baseVersionLabel: string) => {
-  return `Paste a text pg_dump or upload a text dump file. PGML will convert the dump into schema objects, replace the current workspace snapshot, and set the workspace to increment from ${baseVersionLabel}.`
+  return buildPgmlImportDialogDescription({
+    baseVersionLabel,
+    fileLabel: 'a text dump file',
+    pasteLabel: 'a text pg_dump'
+  })
 }
 
 export const buildPgmlImportDumpInputDescription = () => {
-  return 'Choose exactly one input method. This replaces the current draft workspace but does not create a locked version until you checkpoint it.'
+  return buildPgmlImportInputDescription()
 }
 
 export const buildPgmlImportDumpDialogTitle = () => {
@@ -33,7 +49,7 @@ export const buildPgmlImportDumpConfirmLabel = () => {
 }
 
 export const buildPgmlImportCheckpointRequiredDescription = () => {
-  return 'Create a version checkpoint before importing a dump onto this document.'
+  return 'Create a version checkpoint before importing onto this document.'
 }
 
 export const buildPgmlImportBaseRequiredMessage = () => {
@@ -54,6 +70,38 @@ export const buildPgmlImportConflictMessage = () => {
 
 export const buildPgmlImportMissingInputMessage = () => {
   return 'Paste pg_dump text or choose a text dump file before importing.'
+}
+
+export const buildPgmlImportDbmlDialogDescription = (baseVersionLabel: string) => {
+  return buildPgmlImportDialogDescription({
+    baseVersionLabel,
+    fileLabel: 'a DBML file',
+    pasteLabel: 'DBML text'
+  })
+}
+
+export const buildPgmlImportDbmlInputDescription = () => {
+  return buildPgmlImportInputDescription()
+}
+
+export const buildPgmlImportDbmlDialogTitle = () => {
+  return 'Import DBML onto a version'
+}
+
+export const buildPgmlImportDbmlConfirmLabel = () => {
+  return 'Replace workspace with import'
+}
+
+export const buildPgmlImportDbmlFailureMessage = () => {
+  return 'Unable to import that DBML.'
+}
+
+export const buildPgmlImportDbmlConflictMessage = () => {
+  return 'Choose either pasted DBML text or a file upload, not both.'
+}
+
+export const buildPgmlImportDbmlMissingInputMessage = () => {
+  return 'Paste DBML text or choose a DBML file before importing.'
 }
 
 export const buildPgmlRestoreSuccessDescription = () => {

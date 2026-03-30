@@ -138,6 +138,42 @@ Enum public.language_preference {
     expect(analysis.diagnostics).toEqual([])
   })
 
+  it('accepts SchemaMetadata blocks at the VersionSet root and offers matching completions', () => {
+    const source = buildVersionedCompletionFixture(`  SchemaMetadata {
+    Table "public.users" {
+      owner: "identity"
+    }
+
+    Column "public.users.email" {
+      pii: "restricted"
+    }
+  }
+
+  Workspace {
+    Snapshot {
+      Table public.users {
+        id uuid [pk]
+        email text
+      }
+    }
+  }`)
+    const completionOffset = source.indexOf('  SchemaMetadata {') + '  SchemaMetadata {'.length
+    const completions = getPgmlCompletionItems(source, completionOffset)
+    const analysis = analyzePgmlDocument(source)
+
+    expect(analysis.diagnostics).toEqual([])
+    expect(completions).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        label: 'Table',
+        kind: 'keyword'
+      }),
+      expect.objectContaining({
+        label: 'Column',
+        kind: 'keyword'
+      })
+    ]))
+  })
+
   it('collects no diagnostics for standalone workspace and version document scopes', () => {
     const workspaceScopeSource = `Workspace {
   based_on: v2

@@ -165,6 +165,10 @@ Domain email_address {
         type: 'keyword'
       }),
       expect.objectContaining({
+        value: 'SchemaMetadata',
+        type: 'keyword'
+      }),
+      expect.objectContaining({
         value: 'Workspace',
         type: 'keyword'
       }),
@@ -199,6 +203,10 @@ Domain email_address {
       expect.objectContaining({
         value: 'v1',
         type: 'typeName'
+      }),
+      expect.objectContaining({
+        value: 'Column',
+        type: 'keyword'
       })
     ]))
   })

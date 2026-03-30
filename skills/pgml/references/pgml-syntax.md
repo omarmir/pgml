@@ -7,14 +7,105 @@ Use this file when the task needs the currently supported PGML surface area rath
 In this repo, PGML behavior is defined by three complementary sources:
 
 - `app/utils/pgml.ts`: current parser behavior
+- `app/utils/pgml-document.ts`: versioned document grammar and root-level metadata
 - `README.md`: draft language spec
-- `app/pages/index.vue`: examples shown on the homepage at `/`
+- `app/pages/spec.vue`: public examples and narrative spec
 
-If those sources appear to disagree, treat `app/utils/pgml.ts` as the current truth because that code drives the actual app.
+If those sources appear to disagree, treat the parser and document model as the current truth because that code drives the actual app.
 
-## Supported Top-Level Constructs
+## Versioned Document Root
 
-The parser recognizes these top-level blocks or lines:
+Persisted PGML documents in this repo are rooted in `VersionSet`.
+
+The document root only allows these nested blocks:
+
+- `SchemaMetadata { ... }`
+- `Workspace { ... }`
+- `Version <id> { ... }`
+
+Lines starting with `//` are ignored as comments.
+
+Example:
+
+```pgml
+VersionSet "Billing schema" {
+  SchemaMetadata {
+    Table "public.orders" {
+      owner: "billing"
+    }
+
+    Column "public.orders.total_cents" {
+      pii: "none"
+    }
+  }
+
+  Workspace {
+    based_on: v_programs
+    updated_at: "2026-03-29T14:12:00Z"
+
+    Snapshot {
+      Table public.orders {
+        id uuid [pk]
+      }
+    }
+  }
+
+  Version v_programs {
+    name: "Programs implementation sync"
+    role: implementation
+    parent: v_foundation
+    created_at: "2026-03-24T10:30:00Z"
+
+    Snapshot {
+      Table public.orders {
+        id uuid [pk]
+      }
+    }
+  }
+}
+```
+
+Important:
+
+- `VersionSet` is the only persisted document root.
+- `Workspace` is required exactly once.
+- `Workspace` may contain `based_on` and `updated_at` metadata lines ahead of `Snapshot`.
+- `Version` blocks are immutable checkpoints in studio behavior.
+- `Version` blocks carry `role`, `created_at`, and optional `name` and `parent` metadata lines ahead of `Snapshot`.
+- `Workspace.based_on` is required when versions exist.
+- `Snapshot` is required exactly once inside each `Workspace` and `Version`.
+- `SchemaMetadata` is optional and lives outside version history.
+
+## SchemaMetadata
+
+`SchemaMetadata` stores arbitrary key/value metadata for tables and columns outside the version graph.
+
+Supported nested blocks:
+
+- `Table "schema.table" { ... }`
+- `Column "schema.table.column" { ... }`
+
+Example:
+
+```pgml
+SchemaMetadata {
+  Table "public.users" {
+    owner: "identity"
+    sla: "gold"
+  }
+
+  Column "public.users.email" {
+    pii: "restricted"
+    classification: "login-identifier"
+  }
+}
+```
+
+Each body line must be a metadata entry such as `key: "value"` or `key: value`.
+
+## Snapshot Contents
+
+`Snapshot` contains the familiar schema grammar. These are the valid schema blocks or lines inside a snapshot:
 
 - `TableGroup ... { ... }`
 - `Table ... { ... }`
@@ -28,7 +119,7 @@ The parser recognizes these top-level blocks or lines:
 - `Ref: ...`
 - `Properties "..." { ... }`
 
-Lines starting with `//` are ignored as comments.
+The studio can also serialize standalone `Workspace` or `Version` blocks when the raw editor is scoped to one block, but the persisted file format is still `VersionSet`.
 
 ## Naming Rules
 

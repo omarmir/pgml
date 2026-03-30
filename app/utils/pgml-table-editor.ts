@@ -4,6 +4,7 @@ import {
   parsePgml,
   type PgmlColumn,
   type PgmlGroup,
+  type PgmlMetadataEntry,
   type PgmlNodeProperties,
   type PgmlSchemaModel,
   type PgmlSourceRange,
@@ -13,11 +14,13 @@ import { hasStoredPgmlTableWidthScale } from './pgml-node-properties'
 
 export type PgmlEditableColumnDraft = {
   id: string
+  customMetadata: PgmlEditableMetadataEntryDraft[]
   defaultValue: string
   extraModifiers: string[]
   name: string
   note: string
   notNull: boolean
+  originalName: string | null
   primaryKey: boolean
   referenceColumn: string
   referenceDeleteAction: string
@@ -30,8 +33,15 @@ export type PgmlEditableColumnDraft = {
   unique: boolean
 }
 
+export type PgmlEditableMetadataEntryDraft = {
+  id: string
+  key: string
+  value: string
+}
+
 export type PgmlEditableTableDraft = {
   columns: PgmlEditableColumnDraft[]
+  customMetadata: PgmlEditableMetadataEntryDraft[]
   groupName: string | null
   mode: 'create' | 'edit'
   name: string
@@ -133,16 +143,55 @@ const extractColumnExtraModifiers = (column: PgmlColumn) => {
     )
   })
 }
+export const createEditableMetadataEntryDraft = (
+  entry?: PgmlMetadataEntry
+): PgmlEditableMetadataEntryDraft => {
+  return {
+    id: nanoid(),
+    key: entry?.key || '',
+    value: entry?.value || ''
+  }
+}
+
+const isEmptyEditableMetadataEntryDraft = (entry: PgmlEditableMetadataEntryDraft) => {
+  return trimEditorValue(entry.key).length === 0 && trimEditorValue(entry.value).length === 0
+}
+
+export const serializeEditableMetadataEntries = (
+  entries: PgmlEditableMetadataEntryDraft[]
+) => {
+  return entries.reduce<PgmlMetadataEntry[]>((nextEntries, entry) => {
+    if (isEmptyEditableMetadataEntryDraft(entry)) {
+      return nextEntries
+    }
+
+    const key = trimEditorValue(entry.key)
+
+    if (key.length === 0) {
+      return nextEntries
+    }
+
+    nextEntries.push({
+      key,
+      value: trimEditorValue(entry.value)
+    })
+
+    return nextEntries
+  }, [])
+}
+
 const toEditableColumnDraft = (column: PgmlColumn): PgmlEditableColumnDraft => {
   const referenceTableParts = column.reference?.toTable.split('.') || []
 
   return {
+    customMetadata: column.customMetadata.map(entry => createEditableMetadataEntryDraft(entry)),
     id: nanoid(),
     defaultValue: extractDefaultModifier(column.modifiers),
     extraModifiers: extractColumnExtraModifiers(column),
     name: column.name,
     note: column.note || '',
     notNull: column.modifiers.some(modifier => modifier.toLowerCase() === 'not null'),
+    originalName: column.name,
     primaryKey: column.modifiers.some((modifier) => {
       const normalizedModifier = modifier.toLowerCase()
 
@@ -461,6 +510,7 @@ export const commonPgmlColumnTypes = [
 export const createEditableTableDraft = (table: PgmlTable): PgmlEditableTableDraft => {
   return {
     columns: table.columns.map(toEditableColumnDraft),
+    customMetadata: table.customMetadata.map(entry => createEditableMetadataEntryDraft(entry)),
     groupName: normalizeGroupName(table.groupName),
     mode: 'edit',
     name: table.name,
@@ -476,12 +526,14 @@ export const createEditableTableDraftForGroup = (groupName: string | null = null
   return {
     columns: [
       {
+        customMetadata: [],
         id: nanoid(),
         defaultValue: '',
         extraModifiers: [],
         name: 'id',
         note: '',
         notNull: true,
+        originalName: null,
         primaryKey: true,
         referenceColumn: '',
         referenceDeleteAction: '',
@@ -494,6 +546,7 @@ export const createEditableTableDraftForGroup = (groupName: string | null = null
         unique: false
       }
     ],
+    customMetadata: [],
     groupName: normalizeGroupName(groupName),
     mode: 'create',
     name: '',
@@ -534,7 +587,13 @@ export const cloneEditableTableDraft = (draft: PgmlEditableTableDraft): PgmlEdit
   return {
     columns: draft.columns.map(column => ({
       ...column,
+      customMetadata: column.customMetadata.map(entry => ({
+        ...entry
+      })),
       extraModifiers: [...column.extraModifiers]
+    })),
+    customMetadata: draft.customMetadata.map(entry => ({
+      ...entry
     })),
     groupName: draft.groupName,
     mode: draft.mode,
@@ -562,6 +621,40 @@ export const getEditableTableDraftErrors = (draft: PgmlEditableTableDraft) => {
   const errors: string[] = []
   const normalizedName = trimEditorValue(draft.name)
   const normalizedSchema = trimEditorValue(draft.schema)
+  const validateMetadataEntries = (
+    entries: PgmlEditableMetadataEntryDraft[],
+    contextLabel: string
+  ) => {
+    const keys = new Map<string, number[]>()
+
+    entries.forEach((entry, index) => {
+      if (isEmptyEditableMetadataEntryDraft(entry)) {
+        return
+      }
+
+      const normalizedKey = trimEditorValue(entry.key)
+
+      if (normalizedKey.length === 0) {
+        errors.push(`${contextLabel} metadata field ${index + 1} needs a key.`)
+        return
+      }
+
+      if (normalizedKey.includes(':')) {
+        errors.push(`${contextLabel} metadata field \`${normalizedKey}\` cannot contain \`:\`.`)
+        return
+      }
+
+      const duplicateIndexes = keys.get(normalizedKey.toLowerCase()) || []
+      duplicateIndexes.push(index + 1)
+      keys.set(normalizedKey.toLowerCase(), duplicateIndexes)
+    })
+
+    Array.from(keys.entries()).forEach(([key, indexes]) => {
+      if (indexes.length > 1) {
+        errors.push(`${contextLabel} metadata field \`${key}\` is duplicated.`)
+      }
+    })
+  }
 
   if (normalizedName.length === 0) {
     errors.push('Table name is required.')
@@ -574,6 +667,8 @@ export const getEditableTableDraftErrors = (draft: PgmlEditableTableDraft) => {
   if (!draft.columns.length) {
     errors.push('Add at least one column.')
   }
+
+  validateMetadataEntries(draft.customMetadata, 'Table')
 
   draft.columns.forEach((column, index) => {
     if (trimEditorValue(column.name).length === 0) {
@@ -593,6 +688,8 @@ export const getEditableTableDraftErrors = (draft: PgmlEditableTableDraft) => {
         errors.push(`Column ${index + 1} needs a reference column.`)
       }
     }
+
+    validateMetadataEntries(column.customMetadata, `Column ${index + 1}`)
   })
 
   return Array.from(new Set(errors))

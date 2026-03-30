@@ -52,6 +52,8 @@ describe('diagram versions panel source', () => {
       'data-version-overview="true"',
       'Choose which locked snapshot the diagram and raw PGML preview should show. Compare and migrations now live in their own dedicated tabs.',
       'Version Switcher',
+      'data-version-import-dbml="true"',
+      'label="Import DBML"',
       'Pick the workspace or a locked checkpoint to change the diagram preview. Restore copies a locked snapshot back into the workspace draft.',
       'Locked {{ version.role }} checkpoint',
       'Leaf',

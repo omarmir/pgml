@@ -56,10 +56,15 @@ import {
   normalizePgmlSnapshotSource,
   normalizePgmlDocumentEditorScope,
   parsePgmlDocument,
+  replacePgmlDocumentSchemaMetadata,
   replacePgmlWorkspaceFromSnapshot,
   serializePgmlDocumentScope,
   serializePgmlDocument
 } from '../../app/utils/pgml-document'
+import {
+  replacePgmlColumnSchemaMetadataEntries,
+  replacePgmlTableSchemaMetadataEntries
+} from '../../app/utils/pgml-schema-metadata'
 
 const baseSnapshotSource = `Table public.users {
   id uuid [pk]
@@ -101,6 +106,62 @@ Table public.orders {
     expect(reparsed.workspace.basedOnVersionId).toBe(reparsed.versions[0]?.id)
     expect(reparsed.versions[0]?.role).toBe('implementation')
     expect(reparsed.workspace.snapshot.source).toContain('Table public.orders')
+  })
+
+  it('serializes and parses document-level SchemaMetadata outside workspace and version snapshots', () => {
+    const documentWithSchemaMetadata = replacePgmlDocumentSchemaMetadata(
+      createInitialImplementationDocument(),
+      replacePgmlColumnSchemaMetadataEntries(
+        replacePgmlTableSchemaMetadataEntries(
+          createInitialImplementationDocument().schemaMetadata,
+          'public.users',
+          [
+            {
+              key: 'owner',
+              value: 'identity'
+            }
+          ]
+        ),
+        'public.users',
+        'id',
+        [
+          {
+            key: 'classification',
+            value: 'identifier'
+          }
+        ]
+      )
+    )
+
+    const serialized = serializePgmlDocument(documentWithSchemaMetadata)
+    const reparsed = parsePgmlDocument(serialized)
+
+    expect(serialized).toContain('SchemaMetadata {')
+    expect(serialized).toContain('Table "public.users" {')
+    expect(serialized).toContain('Column "public.users.id" {')
+    expect(reparsed.schemaMetadata.tables).toEqual([
+      {
+        entries: [
+          {
+            key: 'owner',
+            value: 'identity'
+          }
+        ],
+        tableId: 'public.users'
+      }
+    ])
+    expect(reparsed.schemaMetadata.columns).toEqual([
+      {
+        columnName: 'id',
+        entries: [
+          {
+            key: 'classification',
+            value: 'identifier'
+          }
+        ],
+        tableId: 'public.users'
+      }
+    ])
   })
 
   it('dedents snapshot bodies when parsing serialized VersionSet blocks back into workspace source', () => {

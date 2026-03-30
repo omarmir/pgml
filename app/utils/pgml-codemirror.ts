@@ -40,7 +40,7 @@ export type PgmlCodeMirrorOptions = {
   placeholder?: string
 }
 
-const pgmlBlockKeywordPattern = /\b(?:VersionSet|Workspace|Version|Snapshot|TableGroup|Table|Enum|Domain|Composite|Function|Procedure|Trigger|Sequence|Properties|Ref:)\b/
+const pgmlBlockKeywordPattern = /\b(?:VersionSet|SchemaMetadata|Workspace|Version|Snapshot|TableGroup|Table|Column|Enum|Domain|Composite|Function|Procedure|Trigger|Sequence|Properties|Ref:)\b/
 const pgmlNestedKeywordPattern = /\b(?:docs|affects|source|definition|Note|Index|Constraint)\b(?=\s|:|\(|\{)/
 const pgmlPropertyKeywordPattern = /\b(?:pk|unique|not|null|default|note|ref|language|volatility|security|timing|events|level|function|arguments|as|base|start|increment|min|max|cache|cycle|owned_by|summary|writes|sets|depends_on|reads|calls|uses|visible|collapsed|masonry|table_columns|table_width_scale|width|height|color|x|y|name|role|parent|created_at|based_on|updated_at)\b(?=\s|:|\])/
 const pgmlAtomPattern = /\b(?:true|false|design|implementation)\b/
@@ -225,6 +225,21 @@ const allowsColumnTypeHighlight = (blockKind: string | null) => {
   return blockKind === 'Table' || blockKind === 'Composite'
 }
 
+const getContextualBlockKind = (
+  blockKeyword: string,
+  parentBlockKind: string | null
+) => {
+  if (parentBlockKind === 'SchemaMetadata' && blockKeyword === 'Table') {
+    return 'SchemaMetadataTable'
+  }
+
+  if (parentBlockKind === 'SchemaMetadata' && blockKeyword === 'Column') {
+    return 'SchemaMetadataColumn'
+  }
+
+  return blockKeyword
+}
+
 const isVersionReferenceProperty = (propertyName: string | null) => {
   return propertyName === 'parent' || propertyName === 'based_on'
 }
@@ -262,8 +277,13 @@ const syncPgmlLineState = (lineText: string, state: PgmlStreamState) => {
   const openingBlockKeyword = getBlockKeyword(lineText)
 
   if (openingBlockKeyword) {
-    state.blockStack.push(openingBlockKeyword)
-    state.blockKind = openingBlockKeyword
+    const contextualBlockKind = getContextualBlockKind(
+      openingBlockKeyword,
+      state.blockStack[state.blockStack.length - 1] || null
+    )
+
+    state.blockStack.push(contextualBlockKind)
+    state.blockKind = contextualBlockKind
     state.lineAllowsColumnTypeHighlight = false
     state.lineIsBlockDeclaration = true
   }

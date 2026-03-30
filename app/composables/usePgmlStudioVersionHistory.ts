@@ -44,6 +44,7 @@ import {
   getPgmlDocumentPreviewSource,
   isPgmlWorkspaceDirty,
   parsePgmlDocument,
+  replacePgmlDocumentSchemaMetadata,
   replacePgmlWorkspaceFromSnapshot,
   serializePgmlDocumentScope,
   serializePgmlDocument,
@@ -57,6 +58,10 @@ import {
   type PgmlVersionSetDocument
 } from '~/utils/pgml-document'
 import { stripPgmlPropertiesBlocks } from '~/utils/pgml'
+import {
+  clonePgmlDocumentSchemaMetadata,
+  type PgmlDocumentSchemaMetadata
+} from '~/utils/pgml-schema-metadata'
 
 export type PgmlVersionPreviewTarget = 'workspace' | string
 
@@ -381,9 +386,13 @@ export const usePgmlStudioVersionHistory = (
   }
 
   const setDocument = (nextDocument: PgmlVersionSetDocument) => {
+    // Normalize every entry point through one setter so browser loads, file
+    // loads, restores, and imports all reset the workspace/editor state with
+    // the same canonical snapshot formatting and compare defaults.
     const normalizedDocument: PgmlVersionSetDocument = {
       ...nextDocument,
       name: input.documentName.value,
+      schemaMetadata: clonePgmlDocumentSchemaMetadata(nextDocument.schemaMetadata),
       versions: nextDocument.versions.map((version) => {
         return {
           ...version,
@@ -427,6 +436,9 @@ export const usePgmlStudioVersionHistory = (
     const normalizedSource = rawText.trim()
     let parsedDocument: PgmlVersionSetDocument
 
+    // Empty text or a non-VersionSet source becomes a fresh versioned document
+    // with that text in the workspace. This keeps the studio resilient while
+    // still treating grammar-native VersionSet documents as the persisted form.
     if (normalizedSource.length === 0 || !normalizedSource.startsWith('VersionSet')) {
       parsedDocument = createInitialPgmlDocument({
         name: input.documentName.value,
@@ -626,6 +638,9 @@ export const usePgmlStudioVersionHistory = (
     includeLayout: boolean
     source: string
   }) => {
+    // Imported snapshots intentionally replace the draft and anchor it to the
+    // chosen locked base version so compare and migrations start from the same
+    // predecessor the user selected during the import flow.
     if (!getPgmlVersionById(document.value, inputOptions.basedOnVersionId)) {
       return false
     }
@@ -658,6 +673,10 @@ export const usePgmlStudioVersionHistory = (
     documentEditorScope.value = normalizePgmlDocumentEditorScope(document.value, nextScope)
   }
 
+  const setSchemaMetadata = (schemaMetadata: PgmlDocumentSchemaMetadata) => {
+    document.value = replacePgmlDocumentSchemaMetadata(document.value, schemaMetadata)
+  }
+
   return {
     compareBaseId,
     compareBaseSource,
@@ -684,6 +703,7 @@ export const usePgmlStudioVersionHistory = (
     resetDocument,
     rootVersions,
     serializeCurrentDocument,
+    setSchemaMetadata,
     setCompareTargets,
     setDocumentEditorScope,
     setPreviewTarget,

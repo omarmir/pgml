@@ -42,6 +42,7 @@ import {
   buildPgmlDiagramCompareEntries,
   type PgmlDiagramCompareEntry
 } from '~/utils/pgml-diagram-compare'
+import { convertDbmlToPgml } from '~/utils/dbml-import'
 import { convertPgDumpToPgml } from '~/utils/pg-dump-import'
 import { analyzePgmlDocument } from '~/utils/pgml-language'
 import {
@@ -67,6 +68,13 @@ import {
   buildPgmlImportDumpInputDescription,
   buildPgmlImportDumpDialogTitle,
   buildPgmlImportBaseRequiredMessage,
+  buildPgmlImportDbmlConfirmLabel,
+  buildPgmlImportDbmlDialogDescription,
+  buildPgmlImportDbmlDialogTitle,
+  buildPgmlImportDbmlFailureMessage,
+  buildPgmlImportDbmlInputDescription,
+  buildPgmlImportDbmlMissingInputMessage,
+  buildPgmlImportDbmlConflictMessage,
   buildPgmlImportConflictMessage,
   buildPgmlImportFailureMessage,
   buildPgmlImportMissingInputMessage,
@@ -87,6 +95,7 @@ import {
   replacePgmlSourceRange,
   stripPgmlPropertiesBlocks,
   type PgmlNodeProperties,
+  type PgmlMetadataEntry,
   type PgmlSourceRange
 } from '~/utils/pgml'
 import {
@@ -95,15 +104,24 @@ import {
   cloneEditableGroupDraft,
   cloneEditableTableDraft,
   commonPgmlColumnTypes,
+  createEditableMetadataEntryDraft,
   createEditableGroupDraft,
   createEditableGroupDraftForCreate,
   createEditableTableDraft,
   createEditableTableDraftForGroup,
   getEditableGroupDraftErrors,
   getEditableTableDraftErrors,
+  serializeEditableMetadataEntries,
   type PgmlEditableGroupDraft,
   type PgmlEditableTableDraft
 } from '~/utils/pgml-table-editor'
+import {
+  applyPgmlDocumentSchemaMetadataToModel,
+  removePgmlColumnSchemaMetadataForTable,
+  removePgmlSchemaMetadataForTable,
+  replacePgmlColumnSchemaMetadataEntries,
+  replacePgmlTableSchemaMetadataEntries
+} from '~/utils/pgml-schema-metadata'
 import {
   getStudioChoiceButtonClass,
   studioPersistentSelectMenuProps,
@@ -238,6 +256,12 @@ const checkpointName: Ref<string> = ref('')
 const checkpointSuggestedCreatedAt: Ref<string | null> = ref(null)
 const checkpointNameIsSuggested: Ref<boolean> = ref(false)
 const checkpointRole: Ref<'design' | 'implementation'> = ref('design')
+const importDbmlDialogOpen: Ref<boolean> = ref(false)
+const importDbmlBaseVersionId: Ref<string | null> = ref(null)
+const importDbmlError: Ref<string | null> = ref(null)
+const importDbmlSelectedFile: Ref<File | null> = ref(null)
+const importDbmlText: Ref<string> = ref('')
+const isSubmittingImportDbml: Ref<boolean> = ref(false)
 const importDumpDialogOpen: Ref<boolean> = ref(false)
 const importDumpBaseVersionId: Ref<string | null> = ref(null)
 const importDumpError: Ref<string | null> = ref(null)
@@ -296,6 +320,7 @@ const {
   setCompareTargets,
   setDocumentEditorScope,
   setPreviewTarget,
+  setSchemaMetadata,
   versionItems: versionHistoryItems,
   versionedDocumentScopeItems,
   versionedDocumentScopeSource,
@@ -368,8 +393,18 @@ const hasBlockingSourceErrors = computed(() => sourceErrorDiagnostics.value.leng
 const workspaceHasBlockingSourceErrors = computed(() => {
   return workspaceSourceAnalysis.value.diagnostics.some(diagnostic => diagnostic.severity === 'error')
 })
-const parsedModel = computed(() => parsePgml(previewSource.value))
-const workspaceParsedModel = computed(() => parsePgml(source.value))
+const parsedModel = computed(() => {
+  return applyPgmlDocumentSchemaMetadataToModel(
+    parsePgml(previewSource.value),
+    versionDocument.value.schemaMetadata
+  )
+})
+const workspaceParsedModel = computed(() => {
+  return applyPgmlDocumentSchemaMetadataToModel(
+    parsePgml(source.value),
+    versionDocument.value.schemaMetadata
+  )
+})
 const canEmbedLayout = computed(() => !workspaceHasBlockingSourceErrors.value)
 const isEditorReadOnly = computed(() => {
   return versionedEditorMode.value === 'document' || !isWorkspacePreview.value
@@ -421,6 +456,7 @@ const displayedEditorSource = computed(() => {
     : previewSource.value
 })
 const importDumpSelectedFileName = computed(() => importDumpSelectedFile.value?.name || '')
+const importDbmlSelectedFileName = computed(() => importDbmlSelectedFile.value?.name || '')
 const mobileCanvasView = computed<StudioMobileCanvasView>(() => {
   if (mobileWorkspaceView.value === 'panel' || mobileWorkspaceView.value === 'tool-panel') {
     return mobileWorkspaceView.value
@@ -832,6 +868,19 @@ const importDumpDialogCopy = computed(() => {
     title: buildPgmlImportDumpDialogTitle()
   }
 })
+const importDbmlDialogCopy = computed(() => {
+  const baseVersion = importDbmlBaseVersionId.value
+    ? versions.value.find(version => version.id === importDbmlBaseVersionId.value) || null
+    : null
+  const baseLabel = baseVersion ? getVersionLabel(baseVersion) : 'the selected version'
+
+  return {
+    confirmLabel: buildPgmlImportDbmlConfirmLabel(),
+    description: buildPgmlImportDbmlDialogDescription(baseLabel),
+    inputDescription: buildPgmlImportDbmlInputDescription(),
+    title: buildPgmlImportDbmlDialogTitle()
+  }
+})
 const checkpointBaseVersion = computed(() => {
   return versions.value.find((version) => {
     return version.id === versionDocument.value.workspace.basedOnVersionId
@@ -840,6 +889,11 @@ const checkpointBaseVersion = computed(() => {
 const selectedImportDumpBaseVersion = computed(() => {
   return importDumpBaseVersionId.value
     ? versions.value.find(version => version.id === importDumpBaseVersionId.value) || null
+    : null
+})
+const selectedImportDbmlBaseVersion = computed(() => {
+  return importDbmlBaseVersionId.value
+    ? versions.value.find(version => version.id === importDbmlBaseVersionId.value) || null
     : null
 })
 const restoreVersionCandidate = computed(() => {
@@ -1039,14 +1093,45 @@ const resetImportDumpDialog = () => {
   importDumpText.value = ''
   importDumpBaseVersionId.value = null
 }
+const syncImportDbmlConflictError = () => {
+  const hasFile = importDbmlSelectedFile.value !== null
+  const hasText = importDbmlText.value.trim().length > 0
+
+  if (hasFile && hasText) {
+    importDbmlError.value = buildPgmlImportDbmlConflictMessage()
+    return false
+  }
+
+  if (importDbmlError.value === buildPgmlImportDbmlConflictMessage()) {
+    importDbmlError.value = null
+  }
+
+  return true
+}
+const resetImportDbmlDialog = () => {
+  importDbmlDialogOpen.value = false
+  importDbmlError.value = null
+  importDbmlSelectedFile.value = null
+  importDbmlText.value = ''
+  importDbmlBaseVersionId.value = null
+}
+const getPreferredImportBaseVersionId = () => {
+  return versionHistoryItems.value.find(version => version.isWorkspaceBase)?.id
+    || latestImplementationVersion.value?.id
+    || latestVersionId.value
+    || null
+}
+const showImportCheckpointRequiredToast = () => {
+  toast.add({
+    title: 'Checkpoint required',
+    description: buildPgmlImportCheckpointRequiredDescription(),
+    color: 'error',
+    icon: 'i-lucide-circle-alert'
+  })
+}
 const openImportDumpDialog = () => {
   if (versions.value.length === 0) {
-    toast.add({
-      title: 'Checkpoint required',
-      description: buildPgmlImportCheckpointRequiredDescription(),
-      color: 'error',
-      icon: 'i-lucide-circle-alert'
-    })
+    showImportCheckpointRequiredToast()
     return
   }
 
@@ -1054,10 +1139,19 @@ const openImportDumpDialog = () => {
   importDumpError.value = null
   importDumpSelectedFile.value = null
   importDumpText.value = ''
-  importDumpBaseVersionId.value = versionHistoryItems.value.find(version => version.isWorkspaceBase)?.id
-    || latestImplementationVersion.value?.id
-    || latestVersionId.value
-    || null
+  importDumpBaseVersionId.value = getPreferredImportBaseVersionId()
+}
+const openImportDbmlDialog = () => {
+  if (versions.value.length === 0) {
+    showImportCheckpointRequiredToast()
+    return
+  }
+
+  importDbmlDialogOpen.value = true
+  importDbmlError.value = null
+  importDbmlSelectedFile.value = null
+  importDbmlText.value = ''
+  importDbmlBaseVersionId.value = getPreferredImportBaseVersionId()
 }
 const closeImportDumpDialog = () => {
   if (isSubmittingImportDump.value) {
@@ -1065,6 +1159,13 @@ const closeImportDumpDialog = () => {
   }
 
   resetImportDumpDialog()
+}
+const closeImportDbmlDialog = () => {
+  if (isSubmittingImportDbml.value) {
+    return
+  }
+
+  resetImportDbmlDialog()
 }
 const handleImportDumpDialogOpenChange = (nextOpen: boolean) => {
   if (nextOpen) {
@@ -1074,17 +1175,37 @@ const handleImportDumpDialogOpenChange = (nextOpen: boolean) => {
 
   closeImportDumpDialog()
 }
+const handleImportDbmlDialogOpenChange = (nextOpen: boolean) => {
+  if (nextOpen) {
+    importDbmlDialogOpen.value = true
+    return
+  }
+
+  closeImportDbmlDialog()
+}
 const setImportDumpText = (value: string) => {
   importDumpText.value = value
   syncImportDumpConflictError()
+}
+const setImportDbmlText = (value: string) => {
+  importDbmlText.value = value
+  syncImportDbmlConflictError()
 }
 const setImportDumpFile = (files: FileList | null) => {
   importDumpSelectedFile.value = files?.[0] || null
   syncImportDumpConflictError()
 }
+const setImportDbmlFile = (files: FileList | null) => {
+  importDbmlSelectedFile.value = files?.[0] || null
+  syncImportDbmlConflictError()
+}
 const clearImportDumpFile = () => {
   importDumpSelectedFile.value = null
   syncImportDumpConflictError()
+}
+const clearImportDbmlFile = () => {
+  importDbmlSelectedFile.value = null
+  syncImportDbmlConflictError()
 }
 const submitImportDump = async () => {
   if (!importDumpBaseVersionId.value) {
@@ -1141,6 +1262,63 @@ const submitImportDump = async () => {
     }
   } finally {
     isSubmittingImportDump.value = false
+  }
+}
+const submitImportDbml = async () => {
+  if (!importDbmlBaseVersionId.value) {
+    importDbmlError.value = buildPgmlImportBaseRequiredMessage()
+    return
+  }
+
+  if (!syncImportDbmlConflictError()) {
+    return
+  }
+
+  const selectedFile = importDbmlSelectedFile.value
+  const trimmedText = importDbmlText.value.trim()
+
+  if (!selectedFile && trimmedText.length === 0) {
+    importDbmlError.value = buildPgmlImportDbmlMissingInputMessage()
+    return
+  }
+
+  isSubmittingImportDbml.value = true
+
+  try {
+    const importedDbml = selectedFile ? await selectedFile.text() : importDbmlText.value
+    const importedSchema = convertDbmlToPgml({
+      dbml: importedDbml,
+      preferredName: selectedFile?.name
+    })
+
+    const didReplaceWorkspace = replaceWorkspaceFromImportedSnapshot({
+      basedOnVersionId: importDbmlBaseVersionId.value,
+      includeLayout: true,
+      source: importedSchema.pgml
+    })
+
+    if (!didReplaceWorkspace) {
+      throw new Error('The selected base version no longer exists.')
+    }
+
+    requestCanvasViewportReset()
+    resetImportDbmlDialog()
+    toast.add({
+      title: 'Workspace replaced',
+      description: buildPgmlImportSuccessDescription(),
+      color: 'success',
+      icon: 'i-lucide-check'
+    })
+  } catch (error) {
+    if (error instanceof Error && error.message.trim().length > 0) {
+      importDbmlError.value = error.message
+    } else if (typeof error === 'string' && error.trim().length > 0) {
+      importDbmlError.value = error
+    } else {
+      importDbmlError.value = buildPgmlImportDbmlFailureMessage()
+    }
+  } finally {
+    isSubmittingImportDbml.value = false
   }
 }
 const viewVersionTarget = (targetId: string) => {
@@ -1283,6 +1461,11 @@ const actionMenus = computed<StudioHeaderMenu[]>(() => {
             label: 'Create checkpoint',
             icon: 'i-lucide-bookmark-plus',
             onSelect: openCheckpointDialog
+          },
+          {
+            label: 'Import DBML onto version',
+            icon: 'i-lucide-file-stack',
+            onSelect: openImportDbmlDialog
           },
           {
             label: 'Import pg_dump onto version',
@@ -1559,18 +1742,71 @@ const handleGroupEditorAfterLeave = () => {
   }
 }
 
+const addTableDraftMetadataEntry = () => {
+  if (!tableEditorDraft.value) {
+    return
+  }
+
+  tableEditorDraft.value.customMetadata.push(createEditableMetadataEntryDraft())
+}
+
+const removeTableDraftMetadataEntry = (metadataEntryId: string) => {
+  if (!tableEditorDraft.value) {
+    return
+  }
+
+  tableEditorDraft.value.customMetadata = tableEditorDraft.value.customMetadata.filter((entry) => {
+    return entry.id !== metadataEntryId
+  })
+}
+
+const addTableDraftColumnMetadataEntry = (columnId: string) => {
+  if (!tableEditorDraft.value) {
+    return
+  }
+
+  const draftColumn = tableEditorDraft.value.columns.find(column => column.id === columnId)
+
+  if (!draftColumn) {
+    return
+  }
+
+  draftColumn.customMetadata.push(createEditableMetadataEntryDraft())
+}
+
+const removeTableDraftColumnMetadataEntry = (
+  columnId: string,
+  metadataEntryId: string
+) => {
+  if (!tableEditorDraft.value) {
+    return
+  }
+
+  const draftColumn = tableEditorDraft.value.columns.find(column => column.id === columnId)
+
+  if (!draftColumn) {
+    return
+  }
+
+  draftColumn.customMetadata = draftColumn.customMetadata.filter((entry) => {
+    return entry.id !== metadataEntryId
+  })
+}
+
 const addTableDraftColumn = () => {
   if (!tableEditorDraft.value) {
     return
   }
 
   tableEditorDraft.value.columns.push({
+    customMetadata: [],
     id: nanoid(),
     defaultValue: '',
     extraModifiers: [],
     name: '',
     note: '',
     notNull: false,
+    originalName: null,
     primaryKey: false,
     referenceColumn: '',
     referenceDeleteAction: '',
@@ -1706,12 +1942,67 @@ const updateTableDraftReferenceAction = (
   draftColumn[field] = normalizeReferenceActionSelectValue(value)
 }
 
+const buildTableFullName = (schema: string, tableName: string) => {
+  return `${schema.trim()}.${tableName.trim()}`
+}
+
+const persistTableDraftSchemaMetadata = (
+  draft: PgmlEditableTableDraft,
+  previousTableId: string | null
+) => {
+  const nextTableId = buildTableFullName(draft.schema, draft.name)
+  const tableMetadataEntries = serializeEditableMetadataEntries(draft.customMetadata)
+  const columnMetadataEntries = draft.columns.reduce<Array<{
+    columnName: string
+    entries: PgmlMetadataEntry[]
+  }>>((entries, column) => {
+    const normalizedColumnName = column.name.trim()
+
+    if (normalizedColumnName.length === 0) {
+      return entries
+    }
+
+    entries.push({
+      columnName: normalizedColumnName,
+      entries: serializeEditableMetadataEntries(column.customMetadata)
+    })
+
+    return entries
+  }, [])
+  let nextSchemaMetadata = versionDocument.value.schemaMetadata
+
+  if (previousTableId && previousTableId !== nextTableId) {
+    nextSchemaMetadata = removePgmlSchemaMetadataForTable(nextSchemaMetadata, previousTableId)
+  }
+
+  nextSchemaMetadata = replacePgmlTableSchemaMetadataEntries(
+    nextSchemaMetadata,
+    nextTableId,
+    tableMetadataEntries
+  )
+  nextSchemaMetadata = removePgmlColumnSchemaMetadataForTable(nextSchemaMetadata, nextTableId)
+
+  columnMetadataEntries.forEach((entry) => {
+    nextSchemaMetadata = replacePgmlColumnSchemaMetadataEntries(
+      nextSchemaMetadata,
+      nextTableId,
+      entry.columnName,
+      entry.entries
+    )
+  })
+
+  setSchemaMetadata(nextSchemaMetadata)
+}
+
 const saveTableEditor = () => {
   if (!isWorkspacePreview.value || !tableEditorDraft.value || tableEditorErrors.value.length > 0) {
     return
   }
 
+  const previousTableId = tableEditorDraft.value.originalFullName
+
   source.value = applyEditableTableDraftToSource(source.value, workspaceParsedModel.value, tableEditorDraft.value)
+  persistTableDraftSchemaMetadata(tableEditorDraft.value, previousTableId)
   closeTableEditor()
 }
 
@@ -1891,6 +2182,7 @@ onBeforeUnmount(() => {
           @update-version-compare-base-id="updateVersionCompareBaseId"
           @update-version-compare-target-id="updateVersionCompareTargetId"
           @version-checkpoint="openCheckpointDialog"
+          @version-import-dbml="openImportDbmlDialog"
           @version-import-dump="openImportDumpDialog"
           @view-version-target="viewVersionTarget"
         />
@@ -1992,6 +2284,7 @@ onBeforeUnmount(() => {
           @update-version-compare-base-id="updateVersionCompareBaseId"
           @update-version-compare-target-id="updateVersionCompareTargetId"
           @version-checkpoint="openCheckpointDialog"
+          @version-import-dbml="openImportDbmlDialog"
           @version-import-dump="openImportDumpDialog"
           @view-version-target="viewVersionTarget"
         />
@@ -2113,6 +2406,61 @@ onBeforeUnmount(() => {
           />
         </template>
       </StudioModalFrame>
+
+      <AppDbmlImportModal
+        :open="importDbmlDialogOpen"
+        :title="importDbmlDialogCopy.title"
+        :description="importDbmlDialogCopy.description"
+        :confirm-label="importDbmlDialogCopy.confirmLabel"
+        :input-description="importDbmlDialogCopy.inputDescription"
+        :model-value="importDbmlText"
+        :selected-file-name="importDbmlSelectedFileName"
+        :error-message="importDbmlError"
+        :is-submitting="isSubmittingImportDbml"
+        @update:open="handleImportDbmlDialogOpenChange"
+        @update:model-value="setImportDbmlText"
+        @select-file="setImportDbmlFile"
+        @clear-file="clearImportDbmlFile"
+        @submit="submitImportDbml"
+      >
+        <template #before-inputs>
+          <div class="grid gap-3">
+            <label class="grid gap-1">
+              <span :class="studioFieldKickerClass">
+                Increment from version
+              </span>
+              <USelect
+                :items="importDumpBaseVersionItems"
+                :model-value="importDbmlBaseVersionId || undefined"
+                value-key="value"
+                label-key="label"
+                color="neutral"
+                variant="outline"
+                size="sm"
+                :ui="studioSelectUi"
+                @update:model-value="importDbmlBaseVersionId = typeof $event === 'string' ? $event : null"
+              />
+            </label>
+
+            <div
+              v-if="selectedImportDbmlBaseVersion"
+              class="border border-[color:var(--studio-shell-border)] bg-[color:var(--studio-control-bg)] px-3 py-3"
+            >
+              <div :class="studioFieldKickerClass">
+                Selected base
+              </div>
+              <div class="mt-2 flex flex-wrap items-center gap-2">
+                <span class="text-[0.82rem] font-semibold text-[color:var(--studio-shell-text)]">
+                  {{ getVersionLabel(selectedImportDbmlBaseVersion) }}
+                </span>
+                <span class="border border-[color:var(--studio-divider)] px-1.5 py-0.5 font-mono text-[0.52rem] uppercase tracking-[0.08em] text-[color:var(--studio-shell-muted)]">
+                  {{ selectedImportDbmlBaseVersion.role }}
+                </span>
+              </div>
+            </div>
+          </div>
+        </template>
+      </AppDbmlImportModal>
 
       <AppPgDumpImportModal
         :open="importDumpDialogOpen"
@@ -2566,6 +2914,79 @@ onBeforeUnmount(() => {
             />
           </label>
 
+          <div
+            class="grid gap-3 border border-[color:var(--studio-shell-border)] bg-[color:var(--studio-control-bg)] px-3 py-3"
+            data-table-editor-metadata="true"
+          >
+            <div class="flex items-center justify-between gap-3">
+              <div>
+                <div :class="studioFieldKickerClass">
+                  Table metadata
+                </div>
+                <p :class="joinStudioClasses(studioCompactBodyCopyClass, 'mt-1')">
+                  Store custom schema fields on this table outside version snapshots so they persist across versions.
+                </p>
+              </div>
+
+              <UButton
+                label="Add field"
+                icon="i-lucide-plus"
+                color="neutral"
+                variant="soft"
+                size="sm"
+                :class="tableEditorAddButtonClass"
+                @click="addTableDraftMetadataEntry"
+              />
+            </div>
+
+            <div
+              v-if="tableEditorDraft.customMetadata.length === 0"
+              :class="studioEmptyStateClass"
+            >
+              No table metadata fields yet.
+            </div>
+
+            <div
+              v-else
+              class="grid gap-2"
+            >
+              <div
+                v-for="metadataEntry in tableEditorDraft.customMetadata"
+                :key="metadataEntry.id"
+                class="grid gap-2 md:grid-cols-[minmax(0,0.42fr)_minmax(0,0.58fr)_auto]"
+                data-table-editor-metadata-row="true"
+              >
+                <UInput
+                  v-model="metadataEntry.key"
+                  aria-label="Table metadata field name"
+                  placeholder="Field name"
+                  color="neutral"
+                  variant="outline"
+                  size="sm"
+                  :ui="studioFieldUi"
+                />
+                <UInput
+                  v-model="metadataEntry.value"
+                  aria-label="Table metadata field value"
+                  placeholder="Field value"
+                  color="neutral"
+                  variant="outline"
+                  size="sm"
+                  :ui="studioFieldUi"
+                />
+                <UButton
+                  icon="i-lucide-trash-2"
+                  color="neutral"
+                  variant="ghost"
+                  size="xs"
+                  :class="tableEditorRemoveButtonClass"
+                  aria-label="Remove table metadata field"
+                  @click="removeTableDraftMetadataEntry(metadataEntry.id)"
+                />
+              </div>
+            </div>
+          </div>
+
           <div class="grid gap-3">
             <div class="flex items-center justify-between gap-3">
               <div>
@@ -2690,6 +3111,78 @@ onBeforeUnmount(() => {
                       :ui="studioFieldUi"
                     />
                   </label>
+                </div>
+
+                <div
+                  class="grid gap-2 border border-[color:var(--studio-shell-border)]/70 bg-[color:var(--studio-shell-bg)]/55 px-3 py-3"
+                  :data-table-editor-column-metadata="column.id"
+                >
+                  <div class="flex items-center justify-between gap-3">
+                    <div>
+                      <div :class="studioCompactFieldKickerClass">
+                        Column metadata
+                      </div>
+                      <p :class="joinStudioClasses(studioCompactBodyCopyClass, 'mt-1')">
+                        Attach custom key/value fields to this column without changing version history snapshots.
+                      </p>
+                    </div>
+
+                    <UButton
+                      label="Add field"
+                      icon="i-lucide-plus"
+                      color="neutral"
+                      variant="soft"
+                      size="xs"
+                      :class="tableEditorAddButtonClass"
+                      @click="addTableDraftColumnMetadataEntry(column.id)"
+                    />
+                  </div>
+
+                  <div
+                    v-if="column.customMetadata.length === 0"
+                    :class="studioEmptyStateClass"
+                  >
+                    No column metadata fields yet.
+                  </div>
+
+                  <div
+                    v-else
+                    class="grid gap-2"
+                  >
+                    <div
+                      v-for="metadataEntry in column.customMetadata"
+                      :key="metadataEntry.id"
+                      class="grid gap-2 md:grid-cols-[minmax(0,0.42fr)_minmax(0,0.58fr)_auto]"
+                    >
+                      <UInput
+                        v-model="metadataEntry.key"
+                        aria-label="Column metadata field name"
+                        placeholder="Field name"
+                        color="neutral"
+                        variant="outline"
+                        size="sm"
+                        :ui="studioFieldUi"
+                      />
+                      <UInput
+                        v-model="metadataEntry.value"
+                        aria-label="Column metadata field value"
+                        placeholder="Field value"
+                        color="neutral"
+                        variant="outline"
+                        size="sm"
+                        :ui="studioFieldUi"
+                      />
+                      <UButton
+                        icon="i-lucide-trash-2"
+                        color="neutral"
+                        variant="ghost"
+                        size="xs"
+                        :class="tableEditorRemoveButtonClass"
+                        aria-label="Remove column metadata field"
+                        @click="removeTableDraftColumnMetadataEntry(column.id, metadataEntry.id)"
+                      />
+                    </div>
+                  </div>
                 </div>
 
                 <div class="flex flex-wrap gap-2">

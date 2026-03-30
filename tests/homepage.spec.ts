@@ -22,7 +22,11 @@ const getPgDumpImportDialog = (page: Page) => {
   return page.locator('[data-studio-modal-surface="pg-dump-import"]')
 }
 
-test('home page exposes the three schema-source lanes and the SQL dump placeholder', async ({ goto, page }) => {
+const getDbmlImportDialog = (page: Page) => {
+  return page.locator('[data-studio-modal-surface="dbml-import"]')
+}
+
+test('home page exposes the three schema-source lanes and the import actions', async ({ goto, page }) => {
   await goto('/')
 
   await expect(page.getByRole('heading', { name: 'Choose where this schema starts.' })).toHaveCount(0)
@@ -32,11 +36,15 @@ test('home page exposes the three schema-source lanes and the SQL dump placehold
   await expect(page.locator('[data-source-card="browser-local-storage"]')).toContainText('Open bundled example')
   await expect(page.locator('[data-source-card="computer-saved-file"]')).toContainText('Save example to a new file')
   await expect(page.locator('[data-source-card="hosted-database"]')).toContainText('Preview hosted example')
-  await expect(page.getByText('SQL dump', { exact: true })).toHaveCount(3)
+  await expect(page.getByText('Imports', { exact: true })).toHaveCount(3)
   await expect(page.getByRole('button', { name: 'Import into browser storage' })).toHaveCount(1)
+  await expect(page.getByRole('button', { name: 'Import DBML into browser storage' })).toHaveCount(1)
   await expect(page.getByRole('button', { name: 'Import into a new file' })).toHaveCount(1)
+  await expect(page.getByRole('button', { name: 'Import DBML into a new file' })).toHaveCount(1)
   await expect(page.getByRole('button', { name: 'Import from hosted lane' })).toHaveCount(1)
-  await expect(page.locator('[data-spec-banner="true"]')).toContainText('Need the language reference before you open the studio?')
+  await expect(page.getByRole('button', { name: 'Import DBML from hosted lane' })).toHaveCount(1)
+  await expect(page.locator('[data-spec-banner="true"]')).toContainText('Need the PGML spec before you open versioning, compare, and migrations?')
+  await expect(page.locator('[data-spec-banner="true"]')).toContainText('DBML and pg_dump imports')
   await expect(page.getByRole('link', { name: 'Jump to spec' })).toHaveCount(1)
 })
 
@@ -140,6 +148,36 @@ ALTER TABLE ONLY public.users ADD CONSTRAINT users_pkey PRIMARY KEY (id);`)
 
   await expect.poll(async () => readPgmlEditorValue(getPgmlEditor(page))).toContain('Table public.users')
   await expect(page.locator('[data-studio-schema-name="true"]')).toHaveText('Imported schema')
+  await expect.poll(async () => {
+    return await page.evaluate(() => {
+      return JSON.parse(window.localStorage.getItem('pgml-studio-schemas-v1') || '[]').length
+    })
+  }).toBe(1)
+})
+
+test('home page can import pasted DBML into the browser lane', async ({ goto, page }) => {
+  await goto('/')
+
+  const browserCard = page.locator('[data-source-card="browser-local-storage"]')
+
+  await browserCard.getByRole('button', { name: 'Import DBML into browser storage' }).click()
+
+  const importDialog = getDbmlImportDialog(page)
+
+  await expect(importDialog).toContainText('Import DBML into browser storage')
+  await importDialog.locator('textarea').fill(`Project commerce {
+  database_type: 'PostgreSQL'
+}
+
+Table users {
+  id uuid [pk]
+  email text [unique]
+}`)
+  await page.getByRole('button', { name: 'Import into browser storage' }).click()
+
+  await expect.poll(async () => readPgmlEditorValue(getPgmlEditor(page))).toContain('Table users')
+  await expect.poll(async () => readPgmlEditorValue(getPgmlEditor(page))).not.toContain('Project commerce')
+  await expect(page.locator('[data-studio-schema-name="true"]')).toHaveText('commerce')
   await expect.poll(async () => {
     return await page.evaluate(() => {
       return JSON.parse(window.localStorage.getItem('pgml-studio-schemas-v1') || '[]').length

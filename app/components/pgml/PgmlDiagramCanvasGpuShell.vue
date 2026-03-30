@@ -4,6 +4,7 @@ import type { CSSProperties, Ref } from 'vue'
 import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
 import { studioSelectUi, studioSwitchUi } from '~/constants/ui'
 import PgmlDiagramComparePanel from '~/components/pgml/PgmlDiagramComparePanel.vue'
+import PgmlDetailPopoverMetadataEditor from '~/components/pgml/PgmlDetailPopoverMetadataEditor.vue'
 import PgmlDetailPopoverSourceEditor from '~/components/pgml/PgmlDetailPopoverSourceEditor.vue'
 import PgmlDiagramGpuScene from '~/components/pgml/PgmlDiagramGpuScene.vue'
 import PgmlDiagramMigrationsPanel from '~/components/pgml/PgmlDiagramMigrationsPanel.vue'
@@ -77,11 +78,23 @@ import {
   getPgmlSourceSelectionRange,
   normalizePgmlBlockSourceForEditor,
   reindentPgmlBlockEditorText,
+  replacePgmlConstraintDefinitionInBlock,
   replacePgmlConstraintExpressionInBlock,
+  replacePgmlExecutableMetadataInBlock,
   replacePgmlExecutableSourceInBlock,
+  replacePgmlIndexDefinitionInBlock,
   replacePgmlRoutineBodyInBlock,
   getSequenceAttachedTableIds
 } from '~/utils/pgml'
+import type { PgmlDetailPopoverMetadataDraft } from '~/utils/pgml-detail-popover-metadata'
+import {
+  clonePgmlDetailPopoverMetadataDraft,
+  createPgmlDetailMetadataDraftFromConstraint,
+  createPgmlDetailMetadataDraftFromIndex,
+  createPgmlDetailMetadataDraftFromRoutine,
+  createPgmlDetailMetadataDraftFromSequence,
+  createPgmlDetailMetadataDraftFromTrigger
+} from '~/utils/pgml-detail-popover-metadata'
 import type { PgmlVersionMigrationStepBundle } from '~/utils/pgml-version-migration'
 import { normalizeSvgPaint } from '~/utils/svg-paint'
 import {
@@ -257,6 +270,13 @@ type DetailPopoverEditorSpec = {
   toReplacementText: (nextSource: string) => string | null
 }
 
+type DetailPopoverMetadataEditorSpec = {
+  description: string
+  draft: PgmlDetailPopoverMetadataDraft
+  title: string
+  toReplacementText: (nextDraft: PgmlDetailPopoverMetadataDraft) => string | null
+}
+
 type VersionMigrationArtifactsProps = {
   // The shell owns the versions panel render branch, so naming the migration
   // prop bundle here keeps the contract readable despite the large prop list.
@@ -341,6 +361,7 @@ const emit = defineEmits<{
   updateVersionCompareBaseId: [value: string | null]
   updateVersionCompareTargetId: [value: string]
   versionCheckpoint: []
+  versionImportDbml: []
   versionImportDump: []
   viewVersionTarget: [targetId: string]
 }>()
@@ -351,7 +372,9 @@ const detailPopoverRef: Ref<HTMLDivElement | null> = ref(null)
 const selectedSelection: Ref<DiagramGpuSelection | null> = ref(null)
 const selectedCompareEntryId: Ref<string | null> = ref(null)
 const isEditingDetailSource: Ref<boolean> = ref(false)
+const isEditingDetailMetadata: Ref<boolean> = ref(false)
 const detailPopoverEditorSource: Ref<string> = ref('')
+const detailPopoverMetadataDraft: Ref<PgmlDetailPopoverMetadataDraft | null> = ref(null)
 const activePanelTab: Ref<DiagramPanelTab> = ref('inspector')
 const activeToolPanelTab: Ref<DiagramToolPanelTab> = ref('versions')
 const isDesktopSidePanelOpen: Ref<boolean> = ref(true)
@@ -2841,6 +2864,172 @@ const resolveSelectedRoutineSource = (
   return routines.find(entry => `${prefix}${entry.name}` === id)?.source || null
 }
 
+const getDraftListValues = (entries: Array<{ value: string }>) => {
+  return entries
+    .map(entry => entry.value.trim())
+    .filter(entry => entry.length > 0)
+}
+
+const getDraftKeyValueEntries = (entries: Array<{ key: string, value: string }>) => {
+  return entries
+    .map((entry) => {
+      return {
+        key: entry.key.trim(),
+        value: entry.value.trim()
+      }
+    })
+    .filter(entry => entry.key.length > 0 && entry.value.length > 0)
+}
+
+const buildListLiteral = (values: string[]) => {
+  return `[${values.join(', ')}]`
+}
+
+const parseCommaSeparatedValues = (value: string) => {
+  return value
+    .split(',')
+    .map(entry => entry.trim())
+    .filter(entry => entry.length > 0)
+}
+
+const buildExecutableMetadataSectionsFromDraft = (draft: PgmlDetailPopoverMetadataDraft) => {
+  const metadata: Array<{ key: string, value: string }> = []
+
+  if (draft.kind === 'function' || draft.kind === 'procedure') {
+    if (draft.known.language.trim().length > 0) {
+      metadata.push({ key: 'language', value: draft.known.language.trim() })
+    }
+
+    if (draft.known.volatility.trim().length > 0) {
+      metadata.push({ key: 'volatility', value: draft.known.volatility.trim() })
+    }
+
+    if (draft.known.security.trim().length > 0) {
+      metadata.push({ key: 'security', value: draft.known.security.trim() })
+    }
+  }
+
+  if (draft.kind === 'trigger') {
+    if (draft.known.triggerTiming.trim().length > 0) {
+      metadata.push({ key: 'timing', value: draft.known.triggerTiming.trim() })
+    }
+
+    const triggerEvents = getDraftListValues(draft.known.triggerEvents)
+
+    if (triggerEvents.length > 0) {
+      metadata.push({ key: 'events', value: buildListLiteral(triggerEvents) })
+    }
+
+    if (draft.known.triggerLevel.trim().length > 0) {
+      metadata.push({ key: 'level', value: draft.known.triggerLevel.trim() })
+    }
+
+    if (draft.known.triggerFunction.trim().length > 0) {
+      metadata.push({ key: 'function', value: draft.known.triggerFunction.trim() })
+    }
+
+    const triggerArguments = getDraftListValues(draft.known.triggerArguments)
+
+    if (triggerArguments.length > 0) {
+      metadata.push({ key: 'arguments', value: buildListLiteral(triggerArguments) })
+    }
+  }
+
+  if (draft.kind === 'sequence') {
+    if (draft.known.sequenceAs.trim().length > 0) {
+      metadata.push({ key: 'as', value: draft.known.sequenceAs.trim() })
+    }
+
+    if (draft.known.sequenceStart.trim().length > 0) {
+      metadata.push({ key: 'start', value: draft.known.sequenceStart.trim() })
+    }
+
+    if (draft.known.sequenceIncrement.trim().length > 0) {
+      metadata.push({ key: 'increment', value: draft.known.sequenceIncrement.trim() })
+    }
+
+    if (draft.known.sequenceMin.trim().length > 0) {
+      metadata.push({ key: 'min', value: draft.known.sequenceMin.trim() })
+    }
+
+    if (draft.known.sequenceMax.trim().length > 0) {
+      metadata.push({ key: 'max', value: draft.known.sequenceMax.trim() })
+    }
+
+    if (draft.known.sequenceCache.trim().length > 0) {
+      metadata.push({ key: 'cache', value: draft.known.sequenceCache.trim() })
+    }
+
+    if (draft.known.sequenceCycle === 'true' || draft.known.sequenceCycle === 'false') {
+      metadata.push({ key: 'cycle', value: draft.known.sequenceCycle })
+    }
+
+    if (draft.known.sequenceOwnedBy.trim().length > 0) {
+      metadata.push({ key: 'owned_by', value: draft.known.sequenceOwnedBy.trim() })
+    }
+  }
+
+  metadata.push(...getDraftKeyValueEntries(draft.customMetadata))
+
+  return {
+    affects: {
+      calls: getDraftListValues(draft.affects.calls),
+      dependsOn: getDraftListValues(draft.affects.dependsOn),
+      extras: draft.affects.extras
+        .map((entry) => {
+          return {
+            key: entry.key.trim(),
+            values: parseCommaSeparatedValues(entry.value)
+          }
+        })
+        .filter(entry => entry.key.length > 0 && entry.values.length > 0),
+      ownedBy: getDraftListValues(draft.affects.ownedBy),
+      reads: getDraftListValues(draft.affects.reads),
+      sets: getDraftListValues(draft.affects.sets),
+      uses: getDraftListValues(draft.affects.uses),
+      writes: getDraftListValues(draft.affects.writes)
+    },
+    docsEntries: getDraftKeyValueEntries(draft.docsEntries),
+    docsSummary: draft.docsSummary.trim(),
+    metadata
+  }
+}
+
+const buildExecutableMetadataEditorSpec = (
+  kindLabel: 'Function' | 'Procedure' | 'Sequence' | 'Trigger',
+  draft: PgmlDetailPopoverMetadataDraft,
+  blockSource: string
+): DetailPopoverMetadataEditorSpec => {
+  return {
+    description: `Edit the ${kindLabel.toLowerCase()} metadata with dedicated controls for docs, affects, and supported settings before dropping down to raw PGML.`,
+    draft,
+    title: `Editing ${kindLabel} metadata`,
+    toReplacementText: (nextDraft: PgmlDetailPopoverMetadataDraft) => {
+      return replacePgmlExecutableMetadataInBlock(
+        blockSource,
+        buildExecutableMetadataSectionsFromDraft(nextDraft)
+      )
+    }
+  }
+}
+
+const routineMetadataSelectItems = computed(() => {
+  return [
+    ...model.functions.map((routine) => {
+      return {
+        label: `Function · ${routine.name}`,
+        value: routine.name
+      }
+    }),
+    ...model.procedures.map((routine) => {
+      return {
+        label: `Procedure · ${routine.name}`,
+        value: routine.name
+      }
+    })
+  ]
+})
+
 const selectedDetailEditorSpec = computed<DetailPopoverEditorSpec | null>(() => {
   const detailPopover = selectedDetailPopover.value
   const blockSource = selectedDetailSourceSnippet.value
@@ -2942,14 +3131,175 @@ const selectedDetailEditorSpec = computed<DetailPopoverEditorSpec | null>(() => 
   return buildPgmlBlockEditorSpec(blockSource, detailPopover.kindLabel)
 })
 
+const selectedDetailMetadataEditorSpec = computed<DetailPopoverMetadataEditorSpec | null>(() => {
+  const detailPopover = selectedDetailPopover.value
+  const blockSource = selectedDetailSourceSnippet.value
+
+  if (!detailPopover?.sourceRange || blockSource.trim().length === 0) {
+    return null
+  }
+
+  if (selectedAttachment.value?.kind === 'Index') {
+    const table = model.tables.find(entry => entry.fullName === selectedAttachment.value?.tableId)
+    const index = table?.indexes.find(entry => `index:${entry.name}` === selectedAttachment.value?.id)
+
+    if (!index) {
+      return null
+    }
+
+    return {
+      description: 'Edit the index definition with structured fields for access method and indexed columns.',
+      draft: createPgmlDetailMetadataDraftFromIndex(index),
+      title: 'Editing Index metadata',
+      toReplacementText: (nextDraft: PgmlDetailPopoverMetadataDraft) => {
+        return replacePgmlIndexDefinitionInBlock(blockSource, {
+          columns: getDraftListValues(nextDraft.known.indexColumns),
+          name: index.name,
+          type: nextDraft.known.indexType.trim() || index.type
+        })
+      }
+    }
+  }
+
+  if (selectedAttachment.value?.kind === 'Constraint') {
+    const table = model.tables.find(entry => entry.fullName === selectedAttachment.value?.tableId)
+    const constraint = table?.constraints.find(entry => `constraint:${entry.name}` === selectedAttachment.value?.id)
+
+    if (!constraint) {
+      return null
+    }
+
+    return {
+      description: 'Edit the constraint expression directly without digging through the surrounding table block.',
+      draft: createPgmlDetailMetadataDraftFromConstraint(constraint),
+      title: 'Editing Constraint metadata',
+      toReplacementText: (nextDraft: PgmlDetailPopoverMetadataDraft) => {
+        return replacePgmlConstraintDefinitionInBlock(blockSource, {
+          expression: nextDraft.known.constraintExpression,
+          name: constraint.name
+        })
+      }
+    }
+  }
+
+  if (selectedAttachment.value?.kind === 'Function') {
+    const routine = model.functions.find(entry => `function:${entry.name}` === selectedAttachment.value?.id)
+
+    return routine
+      ? buildExecutableMetadataEditorSpec(
+          'Function',
+          createPgmlDetailMetadataDraftFromRoutine('function', routine),
+          blockSource
+        )
+      : null
+  }
+
+  if (selectedAttachment.value?.kind === 'Procedure') {
+    const routine = model.procedures.find(entry => `procedure:${entry.name}` === selectedAttachment.value?.id)
+
+    return routine
+      ? buildExecutableMetadataEditorSpec(
+          'Procedure',
+          createPgmlDetailMetadataDraftFromRoutine('procedure', routine),
+          blockSource
+        )
+      : null
+  }
+
+  if (selectedAttachment.value?.kind === 'Trigger') {
+    const trigger = model.triggers.find(entry => `trigger:${entry.name}` === selectedAttachment.value?.id)
+
+    return trigger
+      ? buildExecutableMetadataEditorSpec(
+          'Trigger',
+          createPgmlDetailMetadataDraftFromTrigger(trigger),
+          blockSource
+        )
+      : null
+  }
+
+  if (selectedAttachment.value?.kind === 'Sequence') {
+    const sequence = model.sequences.find(entry => `sequence:${entry.name}` === selectedAttachment.value?.id)
+
+    return sequence
+      ? buildExecutableMetadataEditorSpec(
+          'Sequence',
+          createPgmlDetailMetadataDraftFromSequence(sequence),
+          blockSource
+        )
+      : null
+  }
+
+  if (selectedObject.value?.kindLabel === 'Function') {
+    const routine = model.functions.find(entry => `function:${entry.name}` === selectedObject.value?.id)
+
+    return routine
+      ? buildExecutableMetadataEditorSpec(
+          'Function',
+          createPgmlDetailMetadataDraftFromRoutine('function', routine),
+          blockSource
+        )
+      : null
+  }
+
+  if (selectedObject.value?.kindLabel === 'Procedure') {
+    const routine = model.procedures.find(entry => `procedure:${entry.name}` === selectedObject.value?.id)
+
+    return routine
+      ? buildExecutableMetadataEditorSpec(
+          'Procedure',
+          createPgmlDetailMetadataDraftFromRoutine('procedure', routine),
+          blockSource
+        )
+      : null
+  }
+
+  if (selectedObject.value?.kindLabel === 'Trigger') {
+    const trigger = model.triggers.find(entry => `trigger:${entry.name}` === selectedObject.value?.id)
+
+    return trigger
+      ? buildExecutableMetadataEditorSpec(
+          'Trigger',
+          createPgmlDetailMetadataDraftFromTrigger(trigger),
+          blockSource
+        )
+      : null
+  }
+
+  if (selectedObject.value?.kindLabel === 'Sequence') {
+    const sequence = model.sequences.find(entry => `sequence:${entry.name}` === selectedObject.value?.id)
+
+    return sequence
+      ? buildExecutableMetadataEditorSpec(
+          'Sequence',
+          createPgmlDetailMetadataDraftFromSequence(sequence),
+          blockSource
+        )
+      : null
+  }
+
+  return null
+})
+
 const canEditSelectedDetailSource = computed(() => {
   return canEditDetailSource
     && !!selectedDetailPopover.value?.sourceRange
     && selectedDetailEditorSpec.value !== null
 })
 
+const canEditSelectedDetailMetadata = computed(() => {
+  return canEditDetailSource
+    && !!selectedDetailPopover.value?.sourceRange
+    && selectedDetailMetadataEditorSpec.value !== null
+})
+
 const detailPopoverSourceHasChanges = computed(() => {
   return detailPopoverEditorSource.value !== (selectedDetailEditorSpec.value?.source || '')
+})
+
+const detailPopoverMetadataHasChanges = computed(() => {
+  return JSON.stringify(detailPopoverMetadataDraft.value)
+    !== JSON.stringify(selectedDetailMetadataEditorSpec.value?.draft || null)
 })
 
 const detailPopoverEditButtonLabel = computed(() => {
@@ -3031,12 +3381,13 @@ const detailPopoverPlacement = computed<DetailPopoverPlacement | null>(() => {
 
   const margin = 12
   const gap = 14
-  const minimumPopoverWidth = isEditingDetailSource.value ? 320 : 220
-  const fallbackPopoverWidth = isEditingDetailSource.value ? 260 : 160
-  const preferredPopoverWidth = isEditingDetailSource.value ? 560 : 360
+  const isEditingDetailPanel = isEditingDetailSource.value || isEditingDetailMetadata.value
+  const minimumPopoverWidth = isEditingDetailPanel ? 320 : 220
+  const fallbackPopoverWidth = isEditingDetailPanel ? 260 : 160
+  const preferredPopoverWidth = isEditingDetailPanel ? 560 : 360
   const popoverHeight = detailPopoverSize.value.height > 0
     ? detailPopoverSize.value.height
-    : isEditingDetailSource.value
+    : isEditingDetailPanel
       ? 420
       : 260
   const usableViewportWidth = Math.max(margin, safeViewportWidth - detailPopoverViewportInsetRight.value)
@@ -3116,6 +3467,7 @@ const getDetailPopoverFlagStyle = (flag: TableAttachmentFlag) => {
 
 const closeDetailPopover = () => {
   isEditingDetailSource.value = false
+  isEditingDetailMetadata.value = false
   selectedSelection.value = null
 }
 
@@ -3123,18 +3475,44 @@ const syncDetailPopoverEditorSource = () => {
   detailPopoverEditorSource.value = selectedDetailEditorSpec.value?.source || ''
 }
 
+const syncDetailPopoverMetadataDraft = () => {
+  detailPopoverMetadataDraft.value = selectedDetailMetadataEditorSpec.value
+    ? clonePgmlDetailPopoverMetadataDraft(selectedDetailMetadataEditorSpec.value.draft)
+    : null
+}
+
+const updateDetailPopoverMetadataDraft = (nextDraft: PgmlDetailPopoverMetadataDraft) => {
+  detailPopoverMetadataDraft.value = nextDraft
+}
+
 const openDetailPopoverSourceEditor = () => {
   if (!canEditSelectedDetailSource.value) {
     return
   }
 
+  isEditingDetailMetadata.value = false
   syncDetailPopoverEditorSource()
   isEditingDetailSource.value = true
+}
+
+const openDetailPopoverMetadataEditor = () => {
+  if (!canEditSelectedDetailMetadata.value) {
+    return
+  }
+
+  isEditingDetailSource.value = false
+  syncDetailPopoverMetadataDraft()
+  isEditingDetailMetadata.value = true
 }
 
 const cancelDetailPopoverSourceEditor = () => {
   syncDetailPopoverEditorSource()
   isEditingDetailSource.value = false
+}
+
+const cancelDetailPopoverMetadataEditor = () => {
+  syncDetailPopoverMetadataDraft()
+  isEditingDetailMetadata.value = false
 }
 
 const applyDetailPopoverSourceEditor = () => {
@@ -3150,6 +3528,24 @@ const applyDetailPopoverSourceEditor = () => {
     sourceRange
   })
   isEditingDetailSource.value = false
+}
+
+const applyDetailPopoverMetadataEditor = () => {
+  const sourceRange = selectedDetailPopover.value?.sourceRange
+  const nextDraft = detailPopoverMetadataDraft.value
+  const replacementText = nextDraft
+    ? selectedDetailMetadataEditorSpec.value?.toReplacementText(nextDraft) || null
+    : null
+
+  if (!sourceRange || !canEditSelectedDetailMetadata.value || replacementText === null) {
+    return
+  }
+
+  emit('replaceSourceRange', {
+    nextText: replacementText,
+    sourceRange
+  })
+  isEditingDetailMetadata.value = false
 }
 
 const diagramSelectionEquals = (left: DiagramGpuSelection | null, right: DiagramGpuSelection) => {
@@ -4103,7 +4499,9 @@ watch(
   () => [selectedDetailEditorKey.value, sourceText],
   () => {
     isEditingDetailSource.value = false
+    isEditingDetailMetadata.value = false
     syncDetailPopoverEditorSource()
+    syncDetailPopoverMetadataDraft()
   },
   {
     immediate: true
@@ -4115,6 +4513,18 @@ watch(
   (canEdit) => {
     if (!canEdit) {
       isEditingDetailSource.value = false
+    }
+  },
+  {
+    immediate: true
+  }
+)
+
+watch(
+  () => canEditSelectedDetailMetadata.value,
+  (canEdit) => {
+    if (!canEdit) {
+      isEditingDetailMetadata.value = false
     }
   },
   {
@@ -4413,6 +4823,16 @@ defineExpose<{
           :title="selectedDetailEditorSpec?.title || 'Editing PGML block'"
         />
 
+        <PgmlDetailPopoverMetadataEditor
+          v-else-if="isEditingDetailMetadata && detailPopoverMetadataDraft"
+          :model-value="detailPopoverMetadataDraft"
+          :description="selectedDetailMetadataEditorSpec?.description"
+          :original-value="selectedDetailMetadataEditorSpec?.draft || detailPopoverMetadataDraft"
+          :routine-items="routineMetadataSelectItems"
+          :title="selectedDetailMetadataEditorSpec?.title || 'Editing metadata'"
+          @update:model-value="updateDetailPopoverMetadataDraft"
+        />
+
         <div
           v-else
           class="grid max-h-64 gap-1 overflow-auto border border-[color:var(--studio-rail)] bg-[color:var(--studio-input-bg)] px-2 py-2"
@@ -4432,7 +4852,18 @@ defineExpose<{
           class="flex flex-wrap gap-2"
         >
           <UButton
-            v-if="canEditSelectedDetailSource && !isEditingDetailSource"
+            v-if="canEditSelectedDetailMetadata && !isEditingDetailSource && !isEditingDetailMetadata"
+            data-detail-popover-edit-metadata="true"
+            label="Edit metadata"
+            leading-icon="i-lucide-sliders-horizontal"
+            color="neutral"
+            variant="outline"
+            size="xs"
+            :class="sidePanelActionButtonClass"
+            @click="openDetailPopoverMetadataEditor"
+          />
+          <UButton
+            v-if="canEditSelectedDetailSource && !isEditingDetailSource && !isEditingDetailMetadata"
             data-detail-popover-edit-source="true"
             :label="detailPopoverEditButtonLabel"
             leading-icon="i-lucide-pencil-line"
@@ -4443,15 +4874,15 @@ defineExpose<{
             @click="openDetailPopoverSourceEditor"
           />
           <UButton
-            v-if="isEditingDetailSource"
+            v-if="isEditingDetailSource || isEditingDetailMetadata"
             data-detail-popover-cancel-source="true"
-            label="Cancel edit"
+            :label="isEditingDetailMetadata ? 'Cancel metadata' : 'Cancel edit'"
             leading-icon="i-lucide-rotate-ccw"
             color="neutral"
             variant="ghost"
             size="xs"
             :class="sidePanelActionButtonClass"
-            @click="cancelDetailPopoverSourceEditor"
+            @click="isEditingDetailMetadata ? cancelDetailPopoverMetadataEditor() : cancelDetailPopoverSourceEditor()"
           />
           <UButton
             v-if="isEditingDetailSource"
@@ -4463,6 +4894,17 @@ defineExpose<{
             size="xs"
             :class="sidePanelActionButtonClass"
             @click="applyDetailPopoverSourceEditor"
+          />
+          <UButton
+            v-if="isEditingDetailMetadata"
+            data-detail-popover-apply-metadata="true"
+            :label="detailPopoverMetadataHasChanges ? 'Apply metadata' : 'Keep metadata'"
+            leading-icon="i-lucide-check"
+            color="primary"
+            variant="solid"
+            size="xs"
+            :class="sidePanelActionButtonClass"
+            @click="applyDetailPopoverMetadataEditor"
           />
           <UButton
             label="Focus source"
@@ -5665,6 +6107,7 @@ defineExpose<{
         :workspace-base-label="workspaceBaseLabel"
         :workspace-status="workspaceStatus"
         @create-checkpoint="emit('versionCheckpoint')"
+        @import-dbml="emit('versionImportDbml')"
         @import-dump="emit('versionImportDump')"
         @restore-version="emit('restoreVersion', $event)"
         @view-target="emit('viewVersionTarget', $event)"

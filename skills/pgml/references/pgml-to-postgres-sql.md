@@ -239,7 +239,7 @@ Use the embedded SQL as the emitted DDL unless the task explicitly asks for norm
 
 ## Migration Delta Workflow
 
-Only generate exact migration SQL when both the old and new PGML states are available. If only one version exists, describe a likely migration plan instead of inventing a precise diff.
+Only generate exact migration SQL when both the old and new PGML states are available. In versioned PGML, that usually means a selected base snapshot and target snapshot. If only one state exists, describe a likely migration plan instead of inventing a precise diff.
 
 For a real diff:
 
@@ -259,6 +259,8 @@ Call out risky operations explicitly:
 - changing sequence ownership
 
 If a function or procedure body changes and a `source:` block exists, prefer a `CREATE OR REPLACE` routine update when PostgreSQL semantics allow it.
+
+When the diff spans a forward checkpoint lineage, prefer one migration file per version transition and keep SQL ordering aligned with the version sequence. Apply the same step boundaries to generated Kysely migrations so SQL and Kysely can replay the same history.
 
 ## Writing Application Queries From PGML
 

@@ -553,10 +553,9 @@ test('versions overview controls render inline instead of as a sticky floating c
 
   await expect(overview).toBeVisible()
   await expect(overview.locator('[data-version-create-checkpoint="true"]')).toBeVisible()
+  await expect(overview.locator('[data-version-import-dbml="true"]')).toBeVisible()
   await expect(overview.locator('[data-version-import-dump="true"]')).toBeVisible()
-  await expect(overview).toContainText('Locked')
-  await expect(overview).toContainText('Design')
-  await expect(overview).toContainText('Impl')
+  await expect(overview).toContainText('Choose which locked snapshot the diagram and raw PGML preview should show.')
   await expect.poll(async () => {
     return overview.evaluate(element => getComputedStyle(element).position)
   }).toBe('static')
@@ -714,6 +713,80 @@ ALTER TABLE ONLY public.orders ADD CONSTRAINT orders_user_id_fkey FOREIGN KEY (u
   expect(importedSource).toContain('Table public.users')
   expect(importedSource).toContain('Table public.orders')
   expect(importedSource).not.toContain('Table public.scratch_entries')
+
+  await compareFromVersion(page, 'Users baseline')
+
+  await openMigrationsPanel(page)
+
+  const migrationArtifact = getMigrationArtifact(page)
+
+  await expect(migrationArtifact).toContainText('-- Step 1: Users baseline -> Current workspace')
+  await expect(migrationArtifact).toContainText('CREATE TABLE "public"."orders"')
+  await expect(migrationArtifact).toContainText('ALTER TABLE "public"."orders" ADD FOREIGN KEY ("user_id") REFERENCES "public"."users" ("id");')
+  await expect(migrationArtifact).not.toContainText('Users and teams')
+  await expect(migrationArtifact).not.toContainText('DROP TABLE IF EXISTS "public"."teams";')
+})
+
+test('importing DBML onto a selected base version replaces the workspace and generates direct history-aware migrations from that base', async ({ goto, page }) => {
+  await goto('/diagram')
+  const editor = getPgmlEditor(page)
+
+  await setPgmlEditorValue(editor, `Table public.users {
+  id uuid [pk]
+}`)
+  await createCheckpoint(page, 'Users baseline')
+
+  await setPgmlEditorValue(editor, `Table public.users {
+  id uuid [pk]
+}
+
+Table public.teams {
+  id uuid [pk]
+}`)
+  await createCheckpoint(page, 'Users and teams')
+
+  await setPgmlEditorValue(editor, `Table public.users {
+  id uuid [pk]
+}
+
+Table public.scratch_entries {
+  id uuid [pk]
+}`)
+  await expect.poll(async () => readPgmlEditorValue(editor)).toContain('Table public.scratch_entries')
+
+  await openVersionsPanel(page)
+  await page.locator('[data-version-import-dbml="true"]').click()
+
+  const importDialog = page.locator('[data-studio-modal-surface="dbml-import"]')
+
+  await expect(importDialog).toBeVisible()
+  await importDialog.getByLabel('Increment from version').click()
+  await page.getByRole('option', { name: /Users baseline/i }).click()
+  await importDialog.locator('textarea').fill(`Project commerce {
+  database_type: "PostgreSQL"
+}
+
+Table public.users {
+  id uuid [pk]
+}
+
+Table public.orders {
+  id uuid [pk]
+  user_id uuid [not null]
+}
+
+Ref: public.orders.user_id > public.users.id`)
+  await importDialog.getByRole('button', { name: 'Replace workspace with import' }).click()
+  await expect(importDialog).toHaveCount(0)
+
+  await expect.poll(async () => readPgmlEditorValue(editor)).toContain('Table public.orders')
+
+  const importedSource = await readPgmlEditorValue(editor)
+
+  expect(importedSource).toContain('Table public.users')
+  expect(importedSource).toContain('Table public.orders')
+  expect(importedSource).not.toContain('Table public.scratch_entries')
+  expect(importedSource).not.toContain('Project commerce')
 
   await compareFromVersion(page, 'Users baseline')
 
