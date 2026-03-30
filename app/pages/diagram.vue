@@ -1182,8 +1182,11 @@ const updateVersionCompareTargetId = (value: string) => {
     targetId: value
   })
 }
+const normalizeVersionedEditorMode = (value: string) => {
+  return value === 'document' ? 'document' : 'head'
+}
 const updateVersionedEditorMode = (value: string) => {
-  versionedEditorMode.value = value === 'document' ? 'document' : 'head'
+  versionedEditorMode.value = normalizeVersionedEditorMode(value)
 }
 const updateDocumentEditorScope = (value: unknown) => {
   if (typeof value !== 'string' || value.trim().length === 0) {
