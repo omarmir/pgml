@@ -3,6 +3,15 @@ import { describe, expect, it } from 'vitest'
 import { parsePgmlDocument } from '../../app/utils/pgml-document'
 import { buildPgmlVersionMigrationBundle } from '../../app/utils/pgml-version-migration'
 
+const expectValidMigrationStep = (
+  bundle: ReturnType<typeof buildPgmlVersionMigrationBundle>,
+  stepIndex: number
+) => {
+  expect(bundle.steps[stepIndex]!.validation.isValid).toBe(true)
+  expect(bundle.steps[stepIndex]!.sql.migration.fileName).toContain(`-step-${stepIndex + 1}-`)
+  expect(bundle.steps[stepIndex]!.kysely.migration.fileName).toContain(`-step-${stepIndex + 1}-`)
+}
+
 describe('PGML version migration helpers', () => {
   it('prepends the empty-base warning when no base version is selected', () => {
     const bundle = buildPgmlVersionMigrationBundle({
@@ -85,15 +94,11 @@ describe('PGML version migration helpers', () => {
     expect(bundle.steps[0]!.label).toBe('Initial users -> Add user email')
     expect(bundle.steps[0]!.target.baseId).toBe('v1')
     expect(bundle.steps[0]!.target.targetId).toBe('v2')
-    expect(bundle.steps[0]!.validation.isValid).toBe(true)
     expect(bundle.steps[1]!.index).toBe(1)
     expect(bundle.steps[1]!.label).toBe('Add user email -> Current workspace')
     expect(bundle.steps[1]!.target.targetId).toBe('workspace')
-    expect(bundle.steps[1]!.validation.isValid).toBe(true)
-    expect(bundle.steps[0]!.sql.migration.fileName).toContain('-step-1-')
-    expect(bundle.steps[0]!.kysely.migration.fileName).toContain('-step-1-')
-    expect(bundle.steps[1]!.sql.migration.fileName).toContain('-step-2-')
-    expect(bundle.steps[1]!.kysely.migration.fileName).toContain('-step-2-')
+    expectValidMigrationStep(bundle, 0)
+    expectValidMigrationStep(bundle, 1)
     expect(bundle.steps[0]!.sql.migration.content).toContain(
       'ALTER TABLE "public"."users" ADD COLUMN "email" text;'
     )
@@ -282,7 +287,7 @@ describe('PGML version migration helpers', () => {
     expect(bundle.steps).toHaveLength(2)
     expect(bundle.steps[0]!.meta.hasChanges).toBe(false)
     expect(bundle.steps[0]!.meta.warningCount).toBeGreaterThan(0)
-    expect(bundle.steps[0]!.validation.isValid).toBe(true)
+    expectValidMigrationStep(bundle, 0)
     expect(bundle.steps[0]!.sql.migration.warnings[0]).toContain(
       'Enum public.order_status changed in a way that cannot be migrated safely'
     )
@@ -290,7 +295,7 @@ describe('PGML version migration helpers', () => {
       'Enum public.order_status changed in a way that cannot be migrated safely'
     )
     expect(bundle.steps[1]!.meta.hasChanges).toBe(true)
-    expect(bundle.steps[1]!.validation.isValid).toBe(true)
+    expectValidMigrationStep(bundle, 1)
     expect(bundle.steps[1]!.sql.migration.content).toContain('CREATE TABLE "public"."audit_log" (')
     expect(bundle.steps[1]!.sql.migration.content).not.toContain('Enum public.order_status')
     expect(bundle.sql.migration.content).toContain('-- Step 1: Full status -> Trim status')
