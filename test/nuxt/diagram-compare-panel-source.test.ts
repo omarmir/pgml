@@ -20,6 +20,10 @@ describe('diagram compare panel source', () => {
     expect(comparePanelFile).toContain('data-compare-search="true"')
     expect(comparePanelFile).toContain('data-compare-entry="entry.id"')
     expect(comparePanelFile).toContain('data-compare-entry-detail="true"')
+    expect(comparePanelFile).toContain('type PgmlCompareFilterKind = \'all\' | \'added\' | \'modified\' | \'removed\'')
+    expect(comparePanelFile).toContain('const compareFilterOptions: PgmlCompareFilterOption[] = [')
+    expect(comparePanelFile).toContain('v-for="option in compareFilterOptions"')
+    expect(comparePanelFile).toContain('@click="clearFilters"')
     expect(comparePanelFile).toContain('label="Show on diagram"')
     expect(comparePanelFile).toContain('selectedDiagramContextIds')
 

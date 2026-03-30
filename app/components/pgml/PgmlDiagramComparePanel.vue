@@ -39,10 +39,35 @@ const emit = defineEmits<{
   'select-entry': [entryId: string]
 }>()
 
+type PgmlCompareFilterKind = 'all' | 'added' | 'modified' | 'removed'
+
+type PgmlCompareFilterOption = {
+  label: string
+  value: PgmlCompareFilterKind
+}
+
 const searchQuery: Ref<string> = ref('')
-const filterKind: Ref<'all' | 'added' | 'modified' | 'removed'> = ref('all')
+const filterKind: Ref<PgmlCompareFilterKind> = ref('all')
 const filterButtonClass = joinStudioClasses(studioButtonClasses.secondary, 'text-[0.62rem]')
 const activeFilterButtonClass = joinStudioClasses(studioButtonClasses.primary, 'text-[0.62rem]')
+const compareFilterOptions: PgmlCompareFilterOption[] = [
+  {
+    label: 'All',
+    value: 'all'
+  },
+  {
+    label: 'Added',
+    value: 'added'
+  },
+  {
+    label: 'Modified',
+    value: 'modified'
+  },
+  {
+    label: 'Removed',
+    value: 'removed'
+  }
+]
 const buildEntrySearchHaystack = (entry: PgmlDiagramCompareEntry) => {
   return [
     entry.label,
@@ -143,6 +168,11 @@ const getChangeBadgeStyle = (entry: PgmlDiagramCompareEntry) => {
 
 const clearSearch = () => {
   searchQuery.value = ''
+}
+
+const clearFilters = () => {
+  clearSearch()
+  filterKind.value = 'all'
 }
 </script>
 
@@ -252,36 +282,14 @@ const clearSearch = () => {
           :class="joinStudioClasses(studioCompactInputClass, 'min-w-[12rem] flex-1')"
         >
         <UButton
-          label="All"
+          v-for="option in compareFilterOptions"
+          :key="option.value"
+          :label="option.label"
           color="neutral"
-          :variant="filterKind === 'all' ? 'soft' : 'outline'"
+          :variant="filterKind === option.value ? 'soft' : 'outline'"
           size="xs"
-          :class="filterKind === 'all' ? activeFilterButtonClass : filterButtonClass"
-          @click="filterKind = 'all'"
-        />
-        <UButton
-          label="Added"
-          color="neutral"
-          :variant="filterKind === 'added' ? 'soft' : 'outline'"
-          size="xs"
-          :class="filterKind === 'added' ? activeFilterButtonClass : filterButtonClass"
-          @click="filterKind = 'added'"
-        />
-        <UButton
-          label="Modified"
-          color="neutral"
-          :variant="filterKind === 'modified' ? 'soft' : 'outline'"
-          size="xs"
-          :class="filterKind === 'modified' ? activeFilterButtonClass : filterButtonClass"
-          @click="filterKind = 'modified'"
-        />
-        <UButton
-          label="Removed"
-          color="neutral"
-          :variant="filterKind === 'removed' ? 'soft' : 'outline'"
-          size="xs"
-          :class="filterKind === 'removed' ? activeFilterButtonClass : filterButtonClass"
-          @click="filterKind = 'removed'"
+          :class="filterKind === option.value ? activeFilterButtonClass : filterButtonClass"
+          @click="filterKind = option.value"
         />
       </div>
 
@@ -336,7 +344,7 @@ const clearSearch = () => {
           variant="outline"
           size="xs"
           :class="filterButtonClass"
-          @click="clearSearch(); filterKind = 'all'"
+          @click="clearFilters"
         />
       </div>
     </div>
