@@ -4,33 +4,38 @@ import { readSourceFile } from './source-test-utils'
 describe('diagram page source', () => {
   it('keeps the studio workspace shells and modal entry points in the page source', () => {
     const file = readSourceFile('app/pages/diagram.vue')
+    const expectedStrings = [
+      'middleware: \'require-studio-launch\'',
+      '<StudioDesktopWorkspace',
+      '<StudioMobileWorkspace',
+      '<StudioEditorSurface',
+      'v-model:active-view="mobileWorkspaceView"',
+      '<StudioModalFrame',
+      'Add table',
+      'Add table group',
+      'Columns',
+      'Tables in this group',
+      'Group color',
+      'data-group-editor-color="true"',
+      'v-bind="studioPersistentSelectMenuProps"',
+      'Create checkpoint',
+      'Versioned document',
+      '<AppPgDumpImportModal',
+      '@version-import-dump="openImportDumpDialog"',
+      'buildPgmlCheckpointName(versionDocument.value',
+      'checkpointNameIsSuggested',
+      ':can-create-checkpoint="canCheckpoint"',
+      ':latest-version-id="latestVersionId"',
+      ':document-scope="documentEditorScope"',
+      ':document-scope-items="documentEditorScopeItems"',
+      '@update:document-scope="updateDocumentEditorScope"',
+      'The selected base version no longer exists.',
+      'getPgmlVersionDisplayLabel',
+      'latestImplementationVersion.value?.id'
+    ]
 
-    expect(file).toContain('middleware: \'require-studio-launch\'')
-    expect(file).toContain('<StudioDesktopWorkspace')
-    expect(file).toContain('<StudioMobileWorkspace')
-    expect(file).toContain('<StudioEditorSurface')
-    expect(file).toContain('v-model:active-view="mobileWorkspaceView"')
-    expect(file).toContain('<StudioModalFrame')
-    expect(file).toContain('Add table')
-    expect(file).toContain('Add table group')
-    expect(file).toContain('Columns')
-    expect(file).toContain('Tables in this group')
-    expect(file).toContain('Group color')
-    expect(file).toContain('data-group-editor-color="true"')
-    expect(file).toContain('v-bind="studioPersistentSelectMenuProps"')
-    expect(file).toContain('Create checkpoint')
-    expect(file).toContain('Versioned document')
-    expect(file).toContain('<AppPgDumpImportModal')
-    expect(file).toContain('@version-import-dump="openImportDumpDialog"')
-    expect(file).toContain('buildPgmlCheckpointName(versionDocument.value')
-    expect(file).toContain('checkpointNameIsSuggested')
-    expect(file).toContain(':can-create-checkpoint="canCheckpoint"')
-    expect(file).toContain(':latest-version-id="latestVersionId"')
-    expect(file).toContain(':document-scope="documentEditorScope"')
-    expect(file).toContain(':document-scope-items="documentEditorScopeItems"')
-    expect(file).toContain('@update:document-scope="updateDocumentEditorScope"')
-    expect(file).toContain('The selected base version no longer exists.')
-    expect(file).toContain('getPgmlVersionDisplayLabel')
-    expect(file).toContain('latestImplementationVersion.value?.id')
+    expectedStrings.forEach((expectedString) => {
+      expect(file).toContain(expectedString)
+    })
   })
 })
