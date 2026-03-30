@@ -23,6 +23,13 @@ const getMigrationArtifact = (page: Page) => {
   return page.locator('[data-version-migration-artifact="true"]')
 }
 
+const getMigrationScopeButton = (
+  page: Page,
+  scope: 'combined' | `step:${number}`
+) => {
+  return getVersionsPanel(page).locator(`[data-version-migration-scope="${scope}"]`)
+}
+
 const getDocumentScopeSelect = (page: Page) => {
   return page.locator('[data-document-scope-select="true"]')
 }
@@ -30,6 +37,13 @@ const getDocumentScopeSelect = (page: Page) => {
 const openVersionsPanel = async (page: Page) => {
   await page.locator('[data-diagram-panel-tab="versions"]').click()
   await expect(getVersionsPanel(page)).toBeVisible()
+}
+
+const selectMigrationScope = async (
+  page: Page,
+  scope: 'combined' | `step:${number}`
+) => {
+  await getMigrationScopeButton(page, scope).click()
 }
 
 const getVersionCardByLabel = (
@@ -78,6 +92,25 @@ const openComparator = async (page: Page) => {
   await openVersionsPanel(page)
   await page.locator('[data-version-open-comparator="true"]').click()
   await expect(getComparePanel(page)).toBeVisible()
+}
+
+const downloadMigrationArtifact = async (
+  page: Page,
+  format: 'sql' | 'kysely'
+) => {
+  const downloadPromise = page.waitForEvent('download')
+
+  await getVersionsPanel(page).locator(`[data-version-migration-download="${format}"]`).click()
+
+  const download = await downloadPromise
+  const downloadPath = await download.path()
+
+  expect(downloadPath).not.toBeNull()
+
+  return {
+    content: readFileSync(downloadPath!, 'utf8'),
+    fileName: download.suggestedFilename()
+  }
 }
 const selectDocumentScope = async (
   page: Page,
@@ -266,33 +299,22 @@ Trigger trg_touch_orders on public.orders {
   await expect(migrationArtifact).toContainText('CREATE OR REPLACE FUNCTION public.touch_orders()')
   await expect(migrationArtifact).toContainText('CREATE TRIGGER trg_touch_orders')
 
-  const sqlDownloadPromise = page.waitForEvent('download')
+  const sqlDownload = await downloadMigrationArtifact(page, 'sql')
 
-  await versionsPanel.locator('[data-version-migration-download="sql"]').click()
+  expect(sqlDownload.fileName).toContain('.migration.sql')
+  expect(sqlDownload.content).toContain('-- Step 2: Orders baseline -> Current workspace')
 
-  const sqlDownload = await sqlDownloadPromise
-  const sqlDownloadPath = await sqlDownload.path()
-
-  expect(sqlDownload.suggestedFilename()).toContain('.migration.sql')
-  expect(readFileSync(sqlDownloadPath!, 'utf8')).toContain('-- Step 2: Orders baseline -> Current workspace')
-
-  await versionsPanel.locator('[data-version-migration-scope="step:0"]').click()
+  await selectMigrationScope(page, 'step:0')
   await expect(migrationArtifact).toContainText('CREATE TABLE "public"."orders"')
   await expect(migrationArtifact).toContainText('ALTER TABLE "public"."orders" ADD FOREIGN KEY ("user_id") REFERENCES "public"."users" ("id");')
   await expect(migrationArtifact).not.toContainText(`ALTER TYPE "public"."order_status" ADD VALUE IF NOT EXISTS 'submitted' BEFORE 'paid';`)
   await expect(migrationArtifact).not.toContainText('CREATE TRIGGER trg_touch_orders')
 
-  const stepOneSqlDownloadPromise = page.waitForEvent('download')
+  const stepOneSqlDownload = await downloadMigrationArtifact(page, 'sql')
 
-  await versionsPanel.locator('[data-version-migration-download="sql"]').click()
-
-  const stepOneSqlDownload = await stepOneSqlDownloadPromise
-  const stepOneSqlDownloadPath = await stepOneSqlDownload.path()
-  const stepOneSqlContent = readFileSync(stepOneSqlDownloadPath!, 'utf8')
-
-  expect(stepOneSqlDownload.suggestedFilename()).toContain('-step-1-')
-  expect(stepOneSqlContent).toContain('CREATE TABLE "public"."orders"')
-  expect(stepOneSqlContent).not.toContain(`ALTER TYPE "public"."order_status" ADD VALUE IF NOT EXISTS 'submitted' BEFORE 'paid';`)
+  expect(stepOneSqlDownload.fileName).toContain('-step-1-')
+  expect(stepOneSqlDownload.content).toContain('CREATE TABLE "public"."orders"')
+  expect(stepOneSqlDownload.content).not.toContain(`ALTER TYPE "public"."order_status" ADD VALUE IF NOT EXISTS 'submitted' BEFORE 'paid';`)
 
   await versionsPanel.locator('[data-version-migration-format="kysely"]').click()
   await expect(migrationArtifact).toHaveAttribute('data-version-migration-format-active', 'kysely')
@@ -300,24 +322,18 @@ Trigger trg_touch_orders on public.orders {
   await expect(migrationArtifact).toContainText('CREATE TABLE "public"."orders"')
   await expect(migrationArtifact).not.toContainText('CREATE OR REPLACE FUNCTION public.touch_orders()')
 
-  await versionsPanel.locator('[data-version-migration-scope="step:1"]').click()
+  await selectMigrationScope(page, 'step:1')
   await expect(migrationArtifact).toContainText(`ALTER TYPE "public"."order_status" ADD VALUE IF NOT EXISTS 'submitted' BEFORE 'paid';`)
   await expect(migrationArtifact).toContainText('CREATE OR REPLACE FUNCTION public.touch_orders()')
   await expect(migrationArtifact).toContainText('CREATE TRIGGER trg_touch_orders')
   await expect(migrationArtifact).not.toContainText('CREATE TABLE "public"."orders"')
 
-  const kyselyDownloadPromise = page.waitForEvent('download')
+  const kyselyDownload = await downloadMigrationArtifact(page, 'kysely')
 
-  await versionsPanel.locator('[data-version-migration-download="kysely"]').click()
-
-  const kyselyDownload = await kyselyDownloadPromise
-  const kyselyDownloadPath = await kyselyDownload.path()
-  const kyselyDownloadContent = readFileSync(kyselyDownloadPath!, 'utf8')
-
-  expect(kyselyDownload.suggestedFilename()).toContain('-step-2-')
-  expect(kyselyDownloadContent).toContain(`ALTER TYPE "public"."order_status" ADD VALUE IF NOT EXISTS 'submitted' BEFORE 'paid';`)
-  expect(kyselyDownloadContent).toContain('CREATE OR REPLACE FUNCTION public.touch_orders()')
-  expect(kyselyDownloadContent).not.toContain('CREATE TABLE "public"."orders"')
+  expect(kyselyDownload.fileName).toContain('-step-2-')
+  expect(kyselyDownload.content).toContain(`ALTER TYPE "public"."order_status" ADD VALUE IF NOT EXISTS 'submitted' BEFORE 'paid';`)
+  expect(kyselyDownload.content).toContain('CREATE OR REPLACE FUNCTION public.touch_orders()')
+  expect(kyselyDownload.content).not.toContain('CREATE TABLE "public"."orders"')
 })
 
 test('versions panel keeps warning-only history steps visible in SQL and Kysely previews', async ({ goto, page }) => {
@@ -360,11 +376,11 @@ Table public.audit_log {
   await expect(migrationArtifact).toContainText('CREATE TABLE "public"."audit_log"')
   await expect(warningsPanel).toContainText('Enum public.order_status changed in a way that cannot be migrated safely')
 
-  await versionsPanel.locator('[data-version-migration-scope="step:0"]').click()
+  await selectMigrationScope(page, 'step:0')
   await expect(migrationArtifact).not.toContainText('CREATE TABLE "public"."audit_log"')
   await expect(warningsPanel).toContainText('Enum public.order_status changed in a way that cannot be migrated safely')
 
-  await versionsPanel.locator('[data-version-migration-scope="step:1"]').click()
+  await selectMigrationScope(page, 'step:1')
   await expect(migrationArtifact).toContainText('CREATE TABLE "public"."audit_log"')
   await expect(warningsPanel).toHaveCount(0)
 
