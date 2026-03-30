@@ -29,6 +29,18 @@ type VersionDiffSection = {
   label: string
 }
 
+type VersionMigrationArtifactsProps = {
+  // The GPU shell and versions panel consume the same migration artifact set.
+  // Keeping the pass-through shape named here makes prop drift easier to spot.
+  migrationFileName?: string
+  migrationHasChanges?: boolean
+  migrationKysely?: string
+  migrationKyselyFileName?: string
+  migrationSql?: string
+  migrationSteps?: PgmlVersionMigrationStepBundle[]
+  migrationWarnings?: string[]
+}
+
 type VersionPanelItem = {
   ancestorCount: number
   branchLeafCount: number
@@ -87,7 +99,7 @@ const {
   workspaceBaseLabel = 'No base version yet',
   workspaceStatus = 'Draft is ready to checkpoint.',
   viewportResetKey = 0
-} = defineProps<{
+} = defineProps<VersionMigrationArtifactsProps & {
   canCreateCheckpoint?: boolean
   canEditDetailSource?: boolean
   compareBaseLabel?: string
@@ -102,13 +114,6 @@ const {
   latestVersionId?: string | null
   mobileActiveView?: StudioMobileCanvasView | null
   mobilePanelTab?: DiagramPanelTab | null
-  migrationFileName?: string
-  migrationHasChanges?: boolean
-  migrationKysely?: string
-  migrationKyselyFileName?: string
-  migrationSql?: string
-  migrationSteps?: PgmlVersionMigrationStepBundle[]
-  migrationWarnings?: string[]
   model: PgmlSchemaModel
   previewTargetId?: string
   sourceText?: string
