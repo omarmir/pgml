@@ -486,6 +486,22 @@ export const usePgmlStudioVersionHistory = (
     compareBaseId.value = baseId
     compareTargetId.value = 'workspace'
   }
+  const replaceWorkspaceSnapshotAndResetSelection = (inputOptions: {
+    basedOnVersionId: string | null
+    selectionBaseId: string | null
+    source: string
+    updatedAt: string
+  }) => {
+    // Restore/import flows both replace the live draft snapshot and then need
+    // every preview/compare selector to point back at that new workspace state.
+    document.value = replacePgmlWorkspaceFromSnapshot(document.value, {
+      basedOnVersionId: inputOptions.basedOnVersionId,
+      source: inputOptions.source,
+      updatedAt: inputOptions.updatedAt
+    })
+    input.source.value = document.value.workspace.snapshot.source
+    resetWorkspaceSelectionState(inputOptions.selectionBaseId)
+  }
 
   const replaceWorkspaceFromVersion = (versionId: string) => {
     const targetVersion = document.value.versions.find(version => version.id === versionId)
@@ -494,13 +510,12 @@ export const usePgmlStudioVersionHistory = (
       return false
     }
 
-    document.value = replacePgmlWorkspaceFromSnapshot(document.value, {
+    replaceWorkspaceSnapshotAndResetSelection({
       basedOnVersionId: targetVersion.id,
+      selectionBaseId: targetVersion.parentVersionId,
       source: targetVersion.snapshot.source,
       updatedAt: new Date().toISOString()
     })
-    input.source.value = targetVersion.snapshot.source
-    resetWorkspaceSelectionState(targetVersion.parentVersionId)
 
     return true
   }
@@ -514,13 +529,12 @@ export const usePgmlStudioVersionHistory = (
       return false
     }
 
-    document.value = replacePgmlWorkspaceFromSnapshot(document.value, {
+    replaceWorkspaceSnapshotAndResetSelection({
       basedOnVersionId: inputOptions.basedOnVersionId,
+      selectionBaseId: inputOptions.basedOnVersionId,
       source: normalizeSnapshotSource(inputOptions.source, inputOptions.includeLayout),
       updatedAt: new Date().toISOString()
     })
-    input.source.value = document.value.workspace.snapshot.source
-    resetWorkspaceSelectionState(inputOptions.basedOnVersionId)
 
     return true
   }
