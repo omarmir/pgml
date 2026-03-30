@@ -279,6 +279,9 @@ const buildDocumentScopeItem = (
 const buildVersionedDocumentScopeItems = (
   document: PgmlVersionSetDocument
 ) => {
+  // The raw document editor can focus the whole VersionSet, the mutable
+  // Workspace block, or one immutable Version block. Keeping the labels in one
+  // helper prevents those scope menus from drifting between layouts.
   return [
     buildDocumentScopeItem('All VersionSet blocks', 'all'),
     buildDocumentScopeItem('Workspace block', 'workspace-block'),
