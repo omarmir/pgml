@@ -247,6 +247,18 @@ export const usePgmlStudioVersionHistory = (
   const syncWorkspaceSource = () => {
     document.value = buildWorkspaceSyncedDocument(document.value, input.source.value)
   }
+  const buildNamedWorkingDocument = (options?: {
+    includeLayout?: boolean
+    updatedAt?: string | null
+  }) => {
+    // The editor owns the mutable workspace text, so any serialized document
+    // view needs to rebuild the current workspace snapshot before it is shown.
+    const workingDocument = buildWorkspaceSyncedDocument(document.value, input.source.value, options)
+
+    workingDocument.name = input.documentName.value
+
+    return workingDocument
+  }
 
   const setDocument = (nextDocument: PgmlVersionSetDocument) => {
     document.value = {
@@ -329,11 +341,7 @@ export const usePgmlStudioVersionHistory = (
     })
   })
   const versionedDocumentSource = computed(() => {
-    const workingDocument = buildWorkspaceSyncedDocument(document.value, input.source.value)
-
-    workingDocument.name = input.documentName.value
-
-    return serializePgmlDocument(workingDocument)
+    return serializePgmlDocument(buildNamedWorkingDocument())
   })
   const versionedDocumentScopeItems = computed<PgmlVersionedDocumentScopeItem[]>(() => {
     return [
@@ -354,11 +362,7 @@ export const usePgmlStudioVersionHistory = (
     ]
   })
   const versionedDocumentScopeSource = computed(() => {
-    const workingDocument = buildWorkspaceSyncedDocument(document.value, input.source.value)
-
-    workingDocument.name = input.documentName.value
-
-    return serializePgmlDocumentScope(workingDocument, documentEditorScope.value)
+    return serializePgmlDocumentScope(buildNamedWorkingDocument(), documentEditorScope.value)
   })
   const isWorkspacePreview = computed(() => previewTargetId.value === 'workspace')
   const compareBaseVersion = computed(() => {
@@ -405,12 +409,10 @@ export const usePgmlStudioVersionHistory = (
 
   const serializeCurrentDocument = (includeLayout: boolean) => {
     const workingDocument = clonePgmlVersionSetDocument(
-      buildWorkspaceSyncedDocument(document.value, input.source.value, {
+      buildNamedWorkingDocument({
         includeLayout
       })
     )
-
-    workingDocument.name = input.documentName.value
     workingDocument.versions = workingDocument.versions.map((version) => {
       return {
         ...version,
