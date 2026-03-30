@@ -228,6 +228,31 @@ const buildCompareRelationshipSummary = (input: {
   return buildPgmlNoCommonAncestorCompareRelationshipSummary()
 }
 
+const buildDocumentScopeItem = (
+  label: string,
+  value: PgmlDocumentEditorScope
+) => {
+  return {
+    label,
+    value
+  } satisfies PgmlVersionedDocumentScopeItem
+}
+
+const buildVersionedDocumentScopeItems = (
+  document: PgmlVersionSetDocument
+) => {
+  return [
+    buildDocumentScopeItem('All VersionSet blocks', 'all'),
+    buildDocumentScopeItem('Workspace block', 'workspace-block'),
+    ...document.versions.map((version) => {
+      return buildDocumentScopeItem(
+        `${getPgmlVersionRoleDisplayLabel(version.role)} · ${version.name || version.id}`,
+        `version:${version.id}`
+      )
+    })
+  ]
+}
+
 export const usePgmlStudioVersionHistory = (
   input: {
     documentName: ComputedRef<string>
@@ -344,22 +369,7 @@ export const usePgmlStudioVersionHistory = (
     return serializePgmlDocument(buildNamedWorkingDocument())
   })
   const versionedDocumentScopeItems = computed<PgmlVersionedDocumentScopeItem[]>(() => {
-    return [
-      {
-        label: 'All VersionSet blocks',
-        value: 'all'
-      },
-      {
-        label: 'Workspace block',
-        value: 'workspace-block'
-      },
-      ...document.value.versions.map((version) => {
-        return {
-          label: `${getPgmlVersionRoleDisplayLabel(version.role)} · ${version.name || version.id}`,
-          value: `version:${version.id}`
-        } satisfies PgmlVersionedDocumentScopeItem
-      })
-    ]
+    return buildVersionedDocumentScopeItems(document.value)
   })
   const versionedDocumentScopeSource = computed(() => {
     return serializePgmlDocumentScope(buildNamedWorkingDocument(), documentEditorScope.value)
