@@ -27,6 +27,7 @@ type PgmlVersionDiffSectionSource = {
 
 const fullDocumentEditorDescription = 'Showing the full VersionSet document, including locked checkpoints and workspace metadata.'
 const workspaceDocumentEditorDescription = 'Showing only the Workspace block from the VersionSet document so you can inspect draft metadata without the rest of history.'
+const emptyCompareDeltaDescription = 'No visible delta in the selected comparison.'
 
 const buildCountLabel = (count: number, singularLabel: string, pluralLabel?: string) => {
   return `${count} ${count === 1 ? singularLabel : pluralLabel || `${singularLabel}s`}`
@@ -222,7 +223,7 @@ export const buildPgmlWorkspaceEditorDescription = () => {
 export const buildPgmlCompareDeltaDescription = (changedSectionCount: number) => {
   return changedSectionCount > 0
     ? `${buildCountLabel(changedSectionCount, 'changed area')} in the selected comparison.`
-    : 'No visible delta in the selected comparison.'
+    : emptyCompareDeltaDescription
 }
 
 export const buildPgmlEmptyBaseCompareRelationshipSummary = () => {
