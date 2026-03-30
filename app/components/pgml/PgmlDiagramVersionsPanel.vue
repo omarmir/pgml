@@ -340,6 +340,9 @@ const buildMigrationScopeLabel = (step: PgmlVersionMigrationStepBundle | null) =
 const buildMigrationFilePairLabel = (sqlFileName: string, kyselyFileName: string) => {
   return `${sqlFileName} · ${kyselyFileName}`
 }
+const buildMigrationStepStatsLabel = (step: PgmlVersionMigrationStepBundle) => {
+  return `${step.meta.statementCount} statement${step.meta.statementCount === 1 ? '' : 's'} · ${step.meta.warningCount} warning${step.meta.warningCount === 1 ? '' : 's'}`
+}
 const selectedMigrationStep = computed(() => {
   const selectedIndex = getMigrationScopeStepIndex(activeMigrationScope.value)
 
@@ -1013,7 +1016,7 @@ watchEffect(() => {
             Step {{ step.index + 1 }}: {{ step.label }}
           </span>
           <span class="text-[0.64rem] text-[color:var(--studio-shell-muted)]">
-            {{ step.meta.statementCount }} statement{{ step.meta.statementCount === 1 ? '' : 's' }} · {{ step.meta.warningCount }} warning{{ step.meta.warningCount === 1 ? '' : 's' }}
+            {{ buildMigrationStepStatsLabel(step) }}
           </span>
           <span class="font-mono text-[0.58rem] uppercase tracking-[0.08em] text-[color:var(--studio-shell-muted)]">
             {{ buildMigrationFilePairLabel(step.sql.migration.fileName, step.kysely.migration.fileName) }}
