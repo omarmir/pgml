@@ -86,16 +86,32 @@ const contextEntries = computed(() => {
   return entries.filter(entry => selectedContextEntryIds.has(entry.id))
 })
 
+const resolveSelectedEntry = (input: {
+  contextEntries: PgmlDiagramCompareEntry[]
+  entries: PgmlDiagramCompareEntry[]
+  filteredEntries: PgmlDiagramCompareEntry[]
+  selectedEntryId: string | null
+}) => {
+  if (input.selectedEntryId) {
+    return input.entries.find(entry => entry.id === input.selectedEntryId) || null
+  }
+
+  if (input.contextEntries.length > 0) {
+    return input.contextEntries[0] || null
+  }
+
+  return input.filteredEntries[0] || null
+}
+
 const selectedEntry = computed(() => {
-  if (selectedEntryId) {
-    return entries.find(entry => entry.id === selectedEntryId) || null
-  }
-
-  if (contextEntries.value.length > 0) {
-    return contextEntries.value[0] || null
-  }
-
-  return filteredEntries.value[0] || null
+  // Explicit inspector selection wins, then the currently selected diagram
+  // context, then the first visible filtered entry as the empty-state fallback.
+  return resolveSelectedEntry({
+    contextEntries: contextEntries.value,
+    entries,
+    filteredEntries: filteredEntries.value,
+    selectedEntryId
+  })
 })
 
 const compareStats = computed(() => {
