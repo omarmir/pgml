@@ -36,6 +36,8 @@ const syncedWorkspaceStatus = 'Draft matches the current locked base version.'
 const documentViewReadOnlyLabel = 'Document view'
 const versionPreviewReadOnlyLabel = 'Version preview'
 const genericReadOnlyLabel = 'Read only'
+const versionPreviewDescriptionSuffix = 'as a locked snapshot preview. Restore it to the workspace if you want to edit from it.'
+const workspaceEditorDescription = 'Editing the current workspace snapshot. Checkpoint it when you want to lock a version into the history.'
 
 const buildCountLabel = (count: number, singularLabel: string, pluralLabel?: string) => {
   return `${count} ${count === 1 ? singularLabel : pluralLabel || `${singularLabel}s`}`
@@ -221,11 +223,11 @@ export const buildPgmlDocumentEditorModeDescription = (input?: {
 }
 
 export const buildPgmlVersionPreviewDescription = (previewLabel: string) => {
-  return `Showing ${previewLabel} as a locked snapshot preview. Restore it to the workspace if you want to edit from it.`
+  return `Showing ${previewLabel} ${versionPreviewDescriptionSuffix}`
 }
 
 export const buildPgmlWorkspaceEditorDescription = () => {
-  return 'Editing the current workspace snapshot. Checkpoint it when you want to lock a version into the history.'
+  return workspaceEditorDescription
 }
 
 export const buildPgmlCompareDeltaDescription = (changedSectionCount: number) => {
