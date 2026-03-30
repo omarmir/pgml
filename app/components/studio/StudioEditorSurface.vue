@@ -61,14 +61,13 @@ const hasDiagnostics = computed(() => sourceDiagnostics.length > 0)
 const showDocumentScopeSelect = computed(() => {
   return editorMode === 'document' && documentScopeItems.length > 0
 })
+const normalizeDocumentScopeValue = (value: unknown) => {
+  return typeof value === 'string' && value.trim().length > 0 ? value : 'all'
+}
 const updateDocumentScope = (value: unknown) => {
-  if (typeof value !== 'string' || value.trim().length === 0) {
-    emit('update:documentScope', 'all')
-
-    return
-  }
-
-  emit('update:documentScope', value)
+  // The select can clear itself while items are being replaced, so clamp those
+  // transient empty emissions back to the full document view.
+  emit('update:documentScope', normalizeDocumentScopeValue(value))
 }
 </script>
 
