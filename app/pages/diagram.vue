@@ -808,6 +808,11 @@ const compareMigrationBundle = computed(() => {
     baseName: `${exportBaseName.value}-${slugifySchemaName(compareBaseLabel.value)}-to-${slugifySchemaName(compareTargetLabel.value)}`
   })
 })
+const compareMigrationHasOutput = computed(() => {
+  // Warning-only transitions still need the migration panel so the user can
+  // inspect and download the manual follow-up notes for that compare pair.
+  return compareMigrationBundle.value.meta.hasChanges || compareMigrationBundle.value.meta.warningCount > 0
+})
 const importDumpDialogCopy = computed(() => {
   const baseVersion = importDumpBaseVersionId.value
     ? versions.value.find(version => version.id === importDumpBaseVersionId.value) || null
@@ -1840,7 +1845,7 @@ onBeforeUnmount(() => {
           :layout-changed="compareDiff.summary.layoutChanged"
           :has-blocking-source-errors="hasBlockingSourceErrors"
           :migration-file-name="compareMigrationBundle.sql.migration.fileName"
-          :migration-has-changes="compareMigrationBundle.meta.hasChanges || compareMigrationBundle.meta.warningCount > 0"
+          :migration-has-changes="compareMigrationHasOutput"
           :migration-kysely="compareMigrationBundle.kysely.migration.content"
           :migration-kysely-file-name="compareMigrationBundle.kysely.migration.fileName"
           :migration-sql="compareMigrationBundle.sql.migration.content"
@@ -1944,7 +1949,7 @@ onBeforeUnmount(() => {
           :layout-changed="compareDiff.summary.layoutChanged"
           :has-blocking-source-errors="hasBlockingSourceErrors"
           :migration-file-name="compareMigrationBundle.sql.migration.fileName"
-          :migration-has-changes="compareMigrationBundle.meta.hasChanges || compareMigrationBundle.meta.warningCount > 0"
+          :migration-has-changes="compareMigrationHasOutput"
           :migration-kysely="compareMigrationBundle.kysely.migration.content"
           :migration-kysely-file-name="compareMigrationBundle.kysely.migration.fileName"
           :migration-sql="compareMigrationBundle.sql.migration.content"
