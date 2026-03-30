@@ -132,6 +132,20 @@ const normalizeCompareBaseSelection = (
   return baseId
 }
 
+const resolveVersionTargetSource = (input: {
+  document: PgmlVersionSetDocument
+  targetId: string
+  workspaceSource: string
+}) => {
+  if (input.targetId === 'workspace') {
+    return input.workspaceSource
+  }
+
+  return getPgmlDocumentPreviewSource(input.document, {
+    versionId: input.targetId
+  })
+}
+
 const normalizeCompareTargetSelection = (
   document: PgmlVersionSetDocument,
   targetId: string
@@ -357,12 +371,10 @@ export const usePgmlStudioVersionHistory = (
     })
   })
   const previewSource = computed(() => {
-    if (previewTargetId.value === 'workspace') {
-      return input.source.value
-    }
-
-    return getPgmlDocumentPreviewSource(document.value, {
-      versionId: previewTargetId.value
+    return resolveVersionTargetSource({
+      document: document.value,
+      targetId: previewTargetId.value,
+      workspaceSource: input.source.value
     })
   })
   const versionedDocumentSource = computed(() => {
@@ -386,14 +398,20 @@ export const usePgmlStudioVersionHistory = (
     return getPgmlVersionById(document.value, compareTargetId.value)
   })
   const compareBaseSource = computed(() => {
-    if (compareBaseId.value === 'workspace') {
-      return input.source.value
-    }
-
-    return compareBaseVersion.value?.snapshot.source || ''
+    return compareBaseId.value === null
+      ? ''
+      : resolveVersionTargetSource({
+          document: document.value,
+          targetId: compareBaseId.value,
+          workspaceSource: input.source.value
+        })
   })
   const compareTargetSource = computed(() => {
-    return compareTargetVersion.value?.snapshot.source || input.source.value
+    return resolveVersionTargetSource({
+      document: document.value,
+      targetId: compareTargetId.value,
+      workspaceSource: input.source.value
+    })
   })
   const compareRelationshipSummary = computed(() => {
     return buildCompareRelationshipSummary({
