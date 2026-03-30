@@ -65,25 +65,29 @@ const baseSnapshotSource = `Table public.users {
   id uuid [pk]
 }`
 
+const createInitialImplementationDocument = (workspaceSource = baseSnapshotSource) => {
+  return createInitialPgmlDocument({
+    initialVersion: {
+      createdAt: '2026-03-29T12:00:00.000Z',
+      name: 'Initial implementation',
+      parentVersionId: null,
+      role: 'implementation',
+      snapshot: {
+        source: baseSnapshotSource
+      }
+    },
+    name: 'Billing',
+    workspaceSource
+  })
+}
+
 describe('PGML versioned documents', () => {
   it('serializes and parses a VersionSet document with immutable versions and a workspace snapshot', () => {
-    const document = createInitialPgmlDocument({
-      initialVersion: {
-        createdAt: '2026-03-29T12:00:00.000Z',
-        name: 'Initial implementation',
-        parentVersionId: null,
-        role: 'implementation',
-        snapshot: {
-          source: baseSnapshotSource
-        }
-      },
-      name: 'Billing',
-      workspaceSource: `${baseSnapshotSource}
+    const document = createInitialImplementationDocument(`${baseSnapshotSource}
 
 Table public.orders {
   id uuid [pk]
-}`
-    })
+}`)
 
     const serialized = serializePgmlDocument(document)
     const reparsed = parsePgmlDocument(serialized)
@@ -100,23 +104,11 @@ Table public.orders {
   })
 
   it('serializes document editor scopes for the full VersionSet, workspace block, and selected version block', () => {
-    const document = createInitialPgmlDocument({
-      initialVersion: {
-        createdAt: '2026-03-29T12:00:00.000Z',
-        name: 'Initial implementation',
-        parentVersionId: null,
-        role: 'implementation',
-        snapshot: {
-          source: baseSnapshotSource
-        }
-      },
-      name: 'Billing',
-      workspaceSource: `${baseSnapshotSource}
+    const document = createInitialImplementationDocument(`${baseSnapshotSource}
 
 Table public.orders {
   id uuid [pk]
-}`
-    })
+}`)
     const versionId = document.versions[0]?.id || ''
 
     expect(serializePgmlDocumentScope(document, 'all')).toContain('VersionSet "Billing" {')
@@ -161,18 +153,7 @@ Table public.memberships {
   })
 
   it('exposes version lookup helpers for ids and the current workspace base', () => {
-    const document = createInitialPgmlDocument({
-      initialVersion: {
-        createdAt: '2026-03-29T12:00:00.000Z',
-        name: 'Initial implementation',
-        parentVersionId: null,
-        role: 'implementation',
-        snapshot: {
-          source: baseSnapshotSource
-        }
-      },
-      name: 'Billing'
-    })
+    const document = createInitialImplementationDocument()
     const versionMap = getPgmlVersionMap(document)
     const workspaceBaseVersion = getPgmlWorkspaceBaseVersion(document)
 
