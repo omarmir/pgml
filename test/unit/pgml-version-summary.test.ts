@@ -131,31 +131,42 @@ Table public.orders {
     expect(buildPgmlCompareDeltaDescription(0)).toBe('No visible delta in the selected comparison.')
   })
 
-  it('builds the empty-base compare relationship summary', () => {
-    expect(buildPgmlEmptyBaseCompareRelationshipSummary()).toBe('Comparing the current workspace against an empty base.')
+  it.each([
+    {
+      expected: 'Comparing the current workspace against an empty base.',
+      label: 'empty-base',
+      summary: buildPgmlEmptyBaseCompareRelationshipSummary()
+    },
+    {
+      expected: 'Comparing the current workspace against Implementation sync.',
+      label: 'workspace',
+      summary: buildPgmlWorkspaceCompareRelationshipSummary('Implementation sync')
+    },
+    {
+      expected: 'Select a valid base and target to compare version history.',
+      label: 'invalid',
+      summary: buildPgmlInvalidCompareRelationshipSummary()
+    },
+    {
+      expected: 'Add orders increments directly from Initial design.',
+      label: 'direct increment',
+      summary: buildPgmlDirectIncrementCompareRelationshipSummary('Add orders', 'Initial design')
+    },
+    {
+      expected: 'Selected versions diverge from Initial design.',
+      label: 'diverged',
+      summary: buildPgmlDivergedCompareRelationshipSummary('Initial design')
+    },
+    {
+      expected: 'Selected versions do not share a common recorded ancestor.',
+      label: 'no-common-ancestor',
+      summary: buildPgmlNoCommonAncestorCompareRelationshipSummary()
+    }
+  ])('builds the $label compare relationship summary', ({ summary, expected }) => {
+    expect(summary).toBe(expected)
   })
 
   it('builds the workspace-base compare relationship summary', () => {
     expect(buildPgmlWorkspaceBaseCompareRelationshipSummary('Initial design')).toContain('locked base Initial design')
-  })
-
-  it('builds the workspace compare relationship summary', () => {
-    expect(buildPgmlWorkspaceCompareRelationshipSummary('Implementation sync')).toBe('Comparing the current workspace against Implementation sync.')
-  })
-
-  it('builds the invalid compare relationship summary', () => {
-    expect(buildPgmlInvalidCompareRelationshipSummary()).toBe('Select a valid base and target to compare version history.')
-  })
-
-  it('builds direct increment compare relationship summaries', () => {
-    expect(buildPgmlDirectIncrementCompareRelationshipSummary('Add orders', 'Initial design')).toBe('Add orders increments directly from Initial design.')
-  })
-
-  it('builds diverged compare relationship summaries', () => {
-    expect(buildPgmlDivergedCompareRelationshipSummary('Initial design')).toBe('Selected versions diverge from Initial design.')
-  })
-
-  it('builds no-common-ancestor compare relationship summaries', () => {
-    expect(buildPgmlNoCommonAncestorCompareRelationshipSummary()).toBe('Selected versions do not share a common recorded ancestor.')
   })
 })
