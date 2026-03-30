@@ -780,6 +780,11 @@ const compareTargetLabel = computed(() => {
     name: versions.value.find(version => version.id === versionCompareTargetId.value)?.name || null
   })
 })
+const buildCompareMigrationBaseName = () => {
+  // File names should stay stable for the currently selected compare pair so
+  // repeated downloads produce predictable SQL/Kysely artifacts.
+  return `${exportBaseName.value}-${slugifySchemaName(compareBaseLabel.value)}-to-${slugifySchemaName(compareTargetLabel.value)}`
+}
 const workspaceBaseLabel = computed(() => {
   const baseVersion = versions.value.find((version) => {
     return version.id === versionDocument.value.workspace.basedOnVersionId
@@ -805,7 +810,7 @@ const compareMigrationBundle = computed(() => {
     targetId: versionCompareTargetId.value,
     targetSource: compareTargetSource.value
   }, {
-    baseName: `${exportBaseName.value}-${slugifySchemaName(compareBaseLabel.value)}-to-${slugifySchemaName(compareTargetLabel.value)}`
+    baseName: buildCompareMigrationBaseName()
   })
 })
 const compareMigrationHasOutput = computed(() => {
