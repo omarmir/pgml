@@ -282,6 +282,8 @@ const collectNormalizedPgmlEmbeddedSourceBlock = (
   delimiter: string,
   sourceIndent: string
 ) => {
+  // The raw workspace editor and popup editors both rely on this collector so
+  // malformed embedded SQL is repaired the same way during normalization.
   const bodyLines: string[] = []
   let index = startIndex + 1
 
@@ -307,6 +309,9 @@ const collectNormalizedPgmlEmbeddedSourceBlock = (
   }
 }
 const normalizeExecutableDetailSource = (value: string) => {
+  // Detail popovers collapse source bodies into a plain-text preview. Keeping
+  // that formatter here ensures popup rendering mirrors the workspace editor's
+  // dedented SQL/PGML presentation rules.
   const trimmedSource = trimMultiline(value)
 
   if (trimmedSource.length === 0) {
