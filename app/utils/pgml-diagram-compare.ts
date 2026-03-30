@@ -202,6 +202,9 @@ const buildNodeIds = (...ids: Array<string | null | undefined>) => {
 const buildSelectionCandidates = (
   entries: Array<DiagramGpuSelection | null | undefined>
 ) => {
+  // Compare entries often have a preferred selection plus one or more safe
+  // fallbacks. Normalizing that list in one place keeps the inspector and
+  // diagram highlight behavior consistent across entity kinds.
   return entries.filter(hasValue)
 }
 
@@ -241,6 +244,9 @@ const buildLayoutSelectionCandidates = (
   baseModel: PgmlSchemaModel,
   targetModel: PgmlSchemaModel
 ) => {
+  // Layout-only changes can reference groups, tables, or standalone objects.
+  // The target model drives selection because compare overlays should focus the
+  // currently rendered node whenever that successor still exists.
   if (nodeId.startsWith('group:')) {
     const groupId = nodeId
     const groupName = groupId.replace(/^group:/, '')
