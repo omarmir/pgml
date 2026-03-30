@@ -1159,14 +1159,25 @@ const confirmRestoreVersionToWorkspace = () => {
     icon: 'i-lucide-check'
   })
 }
-const updateVersionCompareBaseId = (value: string | null) => {
+// Compare selectors live in multiple controls, so keep the page-level pair
+// updates centralized before they flow into the shared version-history state.
+const updateVersionCompareSelection = (input: {
+  baseId: string | null
+  targetId: string
+}) => {
   setCompareTargets({
+    baseId: input.baseId,
+    targetId: input.targetId
+  })
+}
+const updateVersionCompareBaseId = (value: string | null) => {
+  updateVersionCompareSelection({
     baseId: value,
     targetId: versionCompareTargetId.value
   })
 }
 const updateVersionCompareTargetId = (value: string) => {
-  setCompareTargets({
+  updateVersionCompareSelection({
     baseId: versionCompareBaseId.value,
     targetId: value
   })
