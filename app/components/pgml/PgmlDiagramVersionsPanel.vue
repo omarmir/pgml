@@ -322,12 +322,19 @@ const combinedMigrationArtifacts = computed<Record<PgmlMigrationFormat, PgmlVers
     })
   }
 })
-const selectedMigrationStep = computed(() => {
-  if (activeMigrationScope.value === 'combined') {
+const getMigrationScopeStepIndex = (scope: PgmlMigrationSelectionScope) => {
+  if (scope === 'combined') {
     return null
   }
 
-  const selectedIndex = Number.parseInt(activeMigrationScope.value.replace('step:', ''), 10)
+  return Number.parseInt(scope.replace('step:', ''), 10)
+}
+const selectedMigrationStep = computed(() => {
+  const selectedIndex = getMigrationScopeStepIndex(activeMigrationScope.value)
+
+  if (selectedIndex === null) {
+    return null
+  }
 
   return migrationSteps.find(step => step.index === selectedIndex) || null
 })
