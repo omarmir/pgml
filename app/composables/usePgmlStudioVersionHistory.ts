@@ -72,6 +72,8 @@ const normalizeSnapshotSource = (value: string, includeLayout: boolean) => {
 }
 
 const buildDefaultCompareBaseId = (document: PgmlVersionSetDocument) => {
+  // Prefer the workspace base when it exists so compare opens on the most
+  // common "locked predecessor -> current draft" workflow by default.
   if (document.workspace.basedOnVersionId) {
     return document.workspace.basedOnVersionId
   }
@@ -80,6 +82,8 @@ const buildDefaultCompareBaseId = (document: PgmlVersionSetDocument) => {
 }
 
 const buildDefaultCompareTargetId = (document: PgmlVersionSetDocument) => {
+  // Empty workspaces are usually first-load or just-restored states, so the
+  // most recent locked version is a better initial compare target in that case.
   if (document.workspace.snapshot.source.trim().length > 0) {
     return 'workspace'
   }
@@ -121,6 +125,7 @@ const normalizePreviewTargetId = (
   document: PgmlVersionSetDocument,
   previewTargetId: PgmlVersionPreviewTarget
 ) => {
+  // Preview state should never strand the UI on a deleted or invalid version.
   return isValidVersionTargetId(document, previewTargetId) ? previewTargetId : 'workspace'
 }
 
