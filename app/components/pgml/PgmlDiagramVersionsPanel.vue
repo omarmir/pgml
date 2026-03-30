@@ -337,6 +337,9 @@ const buildMigrationScopeLabel = (step: PgmlVersionMigrationStepBundle | null) =
 
   return `Step ${step.index + 1}: ${step.label}`
 }
+const buildMigrationFilePairLabel = (sqlFileName: string, kyselyFileName: string) => {
+  return `${sqlFileName} · ${kyselyFileName}`
+}
 const selectedMigrationStep = computed(() => {
   const selectedIndex = getMigrationScopeStepIndex(activeMigrationScope.value)
 
@@ -994,7 +997,7 @@ watchEffect(() => {
             Consolidated SQL and Kysely previews across every selected version transition.
           </span>
           <span class="font-mono text-[0.58rem] uppercase tracking-[0.08em] text-[color:var(--studio-shell-muted)]">
-            {{ migrationFileName }} · {{ migrationKyselyFileName }}
+            {{ buildMigrationFilePairLabel(migrationFileName, migrationKyselyFileName) }}
           </span>
         </button>
         <button
@@ -1013,7 +1016,7 @@ watchEffect(() => {
             {{ step.meta.statementCount }} statement{{ step.meta.statementCount === 1 ? '' : 's' }} · {{ step.meta.warningCount }} warning{{ step.meta.warningCount === 1 ? '' : 's' }}
           </span>
           <span class="font-mono text-[0.58rem] uppercase tracking-[0.08em] text-[color:var(--studio-shell-muted)]">
-            {{ step.sql.migration.fileName }} · {{ step.kysely.migration.fileName }}
+            {{ buildMigrationFilePairLabel(step.sql.migration.fileName, step.kysely.migration.fileName) }}
           </span>
           <span
             v-if="!step.validation.isValid"
