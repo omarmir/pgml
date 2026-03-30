@@ -314,6 +314,9 @@ const readPgmlToken = (stream: StringStream, state: PgmlStreamState) => {
   }
 
   if (stream.match(pgmlBlockKeywordPattern)) {
+    // VersionSet / Workspace / Version / Snapshot now share the same block
+    // keyword path as classic PGML blocks so scoped document views highlight
+    // exactly like the full raw editor.
     state.lineAllowsColumnTypeHighlight = false
     state.lastNamedTokenType = 'keyword'
     state.lastPropertyName = null
