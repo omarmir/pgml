@@ -298,16 +298,17 @@ const createVersionMigrationArtifact = (input: {
     warnings: input.warnings
   } satisfies PgmlVersionMigrationArtifact
 }
+// Warning-only migrations still deserve preview/download affordances because
+// they communicate manual follow-up that is part of the version transition.
+const hasUsableMigrationArtifact = (content: string, hasChanges: boolean, warnings: string[]) => {
+  return (hasChanges || warnings.length > 0) && content.trim().length > 0
+}
 const combinedMigrationArtifacts = computed<Record<PgmlMigrationFormat, PgmlVersionMigrationArtifact>>(() => {
-  // The combined view stays selectable even for warning-only transitions so
-  // users can download the synthesized history file without needing DDL.
-  const hasCombinedMigration = migrationHasChanges || migrationWarnings.length > 0
-
   return {
     kysely: createVersionMigrationArtifact({
       content: migrationKysely,
       fileName: migrationKyselyFileName,
-      hasChanges: hasCombinedMigration && migrationKysely.trim().length > 0,
+      hasChanges: hasUsableMigrationArtifact(migrationKysely, migrationHasChanges, migrationWarnings),
       label: 'Kysely',
       mimeType: 'text/plain;charset=utf-8',
       warnings: migrationWarnings
@@ -315,7 +316,7 @@ const combinedMigrationArtifacts = computed<Record<PgmlMigrationFormat, PgmlVers
     sql: createVersionMigrationArtifact({
       content: migrationSql,
       fileName: migrationFileName,
-      hasChanges: hasCombinedMigration && migrationSql.trim().length > 0,
+      hasChanges: hasUsableMigrationArtifact(migrationSql, migrationHasChanges, migrationWarnings),
       label: 'SQL',
       mimeType: 'text/sql;charset=utf-8',
       warnings: migrationWarnings
@@ -360,7 +361,11 @@ const getMigrationArtifactForFormat = (format: PgmlMigrationFormat) => {
   return createVersionMigrationArtifact({
     content: stepArtifact.content,
     fileName: stepArtifact.fileName,
-    hasChanges: hasArtifact && stepArtifact.content.trim().length > 0,
+    hasChanges: hasUsableMigrationArtifact(
+      stepArtifact.content,
+      hasArtifact,
+      stepArtifact.warnings
+    ),
     label: stepArtifact.label,
     mimeType: format === 'sql'
       ? 'text/sql;charset=utf-8'
