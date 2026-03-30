@@ -231,44 +231,45 @@ const latestImplementationVersionId = computed(() => {
 const latestDesignVersionId = computed(() => {
   return versions.find(version => version.role === 'design' && version.isLatestByRole)?.id || null
 })
+// Presets all follow the same "known base to current target" rule, so keep the
+// enablement logic in one place instead of repeating the active-state check.
+const buildComparePresetButton = (input: {
+  baseId: string | null
+  label: string
+  targetId: string
+}) => {
+  return {
+    baseId: input.baseId,
+    disabled: input.baseId === null || isComparePresetActive({
+      baseId: input.baseId,
+      targetId: input.targetId
+    }),
+    label: input.label,
+    targetId: input.targetId
+  } satisfies PgmlComparePresetButton
+}
 const comparePresetButtons = computed(() => {
   return [
-    {
+    buildComparePresetButton({
       baseId: workspaceBaseVersionId.value,
-      disabled: workspaceBaseVersionId.value === null || isComparePresetActive({
-        baseId: workspaceBaseVersionId.value,
-        targetId: 'workspace'
-      }),
       label: 'Workspace base to draft',
       targetId: 'workspace'
-    },
-    {
+    }),
+    buildComparePresetButton({
       baseId: latestVersionId,
-      disabled: latestVersionId === null || isComparePresetActive({
-        baseId: latestVersionId,
-        targetId: 'workspace'
-      }),
       label: 'Latest to draft',
       targetId: 'workspace'
-    },
-    {
+    }),
+    buildComparePresetButton({
       baseId: latestImplementationVersionId.value,
-      disabled: latestImplementationVersionId.value === null || isComparePresetActive({
-        baseId: latestImplementationVersionId.value,
-        targetId: 'workspace'
-      }),
       label: 'Latest impl to draft',
       targetId: 'workspace'
-    },
-    {
+    }),
+    buildComparePresetButton({
       baseId: latestDesignVersionId.value,
-      disabled: latestDesignVersionId.value === null || isComparePresetActive({
-        baseId: latestDesignVersionId.value,
-        targetId: 'workspace'
-      }),
       label: 'Latest design to draft',
       targetId: 'workspace'
-    }
+    })
   ] satisfies PgmlComparePresetButton[]
 })
 const migrationLineCount = computed(() => {
