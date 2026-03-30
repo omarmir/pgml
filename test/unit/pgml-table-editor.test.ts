@@ -25,8 +25,11 @@ Table public.users in Core {
 }`
 
 describe('PGML table editor', () => {
-  it('offers bigserial in the common column type presets', () => {
-    expect(commonPgmlColumnTypes).toContain('bigserial')
+  it('keeps the common column type presets on explicit base types', () => {
+    expect(commonPgmlColumnTypes).toContain('bigint')
+    expect(commonPgmlColumnTypes).toContain('integer')
+    expect(commonPgmlColumnTypes).not.toContain('bigserial')
+    expect(commonPgmlColumnTypes).not.toContain('serial')
   })
 
   it('serializes metadata drafts and rejects invalid metadata keys', () => {

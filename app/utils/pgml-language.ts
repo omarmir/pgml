@@ -1,4 +1,11 @@
 import { commonPgmlColumnTypes } from './pgml-table-editor'
+import {
+  collectDbmlCompatibleMultilineEntries,
+  normalizePgmlCompatSource,
+  parseDbmlCompatibleCheckDefinition,
+  parseDbmlCompatibleIndexDefinition,
+  parsePgmlCompatibleReference
+} from './pgml-dbml-compat'
 
 export type PgmlLanguageDiagnosticSeverity = 'error' | 'warning'
 
@@ -124,8 +131,10 @@ type PgmlReferenceSymbol = {
   relation: '>' | '<' | '-'
   fromTable: string
   fromColumn: string
+  fromColumns?: string[]
   toTable: string
   toColumn: string
+  toColumns?: string[]
   from: number
   to: number
   line: number
@@ -226,7 +235,9 @@ const versionMetadataKeys = new Set(['name', 'role', 'parent', 'created_at'])
 const tableBodyKeywordTemplates = [
   { label: 'Note:', detail: 'Add a table note.', apply: 'Note: ' },
   { label: 'Index', detail: 'Add an index definition.', apply: 'Index ' },
-  { label: 'Constraint', detail: 'Add a constraint definition.', apply: 'Constraint ' }
+  { label: 'Indexes', detail: 'Add a DBML-style indexes block.', apply: 'Indexes {' },
+  { label: 'Constraint', detail: 'Add a constraint definition.', apply: 'Constraint ' },
+  { label: 'checks', detail: 'Add a DBML-style checks block.', apply: 'checks {' }
 ] as const
 
 const executableKeywordTemplates = [
@@ -799,26 +810,85 @@ const collectTableBody = (
     groupName: rawGroupName,
     columns: []
   }
+  let index = 0
 
-  block.body.forEach((line) => {
+  while (index < block.body.length) {
+    const line = block.body[index]
+
+    if (!line) {
+      break
+    }
+
     if (line.trimmed.length === 0 || line.trimmed.startsWith('//')) {
-      return
+      index += 1
+      continue
     }
 
     if (line.trimmed.startsWith('Note:')) {
-      return
+      index += 1
+      continue
+    }
+
+    if (/^Indexes\s*\{$/i.test(line.trimmed)) {
+      const nested = collectNestedBlock(block.body, index, diagnostics)
+
+      nested.body.forEach((nestedLine) => {
+        if (nestedLine.trimmed.length === 0 || nestedLine.trimmed.startsWith('//')) {
+          return
+        }
+
+        if (!parseDbmlCompatibleIndexDefinition(nestedLine.trimmed)) {
+          createDiagnostic(
+            diagnostics,
+            'pgml/table-index-entry',
+            'error',
+            'Index entries inside `Indexes {}` must use `(column_a, column_b) [name: ...]`.',
+            nestedLine
+          )
+        }
+      })
+
+      index = nested.nextIndex
+      continue
+    }
+
+    if (/^checks\s*\{$/i.test(line.trimmed)) {
+      const nested = collectNestedBlock(block.body, index, diagnostics)
+
+      collectDbmlCompatibleMultilineEntries(nested.body.map(entry => entry.text)).forEach((nestedEntry) => {
+        const diagnosticLine = nested.body[nestedEntry.startIndex]
+
+        if (!diagnosticLine) {
+          return
+        }
+
+        if (!parseDbmlCompatibleCheckDefinition(nestedEntry.text)) {
+          createDiagnostic(
+            diagnostics,
+            'pgml/table-check-entry',
+            'error',
+            'Check entries inside `checks {}` must use `` `expression` [name: ...] ``.',
+            diagnosticLine
+          )
+        }
+      })
+
+      index = nested.nextIndex
+      continue
     }
 
     const indexMatch = line.trimmed.match(/^Index\s+([^\s(]+)\s*\(([^)]*)\)(?:\s*\[([^\]]+)\])?$/)
 
     if (indexMatch) {
-      return
+      index += 1
+      continue
     }
 
     const constraintMatch = line.trimmed.match(/^Constraint\s+([^:]+):\s*(.+)$/)
 
     if (constraintMatch) {
-      return
+      index += 1
+      continue
     }
 
     const columnMatch = line.trimmed.match(/^([^\s]+)\s+([^[\]]+?)(?:\s+\[([^\]]+)\])?$/)
@@ -828,10 +898,11 @@ const collectTableBody = (
         diagnostics,
         'pgml/table-entry',
         'error',
-        'Table entries must be columns, `Index`, `Constraint`, or `Note:` lines.',
+        'Table entries must be columns, `Index`, `Indexes`, `Constraint`, `checks`, or `Note:` lines.',
         line
       )
-      return
+      index += 1
+      continue
     }
 
     const columnName = cleanName(columnMatch[1] || '')
@@ -874,15 +945,19 @@ const collectTableBody = (
             relation,
             fromTable: fullName,
             fromColumn: columnName,
+            fromColumns: [columnName],
             toTable: `${target.schema}.${target.table}`,
             toColumn: target.column,
+            toColumns: [target.column],
             from: line.from,
             to: line.to,
             line: line.number
           })
         })
     }
-  })
+
+    index += 1
+  }
 
   tables.push(tableSymbol)
 }
@@ -1043,30 +1118,33 @@ const collectTopLevelReference = (
   diagnostics: PgmlLanguageDiagnostic[],
   references: PgmlReferenceSymbol[]
 ) => {
-  const match = line.trimmed.match(/^Ref:\s+([^\s]+)\s*([<>-])\s*([^\s]+)$/)
+  const declaration = parsePgmlCompatibleReference(line.trimmed)
 
-  if (!match) {
+  if (!declaration) {
     createDiagnostic(
       diagnostics,
       'pgml/ref-top-level',
       'error',
-      'Top-level refs must use `Ref: schema.table.column > schema.table.column`.',
+      'Top-level refs must use `Ref: table.column > table.column` or `Ref name: table.(column_a, column_b) > table.(column_a, column_b)`.',
       line
     )
     return
   }
 
-  const fromTarget = parseReferenceTarget(match[1] || '')
-  const relation = (match[2] || '>') as '>' | '<' | '-'
-  const toTarget = parseReferenceTarget(match[3] || '')
+  const fromTarget = parseTableName(declaration.fromTable)
+  const toTarget = parseTableName(declaration.toTable)
+  const fromColumns = declaration.fromColumns.map(column => cleanName(column))
+  const toColumns = declaration.toColumns.map(column => cleanName(column))
 
   references.push({
     kind: 'top-level',
-    relation,
+    relation: declaration.relation,
     fromTable: `${fromTarget.schema}.${fromTarget.table}`,
-    fromColumn: fromTarget.column,
+    fromColumn: fromColumns[0] || '',
+    fromColumns,
     toTable: `${toTarget.schema}.${toTarget.table}`,
-    toColumn: toTarget.column,
+    toColumn: toColumns[0] || '',
+    toColumns,
     from: line.from,
     to: line.to,
     line: line.number
@@ -1517,6 +1595,12 @@ const runSemanticDiagnostics = (analysis: PgmlDocumentAnalysis) => {
   references.forEach((reference) => {
     const fromTable = tableMap.get(lower(reference.fromTable))
     const toTable = tableMap.get(lower(reference.toTable))
+    const fromColumns = reference.fromColumns && reference.fromColumns.length > 0
+      ? reference.fromColumns
+      : [reference.fromColumn]
+    const toColumns = reference.toColumns && reference.toColumns.length > 0
+      ? reference.toColumns
+      : [reference.toColumn]
 
     if (!fromTable) {
       diagnostics.push({
@@ -1542,26 +1626,34 @@ const runSemanticDiagnostics = (analysis: PgmlDocumentAnalysis) => {
       return
     }
 
-    const fromColumnExists = fromTable.columns.some(column => lower(column.name) === lower(reference.fromColumn))
+    const missingFromColumns = fromColumns.filter((columnName) => {
+      return !fromTable.columns.some(column => lower(column.name) === lower(columnName))
+    })
 
-    if (!fromColumnExists) {
+    if (missingFromColumns.length > 0) {
+      const missingColumnLabel = missingFromColumns.map(columnName => `\`${columnName}\``).join(', ')
+
       diagnostics.push({
         code: 'pgml/ref-missing-from-column',
         severity: 'error',
-        message: `Reference source column \`${reference.fromColumn}\` does not exist on \`${reference.fromTable}\`.`,
+        message: `Reference source column${missingFromColumns.length === 1 ? '' : 's'} ${missingColumnLabel} ${missingFromColumns.length === 1 ? 'does' : 'do'} not exist on \`${reference.fromTable}\`.`,
         from: reference.from,
         to: reference.to,
         line: reference.line
       })
     }
 
-    const toColumnExists = toTable.columns.some(column => lower(column.name) === lower(reference.toColumn))
+    const missingToColumns = toColumns.filter((columnName) => {
+      return !toTable.columns.some(column => lower(column.name) === lower(columnName))
+    })
 
-    if (!toColumnExists) {
+    if (missingToColumns.length > 0) {
+      const missingColumnLabel = missingToColumns.map(columnName => `\`${columnName}\``).join(', ')
+
       diagnostics.push({
         code: 'pgml/ref-missing-to-column',
         severity: 'error',
-        message: `Reference target column \`${reference.toColumn}\` does not exist on \`${reference.toTable}\`.`,
+        message: `Reference target column${missingToColumns.length === 1 ? '' : 's'} ${missingColumnLabel} ${missingToColumns.length === 1 ? 'does' : 'do'} not exist on \`${reference.toTable}\`.`,
         from: reference.from,
         to: reference.to,
         line: reference.line
@@ -1571,7 +1663,13 @@ const runSemanticDiagnostics = (analysis: PgmlDocumentAnalysis) => {
 
   detectDuplicates(
     references,
-    reference => `${lower(reference.fromTable)}.${lower(reference.fromColumn)}:${reference.relation}:${lower(reference.toTable)}.${lower(reference.toColumn)}`
+    reference => [
+      lower(reference.fromTable),
+      (reference.fromColumns && reference.fromColumns.length > 0 ? reference.fromColumns : [reference.fromColumn]).map(column => lower(column)).join(','),
+      reference.relation,
+      lower(reference.toTable),
+      (reference.toColumns && reference.toColumns.length > 0 ? reference.toColumns : [reference.toColumn]).map(column => lower(column)).join(',')
+    ].join(':')
   ).forEach((entry) => {
     const duplicateLines = getDuplicateLineNumbers(entry.values)
 
@@ -1764,7 +1862,7 @@ const analyzeSnapshotBlocks = (
   buildContexts(blocks, contexts)
 
   topLevelLines.forEach((line) => {
-    if (line.trimmed.startsWith('Ref:')) {
+    if (/^Ref(?:\s+[^:]+)?:/.test(line.trimmed)) {
       collectTopLevelReference(line, diagnostics, analysisState.references)
       return
     }
@@ -2516,7 +2614,7 @@ export const analyzePgmlDocument = (source: string) => {
   const references: PgmlReferenceSymbol[] = []
   const propertyTargets: PgmlPropertyTarget[] = []
   const versionIds: PgmlNamedRange[] = []
-  const { lines, normalizedSource } = createLineInfo(source)
+  const { lines, normalizedSource } = createLineInfo(normalizePgmlCompatSource(source))
   const { blocks, topLevelLines } = collectRawBlocks(lines, diagnostics, contexts)
   const analysisState: PgmlAnalysisState = {
     tables,
@@ -2787,7 +2885,7 @@ const getRootCompletionItems = (
   from: number,
   to: number
 ) => {
-  if (/^\s*Ref:\s*/.test(beforeCursor)) {
+  if (/^\s*Ref(?:\s+[^:]+)?:\s*/.test(beforeCursor)) {
     return getReferencePathCompletions(analysis, fragment, from, to)
   }
 
@@ -2873,7 +2971,7 @@ const getSnapshotCompletionItems = (
   from: number,
   to: number
 ) => {
-  if (/^\s*Ref:\s*/.test(beforeCursor)) {
+  if (/^\s*Ref(?:\s+[^:]+)?:\s*/.test(beforeCursor)) {
     return getReferencePathCompletions(analysis, fragment, from, to)
   }
 

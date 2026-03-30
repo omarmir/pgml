@@ -335,12 +335,22 @@ const buildCreateIndexStatement = (tableId: string, index: PgmlIndex) => {
 }
 
 const buildCreateReferenceStatement = (reference: PgmlReference) => {
-  return `ALTER TABLE ${formatQualifiedSqlName(reference.fromTable)} ADD FOREIGN KEY (${quoteSqlIdentifier(reference.fromColumn)}) REFERENCES ${formatQualifiedSqlName(reference.toTable)} (${quoteSqlIdentifier(reference.toColumn)})${buildReferenceActionClause('DELETE', reference.onDelete)}${buildReferenceActionClause('UPDATE', reference.onUpdate)};`
+  const fromColumns = reference.fromColumns && reference.fromColumns.length > 0
+    ? reference.fromColumns
+    : [reference.fromColumn]
+  const toColumns = reference.toColumns && reference.toColumns.length > 0
+    ? reference.toColumns
+    : [reference.toColumn]
+
+  return `ALTER TABLE ${formatQualifiedSqlName(reference.fromTable)} ADD FOREIGN KEY (${formatSqlIdentifierList(fromColumns)}) REFERENCES ${formatQualifiedSqlName(reference.toTable)} (${formatSqlIdentifierList(toColumns)})${buildReferenceActionClause('DELETE', reference.onDelete)}${buildReferenceActionClause('UPDATE', reference.onUpdate)};`
 }
 
 const buildDropReferenceStatement = (reference: PgmlReference) => {
   const { name: tableName } = splitQualifiedName(reference.fromTable)
-  const constraintName = `${tableName}_${reference.fromColumn}_fkey`
+  const fromColumns = reference.fromColumns && reference.fromColumns.length > 0
+    ? reference.fromColumns
+    : [reference.fromColumn]
+  const constraintName = `${tableName}_${fromColumns.join('_')}_fkey`
 
   return `ALTER TABLE ${formatQualifiedSqlName(reference.fromTable)} DROP CONSTRAINT IF EXISTS ${quoteSqlIdentifier(constraintName)};`
 }
@@ -402,10 +412,10 @@ const buildTableMap = (tables: PgmlTable[]) => {
 const buildReferenceMap = (references: PgmlReference[]) => {
   return new Map(references.map(reference => [[
     reference.fromTable,
-    reference.fromColumn,
+    (reference.fromColumns && reference.fromColumns.length > 0 ? reference.fromColumns : [reference.fromColumn]).join(','),
     reference.relation,
     reference.toTable,
-    reference.toColumn
+    (reference.toColumns && reference.toColumns.length > 0 ? reference.toColumns : [reference.toColumn]).join(',')
   ].join('::'), reference] as const))
 }
 
@@ -495,11 +505,13 @@ const normalizeConstraintForCompare = (constraint: PgmlConstraint) => {
 const normalizeReferenceForCompare = (reference: PgmlReference) => {
   return {
     fromColumn: reference.fromColumn,
+    fromColumns: reference.fromColumns && reference.fromColumns.length > 0 ? [...reference.fromColumns] : [reference.fromColumn],
     fromTable: reference.fromTable,
     onDelete: reference.onDelete,
     onUpdate: reference.onUpdate,
     relation: reference.relation,
     toColumn: reference.toColumn,
+    toColumns: reference.toColumns && reference.toColumns.length > 0 ? [...reference.toColumns] : [reference.toColumn],
     toTable: reference.toTable
   }
 }

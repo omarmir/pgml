@@ -273,13 +273,22 @@ const buildCreateTableStatement = (table: PgmlTable, warnings: Set<string>) => {
 }
 
 const resolveReferenceConstraintParts = (reference: PgmlReference, warnings: Set<string>) => {
+  const fromColumns = reference.fromColumns && reference.fromColumns.length > 0
+    ? reference.fromColumns
+    : [reference.fromColumn]
+  const toColumns = reference.toColumns && reference.toColumns.length > 0
+    ? reference.toColumns
+    : [reference.toColumn]
+
   if (reference.relation === '>') {
     return {
       fromColumn: reference.fromColumn,
+      fromColumns,
       fromTable: reference.fromTable,
       onDelete: reference.onDelete,
       onUpdate: reference.onUpdate,
       toColumn: reference.toColumn,
+      toColumns,
       toTable: reference.toTable
     }
   }
@@ -287,22 +296,26 @@ const resolveReferenceConstraintParts = (reference: PgmlReference, warnings: Set
   if (reference.relation === '<') {
     return {
       fromColumn: reference.toColumn,
+      fromColumns: toColumns,
       fromTable: reference.toTable,
       onDelete: reference.onDelete,
       onUpdate: reference.onUpdate,
       toColumn: reference.fromColumn,
+      toColumns: fromColumns,
       toTable: reference.fromTable
     }
   }
 
-  warnings.add(`Reference ${reference.fromTable}.${reference.fromColumn} - ${reference.toTable}.${reference.toColumn} was exported as a plain foreign key without adding extra one-to-one uniqueness enforcement.`)
+  warnings.add(`Reference ${reference.fromTable}.${fromColumns.join(',')} - ${reference.toTable}.${toColumns.join(',')} was exported as a plain foreign key without adding extra one-to-one uniqueness enforcement.`)
 
   return {
     fromColumn: reference.fromColumn,
+    fromColumns,
     fromTable: reference.fromTable,
     onDelete: reference.onDelete,
     onUpdate: reference.onUpdate,
     toColumn: reference.toColumn,
+    toColumns,
     toTable: reference.toTable
   }
 }
@@ -322,9 +335,9 @@ const buildReferenceStatements = (references: PgmlReference[], warnings: Set<str
     const normalized = resolveReferenceConstraintParts(reference, warnings)
     const key = [
       normalizeNameLookupKey(normalized.fromTable),
-      normalizeNameLookupKey(normalized.fromColumn),
+      normalized.fromColumns.map(column => normalizeNameLookupKey(column)).join(','),
       normalizeNameLookupKey(normalized.toTable),
-      normalizeNameLookupKey(normalized.toColumn),
+      normalized.toColumns.map(column => normalizeNameLookupKey(column)).join(','),
       normalizeNameLookupKey(normalized.onDelete || ''),
       normalizeNameLookupKey(normalized.onUpdate || '')
     ].join('::')
@@ -335,7 +348,7 @@ const buildReferenceStatements = (references: PgmlReference[], warnings: Set<str
 
     seen.add(key)
     statements.push(
-      `ALTER TABLE ${formatQualifiedSqlName(normalized.fromTable)} ADD FOREIGN KEY (${quoteSqlIdentifier(normalized.fromColumn)}) REFERENCES ${formatQualifiedSqlName(normalized.toTable)} (${quoteSqlIdentifier(normalized.toColumn)})${buildReferenceActionClause('DELETE', normalized.onDelete)}${buildReferenceActionClause('UPDATE', normalized.onUpdate)};`
+      `ALTER TABLE ${formatQualifiedSqlName(normalized.fromTable)} ADD FOREIGN KEY (${formatSqlIdentifierList(normalized.fromColumns)}) REFERENCES ${formatQualifiedSqlName(normalized.toTable)} (${formatSqlIdentifierList(normalized.toColumns)})${buildReferenceActionClause('DELETE', normalized.onDelete)}${buildReferenceActionClause('UPDATE', normalized.onUpdate)};`
     )
     return statements
   }, [])

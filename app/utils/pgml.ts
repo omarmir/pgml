@@ -2,6 +2,13 @@ import {
   hasStoredPgmlTableWidthScale,
   normalizePgmlTableWidthScale
 } from './pgml-node-properties'
+import {
+  collectDbmlCompatibleMultilineEntries,
+  normalizePgmlCompatSource,
+  parseDbmlCompatibleCheckDefinition,
+  parseDbmlCompatibleIndexDefinition,
+  parsePgmlCompatibleReference
+} from './pgml-dbml-compat'
 
 export type PgmlColumn = {
   customMetadata: PgmlMetadataEntry[]
@@ -48,11 +55,14 @@ export type PgmlConstraint = {
 export type PgmlReference = {
   fromTable: string
   fromColumn: string
+  fromColumns?: string[]
   toTable: string
   toColumn: string
+  toColumns?: string[]
   relation: '>' | '<' | '-'
   onDelete: string | null
   onUpdate: string | null
+  name?: string | null
 }
 
 export type PgmlGroup = {
@@ -1061,6 +1071,26 @@ const parseReferenceTarget = (value: string) => {
   }
 }
 
+const createGeneratedTableIndexName = (
+  tableName: string,
+  columns: string[],
+  entryIndex: number
+) => {
+  const normalizedColumns = columns
+    .map(column => cleanName(column).replaceAll(/[^\w]+/g, '_'))
+    .filter(column => column.length > 0)
+    .join('_')
+
+  return `${tableName.replaceAll(/[^\w]+/g, '_')}_${normalizedColumns || 'index'}_${entryIndex}`
+}
+
+const createGeneratedTableConstraintName = (
+  tableName: string,
+  entryIndex: number
+) => {
+  return `${tableName.replaceAll(/[^\w]+/g, '_')}_check_${entryIndex}`
+}
+
 export const getPgmlSourceSelectionRange = (source: string, sourceRange: PgmlSourceRange) => {
   const lines = source.replaceAll('\r\n', '\n').split('\n')
 
@@ -1645,8 +1675,7 @@ export const getPgmlSourceScrollTop = (
 }
 
 const collectBlocks = (source: string) => {
-  const lines = source
-    .replaceAll('\r\n', '\n')
+  const lines = normalizePgmlCompatSource(source)
     .split('\n')
 
   const topLevel: string[] = []
@@ -2070,18 +2099,73 @@ const parseTable = (block: NamedBlock) => {
   const indexes: PgmlIndex[] = []
   const constraints: PgmlConstraint[] = []
   let note: string | null = null
+  let lineIndex = 0
 
-  block.body.forEach((line, lineIndex) => {
+  while (lineIndex < block.body.length) {
+    const line = block.body[lineIndex] || ''
     const trimmed = line.trim()
     const sourceLine = block.bodyStartLine + lineIndex
 
     if (trimmed.length === 0 || trimmed.startsWith('//')) {
-      return
+      lineIndex += 1
+      continue
     }
 
     if (trimmed.startsWith('Note:')) {
       note = trimmed.replace('Note:', '').trim()
-      return
+      lineIndex += 1
+      continue
+    }
+
+    if (/^Indexes\s*\{$/i.test(trimmed)) {
+      const nestedBlock = collectNestedBlockBody(block.body, lineIndex)
+
+      nestedBlock.body.forEach((nestedLine, nestedLineIndex) => {
+        const indexDefinition = parseDbmlCompatibleIndexDefinition(nestedLine)
+
+        if (!indexDefinition || indexDefinition.columns.length === 0) {
+          return
+        }
+
+        indexes.push({
+          name: indexDefinition.name || createGeneratedTableIndexName(nameTarget.table, indexDefinition.columns, indexes.length + 1),
+          tableName: `${nameTarget.schema}.${nameTarget.table}`,
+          columns: indexDefinition.columns,
+          type: indexDefinition.type || 'btree',
+          sourceRange: {
+            startLine: sourceLine + nestedLineIndex + 1,
+            endLine: sourceLine + nestedLineIndex + 1
+          }
+        })
+      })
+
+      lineIndex = nestedBlock.nextIndex
+      continue
+    }
+
+    if (/^checks\s*\{$/i.test(trimmed)) {
+      const nestedBlock = collectNestedBlockBody(block.body, lineIndex)
+
+      collectDbmlCompatibleMultilineEntries(nestedBlock.body).forEach((nestedEntry) => {
+        const checkDefinition = parseDbmlCompatibleCheckDefinition(nestedEntry.text)
+
+        if (!checkDefinition || checkDefinition.expression.length === 0) {
+          return
+        }
+
+        constraints.push({
+          name: checkDefinition.name || createGeneratedTableConstraintName(nameTarget.table, constraints.length + 1),
+          tableName: `${nameTarget.schema}.${nameTarget.table}`,
+          expression: checkDefinition.expression,
+          sourceRange: {
+            startLine: sourceLine + nestedEntry.startIndex + 1,
+            endLine: sourceLine + nestedEntry.endIndex + 1
+          }
+        })
+      })
+
+      lineIndex = nestedBlock.nextIndex
+      continue
     }
 
     const indexMatch = trimmed.match(/^Index\s+([^\s(]+)\s*\(([^)]*)\)(?:\s*\[([^\]]+)\])?$/)
@@ -2103,7 +2187,8 @@ const parseTable = (block: NamedBlock) => {
           endLine: sourceLine
         }
       })
-      return
+      lineIndex += 1
+      continue
     }
 
     const constraintMatch = trimmed.match(/^Constraint\s+([^:]+):\s*(.+)$/)
@@ -2121,13 +2206,15 @@ const parseTable = (block: NamedBlock) => {
           endLine: sourceLine
         }
       })
-      return
+      lineIndex += 1
+      continue
     }
 
     const columnMatch = trimmed.match(/^([^\s]+)\s+([^[\]]+?)(?:\s+\[([^\]]+)\])?$/)
 
     if (!columnMatch) {
-      return
+      lineIndex += 1
+      continue
     }
 
     const columnName = readMatch(columnMatch[1])
@@ -2147,14 +2234,17 @@ const parseTable = (block: NamedBlock) => {
         const relation = readMatch(refMatch[1]) as '>' | '<' | '-'
         const refTarget = readMatch(refMatch[2])
         const target = parseReferenceTarget(refTarget)
+        const normalizedColumnName = cleanName(columnName)
 
         reference = {
           fromTable: `${nameTarget.schema}.${nameTarget.table}`,
-          fromColumn: cleanName(columnName),
+          fromColumn: normalizedColumnName,
+          fromColumns: [normalizedColumnName],
           onDelete,
           onUpdate,
           toTable: `${target.schema}.${target.table}`,
           toColumn: target.column,
+          toColumns: [target.column],
           relation
         }
       }
@@ -2168,7 +2258,8 @@ const parseTable = (block: NamedBlock) => {
       note: notePart ? notePart.replace('note:', '').trim() : null,
       reference
     })
-  })
+    lineIndex += 1
+  }
 
   return {
     name: nameTarget.table,
@@ -2394,24 +2485,28 @@ const parseCustomType = (block: NamedBlock) => {
 }
 
 const parseTopLevelReference = (line: string) => {
-  const match = line.match(/^Ref:\s+([^\s]+)\s*([<>-])\s*([^\s]+)$/)
+  const declaration = parsePgmlCompatibleReference(line)
 
-  if (!match) {
+  if (!declaration) {
     return null
   }
 
-  const fromTarget = parseReferenceTarget(readMatch(match[1]))
-  const relation = readMatch(match[2]) as '>' | '<' | '-'
-  const toTarget = parseReferenceTarget(readMatch(match[3]))
+  const fromTarget = parseTableName(declaration.fromTable)
+  const toTarget = parseTableName(declaration.toTable)
+  const fromColumns = declaration.fromColumns.map(column => cleanName(column))
+  const toColumns = declaration.toColumns.map(column => cleanName(column))
 
   return {
     fromTable: `${fromTarget.schema}.${fromTarget.table}`,
-    fromColumn: readMatch(fromTarget.column),
+    fromColumn: fromColumns[0] || '',
+    fromColumns,
+    name: declaration.name,
     onDelete: null,
     onUpdate: null,
     toTable: `${toTarget.schema}.${toTarget.table}`,
-    toColumn: readMatch(toTarget.column),
-    relation
+    toColumn: toColumns[0] || '',
+    toColumns,
+    relation: declaration.relation
   } satisfies PgmlReference
 }
 

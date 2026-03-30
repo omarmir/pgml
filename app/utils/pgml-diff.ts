@@ -133,9 +133,9 @@ const normalizeReferenceKey = (reference: PgmlReference) => {
   return [
     reference.relation,
     reference.fromTable,
-    reference.fromColumn,
+    (reference.fromColumns && reference.fromColumns.length > 0 ? reference.fromColumns : [reference.fromColumn]).join(','),
     reference.toTable,
-    reference.toColumn
+    (reference.toColumns && reference.toColumns.length > 0 ? reference.toColumns : [reference.toColumn]).join(',')
   ].join('::')
 }
 

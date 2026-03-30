@@ -78,14 +78,14 @@ test('table editor uses searchable group selection and descriptive type presets'
 
   await firstColumn.getByLabel('Column name', { exact: true }).fill('id')
   await columnTypePreset.click()
-  await page.getByPlaceholder('Search column types').fill('auto-incrementing large number')
-  await page.getByRole('option', { name: /Auto-incrementing large number/i }).click()
-  await expect(columnTypeInput).toHaveValue('bigserial')
+  await page.getByPlaceholder('Search column types').fill('large whole number')
+  await page.getByRole('option', { name: /Large whole number/i }).click()
+  await expect(columnTypeInput).toHaveValue('bigint')
 
   await page.locator('[data-table-editor-save="true"]').dispatchEvent('click')
 
   await expect.poll(async () => readPgmlEditorValue(editor)).toContain('Table public.job_runs in Core {')
-  await expect.poll(async () => readPgmlEditorValue(editor)).toContain('id bigserial')
+  await expect.poll(async () => readPgmlEditorValue(editor)).toContain('id bigint')
 })
 
 test('table editor persists table and column metadata into the VersionSet SchemaMetadata block', async ({ goto, page }) => {
@@ -558,7 +558,7 @@ test('code editor shows PGML diagnostics and autocomplete suggestions', async ({
   await expect(page.locator('.cm-tooltip-autocomplete')).toContainText('Table')
 })
 
-test('diagnostics panel explains when additional issues are hidden', async ({ goto, page }) => {
+test('diagnostics panel groups repeated issues into collapsible line buckets', async ({ goto, page }) => {
   await goto('/diagram')
 
   const editor = getPgmlEditor(page)
@@ -572,7 +572,10 @@ ${duplicateColumns}
 }`)
 
   await expect(page.locator('[data-pgml-diagnostics="true"]')).toContainText('Duplicate column')
-  await expect(page.locator('[data-pgml-diagnostics-overflow="true"]')).toContainText(/Showing first 6 of \d+ diagnostics\./)
+  await expect(page.locator('[data-pgml-diagnostic-group="true"]')).toHaveCount(1)
+  await expect(page.locator('[data-pgml-diagnostic-group-summary="true"]').first()).toContainText(/lines/i)
+  await page.locator('[data-pgml-diagnostic-group-summary="true"]').first().click()
+  await expect(page.locator('[data-pgml-diagnostic-line="true"]')).toHaveCount(9)
 })
 
 test('clicking a diagnostic line focuses and scrolls the editor to that source location', async ({ goto, page }) => {
@@ -595,6 +598,7 @@ Table public.users {
   await setPgmlEditorScrollTop(editor, 0)
 
   await expect(page.locator('[data-pgml-diagnostics="true"]')).toContainText('Duplicate column')
+  await page.locator('[data-pgml-diagnostic-group-summary="true"]').first().click()
   await page.locator('[data-pgml-diagnostic-line="true"]').first().click()
 
   await expect.poll(async () => {

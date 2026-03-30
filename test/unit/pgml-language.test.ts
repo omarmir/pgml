@@ -38,6 +38,42 @@ Properties "function:orphan_report" {
     expect(analysis.diagnostics).toEqual([])
   })
 
+  it('accepts DBML-style imported indexes, checks, comments, and named composite refs', () => {
+    const source = `/*
+Imported from DBML.
+*/
+Table public.users {
+  id bigint [pk, not null] // System ID
+  email text [not null]
+  status text [not null]
+
+  Indexes {
+    email [name: 'users_email_idx']
+    (email, status) [name: 'users_email_status_idx', unique, where: \`status <> ''\`]
+  }
+
+  checks {
+    \`status <> ''\` [name: 'users_status_check']
+    \`NOT (
+      status = 'draft'
+      AND email = ''
+    )\` [name: 'users_status_email_check']
+  }
+}
+
+Table public.accounts {
+  id bigint [pk]
+  user_id bigint [not null]
+  entity_type text [not null]
+}
+
+Ref account_user_ref: public.accounts.(user_id, entity_type) > public.users.(id, status)`
+
+    const analysis = analyzePgmlDocument(source)
+
+    expect(analysis.diagnostics).toEqual([])
+  })
+
   it('reports duplicate columns and missing reference targets', () => {
     const source = `Table public.users {
   id uuid [pk]

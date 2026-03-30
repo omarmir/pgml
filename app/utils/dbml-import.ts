@@ -1,4 +1,5 @@
 import { parsePgml } from './pgml'
+import { normalizePgmlCompatSource } from './pgml-dbml-compat'
 import { normalizeSchemaName } from './studio-browser-schemas'
 
 export type DbmlImportResult = {
@@ -73,11 +74,128 @@ const stripDbmlProjectBlocks = (source: string) => {
   return keptLines.join('\n').trim()
 }
 
+const parseImportedTableName = (value: string) => {
+  const cleanedValue = value.replaceAll('"', '').trim()
+  const parts = cleanedValue.split('.')
+
+  if (parts.length >= 2) {
+    return {
+      fullName: `${parts[0]}.${parts[1]}`,
+      schema: parts[0] || 'public',
+      table: parts[1] || ''
+    }
+  }
+
+  return {
+    fullName: `public.${cleanedValue}`,
+    schema: 'public',
+    table: cleanedValue
+  }
+}
+
+const normalizeSerialBaseType = (value: string) => {
+  const normalizedValue = value.trim().toLowerCase()
+
+  if (normalizedValue === 'smallserial' || normalizedValue === 'serial2') {
+    return 'smallint'
+  }
+
+  if (normalizedValue === 'bigserial' || normalizedValue === 'serial8') {
+    return 'bigint'
+  }
+
+  return 'integer'
+}
+
+const normalizeDbmlSerialColumns = (source: string) => {
+  const originalLines = normalizeDbmlLineEndings(source).split('\n')
+  const visibleLines = normalizePgmlCompatSource(source).split('\n')
+  const nextLines: string[] = []
+  const generatedSequenceBlocks: string[] = []
+  let tableDepth = 0
+  let currentTable: ReturnType<typeof parseImportedTableName> | null = null
+
+  originalLines.forEach((originalLine, index) => {
+    const visibleLine = visibleLines[index] || ''
+    const trimmedVisibleLine = visibleLine.trim()
+
+    if (tableDepth === 0) {
+      const tableHeaderMatch = trimmedVisibleLine.match(/^Table\s+([^\s]+)(?:\s+in\s+.+)?\s*\{$/)
+
+      if (tableHeaderMatch) {
+        currentTable = parseImportedTableName(tableHeaderMatch[1] || '')
+        tableDepth = 1
+        nextLines.push(originalLine)
+        return
+      }
+
+      nextLines.push(originalLine)
+      return
+    }
+
+    if (!currentTable) {
+      nextLines.push(originalLine)
+      return
+    }
+
+    if (
+      tableDepth === 1
+      && trimmedVisibleLine.length > 0
+      && !trimmedVisibleLine.endsWith('{')
+      && trimmedVisibleLine !== '}'
+    ) {
+      const columnMatch = visibleLine.match(/^(\s*)([^\s]+)\s+(smallserial|bigserial|serial(?:2|4|8)?)\b(?:\s+\[([^\]]+)\])?(\s*)$/i)
+
+      if (columnMatch) {
+        const indent = columnMatch[1] || ''
+        const columnName = columnMatch[2] || ''
+        const serialType = columnMatch[3] || 'serial'
+        const modifierGroup = columnMatch[4] || ''
+        const suffix = originalLine.slice(columnMatch[0].length)
+        const nextBaseType = normalizeSerialBaseType(serialType)
+        const sequenceName = `${currentTable.table}_${columnName}_seq`
+        const qualifiedSequenceName = `${currentTable.schema}.${sequenceName}`
+        const ownedByTarget = `${currentTable.fullName}.${columnName}`
+        const modifiers = modifierGroup
+          .split(',')
+          .map(part => part.trim())
+          .filter(part => part.length > 0)
+
+        if (!modifiers.some(modifier => modifier.startsWith('default:'))) {
+          modifiers.push(`default: nextval('${qualifiedSequenceName}')`)
+        }
+
+        generatedSequenceBlocks.push(`Sequence ${qualifiedSequenceName} {\n  as: ${nextBaseType}\n  owned_by: ${ownedByTarget}\n}`)
+        nextLines.push(`${indent}${columnName} ${nextBaseType} [${modifiers.join(', ')}]${suffix}`)
+      } else {
+        nextLines.push(originalLine)
+      }
+    } else {
+      nextLines.push(originalLine)
+    }
+
+    const openBraceCount = (visibleLine.match(/\{/g) || []).length
+    const closeBraceCount = (visibleLine.match(/\}/g) || []).length
+    tableDepth += openBraceCount - closeBraceCount
+
+    if (tableDepth <= 0) {
+      tableDepth = 0
+      currentTable = null
+    }
+  })
+
+  if (generatedSequenceBlocks.length === 0) {
+    return source
+  }
+
+  return `${generatedSequenceBlocks.join('\n\n')}\n\n${nextLines.join('\n')}`.trim()
+}
+
 export const convertDbmlToPgml = (input: {
   dbml: string
   preferredName?: string | null
 }): DbmlImportResult => {
-  const normalizedDbml = stripDbmlProjectBlocks(input.dbml)
+  const normalizedDbml = normalizeDbmlSerialColumns(stripDbmlProjectBlocks(input.dbml))
 
   if (normalizedDbml.length === 0) {
     throw new Error('No importable schema objects were found in that DBML.')

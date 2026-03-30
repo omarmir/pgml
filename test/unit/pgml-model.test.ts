@@ -189,6 +189,73 @@ Table public.orders {
     ]))
   })
 
+  it('parses DBML-style imported indexes, checks, comments, and named composite refs', () => {
+    const source = `/*
+Imported from DBML.
+*/
+Table public.users {
+  id bigint [pk, not null] // System ID
+  email text [not null]
+  status text [not null]
+
+  Indexes {
+    email [name: 'users_email_idx']
+    (email, status) [name: 'users_email_status_idx', unique, where: \`status <> ''\`]
+  }
+
+  checks {
+    \`status <> ''\` [name: 'users_status_check']
+    \`NOT (
+      status = 'draft'
+      AND email = ''
+    )\` [name: 'users_status_email_check']
+  }
+}
+
+Table public.accounts {
+  id bigint [pk]
+  user_id bigint [not null]
+  entity_type text [not null]
+}
+
+Ref account_user_ref: public.accounts.(user_id, entity_type) > public.users.(id, status)`
+    const model = parsePgml(source)
+    const usersTable = model.tables.find(table => table.fullName === 'public.users')
+    const namedReference = model.references.find(reference => reference.name === 'account_user_ref')
+
+    expect(usersTable?.columns.map(column => column.name)).toEqual(['id', 'email', 'status'])
+    expect(usersTable?.indexes).toEqual([
+      expect.objectContaining({
+        columns: ['email'],
+        name: 'users_email_idx'
+      }),
+      expect.objectContaining({
+        columns: ['email', 'status'],
+        name: 'users_email_status_idx'
+      })
+    ])
+    expect(usersTable?.constraints).toEqual([
+      expect.objectContaining({
+        expression: `status <> ''`,
+        name: 'users_status_check'
+      }),
+      expect.objectContaining({
+        expression: `NOT (
+status = 'draft'
+AND email = ''
+)`,
+        name: 'users_status_email_check'
+      })
+    ])
+    expect(namedReference).toEqual(expect.objectContaining({
+      fromColumn: 'user_id',
+      fromColumns: ['user_id', 'entity_type'],
+      name: 'account_user_ref',
+      toColumn: 'id',
+      toColumns: ['id', 'status']
+    }))
+  })
+
   it('tracks source ranges for navigable schema objects', () => {
     const source = `TableGroup Core {
   orders

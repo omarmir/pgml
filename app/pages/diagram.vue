@@ -175,11 +175,7 @@ const defaultReferenceActionSelectValue = '__pgml_default_reference_action__'
 const beginnerFriendlyColumnTypePresets: Record<string, Omit<ReferenceTargetItem, 'value'>> = {
   bigint: {
     label: 'Large whole number',
-    description: 'For large counts and identifiers. Exact type: bigint.'
-  },
-  bigserial: {
-    label: 'Auto-incrementing large number',
-    description: 'Good for generated primary keys that may grow large. Exact type: bigserial.'
+    description: 'For large counts and identifiers, including explicit sequence-backed IDs. Exact type: bigint.'
   },
   boolean: {
     label: 'True / false',
@@ -200,10 +196,6 @@ const beginnerFriendlyColumnTypePresets: Record<string, Omit<ReferenceTargetItem
   numeric: {
     label: 'Decimal number',
     description: 'Precise numbers for money and measurements. Exact type: numeric.'
-  },
-  serial: {
-    label: 'Auto-incrementing number',
-    description: 'Generated integer ID. Exact type: serial.'
   },
   text: {
     label: 'Long text',
@@ -388,7 +380,6 @@ const sourceErrorDiagnostics = computed(() => {
 const sourceWarningDiagnostics = computed(() => {
   return sourceDiagnostics.value.filter(diagnostic => diagnostic.severity === 'warning')
 })
-const visibleSourceDiagnostics = computed(() => sourceDiagnostics.value.slice(0, 6))
 const hasBlockingSourceErrors = computed(() => sourceErrorDiagnostics.value.length > 0)
 const workspaceHasBlockingSourceErrors = computed(() => {
   return workspaceSourceAnalysis.value.diagnostics.some(diagnostic => diagnostic.severity === 'error')
@@ -2203,7 +2194,6 @@ onBeforeUnmount(() => {
           :source-diagnostics="sourceDiagnostics"
           :source-error-count="sourceErrorDiagnostics.length"
           :source-warning-count="sourceWarningDiagnostics.length"
-          :visible-source-diagnostics="visibleSourceDiagnostics"
           @update:document-scope="updateDocumentEditorScope"
           @update:editor-mode="updateVersionedEditorMode"
         />
@@ -2234,7 +2224,6 @@ onBeforeUnmount(() => {
           :source-diagnostics="sourceDiagnostics"
           :source-error-count="sourceErrorDiagnostics.length"
           :source-warning-count="sourceWarningDiagnostics.length"
-          :visible-source-diagnostics="visibleSourceDiagnostics"
           @update:document-scope="updateDocumentEditorScope"
           @update:editor-mode="updateVersionedEditorMode"
         />

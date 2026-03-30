@@ -491,13 +491,11 @@ const buildCreateEmptyGroupInsertEdit = (source: string, draft: PgmlEditableGrou
 
 export const commonPgmlColumnTypes = [
   'bigint',
-  'bigserial',
   'boolean',
   'date',
   'integer',
   'jsonb',
   'numeric',
-  'serial',
   'text',
   'time',
   'timestamp',
