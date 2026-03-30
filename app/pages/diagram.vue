@@ -1185,15 +1185,22 @@ const updateVersionCompareTargetId = (value: string) => {
 const normalizeVersionedEditorMode = (value: string) => {
   return value === 'document' ? 'document' : 'head'
 }
+const normalizeDocumentEditorScopeUpdate = (value: unknown) => {
+  return typeof value === 'string' && value.trim().length > 0
+    ? value as Parameters<typeof setDocumentEditorScope>[0]
+    : null
+}
 const updateVersionedEditorMode = (value: string) => {
   versionedEditorMode.value = normalizeVersionedEditorMode(value)
 }
 const updateDocumentEditorScope = (value: unknown) => {
-  if (typeof value !== 'string' || value.trim().length === 0) {
+  const nextScope = normalizeDocumentEditorScopeUpdate(value)
+
+  if (nextScope === null) {
     return
   }
 
-  setDocumentEditorScope(value as Parameters<typeof setDocumentEditorScope>[0])
+  setDocumentEditorScope(nextScope)
 }
 
 const actionMenus = computed<StudioHeaderMenu[]>(() => {
