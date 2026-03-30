@@ -55,6 +55,9 @@ const normalizeLineEndings = (value: string) => {
 }
 
 export const normalizePgmlSnapshotSource = (value: string) => {
+  // Snapshot sources are serialized inside Workspace/Version wrappers, but the
+  // editor always works on the inner body. Normalizing here keeps equality,
+  // dirty-state checks, and round-trips aligned on that canonical form.
   return normalizePgmlSourceIndentation(normalizeLineEndings(value)).trim()
 }
 
@@ -134,6 +137,8 @@ export const isPgmlWorkspaceDirty = (
   const baseVersion = getPgmlWorkspaceBaseVersion(document)
 
   if (!baseVersion) {
+    // A document without checkpoints treats any non-empty workspace snapshot
+    // as meaningful draft state that still needs its first locked version.
     return normalizePgmlSnapshotSource(document.workspace.snapshot.source).length > 0
   }
 
