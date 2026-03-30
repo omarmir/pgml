@@ -19,6 +19,14 @@ const getComparePanel = (page: Page) => {
   return page.locator('[data-diagram-compare-panel="true"]')
 }
 
+const getMigrationArtifact = (page: Page) => {
+  return page.locator('[data-version-migration-artifact="true"]')
+}
+
+const getDocumentScopeSelect = (page: Page) => {
+  return page.locator('[data-document-scope-select="true"]')
+}
+
 const openVersionsPanel = async (page: Page) => {
   await page.locator('[data-diagram-panel-tab="versions"]').click()
   await expect(getVersionsPanel(page)).toBeVisible()
@@ -67,7 +75,7 @@ const selectDocumentScope = async (
   page: Page,
   label: string
 ) => {
-  await page.locator('[data-document-scope-select="true"]').click()
+  await getDocumentScopeSelect(page).click()
   await page.getByText(label, { exact: true }).click()
 }
 
@@ -238,7 +246,7 @@ Trigger trg_touch_orders on public.orders {
   await compareFromVersion(page, 'Initial users')
 
   const versionsPanel = getVersionsPanel(page)
-  const migrationArtifact = page.locator('[data-version-migration-artifact="true"]')
+  const migrationArtifact = getMigrationArtifact(page)
 
   await expect(migrationArtifact).toHaveAttribute('data-version-migration-format-active', 'sql')
   await expect(migrationArtifact).toContainText('-- Step 1: Initial users -> Orders baseline')
@@ -308,7 +316,7 @@ Table public.audit_log {
   await compareFromVersion(page, 'Full status')
 
   const versionsPanel = getVersionsPanel(page)
-  const migrationArtifact = page.locator('[data-version-migration-artifact="true"]')
+  const migrationArtifact = getMigrationArtifact(page)
   const warningsPanel = page.locator('[data-version-migration-warnings="true"]')
 
   await expect(migrationArtifact).toContainText('-- Step 1: Full status -> Trim status')
@@ -426,7 +434,7 @@ ALTER TABLE ONLY public.orders ADD CONSTRAINT orders_user_id_fkey FOREIGN KEY (u
 
   await compareFromVersion(page, 'Users baseline')
 
-  const migrationArtifact = page.locator('[data-version-migration-artifact="true"]')
+  const migrationArtifact = getMigrationArtifact(page)
 
   await expect(migrationArtifact).toContainText('-- Step 1: Users baseline -> Current workspace')
   await expect(migrationArtifact).toContainText('CREATE TABLE "public"."orders"')
@@ -506,7 +514,7 @@ test('versioned document mode can scope the editor to the full document, workspa
   await createCheckpoint(page, 'Scope baseline')
 
   await page.getByRole('button', { name: 'Versioned document' }).click()
-  await expect(page.locator('[data-document-scope-select="true"]')).toBeVisible()
+  await expect(getDocumentScopeSelect(page)).toBeVisible()
   await expectEditorValueToContain(editor, 'VersionSet ')
 
   await selectDocumentScope(page, 'Workspace block')
