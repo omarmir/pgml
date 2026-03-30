@@ -9,9 +9,13 @@ import {
 import { diffPgmlSchemaModels } from '../../app/utils/pgml-diff'
 import { parsePgml } from '../../app/utils/pgml'
 
+const parseSnapshotModel = (source: string) => {
+  return parsePgml(source)
+}
+
 describe('PGML diagram compare entries', () => {
   it('builds compare entries that can drive diagram selection and delta inspection', () => {
-    const baseModel = parsePgml(`Table public.users {
+    const baseModel = parseSnapshotModel(`Table public.users {
   id uuid [pk]
   email text
 }
@@ -26,7 +30,7 @@ Properties "public.users" {
   x: 20
   y: 32
 }`)
-    const targetModel = parsePgml(`Table public.users {
+    const targetModel = parseSnapshotModel(`Table public.users {
   id uuid [pk]
   email varchar [not null]
 }
@@ -96,7 +100,7 @@ Properties "public.users" {
   })
 
   it('builds layout compare entries with diagram-target selections', () => {
-    const baseModel = parsePgml(`TableGroup Analytics {
+    const baseModel = parseSnapshotModel(`TableGroup Analytics {
   public.users
 }
 
@@ -113,7 +117,7 @@ Properties "public.users" {
   x: 52
   y: 108
 }`)
-    const targetModel = parsePgml(`TableGroup Analytics {
+    const targetModel = parseSnapshotModel(`TableGroup Analytics {
   public.users
 }
 
