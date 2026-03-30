@@ -2245,6 +2245,9 @@ const analyzeWorkspaceDocumentBlocks = (
   contexts: PgmlContextRange[],
   analysisState: PgmlAnalysisState
 ) => {
+  // Scoped workspace views reuse the same analyzer as full VersionSet
+  // documents, but the root contract is narrower because the editor dropdown
+  // can show just the Workspace block on its own.
   topLevelLines.forEach((line) => {
     createDiagnostic(
       diagnostics,
@@ -2294,6 +2297,8 @@ const analyzeVersionDocumentBlocks = (
   contexts: PgmlContextRange[],
   analysisState: PgmlAnalysisState
 ) => {
+  // Version block scopes power the read-only raw editor slice for one locked
+  // checkpoint, so diagnostics must accept Version as the document root here.
   topLevelLines.forEach((line) => {
     createDiagnostic(
       diagnostics,
@@ -2339,6 +2344,9 @@ const analyzeVersionDocumentBlocks = (
 const getPgmlDocumentRootMode = (
   blocks: PgmlRawBlock[]
 ): PgmlDocumentRootMode => {
+  // Root mode detection decides which top-level grammar rules and completions
+  // apply before semantic analysis runs. VersionSet wins over scoped modes so
+  // mixed content still surfaces the stricter versioned-root diagnostics.
   if (blocks.some(block => block.kind === 'VersionSet')) {
     return 'version-set'
   }
