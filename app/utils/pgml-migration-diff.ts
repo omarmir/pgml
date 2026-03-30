@@ -179,6 +179,8 @@ const escapeTemplateLiteralContent = (value: string) => {
 }
 
 const buildKyselyStatementBlock = (statement: string) => {
+  // Keeping the template-literal block in one helper makes it easier to update
+  // escaping or execution semantics without touching every artifact builder.
   return `  await sql\`
 ${escapeTemplateLiteralContent(statement)}
 \`.execute(db)`
