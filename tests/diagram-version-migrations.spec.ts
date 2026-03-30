@@ -63,6 +63,13 @@ const openComparator = async (page: Page) => {
   await page.locator('[data-version-open-comparator="true"]').click()
   await expect(getComparePanel(page)).toBeVisible()
 }
+const selectDocumentScope = async (
+  page: Page,
+  label: string
+) => {
+  await page.locator('[data-document-scope-select="true"]').click()
+  await page.getByText(label, { exact: true }).click()
+}
 
 const expectEditorValueToContain = async (
   editor: ReturnType<typeof getPgmlEditor>,
@@ -502,19 +509,16 @@ test('versioned document mode can scope the editor to the full document, workspa
   await expect(page.locator('[data-document-scope-select="true"]')).toBeVisible()
   await expectEditorValueToContain(editor, 'VersionSet ')
 
-  await page.locator('[data-document-scope-select="true"]').click()
-  await page.getByText('Workspace block', { exact: true }).click()
+  await selectDocumentScope(page, 'Workspace block')
   await expectEditorValueToContain(editor, 'Workspace {')
   await expectEditorValueNotToContain(editor, 'VersionSet ')
 
-  await page.locator('[data-document-scope-select="true"]').click()
-  await page.getByText('Design · Scope baseline', { exact: true }).click()
+  await selectDocumentScope(page, 'Design · Scope baseline')
   await expectEditorValueToContain(editor, 'name: "Scope baseline"')
   await expectEditorValueToContain(editor, 'Version v_')
   await expectEditorValueNotToContain(editor, 'Workspace {')
 
-  await page.locator('[data-document-scope-select="true"]').click()
-  await page.getByText('All VersionSet blocks', { exact: true }).click()
+  await selectDocumentScope(page, 'All VersionSet blocks')
   await expectEditorValueToContain(editor, 'VersionSet ')
   await expectEditorValueToContain(editor, 'Workspace {')
 })
