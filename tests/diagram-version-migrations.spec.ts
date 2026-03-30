@@ -42,6 +42,14 @@ const getVersionCardByLabel = (
     .first()
 }
 
+const clickVersionCardAction = async (
+  page: Page,
+  versionLabel: string,
+  selector: string
+) => {
+  await getVersionCardByLabel(page, versionLabel).locator(selector).click()
+}
+
 const createCheckpoint = async (
   page: Page,
   name: string
@@ -63,7 +71,7 @@ const compareFromVersion = async (
   versionLabel: string
 ) => {
   await openVersionsPanel(page)
-  await getVersionCardByLabel(page, versionLabel).locator('[data-version-compare]').click()
+  await clickVersionCardAction(page, versionLabel, '[data-version-compare]')
 }
 
 const openComparator = async (page: Page) => {
@@ -98,7 +106,7 @@ const viewVersion = async (
   versionLabel: string
 ) => {
   await openVersionsPanel(page)
-  await getVersionCardByLabel(page, versionLabel).locator('[data-version-view]').click()
+  await clickVersionCardAction(page, versionLabel, '[data-version-view]')
   await expect(getVersionCardByLabel(page, versionLabel)).toContainText('Previewing now')
 }
 
@@ -482,9 +490,7 @@ Ref: public.memberships.team_id > public.teams.id`)
   await viewVersion(page, 'Users only')
   await expect(getVersionsPanel(page)).toContainText('Preview target: Users only.')
 
-  const usersOnlyCard = getVersionCardByLabel(page, 'Users only')
-
-  await usersOnlyCard.locator('[data-version-restore]').click()
+  await clickVersionCardAction(page, 'Users only', '[data-version-restore]')
 
   const restoreDialog = page.locator('[data-studio-modal-surface="restore-version"]')
 
