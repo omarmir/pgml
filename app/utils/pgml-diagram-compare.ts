@@ -199,6 +199,17 @@ const buildNodeIds = (...ids: Array<string | null | undefined>) => {
   return Array.from(new Set(ids.filter(hasNodeId)))
 }
 
+// Removed child entities still need a target-side visual anchor when the owning
+// table survives into the compare target. Falling back to the rendered target
+// table ids keeps deletes visible on the diagram even though the removed row or
+// attachment no longer exists in the target snapshot.
+const buildTargetTableNodeIds = (
+  afterTableId: string | null | undefined,
+  targetTable: { fullName: string } | null
+) => {
+  return buildNodeIds(afterTableId, targetTable?.fullName)
+}
+
 const buildSelectionCandidates = (
   entries: Array<DiagramGpuSelection | null | undefined>
 ) => {
@@ -440,7 +451,7 @@ export const buildPgmlDiagramCompareEntries = (
           targetTable
         }),
         sourceRange: pickSourceRange(targetTable?.sourceRange, findTableById(baseModel, tableId)?.sourceRange),
-        targetNodeIds: buildNodeIds(entry.after?.tableId, targetTable?.fullName)
+        targetNodeIds: buildTargetTableNodeIds(entry.after?.tableId, targetTable)
       } satisfies PgmlDiagramCompareEntry
     },
     entries: diff.columns
@@ -475,7 +486,7 @@ export const buildPgmlDiagramCompareEntries = (
           targetTable
         }),
         sourceRange: pickSourceRange(entry.after?.index.sourceRange, entry.before?.index.sourceRange, targetTable?.sourceRange),
-        targetNodeIds: buildNodeIds(entry.after?.tableId)
+        targetNodeIds: buildTargetTableNodeIds(entry.after?.tableId, targetTable)
       } satisfies PgmlDiagramCompareEntry
     },
     entries: diff.indexes
@@ -510,7 +521,7 @@ export const buildPgmlDiagramCompareEntries = (
           targetTable
         }),
         sourceRange: pickSourceRange(entry.after?.constraint.sourceRange, entry.before?.constraint.sourceRange, targetTable?.sourceRange),
-        targetNodeIds: buildNodeIds(entry.after?.tableId)
+        targetNodeIds: buildTargetTableNodeIds(entry.after?.tableId, targetTable)
       } satisfies PgmlDiagramCompareEntry
     },
     entries: diff.constraints
@@ -554,7 +565,12 @@ export const buildPgmlDiagramCompareEntries = (
           targetTable: targetFromTable
         }),
         sourceRange: pickSourceRange(targetFromTable?.sourceRange, baseFromTable?.sourceRange),
-        targetNodeIds: buildNodeIds(entry.after?.fromTable, entry.after?.toTable)
+        targetNodeIds: buildNodeIds(
+          entry.after?.fromTable,
+          entry.after?.toTable,
+          targetFromTable?.fullName,
+          targetToTable?.fullName
+        )
       } satisfies PgmlDiagramCompareEntry
     },
     entries: diff.references
@@ -616,7 +632,7 @@ export const buildPgmlDiagramCompareEntries = (
           targetTable
         }),
         sourceRange: pickSourceRange(entry.after?.sourceRange, entry.before?.sourceRange, targetTable?.sourceRange),
-        targetNodeIds: buildNodeIds(entry.after?.tableName, entry.after ? objectId : null)
+        targetNodeIds: buildNodeIds(entry.after?.tableName, targetTable?.fullName, entry.after ? objectId : null)
       } satisfies PgmlDiagramCompareEntry
     },
     entries: diff.triggers

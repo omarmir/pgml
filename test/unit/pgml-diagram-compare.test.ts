@@ -18,7 +18,15 @@ describe('PGML diagram compare entries', () => {
     const baseModel = parseSnapshotModel(`Table public.users {
   id uuid [pk]
   email text
+  Constraint chk_users_email: email <> ''
 }
+
+Table public.orders {
+  id uuid [pk]
+  user_id uuid [not null]
+}
+
+Ref: public.orders.user_id > public.users.id
 
 Function public.legacy_cleanup() returns void {
   source: $sql$
@@ -40,7 +48,9 @@ Table public.orders {
   user_id uuid [not null]
 }
 
-Ref: public.orders.user_id > public.users.id
+Table public.audit_log {
+  id uuid [pk]
+}
 
 Properties "public.users" {
   x: 20
@@ -52,9 +62,10 @@ Properties "public.users" {
       targetModel
     )
     const modifiedColumn = entries.find(entry => entry.id === 'column:public.users::email') || null
-    const addedTable = entries.find(entry => entry.id === 'table:public.orders') || null
+    const addedTable = entries.find(entry => entry.id === 'table:public.audit_log') || null
     const removedFunction = entries.find(entry => entry.id === 'function:public.legacy_cleanup') || null
-    const addedReference = entries.find(entry => entry.id === 'reference:>::public.orders::user_id::public.users::id') || null
+    const removedConstraint = entries.find(entry => entry.id === 'constraint:public.users::chk_users_email') || null
+    const removedReference = entries.find(entry => entry.id === 'reference:>::public.orders::user_id::public.users::id') || null
 
     expect(modifiedColumn).toMatchObject({
       changeKind: 'modified',
@@ -75,11 +86,11 @@ Properties "public.users" {
     expect(addedTable).toMatchObject({
       changeKind: 'added',
       entityKind: 'table',
-      targetNodeIds: ['public.orders']
+      targetNodeIds: ['public.audit_log']
     })
     expect(addedTable?.selectionCandidates).toContainEqual({
       kind: 'table',
-      tableId: 'public.orders'
+      tableId: 'public.audit_log'
     })
 
     expect(removedFunction).toMatchObject({
@@ -91,10 +102,16 @@ Properties "public.users" {
     expect(removedFunction?.beforeSnapshot).toContain('legacy_cleanup')
     expect(removedFunction?.afterSnapshot).toBeNull()
 
-    expect(addedReference).toMatchObject({
-      changeKind: 'added',
+    expect(removedConstraint).toMatchObject({
+      changeKind: 'removed',
+      entityKind: 'constraint',
+      targetNodeIds: ['public.users']
+    })
+
+    expect(removedReference).toMatchObject({
+      changeKind: 'removed',
       entityKind: 'reference',
-      rowKey: 'public.orders.user_id',
+      rowKey: null,
       targetNodeIds: ['public.orders', 'public.users']
     })
   })

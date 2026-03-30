@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import JSZip from 'jszip'
 import type { Ref } from 'vue'
 import { computed, ref, watchEffect } from 'vue'
 import type { PgmlVersionMigrationStepBundle } from '~/utils/pgml-version-migration'
@@ -219,6 +220,9 @@ const hasActiveMigration = computed(() => {
 const activeMigrationDownloadCount = computed(() => {
   return activeMigrationDownloadArtifacts.value.length
 })
+const hasMigrationArchive = computed(() => {
+  return activeMigrationDownloadCount.value > 1
+})
 const selectedMigrationScopeLabel = computed(() => {
   return buildMigrationScopeLabel(selectedMigrationStep.value)
 })
@@ -233,11 +237,15 @@ const migrationOutputSummary = computed(() => {
   const fileLabel = activeMigrationDownloadCount.value === 1 ? 'file' : 'files'
   const previewLineLabel = migrationLineCount.value === 1 ? 'line' : 'lines'
 
+  if (hasMigrationArchive.value) {
+    return `${selectedMigrationScopeLabel.value} · ${activeMigrationLabel.value} · ${migrationLineCount.value} ${previewLineLabel} in preview · ${activeMigrationDownloadCount.value} ordered ${fileLabel} in one archive`
+  }
+
   return `${selectedMigrationScopeLabel.value} · ${activeMigrationLabel.value} · ${migrationLineCount.value} ${previewLineLabel} in preview · ${activeMigrationDownloadCount.value} downloadable ${fileLabel}`
 })
 const migrationDownloadLabel = computed(() => {
-  if (activeMigrationDownloadCount.value > 1) {
-    return `Download ${activeMigrationLabel.value} files`
+  if (hasMigrationArchive.value) {
+    return `Download ${activeMigrationLabel.value} archive`
   }
 
   return `Download ${activeMigrationLabel.value}`
@@ -251,17 +259,46 @@ const selectMigrationScope = (scope: PgmlMigrationSelectionScope) => {
   activeMigrationScope.value = scope
 }
 
-const downloadMigrationArtifactFile = (artifact: PgmlVersionMigrationArtifact) => {
-  const blob = new Blob([artifact.content], {
-    type: artifact.mimeType
-  })
+const downloadMigrationBlob = (blob: Blob, fileName: string) => {
   const objectUrl = URL.createObjectURL(blob)
   const anchor = document.createElement('a')
 
   anchor.href = objectUrl
-  anchor.download = artifact.fileName
+  anchor.download = fileName
   anchor.click()
   URL.revokeObjectURL(objectUrl)
+}
+
+const downloadMigrationArtifactFile = (artifact: PgmlVersionMigrationArtifact) => {
+  const blob = new Blob([artifact.content], {
+    type: artifact.mimeType
+  })
+
+  downloadMigrationBlob(blob, artifact.fileName)
+}
+
+const buildMigrationArchiveFileName = (format: PgmlMigrationFormat) => {
+  return `${combinedMigrationArtifacts.value[format].fileName}.zip`
+}
+
+const downloadMigrationArtifactArchive = async (
+  artifacts: PgmlVersionMigrationArtifact[],
+  format: PgmlMigrationFormat
+) => {
+  // Combined history downloads need to preserve the on-disk migration order
+  // while still giving the user one transferable artifact. The zip keeps the
+  // numbered step files intact so replay-by-filename still works after extract.
+  const archive = new JSZip()
+
+  artifacts.forEach((artifact) => {
+    archive.file(artifact.fileName, artifact.content)
+  })
+
+  const blob = await archive.generateAsync({
+    type: 'blob'
+  })
+
+  downloadMigrationBlob(blob, buildMigrationArchiveFileName(format))
 }
 
 const handleCopyMigration = async () => {
@@ -281,12 +318,20 @@ const handleCopyMigration = async () => {
   }, 1600)
 }
 
-const handleDownloadMigration = () => {
+const handleDownloadMigration = async () => {
   if (activeMigrationDownloadArtifacts.value.length === 0) {
     return
   }
 
-  activeMigrationDownloadArtifacts.value.forEach(downloadMigrationArtifactFile)
+  if (hasMigrationArchive.value) {
+    await downloadMigrationArtifactArchive(
+      activeMigrationDownloadArtifacts.value,
+      activeMigrationFormat.value
+    )
+    return
+  }
+
+  downloadMigrationArtifactFile(activeMigrationDownloadArtifacts.value[0]!)
 }
 
 watchEffect(() => {
@@ -319,7 +364,7 @@ watchEffect(() => {
       </div>
 
       <p :class="studioCompactBodyCopyClass">
-        Export SQL or Kysely forward migrations for the active compare pair. Use the Versions tool to change the base or target snapshot.
+        Export SQL or Kysely forward migrations for the active compare pair. Use the Compare tool to change the base or target snapshot.
       </p>
     </div>
 
@@ -393,7 +438,7 @@ watchEffect(() => {
             Combined history sequence
           </span>
           <span class="text-[0.62rem] text-[color:var(--studio-shell-muted)]">
-            One file per format covering every transition in the current compare lineage.
+            Preview the whole lineage at once, then download the numbered step files together as one archive.
           </span>
           <span class="text-[0.6rem] text-[color:var(--studio-shell-muted)]">
             {{ buildMigrationFilePairLabel(migrationFileName, migrationKyselyFileName) }}

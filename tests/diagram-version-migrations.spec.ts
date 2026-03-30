@@ -1,7 +1,8 @@
 import { readFileSync } from 'node:fs'
 
-import type { Download, Page } from '@playwright/test'
+import type { Page } from '@playwright/test'
 import { expect, test } from '@nuxt/test-utils/playwright'
+import JSZip from 'jszip'
 import { getPgmlEditor, readPgmlEditorValue, setPgmlEditorValue } from './helpers/pgml-editor'
 import { authorizeStudioLaunchAccess } from './helpers/studio-launch'
 
@@ -126,9 +127,11 @@ const compareFromVersion = async (
   page: Page,
   versionLabel: string
 ) => {
-  await openVersionsPanel(page)
-  await clickVersionCardAction(page, versionLabel, '[data-version-compare-base]')
-  await getVersionsPanel(page).locator('[data-version-workspace-compare-target="true"]').click()
+  await openComparator(page)
+  await getComparePanel(page).locator('[data-compare-base-select="true"]').click()
+  await page.getByRole('option', { name: versionLabel }).click()
+  await getComparePanel(page).locator('[data-compare-target-select="true"]').click()
+  await page.getByRole('option', { name: 'Current workspace' }).click()
 }
 
 const openComparator = async (page: Page) => {
@@ -152,32 +155,46 @@ const downloadMigrationArtifacts = async (
   format: 'sql' | 'kysely',
   expectedCount = 1
 ) => {
-  // Combined lineage downloads should emit one file per version transition.
-  // Collect every download triggered by the single button click so the tests
-  // can prove the UI preserves the exact step order.
-  const downloads: Download[] = []
-  const handleDownload = (download: Download) => {
-    downloads.push(download)
+  const [download] = await Promise.all([
+    page.waitForEvent('download'),
+    getMigrationsPanel(page).locator(`[data-version-migration-download="${format}"]`).click()
+  ])
+  const downloadPath = await download.path()
+
+  expect(downloadPath).not.toBeNull()
+
+  if (download.suggestedFilename().endsWith('.zip')) {
+    const archive = await JSZip.loadAsync(readFileSync(downloadPath!))
+    const archiveEntries = await Promise.all(
+      Object.values(archive.files)
+        .filter(entry => !entry.dir)
+        .sort((left, right) => left.name.localeCompare(right.name))
+        .map(async (entry) => {
+          return {
+            content: await entry.async('string'),
+            fileName: entry.name
+          }
+        })
+    )
+
+    expect(archiveEntries).toHaveLength(expectedCount)
+
+    return {
+      archiveFileName: download.suggestedFilename(),
+      files: archiveEntries
+    }
   }
 
-  page.on('download', handleDownload)
+  const files = [{
+    content: readFileSync(downloadPath!, 'utf8'),
+    fileName: download.suggestedFilename()
+  }]
 
-  try {
-    await getMigrationsPanel(page).locator(`[data-version-migration-download="${format}"]`).click()
-    await expect.poll(() => downloads.length).toBe(expectedCount)
+  expect(files).toHaveLength(expectedCount)
 
-    return await Promise.all(downloads.map(async (download) => {
-      const downloadPath = await download.path()
-
-      expect(downloadPath).not.toBeNull()
-
-      return {
-        content: readFileSync(downloadPath!, 'utf8'),
-        fileName: download.suggestedFilename()
-      }
-    }))
-  } finally {
-    page.off('download', handleDownload)
+  return {
+    archiveFileName: null,
+    files
   }
 }
 
@@ -185,9 +202,9 @@ const downloadMigrationArtifact = async (
   page: Page,
   format: 'sql' | 'kysely'
 ) => {
-  const [download] = await downloadMigrationArtifacts(page, format, 1)
+  const download = await downloadMigrationArtifacts(page, format, 1)
 
-  return download!
+  return download.files[0]!
 }
 const selectDocumentScope = async (
   page: Page,
@@ -380,14 +397,16 @@ Trigger trg_touch_orders on public.orders {
 
   const sqlDownloads = await downloadMigrationArtifacts(page, 'sql', 2)
 
-  expect(sqlDownloads[0]!.fileName).toMatch(/^001-/)
-  expect(sqlDownloads[0]!.content).toContain('CREATE TABLE "public"."orders"')
-  expect(sqlDownloads[0]!.content).toContain('ALTER TABLE "public"."orders" ADD FOREIGN KEY ("user_id") REFERENCES "public"."users" ("id");')
-  expect(sqlDownloads[0]!.content).not.toContain(`ALTER TYPE "public"."order_status" ADD VALUE IF NOT EXISTS 'submitted' BEFORE 'paid';`)
-  expect(sqlDownloads[1]!.fileName).toMatch(/^002-/)
-  expect(sqlDownloads[1]!.content).toContain(`ALTER TYPE "public"."order_status" ADD VALUE IF NOT EXISTS 'submitted' BEFORE 'paid';`)
-  expect(sqlDownloads[1]!.content).toContain('CREATE TRIGGER trg_touch_orders')
-  expect(sqlDownloads[1]!.content).not.toContain('CREATE TABLE "public"."orders"')
+  expect(sqlDownloads.archiveFileName).toContain('initial-users-to-workspace')
+  expect(sqlDownloads.archiveFileName).toMatch(/\.migration\.sql\.zip$/)
+  expect(sqlDownloads.files[0]!.fileName).toMatch(/^001-/)
+  expect(sqlDownloads.files[0]!.content).toContain('CREATE TABLE "public"."orders"')
+  expect(sqlDownloads.files[0]!.content).toContain('ALTER TABLE "public"."orders" ADD FOREIGN KEY ("user_id") REFERENCES "public"."users" ("id");')
+  expect(sqlDownloads.files[0]!.content).not.toContain(`ALTER TYPE "public"."order_status" ADD VALUE IF NOT EXISTS 'submitted' BEFORE 'paid';`)
+  expect(sqlDownloads.files[1]!.fileName).toMatch(/^002-/)
+  expect(sqlDownloads.files[1]!.content).toContain(`ALTER TYPE "public"."order_status" ADD VALUE IF NOT EXISTS 'submitted' BEFORE 'paid';`)
+  expect(sqlDownloads.files[1]!.content).toContain('CREATE TRIGGER trg_touch_orders')
+  expect(sqlDownloads.files[1]!.content).not.toContain('CREATE TABLE "public"."orders"')
 
   await selectMigrationScope(page, 'step:0')
   await expect(migrationArtifact).toContainText('CREATE TABLE "public"."orders"')
@@ -424,15 +443,17 @@ Trigger trg_touch_orders on public.orders {
 
   const kyselyDownloads = await downloadMigrationArtifacts(page, 'kysely', 2)
 
-  expect(kyselyDownloads[0]!.fileName).toMatch(/^001-/)
-  expect(kyselyDownloads[0]!.content).toContain('CREATE TABLE "public"."orders"')
-  expect(kyselyDownloads[0]!.content).not.toContain(`ALTER TYPE "public"."order_status" ADD VALUE IF NOT EXISTS 'submitted' BEFORE 'paid';`)
-  expect(kyselyDownloads[1]!.fileName).toMatch(/^002-/)
-  expect(kyselyDownloads[1]!.content).toContain(`ALTER TYPE "public"."order_status" ADD VALUE IF NOT EXISTS 'submitted' BEFORE 'paid';`)
-  expect(kyselyDownloads[1]!.content).toContain('CREATE TRIGGER trg_touch_orders')
+  expect(kyselyDownloads.archiveFileName).toContain('initial-users-to-workspace')
+  expect(kyselyDownloads.archiveFileName).toMatch(/\.migration\.ts\.zip$/)
+  expect(kyselyDownloads.files[0]!.fileName).toMatch(/^001-/)
+  expect(kyselyDownloads.files[0]!.content).toContain('CREATE TABLE "public"."orders"')
+  expect(kyselyDownloads.files[0]!.content).not.toContain(`ALTER TYPE "public"."order_status" ADD VALUE IF NOT EXISTS 'submitted' BEFORE 'paid';`)
+  expect(kyselyDownloads.files[1]!.fileName).toMatch(/^002-/)
+  expect(kyselyDownloads.files[1]!.content).toContain(`ALTER TYPE "public"."order_status" ADD VALUE IF NOT EXISTS 'submitted' BEFORE 'paid';`)
+  expect(kyselyDownloads.files[1]!.content).toContain('CREATE TRIGGER trg_touch_orders')
 })
 
-test('versions panel can compare two locked versions without forcing the workspace as the target', async ({ goto, page }) => {
+test('compare panel can compare two locked versions without forcing the workspace as the target', async ({ goto, page }) => {
   await goto('/diagram')
   const editor = getPgmlEditor(page)
 
@@ -453,10 +474,11 @@ Table public.orders {
 Ref: public.orders.user_id > public.users.id`)
   await createCheckpoint(page, 'Orders baseline')
 
-  await openVersionsPanel(page)
-  await clickVersionCardAction(page, 'Initial users', '[data-version-compare-base]')
-  await clickVersionCardAction(page, 'Orders baseline', '[data-version-compare-target]')
-  await getVersionsPanel(page).locator('[data-version-open-comparator="true"]').click()
+  await openComparator(page)
+  await getComparePanel(page).locator('[data-compare-base-select="true"]').click()
+  await page.getByRole('option', { name: 'Initial users' }).click()
+  await getComparePanel(page).locator('[data-compare-target-select="true"]').click()
+  await page.getByRole('option', { name: 'Orders baseline' }).click()
 
   const comparePanel = getComparePanel(page)
 

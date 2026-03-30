@@ -25,7 +25,7 @@ describe('diagram page source', () => {
       'buildPgmlCheckpointName(versionDocument.value',
       'checkpointNameIsSuggested',
       ':can-create-checkpoint="canCheckpoint"',
-      ':latest-version-id="latestVersionId"',
+      'const latestVersionId = computed(() => {',
       ':document-scope="documentEditorScope"',
       ':document-scope-items="documentEditorScopeItems"',
       '@update:document-scope="updateDocumentEditorScope"',

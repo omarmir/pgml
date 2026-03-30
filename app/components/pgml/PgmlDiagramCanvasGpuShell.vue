@@ -230,16 +230,6 @@ type VersionCompareOption = {
   value: string
 }
 
-type VersionDiffSection = {
-  count: number
-  items: Array<{
-    id: string
-    kind: 'added' | 'modified' | 'removed'
-    label: string
-  }>
-  label: string
-}
-
 type DetailPopoverPlacement = {
   left: number
   top: number
@@ -290,8 +280,6 @@ const {
   exportBaseName = 'pgml-schema',
   exportPreferenceKey = 'name:pgml-schema',
   hasBlockingSourceErrors = false,
-  layoutChanged = 0,
-  latestVersionId = null,
   mobileActiveView = null,
   mobilePanelTab = null,
   mobileToolPanelTab = null,
@@ -308,7 +296,6 @@ const {
   versionCompareBaseId = null,
   versionCompareOptions = [],
   versionCompareTargetId = 'workspace',
-  versionDiffSections = [],
   versionItems = [],
   workspaceBaseLabel = 'No base version yet',
   workspaceStatus = 'Draft is ready to checkpoint.',
@@ -324,8 +311,6 @@ const {
   exportBaseName?: string
   exportPreferenceKey?: string
   hasBlockingSourceErrors?: boolean
-  layoutChanged?: number
-  latestVersionId?: string | null
   mobileActiveView?: StudioMobileCanvasView | null
   mobilePanelTab?: DiagramPanelTab | null
   mobileToolPanelTab?: DiagramToolPanelTab | null
@@ -335,7 +320,6 @@ const {
   versionCompareBaseId?: string | null
   versionCompareOptions?: VersionCompareOption[]
   versionCompareTargetId?: string
-  versionDiffSections?: VersionDiffSection[]
   versionItems?: VersionPanelItem[]
   workspaceBaseLabel?: string
   workspaceStatus?: string
@@ -2316,11 +2300,11 @@ const doesCompareEntryMatchSelection = (
   }
 
   if (selection.kind === 'group' || selection.kind === 'object') {
-    return entry.targetNodeIds.includes(selection.id)
+    return entry.targetNodeIds.includes(selection.id) || entry.baseNodeIds.includes(selection.id)
   }
 
   if (selection.kind === 'table') {
-    return entry.targetNodeIds.includes(selection.tableId)
+    return entry.targetNodeIds.includes(selection.tableId) || entry.baseNodeIds.includes(selection.tableId)
   }
 
   if (selection.kind === 'column') {
@@ -5675,25 +5659,14 @@ defineExpose<{
 
       <PgmlDiagramVersionsPanel
         v-else-if="activeToolPanelTab === 'versions'"
-        :compare-base-id="versionCompareBaseId"
         :can-create-checkpoint="canCreateCheckpoint"
-        :compare-options="versionCompareOptions"
-        :compare-relationship-summary="compareRelationshipSummary"
-        :compare-target-id="versionCompareTargetId"
-        :diff-sections="versionDiffSections"
-        :layout-changed="layoutChanged"
-        :latest-version-id="latestVersionId"
         :preview-target-id="previewTargetId"
         :versions="versionItems"
         :workspace-base-label="workspaceBaseLabel"
         :workspace-status="workspaceStatus"
         @create-checkpoint="emit('versionCheckpoint')"
         @import-dump="emit('versionImportDump')"
-        @open-comparator="openComparator"
-        @open-migrations="openMigrationsPanel"
         @restore-version="emit('restoreVersion', $event)"
-        @update:compare-base-id="emit('updateVersionCompareBaseId', $event)"
-        @update:compare-target-id="emit('updateVersionCompareTargetId', $event)"
         @view-target="emit('viewVersionTarget', $event)"
       />
 

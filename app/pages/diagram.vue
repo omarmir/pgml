@@ -48,11 +48,9 @@ import {
   buildPgmlDocumentEditorModeDescription,
   buildPgmlEditorReadOnlyLabel,
   buildPgmlVersionPreviewDescription,
-  buildPgmlVersionDiffSections,
   buildPgmlWorkspaceBaseLabel,
   buildPgmlWorkspaceEditorDescription,
-  buildPgmlWorkspaceStatus,
-  type PgmlVersionDiffSection
+  buildPgmlWorkspaceStatus
 } from '~/utils/pgml-version-summary'
 import {
   buildPgmlCheckpointName,
@@ -758,9 +756,6 @@ const compareEntries = computed<PgmlDiagramCompareEntry[]>(() => {
     compareBaseModel.value,
     compareTargetModel.value
   )
-})
-const versionDiffSections = computed<PgmlVersionDiffSection[]>(() => {
-  return buildPgmlVersionDiffSections(compareDiff.value)
 })
 const compareBaseLabel = computed(() => {
   if (versionCompareBaseId.value === null) {
@@ -1862,7 +1857,6 @@ onBeforeUnmount(() => {
           :model="parsedModel"
           :export-base-name="exportBaseName"
           :export-preference-key="exportPreferenceKey"
-          :layout-changed="compareDiff.summary.layoutChanged"
           :has-blocking-source-errors="hasBlockingSourceErrors"
           :migration-file-name="compareMigrationBundle.sql.migration.fileName"
           :migration-has-changes="compareMigrationHasOutput"
@@ -1871,7 +1865,6 @@ onBeforeUnmount(() => {
           :migration-sql="compareMigrationBundle.sql.migration.content"
           :migration-steps="compareMigrationBundle.steps"
           :migration-warnings="compareMigrationBundle.sql.migration.warnings"
-          :latest-version-id="latestVersionId"
           :mobile-active-view="mobileCanvasView"
           :mobile-panel-tab="mobilePanelTab"
           :mobile-tool-panel-tab="mobileToolPanelTab"
@@ -1880,7 +1873,6 @@ onBeforeUnmount(() => {
           :version-compare-base-id="versionCompareBaseId"
           :version-compare-options="versionCompareOptions"
           :version-compare-target-id="versionCompareTargetId"
-          :version-diff-sections="versionDiffSections"
           :version-items="versionPanelItems"
           :workspace-base-label="workspaceBaseLabel"
           :workspace-status="workspaceStatus"
@@ -1969,7 +1961,6 @@ onBeforeUnmount(() => {
           :model="parsedModel"
           :export-base-name="exportBaseName"
           :export-preference-key="exportPreferenceKey"
-          :layout-changed="compareDiff.summary.layoutChanged"
           :has-blocking-source-errors="hasBlockingSourceErrors"
           :migration-file-name="compareMigrationBundle.sql.migration.fileName"
           :migration-has-changes="compareMigrationHasOutput"
@@ -1978,13 +1969,11 @@ onBeforeUnmount(() => {
           :migration-sql="compareMigrationBundle.sql.migration.content"
           :migration-steps="compareMigrationBundle.steps"
           :migration-warnings="compareMigrationBundle.sql.migration.warnings"
-          :latest-version-id="latestVersionId"
           :preview-target-id="previewTargetId"
           :source-text="source"
           :version-compare-base-id="versionCompareBaseId"
           :version-compare-options="versionCompareOptions"
           :version-compare-target-id="versionCompareTargetId"
-          :version-diff-sections="versionDiffSections"
           :version-items="versionPanelItems"
           :workspace-base-label="workspaceBaseLabel"
           :workspace-status="workspaceStatus"

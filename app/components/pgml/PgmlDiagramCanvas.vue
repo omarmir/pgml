@@ -19,16 +19,6 @@ type VersionCompareOption = {
   value: string
 }
 
-type VersionDiffSection = {
-  count: number
-  items: Array<{
-    id: string
-    kind: 'added' | 'modified' | 'removed'
-    label: string
-  }>
-  label: string
-}
-
 type VersionMigrationArtifactsProps = {
   // The GPU shell and versions panel consume the same migration artifact set.
   // Keeping the pass-through shape named here makes prop drift easier to spot.
@@ -77,8 +67,6 @@ const {
   exportBaseName = 'pgml-schema',
   exportPreferenceKey = 'name:pgml-schema',
   hasBlockingSourceErrors = false,
-  layoutChanged = 0,
-  latestVersionId = null,
   mobileActiveView = null,
   mobilePanelTab = null,
   mobileToolPanelTab = null,
@@ -95,7 +83,6 @@ const {
   versionCompareBaseId = null,
   versionCompareOptions = [],
   versionCompareTargetId = 'workspace',
-  versionDiffSections = [],
   versionItems = [],
   workspaceBaseLabel = 'No base version yet',
   workspaceStatus = 'Draft is ready to checkpoint.',
@@ -111,8 +98,6 @@ const {
   exportBaseName?: string
   exportPreferenceKey?: string
   hasBlockingSourceErrors?: boolean
-  layoutChanged?: number
-  latestVersionId?: string | null
   mobileActiveView?: StudioMobileCanvasView | null
   mobilePanelTab?: DiagramPanelTab | null
   mobileToolPanelTab?: DiagramToolPanelTab | null
@@ -122,7 +107,6 @@ const {
   versionCompareBaseId?: string | null
   versionCompareOptions?: VersionCompareOption[]
   versionCompareTargetId?: string
-  versionDiffSections?: VersionDiffSection[]
   versionItems?: VersionPanelItem[]
   workspaceBaseLabel?: string
   workspaceStatus?: string
@@ -179,8 +163,6 @@ defineExpose<CanvasHandle>({
     :export-base-name="exportBaseName"
     :export-preference-key="exportPreferenceKey"
     :has-blocking-source-errors="hasBlockingSourceErrors"
-    :layout-changed="layoutChanged"
-    :latest-version-id="latestVersionId"
     :mobile-active-view="mobileActiveView"
     :mobile-panel-tab="mobilePanelTab"
     :mobile-tool-panel-tab="mobileToolPanelTab"
@@ -197,7 +179,6 @@ defineExpose<CanvasHandle>({
     :version-compare-base-id="versionCompareBaseId"
     :version-compare-options="versionCompareOptions"
     :version-compare-target-id="versionCompareTargetId"
-    :version-diff-sections="versionDiffSections"
     :version-items="versionItems"
     :workspace-base-label="workspaceBaseLabel"
     :workspace-status="workspaceStatus"

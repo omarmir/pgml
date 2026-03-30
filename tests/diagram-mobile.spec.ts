@@ -140,7 +140,7 @@ test('mobile studio menu switches views and keeps modals inside the viewport', a
   expect(modalBounds?.bottom || 0).toBeLessThanOrEqual(modalBounds?.viewportHeight || 0)
 })
 
-test('mobile versions panel wraps controls and diff cards without horizontal overflow', async ({ goto, page }) => {
+test('mobile versions panel stays lightweight and avoids horizontal overflow', async ({ goto, page }) => {
   await page.setViewportSize({
     width: 390,
     height: 844
@@ -152,8 +152,9 @@ test('mobile versions panel wraps controls and diff cards without horizontal ove
   const versionsPanel = page.locator('[data-diagram-versions-panel="true"]')
 
   await expect(versionsPanel).toBeVisible()
-  await expect(page.locator('[data-version-open-migrations="true"]')).toBeVisible()
-  await expect(page.locator('[data-version-open-migrations="true"]')).toContainText('Open migrations')
+  await expect(versionsPanel).toContainText('Version Switcher')
+  await expect(page.locator('[data-version-card="workspace"]')).toBeVisible()
+  await expect(page.locator('[data-version-create-checkpoint="true"]')).toBeVisible()
 
   const overflowMetrics = await versionsPanel.evaluate((element) => {
     const panel = element as HTMLElement
