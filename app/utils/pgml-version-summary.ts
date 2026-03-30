@@ -25,6 +25,9 @@ type PgmlVersionDiffSectionSource = {
   label: string
 }
 
+const fullDocumentEditorDescription = 'Showing the full VersionSet document, including locked checkpoints and workspace metadata.'
+const workspaceDocumentEditorDescription = 'Showing only the Workspace block from the VersionSet document so you can inspect draft metadata without the rest of history.'
+
 const buildCountLabel = (count: number, singularLabel: string, pluralLabel?: string) => {
   return `${count} ${count === 1 ? singularLabel : pluralLabel || `${singularLabel}s`}`
 }
@@ -198,14 +201,14 @@ export const buildPgmlDocumentEditorModeDescription = (input?: {
   const scopeLabel = input?.scopeLabel || 'the selected Version block'
 
   if (scope === 'workspace') {
-    return 'Showing only the Workspace block from the VersionSet document so you can inspect draft metadata without the rest of history.'
+    return workspaceDocumentEditorDescription
   }
 
   if (scope === 'version') {
     return `Showing only ${scopeLabel} from the VersionSet document. Switch back to All VersionSet blocks to inspect the full history.`
   }
 
-  return 'Showing the full VersionSet document, including locked checkpoints and workspace metadata.'
+  return fullDocumentEditorDescription
 }
 
 export const buildPgmlVersionPreviewDescription = (previewLabel: string) => {
