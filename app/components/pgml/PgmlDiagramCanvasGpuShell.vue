@@ -9,6 +9,11 @@ import PgmlDetailPopoverSourceEditor from '~/components/pgml/PgmlDetailPopoverSo
 import PgmlDiagramGpuScene from '~/components/pgml/PgmlDiagramGpuScene.vue'
 import PgmlDiagramMigrationsPanel from '~/components/pgml/PgmlDiagramMigrationsPanel.vue'
 import PgmlDiagramVersionsPanel from '~/components/pgml/PgmlDiagramVersionsPanel.vue'
+import {
+  buildDiagramConnectionDragPreviewPath,
+  buildDiagramConnectionPreviewLayers,
+  type DiagramConnectionPreviewDragState
+} from '~/utils/diagram-connection-preview'
 import { buildTableGroupMasonryLayout, type TableAttachment, type TableAttachmentFlag, type TableAttachmentKind } from '~/utils/pgml-diagram-canvas'
 import {
   getPgmlDiagramCompareChangeColor,
@@ -249,6 +254,11 @@ type DetailPopoverPlacement = {
   width: number
 }
 
+type ActiveConnectionDragPreview = DiagramConnectionPreviewDragState & {
+  originX: number
+  originY: number
+}
+
 type DiagramCompareGhostOverlay = {
   bounds: MeasuredBounds
   color: string
@@ -356,6 +366,7 @@ const emit = defineEmits<{
   nodePropertiesChange: [properties: Record<string, PgmlNodeProperties>]
   panelTabChange: [tab: DiagramPanelTab]
   toolPanelTabChange: [tab: DiagramToolPanelTab]
+  toolPanelVisibilityChange: [payload: { open: boolean, tab: DiagramToolPanelTab }]
   replaceSourceRange: [payload: { nextText: string, sourceRange: PgmlSourceRange }]
   restoreVersion: [versionId: string]
   updateVersionCompareBaseId: [value: string | null]
@@ -398,6 +409,7 @@ const detailPopoverSize: Ref<MeasuredSize> = ref({
 const entitySearchQuery: Ref<string> = ref('')
 const entitySearchInputRef: Ref<HTMLInputElement | null> = ref(null)
 const connectionLines: Ref<DiagramGpuConnectionLine[]> = ref([])
+const activeConnectionDragPreview: Ref<ActiveConnectionDragPreview | null> = ref(null)
 const groupLayoutStates: Ref<Record<string, DiagramGpuGroupNode>> = ref({})
 const floatingTableStates: Ref<Record<string, DiagramGpuNodeLayoutState>> = ref({})
 const objectLayoutStates: Ref<Record<string, DiagramGpuObjectNode>> = ref({})
@@ -1975,6 +1987,87 @@ const selectedObjectImpactRowKeys = computed(() => {
   }))
 })
 
+const parseConnectionPreviewPath = (path: string) => {
+  const segments = path.match(/[ML]\s*-?\d+(?:\.\d+)?\s+-?\d+(?:\.\d+)?/g) || []
+
+  return segments.map((segment) => {
+    const [, x = '0', y = '0'] = segment.trim().split(/\s+/)
+
+    return {
+      x: Number(x),
+      y: Number(y)
+    }
+  })
+}
+
+const getLineBounds = (points: DiagramGpuConnectionLine['points']) => {
+  if (points.length === 0) {
+    return {
+      maxX: 0,
+      maxY: 0,
+      minX: 0,
+      minY: 0
+    }
+  }
+
+  return {
+    maxX: Math.max(...points.map(point => point.x)),
+    maxY: Math.max(...points.map(point => point.y)),
+    minX: Math.min(...points.map(point => point.x)),
+    minY: Math.min(...points.map(point => point.y))
+  }
+}
+
+const buildPreviewLine = (
+  line: DiagramGpuConnectionLine,
+  points: DiagramGpuConnectionLine['points']
+) => {
+  return {
+    ...line,
+    bounds: getLineBounds(points),
+    points
+  }
+}
+
+const displayedConnectionLines = computed(() => {
+  const activeDrag = activeConnectionDragPreview.value
+
+  if (!activeDrag || (activeDrag.deltaX === 0 && activeDrag.deltaY === 0)) {
+    return connectionLines.value
+  }
+
+  const layers = buildDiagramConnectionPreviewLayers(connectionLines.value, activeDrag)
+
+  return layers.flatMap((layer) => {
+    return [
+      ...layer.staticLines,
+      ...layer.translatedLines.map((line) => {
+        const translatedPoints = line.points.map((point) => {
+          return {
+            x: point.x + activeDrag.deltaX,
+            y: point.y + activeDrag.deltaY
+          }
+        })
+
+        return buildPreviewLine(line, translatedPoints)
+      }),
+      ...layer.bridgedLines.map((line) => {
+        const movedEnd = line.fromOwnerNodeId === activeDrag.nodeId ? 'from' : 'to'
+        const previewPoints = parseConnectionPreviewPath(
+          buildDiagramConnectionDragPreviewPath(
+            line.points,
+            activeDrag.deltaX,
+            activeDrag.deltaY,
+            movedEnd
+          )
+        )
+
+        return buildPreviewLine(line, previewPoints)
+      })
+    ]
+  })
+})
+
 const nodeOrderById = computed(() => {
   const entries: Record<string, number> = {}
   let order = 1
@@ -2403,6 +2496,19 @@ const openMigrationsPanel = () => {
   openToolPanel('migrations')
 }
 
+watch(
+  () => [isToolPanelOpen.value, activeToolPanelTab.value] as const,
+  ([open, tab]) => {
+    emit('toolPanelVisibilityChange', {
+      open,
+      tab
+    })
+  },
+  {
+    immediate: true
+  }
+)
+
 const focusCompareEntry = (entryId: string) => {
   const entry = compareEntryById.value.get(entryId)
 
@@ -2539,6 +2645,11 @@ const geometryRegistry = computed(() => {
 const computeConnectionLines = async () => {
   latestConnectionRequestId += 1
   const requestId = latestConnectionRequestId
+
+  if (activeConnectionDragPreview.value) {
+    return
+  }
+
   const descriptors: RoutingWorkerDescriptorInput[] = []
 
   model.references.forEach((reference) => {
@@ -2645,11 +2756,11 @@ const computeConnectionLines = async () => {
       })
     })
 
-    if (requestId === latestConnectionRequestId) {
+    if (requestId === latestConnectionRequestId && !activeConnectionDragPreview.value) {
       connectionLines.value = lines
     }
   } catch {
-    if (requestId === latestConnectionRequestId) {
+    if (requestId === latestConnectionRequestId && !activeConnectionDragPreview.value) {
       connectionLines.value = []
     }
   }
@@ -3995,9 +4106,37 @@ const toggleObjectCollapsed = (id: string) => {
   })
 }
 
-const handleSceneMoveNode = (payload: { id: string, kind: 'group' | 'object' | 'table', x: number, y: number }) => {
+const applySceneNodePosition = (
+  payload: { id: string, kind: 'group' | 'object' | 'table', x: number, y: number },
+  options: {
+    updatePreview: boolean
+  }
+) => {
   const nextX = snapToGrid.value ? Math.round(payload.x / 18) * 18 : payload.x
   const nextY = snapToGrid.value ? Math.round(payload.y / 18) * 18 : payload.y
+  const currentState = payload.kind === 'group'
+    ? groupLayoutStates.value[payload.id]
+    : payload.kind === 'table'
+      ? floatingTableStates.value[payload.id]
+      : objectLayoutStates.value[payload.id]
+
+  if (!currentState) {
+    return
+  }
+
+  if (options.updatePreview) {
+    const existingPreview = activeConnectionDragPreview.value?.nodeId === payload.id
+      ? activeConnectionDragPreview.value
+      : null
+
+    activeConnectionDragPreview.value = {
+      deltaX: nextX - (existingPreview?.originX || currentState.x),
+      deltaY: nextY - (existingPreview?.originY || currentState.y),
+      nodeId: payload.id,
+      originX: existingPreview?.originX || currentState.x,
+      originY: existingPreview?.originY || currentState.y
+    }
+  }
 
   if (payload.kind === 'group') {
     updateGroupState(payload.id, {
@@ -4027,8 +4166,20 @@ const handleSceneMoveNode = (payload: { id: string, kind: 'group' | 'object' | '
   })
 }
 
-const handleSceneMoveEnd = () => {
+const handleSceneMoveNode = (payload: { id: string, kind: 'group' | 'object' | 'table', x: number, y: number }) => {
+  applySceneNodePosition(payload, {
+    updatePreview: true
+  })
+}
+
+const handleSceneMoveEnd = (payload: { id: string, kind: 'group' | 'object' | 'table', x: number, y: number }) => {
+  activeConnectionDragPreview.value = null
+
+  applySceneNodePosition(payload, {
+    updatePreview: false
+  })
   emit('nodePropertiesChange', getNodeLayoutProperties())
+  void computeConnectionLines()
 }
 
 const handleSceneToggleObjectCollapsed = (id: string) => {
@@ -4716,7 +4867,7 @@ defineExpose<{
   >
     <PgmlDiagramGpuScene
       ref="sceneRef"
-      :connections="connectionLines"
+      :connections="displayedConnectionLines"
       :groups="groupNodes"
       :objects="objectNodes"
       :selection="selectedSelection"

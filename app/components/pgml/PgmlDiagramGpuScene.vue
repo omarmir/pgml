@@ -136,7 +136,7 @@ const {
 
 const emit = defineEmits<{
   focusSource: [sourceRange: PgmlSourceRange]
-  moveEnd: [payload: { id: string, kind: 'group' | 'object' | 'table' }]
+  moveEnd: [payload: { id: string, kind: 'group' | 'object' | 'table', x: number, y: number }]
   moveNode: [payload: { id: string, kind: 'group' | 'object' | 'table', x: number, y: number }]
   scaleChange: [scale: number]
   select: [selection: DiagramGpuSelection | null]
@@ -2218,7 +2218,9 @@ const handlePointerUp = (event: PointerEvent) => {
   if (moved && dragSession.nodeId && dragSession.nodeKind && dragSession.mode === 'drag') {
     emit('moveEnd', {
       id: dragSession.nodeId,
-      kind: dragSession.nodeKind
+      kind: dragSession.nodeKind,
+      x: Math.round((dragSession.originX || 0) + ((event.clientX - dragSession.originClientX) / Math.max(worldScale, 0.001))),
+      y: Math.round((dragSession.originY || 0) + ((event.clientY - dragSession.originClientY) / Math.max(worldScale, 0.001)))
     })
   }
 

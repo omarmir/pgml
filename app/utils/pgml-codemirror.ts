@@ -2,6 +2,7 @@ import type { Completion, CompletionContext } from '@codemirror/autocomplete'
 import type { Extension } from '@codemirror/state'
 import type { Diagnostic as CodeMirrorDiagnostic } from '@codemirror/lint'
 import type { StringStream } from '@codemirror/language'
+import type { PgmlLanguageDiagnostic } from './pgml-language'
 import { autocompletion, completionKeymap } from '@codemirror/autocomplete'
 import { defaultKeymap, history, historyKeymap, indentWithTab } from '@codemirror/commands'
 import { EditorState } from '@codemirror/state'
@@ -36,7 +37,10 @@ type PgmlStreamState = {
 }
 
 export type PgmlCodeMirrorOptions = {
+  activateCompletionOnTyping?: boolean
   enableDiagnostics?: boolean
+  externalDiagnostics?: PgmlLanguageDiagnostic[] | null
+  linterDelayMs?: number
   placeholder?: string
 }
 
@@ -522,10 +526,17 @@ const createCodeMirrorDiagnostics = (source: string) => {
 }
 
 export const createPgmlCodeMirrorExtensions = (options: PgmlCodeMirrorOptions = {}) => {
+  const activateCompletionOnTyping = options.activateCompletionOnTyping !== false
   const placeholderText = typeof options.placeholder === 'string' && options.placeholder.length > 0
     ? options.placeholder
     : 'Paste PGML here...'
   const enableDiagnostics = options.enableDiagnostics !== false
+  const linterDelayMs = typeof options.linterDelayMs === 'number' && options.linterDelayMs >= 0
+    ? options.linterDelayMs
+    : 150
+  const externalDiagnostics = Array.isArray(options.externalDiagnostics)
+    ? options.externalDiagnostics
+    : null
 
   const extensions: Extension[] = [
     history(),
@@ -545,7 +556,7 @@ export const createPgmlCodeMirrorExtensions = (options: PgmlCodeMirrorOptions = 
     pgmlStreamParser,
     syntaxHighlighting(pgmlHighlightStyle),
     autocompletion({
-      activateOnTyping: true,
+      activateOnTyping: activateCompletionOnTyping,
       defaultKeymap: true,
       override: [pgmlCompletionSource]
     }),
@@ -561,9 +572,21 @@ export const createPgmlCodeMirrorExtensions = (options: PgmlCodeMirrorOptions = 
   if (enableDiagnostics) {
     extensions.push(
       linter((view) => {
+        if (externalDiagnostics) {
+          return externalDiagnostics.map((diagnostic) => {
+            return {
+              from: diagnostic.from,
+              to: diagnostic.to,
+              severity: diagnostic.severity,
+              message: diagnostic.message,
+              source: diagnostic.code
+            } satisfies CodeMirrorDiagnostic
+          })
+        }
+
         return createCodeMirrorDiagnostics(view.state.doc.toString())
       }, {
-        delay: 150
+        delay: linterDelayMs
       }),
       lintGutter()
     )

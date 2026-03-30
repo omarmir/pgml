@@ -9,6 +9,9 @@ const source = defineModel<string>({
 })
 
 const {
+  activateCompletionOnTyping = true,
+  commitDebounceMs = 0,
+  diagnosticsDelayMs = 150,
   documentScope = 'all',
   documentScopeItems = [],
   editorMode,
@@ -22,6 +25,9 @@ const {
   sourceErrorCount,
   sourceWarningCount
 } = defineProps<{
+  activateCompletionOnTyping?: boolean
+  commitDebounceMs?: number
+  diagnosticsDelayMs?: number
   documentScope?: string
   documentScopeItems?: Array<{
     label: string
@@ -125,6 +131,10 @@ const updateDocumentScope = (value: unknown) => {
       <PgmlSourceCodeEditor
         :ref="editorRefSetter"
         v-model="source"
+        :activate-completion-on-typing="activateCompletionOnTyping"
+        :commit-debounce-ms="commitDebounceMs"
+        :diagnostics-delay-ms="diagnosticsDelayMs"
+        :external-diagnostics="sourceDiagnostics"
         placeholder="Paste PGML here..."
         :read-only="readOnly"
       />

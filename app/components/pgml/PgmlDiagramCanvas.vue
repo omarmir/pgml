@@ -123,6 +123,7 @@ const emit = defineEmits<{
   nodePropertiesChange: [properties: Record<string, PgmlNodeProperties>]
   panelTabChange: [tab: DiagramPanelTab]
   toolPanelTabChange: [tab: DiagramToolPanelTab]
+  toolPanelVisibilityChange: [payload: { open: boolean, tab: DiagramToolPanelTab }]
   replaceSourceRange: [payload: { nextText: string, sourceRange: PgmlSourceRange }]
   restoreVersion: [versionId: string]
   updateVersionCompareBaseId: [value: string | null]
@@ -193,6 +194,7 @@ defineExpose<CanvasHandle>({
     @node-properties-change="emit('nodePropertiesChange', $event)"
     @panel-tab-change="emit('panelTabChange', $event)"
     @tool-panel-tab-change="emit('toolPanelTabChange', $event)"
+    @tool-panel-visibility-change="emit('toolPanelVisibilityChange', $event)"
     @replace-source-range="emit('replaceSourceRange', $event)"
     @restore-version="emit('restoreVersion', $event)"
     @update-version-compare-base-id="emit('updateVersionCompareBaseId', $event)"

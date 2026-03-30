@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import type { Ref } from 'vue'
 import type { PgmlSourceRange } from '~/utils/pgml'
+import type { PgmlLanguageDiagnostic } from '~/utils/pgml-language'
 import { Compartment, EditorSelection, EditorState } from '@codemirror/state'
 import { EditorView } from '@codemirror/view'
 import { createPgmlCodeMirrorExtensions } from '~/utils/pgml-codemirror'
@@ -14,11 +15,19 @@ type PgmlEditorHostElement = HTMLDivElement & {
 }
 
 const {
+  activateCompletionOnTyping = true,
+  commitDebounceMs = 0,
+  diagnosticsDelayMs = 150,
+  externalDiagnostics = null,
   languageMode = 'pgml',
   modelValue,
   placeholder = 'Paste PGML here...',
   readOnly = false
 } = defineProps<{
+  activateCompletionOnTyping?: boolean
+  commitDebounceMs?: number
+  diagnosticsDelayMs?: number
+  externalDiagnostics?: PgmlLanguageDiagnostic[] | null
   languageMode?: SourceEditorLanguageMode
   modelValue: string
   placeholder?: string
@@ -35,6 +44,77 @@ const editableCompartment = new Compartment()
 const languageCompartment = new Compartment()
 const readOnlyCompartment = new Compartment()
 let isApplyingExternalUpdate = false
+let pendingCommitTimeout: ReturnType<typeof setTimeout> | null = null
+let pendingCommitValue: string | null = null
+
+const clearPendingCommit = () => {
+  if (pendingCommitTimeout) {
+    clearTimeout(pendingCommitTimeout)
+    pendingCommitTimeout = null
+  }
+
+  pendingCommitValue = null
+}
+
+const emitCommittedValue = (value: string) => {
+  clearPendingCommit()
+
+  if (value === modelValue) {
+    return
+  }
+
+  emit('update:modelValue', value)
+}
+
+const flushPendingChanges = async () => {
+  const pendingValue = pendingCommitValue
+
+  if (typeof pendingValue === 'string') {
+    emitCommittedValue(pendingValue)
+    await nextTick()
+    return
+  }
+
+  const currentValue = getValue()
+
+  if (currentValue === modelValue) {
+    return
+  }
+
+  emit('update:modelValue', currentValue)
+  await nextTick()
+}
+
+const hasPendingChanges = () => {
+  return pendingCommitValue !== null && pendingCommitValue !== modelValue
+}
+
+const queueValueCommit = (value: string) => {
+  if (readOnly) {
+    return
+  }
+
+  if (commitDebounceMs <= 0) {
+    emitCommittedValue(value)
+    return
+  }
+
+  pendingCommitValue = value
+
+  if (pendingCommitTimeout) {
+    clearTimeout(pendingCommitTimeout)
+  }
+
+  pendingCommitTimeout = setTimeout(() => {
+    const nextValue = pendingCommitValue
+
+    if (typeof nextValue !== 'string') {
+      return
+    }
+
+    emitCommittedValue(nextValue)
+  }, commitDebounceMs)
+}
 
 const buildLanguageExtensions = () => {
   return languageMode === 'sql'
@@ -42,7 +122,10 @@ const buildLanguageExtensions = () => {
         placeholder
       })
     : createPgmlCodeMirrorExtensions({
+        activateCompletionOnTyping,
         enableDiagnostics: languageMode === 'pgml',
+        externalDiagnostics: languageMode === 'pgml' ? externalDiagnostics : null,
+        linterDelayMs: diagnosticsDelayMs,
         placeholder
       })
 }
@@ -111,9 +194,14 @@ const setValue = (value: string) => {
   const currentValue = viewRef.value.state.doc.toString()
 
   if (currentValue === value) {
+    if (pendingCommitValue === value) {
+      clearPendingCommit()
+    }
+
     return
   }
 
+  clearPendingCommit()
   isApplyingExternalUpdate = true
   viewRef.value.dispatch({
     changes: {
@@ -138,12 +226,18 @@ onMounted(() => {
         editableCompartment.of(EditorView.editable.of(!readOnly)),
         languageCompartment.of(buildLanguageExtensions()),
         readOnlyCompartment.of(EditorState.readOnly.of(readOnly)),
+        EditorView.domEventHandlers({
+          blur: () => {
+            void flushPendingChanges()
+            return false
+          }
+        }),
         EditorView.updateListener.of((update) => {
           if (!update.docChanged || isApplyingExternalUpdate) {
             return
           }
 
-          emit('update:modelValue', update.state.doc.toString())
+          queueValueCommit(update.state.doc.toString())
         })
       ]
     })
@@ -160,6 +254,10 @@ watch(() => modelValue, (nextValue) => {
 })
 
 watch(() => readOnly, (nextValue) => {
+  if (nextValue) {
+    void flushPendingChanges()
+  }
+
   if (!viewRef.value) {
     return
   }
@@ -172,7 +270,13 @@ watch(() => readOnly, (nextValue) => {
   })
 })
 
-watch(() => [languageMode, placeholder], () => {
+watch(() => [
+  activateCompletionOnTyping,
+  diagnosticsDelayMs,
+  externalDiagnostics,
+  languageMode,
+  placeholder
+], () => {
   if (!viewRef.value) {
     return
   }
@@ -183,6 +287,8 @@ watch(() => [languageMode, placeholder], () => {
 })
 
 onBeforeUnmount(() => {
+  clearPendingCommit()
+
   if (containerRef.value) {
     delete containerRef.value.__pgmlEditorView
   }
@@ -194,10 +300,12 @@ onBeforeUnmount(() => {
 })
 
 defineExpose({
+  flushPendingChanges,
   focusOffset,
   focusSourceRange,
   getScrollTop,
   getValue,
+  hasPendingChanges,
   setScrollTop
 })
 </script>

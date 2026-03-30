@@ -17,10 +17,12 @@ describe('usePgmlSourceEditor', () => {
           startLine: 1
         })
         api.editorRef.value = {
+          flushPendingChanges: async () => undefined,
           focusOffset: () => undefined,
           focusSourceRange,
           getScrollTop: () => 0,
           getValue: () => '',
+          hasPendingChanges: () => false,
           setScrollTop: () => undefined
         }
 

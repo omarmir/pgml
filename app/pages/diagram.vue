@@ -46,6 +46,10 @@ import { convertDbmlToPgml } from '~/utils/dbml-import'
 import { convertPgDumpToPgml } from '~/utils/pg-dump-import'
 import { analyzePgmlDocument } from '~/utils/pgml-language'
 import {
+  hasBlockingPgmlDiagnostics,
+  type PgmlAnalysisWorkerResponse
+} from '~/utils/pgml-analysis-worker'
+import {
   buildPgmlDocumentEditorModeDescription,
   buildPgmlEditorReadOnlyLabel,
   buildPgmlVersionPreviewDescription,
@@ -58,7 +62,10 @@ import {
   getPgmlVersionDisplayLabel,
   getLatestPgmlVersion
 } from '~/utils/pgml-document'
-import { buildPgmlVersionMigrationBundle } from '~/utils/pgml-version-migration'
+import {
+  buildPgmlVersionMigrationBundle,
+  type PgmlVersionMigrationBundle
+} from '~/utils/pgml-version-migration'
 import {
   buildPgmlCheckpointCreatedDescription,
   buildPgmlCheckpointRoleDescription,
@@ -96,6 +103,7 @@ import {
   stripPgmlPropertiesBlocks,
   type PgmlNodeProperties,
   type PgmlMetadataEntry,
+  type PgmlSchemaModel,
   type PgmlSourceRange
 } from '~/utils/pgml'
 import {
@@ -243,6 +251,13 @@ const versionDocumentName: Ref<string> = ref('Untitled schema')
 const mobileWorkspaceView: Ref<StudioMobileWorkspaceView> = ref('diagram')
 const mobilePanelTab: Ref<DiagramPanelTab> = ref(defaultStudioMobilePanelTab)
 const mobileToolPanelTab: Ref<DiagramToolPanelTab> = ref('versions')
+const toolPanelVisibility: Ref<{
+  open: boolean
+  tab: DiagramToolPanelTab
+}> = ref({
+  open: false,
+  tab: 'versions'
+})
 const checkpointDialogOpen: Ref<boolean> = ref(false)
 const checkpointName: Ref<string> = ref('')
 const checkpointSuggestedCreatedAt: Ref<string | null> = ref(null)
@@ -323,6 +338,86 @@ const {
   source
 })
 loadVersionedDocument(pgmlVersionedExample)
+const largeDocumentCharThreshold = 50000
+const largeDocumentLineThreshold = 1500
+const workspaceAnalysisDiagnostics: Ref<PgmlAnalysisWorkerResponse['diagnostics']> = ref([])
+const workspaceAnalysisHasBlockingErrors: Ref<boolean> = ref(false)
+const workspaceAnalysisParsedModel: Ref<PgmlSchemaModel> = ref(parsePgml(source.value))
+const workspaceAnalysisRevision: Ref<number> = ref(0)
+const workspaceAnalysisRequestRevision: Ref<number> = ref(0)
+const lastRenderableWorkspaceModel: Ref<PgmlSchemaModel> = ref(applyPgmlDocumentSchemaMetadataToModel(
+  parsePgml(source.value),
+  versionDocument.value.schemaMetadata
+))
+let pgmlAnalysisWorker: Worker | null = null
+
+const syncWorkspaceAnalysisLocally = (
+  nextSource: string,
+  revision: number
+) => {
+  const analysis = analyzePgmlDocument(nextSource)
+
+  workspaceAnalysisDiagnostics.value = analysis.diagnostics
+  workspaceAnalysisHasBlockingErrors.value = hasBlockingPgmlDiagnostics(analysis.diagnostics)
+  workspaceAnalysisParsedModel.value = parsePgml(nextSource)
+  workspaceAnalysisRevision.value = revision
+}
+
+const ensurePgmlAnalysisWorker = () => {
+  if (!import.meta.client) {
+    return null
+  }
+
+  if (pgmlAnalysisWorker) {
+    return pgmlAnalysisWorker
+  }
+
+  const worker = new Worker(new URL('../workers/pgml-analysis.worker.ts', import.meta.url), {
+    type: 'module'
+  })
+
+  worker.onmessage = (event: MessageEvent<PgmlAnalysisWorkerResponse>) => {
+    if (event.data.revision !== workspaceAnalysisRequestRevision.value) {
+      return
+    }
+
+    workspaceAnalysisDiagnostics.value = event.data.diagnostics
+    workspaceAnalysisHasBlockingErrors.value = event.data.hasBlockingErrors
+    workspaceAnalysisParsedModel.value = event.data.parsedModel
+    workspaceAnalysisRevision.value = event.data.revision
+  }
+  worker.onerror = () => {
+    pgmlAnalysisWorker?.terminate()
+    pgmlAnalysisWorker = null
+    syncWorkspaceAnalysisLocally(source.value, workspaceAnalysisRequestRevision.value)
+  }
+  pgmlAnalysisWorker = worker
+
+  return worker
+}
+
+const queueWorkspaceAnalysis = (nextSource: string) => {
+  const nextRevision = workspaceAnalysisRequestRevision.value + 1
+
+  workspaceAnalysisRequestRevision.value = nextRevision
+  const worker = ensurePgmlAnalysisWorker()
+
+  if (!worker) {
+    syncWorkspaceAnalysisLocally(nextSource, nextRevision)
+    return
+  }
+
+  worker.postMessage({
+    revision: nextRevision,
+    source: nextSource
+  })
+}
+
+watch(source, (nextSource) => {
+  queueWorkspaceAnalysis(nextSource)
+}, {
+  immediate: true
+})
 const {
   isEditorPanelVisible,
   isCompactStudioLayout,
@@ -366,14 +461,53 @@ const checkpointRoleItems = [
 ] satisfies Array<ReferenceTargetItem & {
   value: 'design' | 'implementation'
 }>
-const workspaceSourceAnalysis = computed(() => analyzePgmlDocument(source.value))
-const previewSourceAnalysis = computed(() => analyzePgmlDocument(previewSource.value))
+const isEditableWorkspaceDraft = computed(() => {
+  return versionedEditorMode.value === 'head' && isWorkspacePreview.value
+})
+const largeDocumentMetrics = computed(() => {
+  const value = displayedEditorSource.value
+
+  return {
+    characterCount: value.length,
+    lineCount: value.split('\n').length
+  }
+})
+const isLargeDocumentMode = computed(() => {
+  return isEditableWorkspaceDraft.value && (
+    largeDocumentMetrics.value.characterCount >= largeDocumentCharThreshold
+    || largeDocumentMetrics.value.lineCount >= largeDocumentLineThreshold
+  )
+})
+const editorCommitDebounceMs = computed(() => {
+  if (!isEditableWorkspaceDraft.value) {
+    return 0
+  }
+
+  return isLargeDocumentMode.value ? 200 : 75
+})
+const editorDiagnosticsDelayMs = computed(() => {
+  if (!isEditableWorkspaceDraft.value) {
+    return 150
+  }
+
+  return isLargeDocumentMode.value ? 500 : 150
+})
+const editorActivateCompletionOnTyping = computed(() => {
+  return !isEditableWorkspaceDraft.value || !isLargeDocumentMode.value
+})
+const previewSourceDiagnostics = computed(() => {
+  if (isWorkspacePreview.value) {
+    return workspaceAnalysisDiagnostics.value
+  }
+
+  return analyzePgmlDocument(previewSource.value).diagnostics
+})
 const sourceDiagnostics = computed(() => {
   if (versionedEditorMode.value === 'document') {
     return []
   }
 
-  return previewSourceAnalysis.value.diagnostics
+  return previewSourceDiagnostics.value
 })
 const sourceErrorDiagnostics = computed(() => {
   return sourceDiagnostics.value.filter(diagnostic => diagnostic.severity === 'error')
@@ -383,19 +517,39 @@ const sourceWarningDiagnostics = computed(() => {
 })
 const hasBlockingSourceErrors = computed(() => sourceErrorDiagnostics.value.length > 0)
 const workspaceHasBlockingSourceErrors = computed(() => {
-  return workspaceSourceAnalysis.value.diagnostics.some(diagnostic => diagnostic.severity === 'error')
+  return workspaceAnalysisHasBlockingErrors.value
+})
+const workspaceParsedModelWithSchemaMetadata = computed(() => {
+  return applyPgmlDocumentSchemaMetadataToModel(
+    workspaceAnalysisParsedModel.value,
+    versionDocument.value.schemaMetadata
+  )
+})
+watch(workspaceParsedModelWithSchemaMetadata, (nextModel) => {
+  if (workspaceHasBlockingSourceErrors.value) {
+    return
+  }
+
+  lastRenderableWorkspaceModel.value = nextModel
+}, {
+  immediate: true
 })
 const parsedModel = computed(() => {
+  if (isWorkspacePreview.value) {
+    return workspaceHasBlockingSourceErrors.value
+      ? lastRenderableWorkspaceModel.value
+      : workspaceParsedModelWithSchemaMetadata.value
+  }
+
   return applyPgmlDocumentSchemaMetadataToModel(
     parsePgml(previewSource.value),
     versionDocument.value.schemaMetadata
   )
 })
 const workspaceParsedModel = computed(() => {
-  return applyPgmlDocumentSchemaMetadataToModel(
-    parsePgml(source.value),
-    versionDocument.value.schemaMetadata
-  )
+  return workspaceHasBlockingSourceErrors.value
+    ? lastRenderableWorkspaceModel.value
+    : workspaceParsedModelWithSchemaMetadata.value
 })
 const canEmbedLayout = computed(() => !workspaceHasBlockingSourceErrors.value)
 const isEditorReadOnly = computed(() => {
@@ -463,6 +617,43 @@ const assignLayoutShellRef = (value: unknown) => {
   layoutShellRef.value = value instanceof HTMLDivElement ? value : null
 }
 
+const getLiveWorkspaceSource = () => {
+  if (!isEditableWorkspaceDraft.value) {
+    return source.value
+  }
+
+  return editorRef.value?.getValue() || source.value
+}
+
+const waitForLatestWorkspaceAnalysis = async () => {
+  if (!isWorkspacePreview.value || workspaceAnalysisRevision.value >= workspaceAnalysisRequestRevision.value) {
+    return
+  }
+
+  const startedAt = Date.now()
+
+  while (
+    workspaceAnalysisRevision.value < workspaceAnalysisRequestRevision.value
+    && Date.now() - startedAt < 1500
+  ) {
+    await new Promise((resolve) => {
+      setTimeout(resolve, 16)
+    })
+  }
+}
+
+const flushPendingEditorChanges = async (options: {
+  waitForAnalysis?: boolean
+} = {}) => {
+  if (editorRef.value?.hasPendingChanges()) {
+    await editorRef.value.flushPendingChanges()
+  }
+
+  if (options.waitForAnalysis) {
+    await waitForLatestWorkspaceAnalysis()
+  }
+}
+
 const buildSchemaText = (includeLayout: boolean) => {
   const shouldIncludeLayout = includeLayout && canEmbedLayout.value && canvasRef.value !== null
 
@@ -475,7 +666,7 @@ const syncSourceWithNodeProperties = (nodeProperties: Record<string, PgmlNodePro
   }
 
   const nextSource = buildPgmlWithNodeProperties(
-    stripPgmlPropertiesBlocks(source.value),
+    stripPgmlPropertiesBlocks(getLiveWorkspaceSource()),
     nodeProperties
   )
 
@@ -769,16 +960,73 @@ const versionCompareOptions = computed(() => {
 const importDumpBaseVersionItems = computed<ReferenceTargetItem[]>(() => {
   return buildPgmlImportBaseVersionItems(versionPanelItems.value)
 })
-const compareBaseModel = computed(() => {
+const createEmptyCompareMigrationBundle = (): PgmlVersionMigrationBundle => {
+  return {
+    kysely: {
+      migration: {
+        content: '',
+        fileName: 'pgml-version.migration.ts',
+        label: 'Version Migration',
+        warnings: []
+      }
+    },
+    meta: {
+      hasChanges: false,
+      historyAware: false,
+      statementCount: 0,
+      stepCount: 0,
+      validation: {
+        isValid: true,
+        issues: []
+      },
+      warningCount: 0
+    },
+    sql: {
+      migration: {
+        content: '',
+        fileName: 'pgml-version.migration.sql',
+        label: 'Version Migration SQL',
+        warnings: []
+      }
+    },
+    steps: []
+  }
+}
+const shouldBuildCompareArtifacts = computed(() => {
+  return toolPanelVisibility.value.open && toolPanelVisibility.value.tab === 'compare'
+})
+const shouldBuildMigrationArtifacts = computed(() => {
+  return toolPanelVisibility.value.open && toolPanelVisibility.value.tab === 'migrations'
+})
+const shouldBuildVersionArtifacts = computed(() => {
+  return shouldBuildCompareArtifacts.value || shouldBuildMigrationArtifacts.value
+})
+const compareBaseModel = computed<PgmlSchemaModel | null>(() => {
+  if (!shouldBuildVersionArtifacts.value) {
+    return null
+  }
+
   return parsePgml(compareBaseSource.value)
 })
-const compareTargetModel = computed(() => {
+const compareTargetModel = computed<PgmlSchemaModel | null>(() => {
+  if (!shouldBuildVersionArtifacts.value) {
+    return null
+  }
+
   return parsePgml(compareTargetSource.value)
 })
 const compareDiff = computed(() => {
+  if (!compareBaseModel.value || !compareTargetModel.value) {
+    return null
+  }
+
   return diffPgmlSchemaModels(compareBaseModel.value, compareTargetModel.value)
 })
 const compareEntries = computed<PgmlDiagramCompareEntry[]>(() => {
+  if (!compareDiff.value || !compareBaseModel.value || !compareTargetModel.value) {
+    return []
+  }
+
   return buildPgmlDiagramCompareEntries(
     compareDiff.value,
     compareBaseModel.value,
@@ -831,6 +1079,10 @@ const workspaceStatus = computed(() => {
   })
 })
 const compareMigrationBundle = computed(() => {
+  if (!shouldBuildMigrationArtifacts.value) {
+    return createEmptyCompareMigrationBundle()
+  }
+
   return buildPgmlVersionMigrationBundle({
     baseSource: compareBaseSource.value,
     baseVersionId: versionCompareBaseId.value,
@@ -977,11 +1229,18 @@ watch([studioLaunchRequest, orderedSavedSchemas], async ([request]) => {
   immediate: true
 })
 
-const downloadCurrentSchema = () => {
+const downloadCurrentSchema = async () => {
+  await flushPendingEditorChanges({
+    waitForAnalysis: true
+  })
   downloadSchemaText(activeSchemaName.value, buildSchemaText(includeLayoutInSchema.value))
   schemaDialogOpen.value = false
 }
 const saveCurrentSchema = async () => {
+  await flushPendingEditorChanges({
+    waitForAnalysis: true
+  })
+
   if (currentPersistenceSource.value === 'file') {
     const didSave = await saveSchemaToComputerFile(includeLayoutInSchema.value)
 
@@ -1001,7 +1260,8 @@ const saveCurrentSchema = async () => {
 
   pushSaveSuccessToast(getSaveSuccessToastDescription())
 }
-const openCheckpointDialog = () => {
+const openCheckpointDialog = async () => {
+  await flushPendingEditorChanges()
   const suggestedCreatedAt = new Date().toISOString()
 
   checkpointDialogOpen.value = true
@@ -1022,7 +1282,8 @@ const closeRestoreVersionDialog = () => {
   restoreVersionDialogOpen.value = false
   restoreVersionId.value = null
 }
-const saveCheckpoint = () => {
+const saveCheckpoint = async () => {
+  await flushPendingEditorChanges()
   const normalizedName = checkpointName.value.trim()
 
   if (normalizedName.length === 0) {
@@ -1989,24 +2250,30 @@ const persistTableDraftSchemaMetadata = (
   setSchemaMetadata(nextSchemaMetadata)
 }
 
-const saveTableEditor = () => {
+const saveTableEditor = async () => {
   if (!isWorkspacePreview.value || !tableEditorDraft.value || tableEditorErrors.value.length > 0) {
     return
   }
 
+  await flushPendingEditorChanges({
+    waitForAnalysis: true
+  })
   const previousTableId = tableEditorDraft.value.originalFullName
 
-  source.value = applyEditableTableDraftToSource(source.value, workspaceParsedModel.value, tableEditorDraft.value)
+  source.value = applyEditableTableDraftToSource(getLiveWorkspaceSource(), workspaceParsedModel.value, tableEditorDraft.value)
   persistTableDraftSchemaMetadata(tableEditorDraft.value, previousTableId)
   closeTableEditor()
 }
 
-const saveGroupEditor = () => {
+const saveGroupEditor = async () => {
   if (!isWorkspacePreview.value || !groupEditorDraft.value || groupEditorErrors.value.length > 0) {
     return
   }
 
-  source.value = applyEditableGroupDraftToSource(source.value, workspaceParsedModel.value, groupEditorDraft.value)
+  await flushPendingEditorChanges({
+    waitForAnalysis: true
+  })
+  source.value = applyEditableGroupDraftToSource(getLiveWorkspaceSource(), workspaceParsedModel.value, groupEditorDraft.value)
   closeGroupEditor()
 }
 
@@ -2015,6 +2282,9 @@ const runExport = async (format: 'svg' | 'png', scaleFactor?: number) => {
     return
   }
 
+  await flushPendingEditorChanges({
+    waitForAnalysis: true
+  })
   isExporting.value = true
 
   try {
@@ -2026,7 +2296,9 @@ const runExport = async (format: 'svg' | 'png', scaleFactor?: number) => {
   }
 }
 
-const handleCanvasFocusSource = (sourceRange: PgmlSourceRange) => {
+const handleCanvasFocusSource = async (sourceRange: PgmlSourceRange) => {
+  await flushPendingEditorChanges()
+
   if (versionedEditorMode.value === 'document') {
     versionedEditorMode.value = 'head'
   }
@@ -2046,7 +2318,7 @@ const handleCanvasReplaceSourceRange = (input: {
     return
   }
 
-  const nextSource = replacePgmlSourceRange(source.value, input.sourceRange, input.nextText)
+  const nextSource = replacePgmlSourceRange(getLiveWorkspaceSource(), input.sourceRange, input.nextText)
 
   if (nextSource === null || nextSource === source.value) {
     return
@@ -2061,6 +2333,13 @@ const handleCanvasPanelTabChange = (nextTab: DiagramPanelTab) => {
 
 const handleCanvasToolPanelTabChange = (nextTab: DiagramToolPanelTab) => {
   mobileToolPanelTab.value = nextTab
+}
+
+const handleCanvasToolPanelVisibilityChange = (payload: {
+  open: boolean
+  tab: DiagramToolPanelTab
+}) => {
+  toolPanelVisibility.value = payload
 }
 
 const handleMobileCanvasViewChange = (nextView: StudioMobileCanvasView) => {
@@ -2116,6 +2395,8 @@ watchEffect(() => {
 })
 
 onBeforeUnmount(() => {
+  pgmlAnalysisWorker?.terminate()
+  pgmlAnalysisWorker = null
   clearStudioHeaderActions()
   clearStudioSchemaStatus()
   studioSessionStore.resetStudioUiState()
@@ -2169,6 +2450,7 @@ onBeforeUnmount(() => {
           @panel-tab-change="handleCanvasPanelTabChange"
           @replace-source-range="handleCanvasReplaceSourceRange"
           @tool-panel-tab-change="handleCanvasToolPanelTabChange"
+          @tool-panel-visibility-change="handleCanvasToolPanelVisibilityChange"
           @create-table="openTableCreator"
           @edit-group="openGroupEditor"
           @edit-table="openTableEditor"
@@ -2191,6 +2473,9 @@ onBeforeUnmount(() => {
           :editor-mode="versionedEditorMode"
           :editor-mode-items="versionedEditorModeItems"
           :editor-ref-setter="assignEditorRef"
+          :activate-completion-on-typing="editorActivateCompletionOnTyping"
+          :commit-debounce-ms="editorCommitDebounceMs"
+          :diagnostics-delay-ms="editorDiagnosticsDelayMs"
           :focus-diagnostic="focusEditorDiagnostic"
           :mode-description="editorModeDescription"
           :read-only="isEditorReadOnly"
@@ -2221,6 +2506,9 @@ onBeforeUnmount(() => {
           :editor-mode="versionedEditorMode"
           :editor-mode-items="versionedEditorModeItems"
           :editor-ref-setter="assignEditorRef"
+          :activate-completion-on-typing="editorActivateCompletionOnTyping"
+          :commit-debounce-ms="editorCommitDebounceMs"
+          :diagnostics-delay-ms="editorDiagnosticsDelayMs"
           :focus-diagnostic="focusEditorDiagnostic"
           :mode-description="editorModeDescription"
           :read-only="isEditorReadOnly"
@@ -2269,6 +2557,7 @@ onBeforeUnmount(() => {
           @panel-tab-change="handleCanvasPanelTabChange"
           @replace-source-range="handleCanvasReplaceSourceRange"
           @tool-panel-tab-change="handleCanvasToolPanelTabChange"
+          @tool-panel-visibility-change="handleCanvasToolPanelVisibilityChange"
           @create-table="openTableCreator"
           @edit-group="openGroupEditor"
           @edit-table="openTableEditor"
