@@ -190,13 +190,14 @@ export const buildPgmlDocumentEditorModeDescription = (input?: {
   scopeLabel?: string | null
 }) => {
   const scope = input?.scope || 'all'
+  const scopeLabel = input?.scopeLabel || 'the selected Version block'
 
   if (scope === 'workspace') {
     return 'Showing only the Workspace block from the VersionSet document so you can inspect draft metadata without the rest of history.'
   }
 
   if (scope === 'version') {
-    return `Showing only ${input.scopeLabel || 'the selected Version block'} from the VersionSet document. Switch back to All VersionSet blocks to inspect the full history.`
+    return `Showing only ${scopeLabel} from the VersionSet document. Switch back to All VersionSet blocks to inspect the full history.`
   }
 
   return 'Showing the full VersionSet document, including locked checkpoints and workspace metadata.'
