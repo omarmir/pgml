@@ -150,6 +150,7 @@ export type DiagramGpuNodeLayoutState = {
   height: number
   id: string
   kind: 'group' | 'object' | 'table'
+  masonry?: boolean
   minHeight: number
   minWidth: number
   tableColumns?: number
@@ -238,6 +239,7 @@ export const normalizeDiagramNodeLayoutProperties = (
       collapsed: typeof entry.collapsed === 'boolean' ? entry.collapsed : previousEntry.collapsed,
       color: entry.color,
       height: entry.height,
+      masonry: typeof entry.masonry === 'boolean' ? entry.masonry : previousEntry.masonry,
       tableColumns: typeof entry.tableColumns === 'number' ? entry.tableColumns : previousEntry.tableColumns,
       tableWidthScale: typeof entry.tableWidthScale === 'number' ? entry.tableWidthScale : previousEntry.tableWidthScale,
       visible: entry.visible,

@@ -14,6 +14,12 @@ import {
   type DiagramSpatialGridIndex
 } from '~/utils/diagram-spatial-index'
 import {
+  applyDiagramRendererInitFailure,
+  getDiagramRendererCapability,
+  type DiagramRendererBackend,
+  type DiagramRendererCapability
+} from '~/utils/diagram-renderer'
+import {
   getDiagramPinchViewportTransform,
   getDiagramTouchGesture,
   type DiagramTouchGesture,
@@ -25,22 +31,18 @@ import {
   diagramDotColor,
   diagramGridDotSpacing,
   diagramGroupHeaderBandHeight,
-  diagramGroupHeaderHeight,
   diagramLabelTextColor,
   diagramLineViewportOverscan,
   diagramMaxScale,
   diagramMinScale,
   diagramMutedTextColor,
   diagramNodeViewportOverscan,
-  diagramObjectCollapsedHeight,
   diagramObjectHeaderHeight,
-  diagramObjectMinHeight,
   diagramPanelSurfaceColor,
   diagramRailColor,
   diagramRowSurfaceColor,
   diagramSpatialGridCellSize,
   diagramSurfaceColor,
-  diagramTableHeaderHeight,
   diagramTableSurfaceColor,
   diagramTableRowHeight,
   diagramTextColor,
@@ -61,6 +63,9 @@ type PixiContainer = import('pixi.js').Container
 type PixiGraphics = import('pixi.js').Graphics
 type PixiSprite = import('pixi.js').Sprite
 type PixiTexture = import('pixi.js').Texture
+type PixiWebGLRenderer = import('pixi.js').WebGLRenderer
+type PixiWebGPURenderer = import('pixi.js').WebGPURenderer
+type SceneRendererPreference = 'webgl' | 'webgpu'
 
 type TextureCacheEntry = {
   key: string
@@ -71,6 +76,8 @@ type TextureCacheEntry = {
 type DragSession = {
   dragStarted?: boolean
   groupId?: string
+  lastDragX?: number
+  lastDragY?: number
   mode: 'pan' | 'drag' | 'select'
   nodeId?: string
   nodeKind?: 'group' | 'object' | 'table'
@@ -81,6 +88,15 @@ type DragSession = {
   originX?: number
   originY?: number
   pressedTarget: HitTarget | null
+  selectOnPress?: boolean
+}
+
+type TransientNodePositionOverride = {
+  expiresAt: number
+  id: string
+  kind: 'group' | 'object' | 'table'
+  x: number
+  y: number
 }
 
 type TouchPinchSession = {
@@ -117,6 +133,7 @@ const {
   connections,
   groups,
   objects,
+  rendererBackend = 'auto',
   selection = null,
   showRelationshipLines = true,
   tables,
@@ -127,6 +144,7 @@ const {
   connections: DiagramGpuConnectionLine[]
   groups: DiagramGpuGroupNode[]
   objects: DiagramGpuObjectNode[]
+  rendererBackend?: DiagramRendererBackend
   selection?: DiagramGpuSelection | null
   showRelationshipLines?: boolean
   tables: DiagramGpuTableCard[]
@@ -139,6 +157,7 @@ const emit = defineEmits<{
   focusSource: [sourceRange: PgmlSourceRange]
   moveEnd: [payload: { id: string, kind: 'group' | 'object' | 'table', x: number, y: number }]
   moveNode: [payload: { id: string, kind: 'group' | 'object' | 'table', x: number, y: number }]
+  rendererCapabilityChange: [capability: DiagramRendererCapability]
   scaleChange: [scale: number]
   select: [selection: DiagramGpuSelection | null]
   transformChange: [transform: ViewTransform]
@@ -159,10 +178,11 @@ let groupHeaderContainer: PixiContainer | null = null
 let tableContainer: PixiContainer | null = null
 let objectContainer: PixiContainer | null = null
 
-let tableSpriteEntries = new Map<string, TextureCacheEntry>()
-let groupSpriteEntries = new Map<string, TextureCacheEntry>()
+const tableSpriteEntries = new Map<string, TextureCacheEntry>()
+const groupSpriteEntries = new Map<string, TextureCacheEntry>()
+// eslint-disable-next-line prefer-const
 let groupHeaderSpriteEntries = new Map<string, TextureCacheEntry>()
-let objectSpriteEntries = new Map<string, TextureCacheEntry>()
+const objectSpriteEntries = new Map<string, TextureCacheEntry>()
 
 let tableSpatialIndex: DiagramSpatialGridIndex<string> | null = null
 let groupSpatialIndex: DiagramSpatialGridIndex<string> | null = null
@@ -177,12 +197,17 @@ let worldScale = 1
 let destroyed = false
 let dragSession: DragSession | null = null
 let touchPinchSession: TouchPinchSession | null = null
+let touchPointerPinchActive = false
+const activeTouchPointers = new Map<number, DiagramTouchPoint>()
 let lastClickTargetKey = ''
 let lastClickTimestamp = 0
 let activeVisibleTableIds = new Set<string>()
 let activeVisibleGroupIds = new Set<string>()
 let activeVisibleObjectIds = new Set<string>()
 let activeVisibleConnectionIds = new Set<string>()
+let renderedDebugGroupCards: Array<{ id: string, x: number, y: number }> = []
+let renderedDebugObjectCards: Array<{ id: string, x: number, y: number }> = []
+let renderedDebugTableCards: Array<{ id: string, x: number, y: number }> = []
 let fullRenderScheduled = false
 let transformRenderScheduled = false
 let deferredFullRenderTimeout: ReturnType<typeof setTimeout> | null = null
@@ -190,13 +215,28 @@ let lineAnimationFrame: number | null = null
 let lineAnimationOffset = 0
 let hasViewportInteraction = false
 let themeObserver: MutationObserver | null = null
+let activeRendererPreference: SceneRendererPreference = 'webgl'
+const transientNodePositionOverrides = new Map<string, TransientNodePositionOverride>()
+const diagramFallbackMaxTextureDimension = 4096
+const diagramTextureDimensionPadding = 64
+const diagramTextureAreaSafetyRatio = 0.82
+const diagramMinimumTextureResolution = 0.125
+const diagramTextureResolutionStep = 0.125
+const diagramTransientNodePositionOverrideTtlMs = 5000
+let maxSpriteTextureDimension = diagramFallbackMaxTextureDimension
+const rendererCapability: Ref<DiagramRendererCapability> = ref({
+  fallbackReason: null,
+  isSecureContext: false,
+  requested: rendererBackend,
+  resolved: 'webgl',
+  supportsWebGPU: false
+})
 
 const fontMonoFamily = '"IBM Plex Mono", "IBM Plex Mono Fallback: Courier New", "IBM Plex Mono Fallback: Roboto Mono", "IBM Plex Mono Fallback: Noto Sans Mono", monospace'
 const fontMono = `600 9px ${fontMonoFamily}`
 const fontMonoSmall = `600 8px ${fontMonoFamily}`
 const fontMonoSmallRegular = `400 8px ${fontMonoFamily}`
 const fontSansTitle = '600 14px ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif'
-const fontSansBody = '500 10px ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif'
 const fontSansMuted = '400 8px ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif'
 
 const clamp = (value: number, min: number, max: number) => {
@@ -416,23 +456,66 @@ const refreshSceneTheme = () => {
   return didChange
 }
 
-const getTextureResolution = () => {
+const quantizeTextureResolution = (value: number) => {
+  const safeValue = Math.max(diagramMinimumTextureResolution, value)
+
+  return Math.max(
+    diagramMinimumTextureResolution,
+    Math.floor(safeValue / diagramTextureResolutionStep) * diagramTextureResolutionStep
+  )
+}
+
+const getRendererMaxTextureDimension = () => {
+  if (!app) {
+    return diagramFallbackMaxTextureDimension
+  }
+
+  const renderer = app.renderer as PixiWebGLRenderer | PixiWebGPURenderer
+
+  if ('gl' in renderer && renderer.gl) {
+    const maxTextureSize = renderer.gl.getParameter(renderer.gl.MAX_TEXTURE_SIZE)
+
+    if (typeof maxTextureSize === 'number' && Number.isFinite(maxTextureSize) && maxTextureSize > 0) {
+      return maxTextureSize
+    }
+  }
+
+  if ('gpu' in renderer) {
+    const maxTextureSize = renderer.gpu?.device?.limits?.maxTextureDimension2D
+
+    if (typeof maxTextureSize === 'number' && Number.isFinite(maxTextureSize) && maxTextureSize > 0) {
+      return maxTextureSize
+    }
+  }
+
+  return diagramFallbackMaxTextureDimension
+}
+
+const syncMaxSpriteTextureDimension = () => {
+  maxSpriteTextureDimension = getRendererMaxTextureDimension()
+}
+
+const getTextureResolution = (width: number, height: number) => {
   if (!import.meta.client) {
     return 2
   }
 
   const deviceResolution = Math.max(window.devicePixelRatio || 1, 1)
   const scaleAdjustedResolution = deviceResolution * clamp(Math.max(worldScale, 1), 1, 1.8)
+  const cappedDimension = Math.max(1024, maxSpriteTextureDimension - diagramTextureDimensionPadding)
+  const resolutionCapFromDimension = cappedDimension / Math.max(width, height, 1)
+  const safeTextureArea = cappedDimension * cappedDimension * diagramTextureAreaSafetyRatio
+  const resolutionCapFromArea = Math.sqrt(safeTextureArea / Math.max(1, width * height))
 
   if (scaleAdjustedResolution <= 1.75) {
-    return 2
+    return quantizeTextureResolution(Math.min(2, resolutionCapFromDimension, resolutionCapFromArea))
   }
 
   if (scaleAdjustedResolution <= 2.75) {
-    return 3
+    return quantizeTextureResolution(Math.min(3, resolutionCapFromDimension, resolutionCapFromArea))
   }
 
-  return 4
+  return quantizeTextureResolution(Math.min(4, resolutionCapFromDimension, resolutionCapFromArea))
 }
 
 const measureViewport = () => {
@@ -471,6 +554,149 @@ const worldPointFromClient = (clientX: number, clientY: number) => {
   }
 }
 
+const getDragWorldPosition = (session: DragSession, clientX: number, clientY: number) => {
+  return {
+    x: Math.round((session.originX || 0) + ((clientX - session.originClientX) / Math.max(worldScale, 0.001))),
+    y: Math.round((session.originY || 0) + ((clientY - session.originClientY) / Math.max(worldScale, 0.001)))
+  }
+}
+
+const getTransientNodePositionOverrideKey = (
+  kind: 'group' | 'object' | 'table',
+  id: string
+) => `${kind}:${id}`
+
+const setTransientNodePositionOverride = (payload: {
+  id: string
+  kind: 'group' | 'object' | 'table'
+  x: number
+  y: number
+}) => {
+  transientNodePositionOverrides.set(getTransientNodePositionOverrideKey(payload.kind, payload.id), {
+    expiresAt: Date.now() + diagramTransientNodePositionOverrideTtlMs,
+    id: payload.id,
+    kind: payload.kind,
+    x: payload.x,
+    y: payload.y
+  })
+}
+
+const getTransientNodePositionOverride = (
+  kind: 'group' | 'object' | 'table',
+  id: string
+) => {
+  const override = transientNodePositionOverrides.get(getTransientNodePositionOverrideKey(kind, id))
+
+  if (!override) {
+    return null
+  }
+
+  if (override.expiresAt <= Date.now()) {
+    transientNodePositionOverrides.delete(getTransientNodePositionOverrideKey(kind, id))
+    return null
+  }
+
+  return override
+}
+
+const syncTransientNodePositionOverrides = () => {
+  transientNodePositionOverrides.forEach((override, key) => {
+    if (override.expiresAt <= Date.now()) {
+      transientNodePositionOverrides.delete(key)
+      return
+    }
+
+    const matchingNode = override.kind === 'group'
+      ? groups.find(group => group.id === override.id)
+      : override.kind === 'table'
+        ? tables.find(table => table.id === override.id)
+        : objects.find(objectNode => objectNode.id === override.id)
+
+    if (!matchingNode) {
+      transientNodePositionOverrides.delete(key)
+      return
+    }
+
+    if (matchingNode.x === override.x && matchingNode.y === override.y) {
+      transientNodePositionOverrides.delete(key)
+    }
+  })
+}
+
+const getDragTargetForHitTarget = (target: HitTarget | null) => {
+  if (!target) {
+    return null
+  }
+
+  if (target.kind === 'group-header' && target.groupId) {
+    const group = groups.find(entry => entry.id === target.groupId)
+
+    if (!group) {
+      return null
+    }
+
+    return {
+      groupId: group.id,
+      id: group.id,
+      kind: 'group' as const,
+      originX: group.x,
+      originY: group.y,
+      selectOnPress: true
+    }
+  }
+
+  if ((target.kind === 'table-header' || target.kind === 'table-row') && target.tableId) {
+    const table = tables.find(entry => entry.id === target.tableId)
+
+    if (!table) {
+      return null
+    }
+
+    if (table.groupId) {
+      const group = groups.find(entry => entry.id === table.groupId)
+
+      if (!group) {
+        return null
+      }
+
+      return {
+        groupId: group.id,
+        id: group.id,
+        kind: 'group' as const,
+        originX: group.x,
+        originY: group.y,
+        selectOnPress: false
+      }
+    }
+
+    return {
+      id: table.id,
+      kind: 'table' as const,
+      originX: table.x,
+      originY: table.y,
+      selectOnPress: target.kind === 'table-header'
+    }
+  }
+
+  if ((target.kind === 'object-header' || target.kind === 'object-body') && target.objectId) {
+    const objectNode = objects.find(entry => entry.id === target.objectId)
+
+    if (!objectNode) {
+      return null
+    }
+
+    return {
+      id: objectNode.id,
+      kind: 'object' as const,
+      originX: objectNode.x,
+      originY: objectNode.y,
+      selectOnPress: true
+    }
+  }
+
+  return null
+}
+
 const getTouchGesture = (touches: TouchList): DiagramTouchGesture | null => {
   const firstTouch = touches.item(0)
   const secondTouch = touches.item(1)
@@ -505,6 +731,46 @@ const startTouchPinchSession = (gesture: DiagramTouchGesture) => {
 
 const resetTouchInteraction = () => {
   touchPinchSession = null
+  touchPointerPinchActive = false
+  activeTouchPointers.clear()
+}
+
+const getPointerTouchGesture = () => {
+  const [firstPoint, secondPoint] = Array.from(activeTouchPointers.values())
+
+  if (!firstPoint || !secondPoint) {
+    return null
+  }
+
+  return getDiagramTouchGesture(firstPoint, secondPoint)
+}
+
+const applyPinchGestureTransform = (gesture: DiagramTouchGesture) => {
+  if (!touchPinchSession) {
+    startTouchPinchSession(gesture)
+  }
+
+  if (!touchPinchSession) {
+    return
+  }
+
+  const transform = getDiagramPinchViewportTransform({
+    currentCenter: gesture.center,
+    currentDistance: gesture.distance,
+    initialCenter: touchPinchSession.initialCenter,
+    initialDistance: touchPinchSession.initialDistance,
+    initialPan: touchPinchSession.initialPan,
+    initialScale: touchPinchSession.initialScale,
+    maxScale: diagramMaxScale,
+    minScale: diagramMinScale
+  })
+
+  worldScale = transform.scale
+  worldPanX = transform.pan.x
+  worldPanY = transform.pan.y
+  hasViewportInteraction = true
+  scheduleTransformRender()
+  scheduleDeferredFullRender(48)
 }
 
 const updateWorldTransform = () => {
@@ -608,7 +874,7 @@ const drawBadge = (
   const text = fitText(context, label.toUpperCase(), Math.max(24, maxWidth - 10))
   const width = measureBadgeWidth(context, label, maxWidth)
 
-  context.fillStyle = mixColors(color, 'rgba(0, 0, 0, 0)', 0.14)
+  context.fillStyle = withAlpha(color, 0.14)
   context.strokeStyle = mixColors(color, sceneTheme.rail, 0.58)
   context.lineWidth = 1
   roundRect(context, x, y, width, 12, 0)
@@ -680,60 +946,6 @@ const drawHeaderChip = (
   context.fillText(label, x + 6, y + 4.5)
 }
 
-const drawTableGridGlyph = (
-  context: CanvasRenderingContext2D,
-  x: number,
-  y: number,
-  strokeColor: string
-) => {
-  context.strokeStyle = strokeColor
-  context.lineWidth = 1
-  context.strokeRect(x, y, 10, 10)
-  context.beginPath()
-  context.moveTo(x + 5.5, y + 1)
-  context.lineTo(x + 5.5, y + 9)
-  context.moveTo(x + 1, y + 5.5)
-  context.lineTo(x + 9, y + 5.5)
-  context.stroke()
-}
-
-const drawPencilGlyph = (
-  context: CanvasRenderingContext2D,
-  x: number,
-  y: number,
-  strokeColor: string
-) => {
-  context.strokeStyle = strokeColor
-  context.lineWidth = 1
-  context.beginPath()
-  context.moveTo(x + 1, y + 9)
-  context.lineTo(x + 3.5, y + 9)
-  context.lineTo(x + 9, y + 3.5)
-  context.lineTo(x + 6.5, y + 1)
-  context.closePath()
-  context.stroke()
-}
-
-const drawHeaderIconChip = (
-  context: CanvasRenderingContext2D,
-  x: number,
-  y: number,
-  glyph: 'grid' | 'pencil'
-) => {
-  context.fillStyle = 'rgba(255, 255, 255, 0.014)'
-  context.strokeStyle = 'rgba(255, 255, 255, 0.05)'
-  context.lineWidth = 1
-  context.strokeRect(x, y, 17, 17)
-  context.fillRect(x, y, 17, 17)
-
-  if (glyph === 'grid') {
-    drawTableGridGlyph(context, x + 3.5, y + 3.5, sceneTheme.muted)
-    return
-  }
-
-  drawPencilGlyph(context, x + 3.5, y + 3.5, sceneTheme.muted)
-}
-
 const destroyTextureEntries = (entries: Map<string, TextureCacheEntry>) => {
   entries.forEach((entry) => {
     entry.sprite.destroy()
@@ -783,6 +995,8 @@ const hashDiagramRenderSignature = (value: string) => {
 
   return Math.abs(hash).toString(36)
 }
+
+const diagramSpriteRasterVersion = '2026-03-30-group-shell-v3'
 
 const getGroupRenderSignature = (group: DiagramGpuGroupNode) => {
   return [
@@ -841,7 +1055,7 @@ const getObjectRenderSignature = (node: DiagramGpuObjectNode) => {
 }
 
 const createCanvas = (width: number, height: number, resolution: number) => {
-  const safeResolution = Math.max(1, resolution)
+  const safeResolution = Math.max(diagramMinimumTextureResolution, resolution)
   const canvas = document.createElement('canvas')
   canvas.width = Math.max(1, Math.ceil(width * safeResolution))
   canvas.height = Math.max(1, Math.ceil(height * safeResolution))
@@ -919,11 +1133,13 @@ const buildTableCanvas = (card: DiagramGpuTableCard, resolution: number) => {
     : compositeColors(withAlpha(card.color, 0.2), sceneTheme.tableSurface)
   const headerTextColor = isGroupedTable ? shellTextColor : getReadableTextColor(headerFillColor)
   const headerMetaColor = isGroupedTable ? accentColor : withAlpha(headerTextColor, 0.82)
-  const headerChipColors = isGroupedTable ? undefined : {
-    fill: withAlpha(headerTextColor, 0.08),
-    stroke: withAlpha(headerTextColor, 0.22),
-    text: withAlpha(headerTextColor, 0.82)
-  }
+  const headerChipColors = isGroupedTable
+    ? undefined
+    : {
+        fill: withAlpha(headerTextColor, 0.08),
+        stroke: withAlpha(headerTextColor, 0.22),
+        text: withAlpha(headerTextColor, 0.82)
+      }
   const mutedTextColor = sceneTheme.muted
   const shellStrokeColor = isGroupedTable ? dividerColor : borderColor
   const shellClipInset = isGroupedTable ? 0 : 1
@@ -1099,8 +1315,23 @@ const buildGroupCanvas = (group: DiagramGpuGroupNode, resolution: number) => {
   const compareAccentColor = group.compareHighlightColor
     ? mixColors(group.compareHighlightColor, sceneTheme.surface, 0.2)
     : null
-  const shellFill = sceneTheme.groupSurface
-  const bodyOverlayFill = withAlpha(group.color, 0.02)
+  const shellFill = compositeColors(sceneTheme.groupSurface, sceneTheme.background)
+  const bodyOverlayFill = compositeColors(withAlpha(group.color, 0.02), shellFill)
+  const headerOverlayHeight = getGroupHeaderOverlayHeight(group)
+  const headerTopFill = compositeColors(withAlpha(group.color, 0.28), bodyOverlayFill)
+  const headerMidFill = compositeColors(withAlpha(group.color, 0.14), bodyOverlayFill)
+  const headerLowFill = compositeColors(withAlpha(group.color, 0.05), bodyOverlayFill)
+  const headerMidStop = Math.min(1, (diagramGroupHeaderBandHeight * 0.24) / headerOverlayHeight)
+  const headerLowStop = Math.min(1, (diagramGroupHeaderBandHeight * 0.5) / headerOverlayHeight)
+  const headerTailStop = Math.min(1, diagramGroupHeaderBandHeight / headerOverlayHeight)
+  const headerFadeOutStop = Math.min(1, (diagramGroupHeaderBandHeight + 18) / headerOverlayHeight)
+  const headerGradient = context.createLinearGradient(0, 0, 0, headerOverlayHeight)
+  headerGradient.addColorStop(0, headerTopFill)
+  headerGradient.addColorStop(headerMidStop, headerMidFill)
+  headerGradient.addColorStop(headerLowStop, headerLowFill)
+  headerGradient.addColorStop(headerTailStop, headerLowFill)
+  headerGradient.addColorStop(headerFadeOutStop, bodyOverlayFill)
+  headerGradient.addColorStop(1, bodyOverlayFill)
 
   context.fillStyle = shellFill
   roundRect(context, 0.5, 0.5, group.width - 1, group.height - 1, 2.5)
@@ -1111,9 +1342,14 @@ const buildGroupCanvas = (group: DiagramGpuGroupNode, resolution: number) => {
   context.clip()
   context.fillStyle = bodyOverlayFill
   context.fillRect(1, 1, Math.max(0, group.width - 2), Math.max(0, group.height - 2))
+  context.fillStyle = headerGradient
+  context.fillRect(1, 1, Math.max(0, group.width - 2), Math.max(0, headerOverlayHeight - 1))
 
   if (compareAccentColor) {
-    context.fillStyle = withAlpha(compareAccentColor, group.compareHighlightActive ? 0.12 : 0.06)
+    context.fillStyle = compositeColors(
+      withAlpha(compareAccentColor, group.compareHighlightActive ? 0.12 : 0.06),
+      bodyOverlayFill
+    )
     context.fillRect(1, 1, Math.max(0, group.width - 2), Math.max(0, group.height - 2))
   }
 
@@ -1142,26 +1378,14 @@ const buildGroupHeaderOverlayCanvas = (group: DiagramGpuGroupNode, resolution: n
   const headerOverlayHeight = getGroupHeaderOverlayHeight(group)
   const { canvas, context } = createCanvas(group.width, headerOverlayHeight, resolution)
   const accentColor = getNodeAccentColor(group.color)
-  const headerTopFill = withAlpha(group.color, 0.28)
-  const headerMidFill = withAlpha(group.color, 0.14)
-  const headerLowFill = withAlpha(group.color, 0.05)
-  const headerMidStop = Math.min(1, (diagramGroupHeaderBandHeight * 0.24) / headerOverlayHeight)
-  const headerLowStop = Math.min(1, (diagramGroupHeaderBandHeight * 0.5) / headerOverlayHeight)
-  const headerTailStop = Math.min(1, diagramGroupHeaderBandHeight / headerOverlayHeight)
-  const headerFadeOutStop = Math.min(1, (diagramGroupHeaderBandHeight + 18) / headerOverlayHeight)
-  const headerGradient = context.createLinearGradient(0, 0, 0, headerOverlayHeight)
-  headerGradient.addColorStop(0, headerTopFill)
-  headerGradient.addColorStop(headerMidStop, headerMidFill)
-  headerGradient.addColorStop(headerLowStop, headerLowFill)
-  headerGradient.addColorStop(headerTailStop, headerLowFill)
-  headerGradient.addColorStop(headerFadeOutStop, 'rgba(0, 0, 0, 0)')
-  headerGradient.addColorStop(1, 'rgba(0, 0, 0, 0)')
+  const shellFill = compositeColors(sceneTheme.groupSurface, sceneTheme.background)
+  const bodyOverlayFill = compositeColors(withAlpha(group.color, 0.02), shellFill)
+  const chipBaseFill = compositeColors(sceneTheme.control, bodyOverlayFill)
+  const chipStrokeColor = compositeColors(sceneTheme.rail, chipBaseFill)
 
   context.save()
   topRoundRect(context, 0.5, 0.5, group.width - 1, headerOverlayHeight - 0.5, 2.5)
   context.clip()
-  context.fillStyle = headerGradient
-  context.fillRect(1, 1, Math.max(0, group.width - 2), Math.max(0, headerOverlayHeight - 1))
 
   context.font = fontMonoSmallRegular
   context.fillStyle = accentColor
@@ -1173,7 +1397,11 @@ const buildGroupHeaderOverlayCanvas = (group: DiagramGpuGroupNode, resolution: n
   const pillWidth = Math.max(58, context.measureText(pill).width + 12)
   const pillX = group.width - 12 - pillWidth
   const headerControlsWidth = pillWidth + 12
-
+  const pillColors = {
+    fill: chipBaseFill,
+    stroke: chipStrokeColor,
+    text: accentColor
+  }
   context.font = fontSansTitle
   context.fillStyle = sceneTheme.shellText
   context.fillText(fitText(context, group.title, group.width - headerControlsWidth - 28), 12, 24)
@@ -1184,7 +1412,7 @@ const buildGroupHeaderOverlayCanvas = (group: DiagramGpuGroupNode, resolution: n
     context.fillText(fitText(context, group.note, group.width - headerControlsWidth - 28), 12, 42)
   }
 
-  drawHeaderChip(context, pillX, 9, pillWidth, pill, fontMonoSmallRegular)
+  drawHeaderChip(context, pillX, 9, pillWidth, pill, fontMonoSmallRegular, pillColors)
   context.restore()
 
   return canvas
@@ -1262,6 +1490,17 @@ const buildObjectCanvas = (node: DiagramGpuObjectNode, resolution: number) => {
   return canvas
 }
 
+const createTextureFromCanvas = (canvas: HTMLCanvasElement) => {
+  if (!pixi) {
+    throw new Error('Pixi must be initialized before creating diagram textures.')
+  }
+
+  return pixi.Texture.from({
+    alphaMode: 'premultiply-alpha-on-upload',
+    resource: canvas
+  })
+}
+
 const getOrCreateSpriteEntry = (
   entries: Map<string, TextureCacheEntry>,
   key: string,
@@ -1275,8 +1514,8 @@ const getOrCreateSpriteEntry = (
     return null
   }
 
-  const resolution = getTextureResolution()
-  const nextKey = `${key}:${getSelectionStateKey(key)}:${Math.round(resolution * 100)}:${width}x${height}:${hashDiagramRenderSignature(renderSignature)}:${hashDiagramRenderSignature(sceneThemeSignature)}`
+  const resolution = getTextureResolution(width, height)
+  const nextKey = `${key}:${getSelectionStateKey(key)}:${Math.round(resolution * 100)}:${width}x${height}:${diagramSpriteRasterVersion}:${hashDiagramRenderSignature(renderSignature)}:${hashDiagramRenderSignature(sceneThemeSignature)}`
   const existingEntry = entries.get(key)
 
   if (existingEntry?.key === nextKey) {
@@ -1284,7 +1523,7 @@ const getOrCreateSpriteEntry = (
   }
 
   const canvas = buildCanvas(resolution)
-  const texture = pixi.Texture.from(canvas)
+  const texture = createTextureFromCanvas(canvas)
   const sprite = existingEntry?.sprite || new pixi.Sprite(texture)
 
   if (existingEntry) {
@@ -1441,12 +1680,10 @@ const resolveHitTarget = (clientX: number, clientY: number) => {
       continue
     }
 
-    if (worldPoint.y <= group.y + diagramGroupHeaderHeight) {
-      return {
-        groupId: group.id,
-        kind: 'group-header'
-      } satisfies HitTarget
-    }
+    return {
+      groupId: group.id,
+      kind: 'group-header'
+    } satisfies HitTarget
   }
 
   return null
@@ -1520,16 +1757,38 @@ const publishRendererDebug = () => {
   ;(window as Window & {
     __pgmlSceneRendererDebug?: {
       background: string
+      fallbackReason: DiagramRendererCapability['fallbackReason']
+      isSecureContext: boolean
+      rendererBackend: SceneRendererPreference
+      requestedRendererBackend: DiagramRendererBackend
       panX: number
       panY: number
+      renderedGroupCards: Array<{ id: string, x: number, y: number }>
+      renderedObjectCards: Array<{ id: string, x: number, y: number }>
+      renderedTableCards: Array<{ id: string, x: number, y: number }>
+      resolvedRendererBackend: DiagramRendererCapability['resolved']
       scale: number
     }
   }).__pgmlSceneRendererDebug = {
     background: sceneTheme.background,
+    fallbackReason: rendererCapability.value.fallbackReason,
+    isSecureContext: rendererCapability.value.isSecureContext,
+    rendererBackend: activeRendererPreference,
+    requestedRendererBackend: rendererCapability.value.requested,
     panX: worldPanX,
     panY: worldPanY,
+    renderedGroupCards: renderedDebugGroupCards,
+    renderedObjectCards: renderedDebugObjectCards,
+    renderedTableCards: renderedDebugTableCards,
+    resolvedRendererBackend: rendererCapability.value.resolved,
     scale: worldScale
   }
+}
+
+const setRendererCapability = (nextCapability: DiagramRendererCapability) => {
+  rendererCapability.value = nextCapability
+  emit('rendererCapabilityChange', nextCapability)
+  publishRendererDebug()
 }
 
 const renderWorldTransformOnly = () => {
@@ -1780,6 +2039,7 @@ const renderScene = () => {
     return
   }
 
+  syncTransientNodePositionOverrides()
   updateWorldTransform()
 
   const visibleGroupIds = getVisibleIds(groupSpatialIndex, diagramNodeViewportOverscan)
@@ -1792,6 +2052,28 @@ const renderScene = () => {
   activeVisibleObjectIds = visibleObjectIds
   activeVisibleConnectionIds = visibleConnectionIds
 
+  const groupBasePositionById = groups.reduce<Record<string, { x: number, y: number }>>((entries, group) => {
+    entries[group.id] = {
+      x: group.x,
+      y: group.y
+    }
+
+    return entries
+  }, {})
+  const groupRenderPositionById = groups.reduce<Record<string, { x: number, y: number }>>((entries, group) => {
+    const override = getTransientNodePositionOverride('group', group.id)
+
+    entries[group.id] = {
+      x: override?.x ?? group.x,
+      y: override?.y ?? group.y
+    }
+
+    return entries
+  }, {})
+  renderedDebugGroupCards = []
+  renderedDebugTableCards = []
+  renderedDebugObjectCards = []
+
   groups.forEach((group) => {
     const renderSignature = getGroupRenderSignature(group)
     const entry = getOrCreateSpriteEntry(
@@ -1801,15 +2083,20 @@ const renderScene = () => {
       renderSignature,
       group.width,
       group.height,
-      (resolution) => buildGroupCanvas(group, resolution)
+      resolution => buildGroupCanvas(group, resolution)
     )
 
     if (!entry) {
       return
     }
 
+    const groupRenderPosition = groupRenderPositionById[group.id] || {
+      x: group.x,
+      y: group.y
+    }
+
     entry.sprite.visible = visibleGroupIds.has(group.id)
-    entry.sprite.position.set(group.x, group.y)
+    entry.sprite.position.set(groupRenderPosition.x, groupRenderPosition.y)
     entry.sprite.zIndex = selection?.kind === 'group' && selection.id === group.id ? 2 : 0
 
     const headerEntry = getOrCreateSpriteEntry(
@@ -1819,7 +2106,7 @@ const renderScene = () => {
       renderSignature,
       group.width,
       getGroupHeaderOverlayHeight(group),
-      (resolution) => buildGroupHeaderOverlayCanvas(group, resolution)
+      resolution => buildGroupHeaderOverlayCanvas(group, resolution)
     )
 
     if (!headerEntry) {
@@ -1827,8 +2114,13 @@ const renderScene = () => {
     }
 
     headerEntry.sprite.visible = visibleGroupIds.has(group.id)
-    headerEntry.sprite.position.set(group.x, group.y)
+    headerEntry.sprite.position.set(groupRenderPosition.x, groupRenderPosition.y)
     headerEntry.sprite.zIndex = selection?.kind === 'group' && selection.id === group.id ? 4 : 0
+    renderedDebugGroupCards.push({
+      id: group.id,
+      x: groupRenderPosition.x,
+      y: groupRenderPosition.y
+    })
   })
 
   tables.forEach((table) => {
@@ -1839,7 +2131,7 @@ const renderScene = () => {
       getTableRenderSignature(table),
       table.width,
       table.height,
-      (resolution) => buildTableCanvas(table, resolution)
+      resolution => buildTableCanvas(table, resolution)
     )
 
     if (!entry) {
@@ -1847,7 +2139,26 @@ const renderScene = () => {
     }
 
     entry.sprite.visible = visibleTableIds.has(table.id)
-    entry.sprite.position.set(table.x, table.y)
+    let renderedTablePosition = {
+      x: table.x,
+      y: table.y
+    }
+
+    if (table.groupId && groupBasePositionById[table.groupId] && groupRenderPositionById[table.groupId]) {
+      renderedTablePosition = {
+        x: table.x + (groupRenderPositionById[table.groupId]?.x || 0) - (groupBasePositionById[table.groupId]?.x || 0),
+        y: table.y + (groupRenderPositionById[table.groupId]?.y || 0) - (groupBasePositionById[table.groupId]?.y || 0)
+      }
+    } else {
+      const override = getTransientNodePositionOverride('table', table.id)
+
+      renderedTablePosition = {
+        x: override?.x ?? table.x,
+        y: override?.y ?? table.y
+      }
+    }
+
+    entry.sprite.position.set(renderedTablePosition.x, renderedTablePosition.y)
     entry.sprite.zIndex = selection?.kind === 'table' && selection.tableId === table.id
       ? 14
       : selection?.kind === 'column' && selection.tableId === table.id
@@ -1855,6 +2166,11 @@ const renderScene = () => {
         : selection?.kind === 'attachment' && selection.tableId === table.id
           ? 14
           : 10
+    renderedDebugTableCards.push({
+      id: table.id,
+      x: renderedTablePosition.x,
+      y: renderedTablePosition.y
+    })
   })
 
   objects.forEach((objectNode) => {
@@ -1865,7 +2181,7 @@ const renderScene = () => {
       getObjectRenderSignature(objectNode),
       objectNode.width,
       objectNode.height,
-      (resolution) => buildObjectCanvas(objectNode, resolution)
+      resolution => buildObjectCanvas(objectNode, resolution)
     )
 
     if (!entry) {
@@ -1873,8 +2189,19 @@ const renderScene = () => {
     }
 
     entry.sprite.visible = visibleObjectIds.has(objectNode.id)
-    entry.sprite.position.set(objectNode.x, objectNode.y)
+    const override = getTransientNodePositionOverride('object', objectNode.id)
+    const objectRenderPosition = {
+      x: override?.x ?? objectNode.x,
+      y: override?.y ?? objectNode.y
+    }
+
+    entry.sprite.position.set(objectRenderPosition.x, objectRenderPosition.y)
     entry.sprite.zIndex = selection?.kind === 'object' && selection.id === objectNode.id ? 16 : 12
+    renderedDebugObjectCards.push({
+      id: objectNode.id,
+      x: objectRenderPosition.x,
+      y: objectRenderPosition.y
+    })
   })
 
   renderConnectionLayer()
@@ -1996,53 +2323,51 @@ const handleWheel = (event: WheelEvent) => {
 }
 
 const handlePointerDown = (event: PointerEvent) => {
+  if (event.pointerType === 'touch') {
+    activeTouchPointers.set(event.pointerId, {
+      x: event.clientX,
+      y: event.clientY
+    })
+    overlayRef.value?.setPointerCapture(event.pointerId)
+
+    if (activeTouchPointers.size >= 2) {
+      const gesture = getPointerTouchGesture()
+
+      dragSession = null
+      touchPointerPinchActive = true
+
+      if (gesture) {
+        applyPinchGestureTransform(gesture)
+      }
+
+      return
+    }
+  }
+
   if (event.button !== 0) {
     return
   }
 
   const hitTarget = resolveHitTarget(event.clientX, event.clientY)
+  const dragTarget = hitTarget?.kind === 'object-toggle' ? null : getDragTargetForHitTarget(hitTarget)
   const originPoint = worldPointFromClient(event.clientX, event.clientY)
 
-  if (hitTarget?.kind === 'group-header' && hitTarget.groupId) {
-    const group = groups.find(entry => entry.id === hitTarget.groupId)
-
-    if (!group) {
-      return
-    }
-
+  if (dragTarget) {
     dragSession = {
-      groupId: group.id,
+      groupId: dragTarget.groupId,
       mode: 'drag',
-      nodeId: group.id,
-      nodeKind: 'group',
+      nodeId: dragTarget.id,
+      nodeKind: dragTarget.kind,
       originClientX: event.clientX,
       originClientY: event.clientY,
       originPanX: worldPanX,
       originPanY: worldPanY,
-      originX: group.x,
-      originY: group.y,
-      pressedTarget: hitTarget
+      originX: dragTarget.originX,
+      originY: dragTarget.originY,
+      pressedTarget: hitTarget,
+      selectOnPress: dragTarget.selectOnPress
     }
-  } else if (hitTarget?.kind === 'table-header' && hitTarget.tableId) {
-    const table = tables.find(entry => entry.id === hitTarget.tableId)
-
-    if (!table) {
-      return
-    }
-
-    dragSession = {
-      mode: table.groupId ? 'select' : 'drag',
-      nodeId: table.id,
-      nodeKind: 'table',
-      originClientX: event.clientX,
-      originClientY: event.clientY,
-      originPanX: worldPanX,
-      originPanY: worldPanY,
-      originX: table.x,
-      originY: table.y,
-      pressedTarget: hitTarget
-    }
-  } else if ((hitTarget?.kind === 'object-header' || hitTarget?.kind === 'object-body' || hitTarget?.kind === 'object-toggle') && hitTarget.objectId) {
+  } else if (hitTarget?.kind === 'object-toggle' && hitTarget.objectId) {
     const objectNode = objects.find(entry => entry.id === hitTarget.objectId)
 
     if (!objectNode) {
@@ -2050,7 +2375,7 @@ const handlePointerDown = (event: PointerEvent) => {
     }
 
     dragSession = {
-      mode: hitTarget.kind === 'object-header' ? 'drag' : 'select',
+      mode: 'select',
       nodeId: objectNode.id,
       nodeKind: 'object',
       originClientX: event.clientX,
@@ -2078,28 +2403,28 @@ const handlePointerDown = (event: PointerEvent) => {
     emit('select', null)
   }
 
-  if (dragSession?.mode === 'drag' && dragSession.nodeKind === 'group' && dragSession.groupId) {
+  if (dragSession?.mode === 'drag' && dragSession.selectOnPress && dragSession.nodeKind === 'group' && dragSession.groupId) {
     emit('select', {
       id: dragSession.groupId,
       kind: 'group'
     })
   }
 
-  if (dragSession?.mode === 'drag' && dragSession.nodeKind === 'table' && dragSession.nodeId) {
+  if (dragSession?.mode === 'drag' && dragSession.selectOnPress && dragSession.nodeKind === 'table' && dragSession.nodeId) {
     emit('select', {
       kind: 'table',
       tableId: dragSession.nodeId
     })
   }
 
-  if (dragSession?.mode === 'drag' && dragSession.nodeKind === 'object' && dragSession.nodeId) {
+  if (dragSession?.mode === 'drag' && dragSession.selectOnPress && dragSession.nodeKind === 'object' && dragSession.nodeId) {
     emit('select', {
       id: dragSession.nodeId,
       kind: 'object'
     })
   }
 
-  if (dragSession?.pressedTarget?.kind === 'table-row') {
+  if (dragSession?.pressedTarget?.kind === 'table-row' && dragSession.mode !== 'drag') {
     emitSelectionForHitTarget(dragSession.pressedTarget)
   }
 
@@ -2125,6 +2450,27 @@ const handleTouchStart = (event: TouchEvent) => {
 }
 
 const handlePointerMove = (event: PointerEvent) => {
+  if (event.pointerType === 'touch' && activeTouchPointers.has(event.pointerId)) {
+    activeTouchPointers.set(event.pointerId, {
+      x: event.clientX,
+      y: event.clientY
+    })
+
+    if (activeTouchPointers.size >= 2) {
+      const gesture = getPointerTouchGesture()
+
+      if (!gesture) {
+        return
+      }
+
+      dragSession = null
+      touchPointerPinchActive = true
+      event.preventDefault()
+      applyPinchGestureTransform(gesture)
+      return
+    }
+  }
+
   if (!dragSession) {
     return
   }
@@ -2156,15 +2502,22 @@ const handlePointerMove = (event: PointerEvent) => {
   }
 
   dragSession.dragStarted = true
-
-  const deltaWorldX = deltaClientX / Math.max(worldScale, 0.001)
-  const deltaWorldY = deltaClientY / Math.max(worldScale, 0.001)
+  const nextPosition = getDragWorldPosition(dragSession, event.clientX, event.clientY)
+  dragSession.lastDragX = nextPosition.x
+  dragSession.lastDragY = nextPosition.y
+  setTransientNodePositionOverride({
+    id: dragSession.nodeId,
+    kind: dragSession.nodeKind,
+    x: nextPosition.x,
+    y: nextPosition.y
+  })
+  scheduleFullRender()
 
   emit('moveNode', {
     id: dragSession.nodeId,
     kind: dragSession.nodeKind,
-    x: Math.round((dragSession.originX || 0) + deltaWorldX),
-    y: Math.round((dragSession.originY || 0) + deltaWorldY)
+    x: nextPosition.x,
+    y: nextPosition.y
   })
 }
 
@@ -2179,35 +2532,40 @@ const handleTouchMove = (event: TouchEvent) => {
     return
   }
 
-  if (!touchPinchSession) {
-    startTouchPinchSession(gesture)
-  }
-
-  if (!touchPinchSession) {
-    return
-  }
-
   event.preventDefault()
-  const transform = getDiagramPinchViewportTransform({
-    currentCenter: gesture.center,
-    currentDistance: gesture.distance,
-    initialCenter: touchPinchSession.initialCenter,
-    initialDistance: touchPinchSession.initialDistance,
-    initialPan: touchPinchSession.initialPan,
-    initialScale: touchPinchSession.initialScale,
-    maxScale: diagramMaxScale,
-    minScale: diagramMinScale
-  })
-
-  worldScale = transform.scale
-  worldPanX = transform.pan.x
-  worldPanY = transform.pan.y
-  hasViewportInteraction = true
-  scheduleTransformRender()
-  scheduleDeferredFullRender(48)
+  applyPinchGestureTransform(gesture)
 }
 
 const handlePointerUp = (event: PointerEvent) => {
+  if (event.pointerType === 'touch') {
+    activeTouchPointers.delete(event.pointerId)
+
+    if (overlayRef.value?.hasPointerCapture(event.pointerId)) {
+      overlayRef.value.releasePointerCapture(event.pointerId)
+    }
+
+    if (touchPointerPinchActive) {
+      if (activeTouchPointers.size >= 2) {
+        const gesture = getPointerTouchGesture()
+
+        if (gesture) {
+          startTouchPinchSession(gesture)
+        }
+
+        return
+      }
+
+      if (activeTouchPointers.size === 0) {
+        resetTouchInteraction()
+      } else {
+        touchPinchSession = null
+      }
+
+      dragSession = null
+      return
+    }
+  }
+
   if (!dragSession) {
     if (overlayRef.value?.hasPointerCapture(event.pointerId)) {
       overlayRef.value.releasePointerCapture(event.pointerId)
@@ -2221,11 +2579,25 @@ const handlePointerUp = (event: PointerEvent) => {
   }
 
   if (dragSession.dragStarted && dragSession.nodeId && dragSession.nodeKind && dragSession.mode === 'drag') {
+    const finalPosition = typeof dragSession.lastDragX === 'number' && typeof dragSession.lastDragY === 'number'
+      ? {
+          x: dragSession.lastDragX,
+          y: dragSession.lastDragY
+        }
+      : getDragWorldPosition(dragSession, event.clientX, event.clientY)
+
+    setTransientNodePositionOverride({
+      id: dragSession.nodeId,
+      kind: dragSession.nodeKind,
+      x: finalPosition.x,
+      y: finalPosition.y
+    })
+    scheduleFullRender()
     emit('moveEnd', {
       id: dragSession.nodeId,
       kind: dragSession.nodeKind,
-      x: Math.round((dragSession.originX || 0) + ((event.clientX - dragSession.originClientX) / Math.max(worldScale, 0.001))),
-      y: Math.round((dragSession.originY || 0) + ((event.clientY - dragSession.originClientY) / Math.max(worldScale, 0.001)))
+      x: finalPosition.x,
+      y: finalPosition.y
     })
   }
 
@@ -2269,6 +2641,46 @@ const handleTouchEnd = (event: TouchEvent) => {
   resetTouchInteraction()
 }
 
+const isTouchInteractionWithinViewport = (event: TouchEvent) => {
+  const bounds = hostRef.value?.getBoundingClientRect()
+  const referenceTouch = event.touches.item(0) || event.changedTouches.item(0)
+
+  if (!bounds || !referenceTouch) {
+    return false
+  }
+
+  return (
+    referenceTouch.clientX >= bounds.left
+    && referenceTouch.clientX <= bounds.right
+    && referenceTouch.clientY >= bounds.top
+    && referenceTouch.clientY <= bounds.bottom
+  )
+}
+
+const handleWindowTouchStart = (event: TouchEvent) => {
+  if (!isTouchInteractionWithinViewport(event)) {
+    return
+  }
+
+  handleTouchStart(event)
+}
+
+const handleWindowTouchMove = (event: TouchEvent) => {
+  if (!touchPinchSession && !isTouchInteractionWithinViewport(event)) {
+    return
+  }
+
+  handleTouchMove(event)
+}
+
+const handleWindowTouchEnd = (event: TouchEvent) => {
+  if (!touchPinchSession && !isTouchInteractionWithinViewport(event)) {
+    return
+  }
+
+  handleTouchEnd(event)
+}
+
 const rebuildSpatialIndices = () => {
   tableSpatialIndex = buildDiagramSpatialGridIndex(tables.map((table) => {
     return {
@@ -2305,26 +2717,72 @@ const rebuildSpatialIndices = () => {
   }), diagramSpatialGridCellSize)
 }
 
-const initPixi = async () => {
+const getRendererCapabilitySnapshot = () => {
+  if (!import.meta.client) {
+    return getDiagramRendererCapability({
+      hasWebGPU: false,
+      isSecureContext: false,
+      requested: rendererBackend
+    })
+  }
+
+  const navigatorWithGpu = navigator as Navigator & {
+    gpu?: Record<string, unknown>
+  }
+
+  return getDiagramRendererCapability({
+    hasWebGPU: Boolean(navigatorWithGpu.gpu),
+    isSecureContext: window.isSecureContext,
+    requested: rendererBackend
+  })
+}
+
+const initPixi = async (initialTransform: ViewTransform | null = null) => {
   if (!(hostRef.value instanceof HTMLDivElement) || app) {
     return
   }
 
-  pixi = await import('pixi.js')
-  app = new pixi.Application()
-  await app.init({
-    antialias: true,
-    autoDensity: true,
-    autoStart: false,
-    backgroundAlpha: 0,
-    preference: 'webgl',
-    resolution: Math.max(window.devicePixelRatio || 1, 1)
-  })
+  const pixiModule = await import('pixi.js')
+
+  pixi = pixiModule
+  const initApplication = async (preference: SceneRendererPreference) => {
+    const nextApp = new pixiModule.Application()
+
+    await nextApp.init({
+      antialias: true,
+      autoDensity: true,
+      autoStart: false,
+      backgroundAlpha: 0,
+      preference,
+      resolution: Math.max(window.devicePixelRatio || 1, 1)
+    })
+
+    return nextApp
+  }
+  const initialRendererCapability = getRendererCapabilitySnapshot()
+  const preferredRenderer = initialRendererCapability.resolved
+
+  activeRendererPreference = preferredRenderer
+  setRendererCapability(initialRendererCapability)
+
+  try {
+    app = await initApplication(preferredRenderer)
+    activeRendererPreference = preferredRenderer
+  } catch (error) {
+    if (preferredRenderer !== 'webgpu') {
+      throw error
+    }
+
+    app = await initApplication('webgl')
+    activeRendererPreference = 'webgl'
+    setRendererCapability(applyDiagramRendererInitFailure(initialRendererCapability))
+  }
 
   if (!(hostRef.value instanceof HTMLDivElement) || !app || !pixi) {
     return
   }
 
+  syncMaxSpriteTextureDimension()
   app.canvas.className = 'pointer-events-none absolute inset-0 h-full w-full'
   hostRef.value.prepend(app.canvas)
 
@@ -2356,13 +2814,21 @@ const initPixi = async () => {
   refreshSceneTheme()
   updateBackgroundGrid()
   rebuildSpatialIndices()
-  resetView()
+  if (initialTransform) {
+    hasViewportInteraction = true
+    worldPanX = initialTransform.panX
+    worldPanY = initialTransform.panY
+    worldScale = initialTransform.scale
+  } else {
+    resetView()
+  }
   renderScene()
 }
 
 const destroyPixi = () => {
   destroyed = true
   resetTouchInteraction()
+  transientNodePositionOverrides.clear()
   if (deferredFullRenderTimeout !== null) {
     clearTimeout(deferredFullRenderTimeout)
     deferredFullRenderTimeout = null
@@ -2378,6 +2844,7 @@ const destroyPixi = () => {
   })
   app = null
   pixi = null
+  maxSpriteTextureDimension = diagramFallbackMaxTextureDimension
   stageContainer = null
   backgroundGraphics = null
   worldContainer = null
@@ -2386,6 +2853,21 @@ const destroyPixi = () => {
   groupHeaderContainer = null
   tableContainer = null
   objectContainer = null
+}
+
+const restartPixi = async () => {
+  const previousTransform: ViewTransform | null = app
+    ? {
+        panX: worldPanX,
+        panY: worldPanY,
+        scale: worldScale
+      }
+    : null
+
+  destroyPixi()
+  destroyed = false
+  await nextTick()
+  await initPixi(previousTransform)
 }
 
 const syncViewportLayout = () => {
@@ -2454,6 +2936,17 @@ watch(
 )
 
 watch(
+  () => rendererBackend,
+  async (nextRendererBackend, previousRendererBackend) => {
+    if (nextRendererBackend === previousRendererBackend) {
+      return
+    }
+
+    await restartPixi()
+  }
+)
+
+watch(
   () => [
     groups,
     tables,
@@ -2481,10 +2974,18 @@ onMounted(async () => {
   await initPixi()
   watchSceneTheme()
   window.addEventListener('resize', syncViewportLayout)
+  window.addEventListener('touchstart', handleWindowTouchStart, { passive: false })
+  window.addEventListener('touchmove', handleWindowTouchMove, { passive: false })
+  window.addEventListener('touchend', handleWindowTouchEnd, { passive: false })
+  window.addEventListener('touchcancel', handleWindowTouchEnd, { passive: false })
 })
 
 onBeforeUnmount(() => {
   window.removeEventListener('resize', syncViewportLayout)
+  window.removeEventListener('touchstart', handleWindowTouchStart)
+  window.removeEventListener('touchmove', handleWindowTouchMove)
+  window.removeEventListener('touchend', handleWindowTouchEnd)
+  window.removeEventListener('touchcancel', handleWindowTouchEnd)
   themeObserver?.disconnect()
   themeObserver = null
   destroyPixi()
@@ -2515,10 +3016,6 @@ defineExpose<{
       @pointermove="handlePointerMove"
       @pointerup="handlePointerUp"
       @pointercancel="handlePointerUp"
-      @touchstart="handleTouchStart"
-      @touchmove="handleTouchMove"
-      @touchend="handleTouchEnd"
-      @touchcancel="handleTouchEnd"
       @wheel="handleWheel"
     />
   </div>

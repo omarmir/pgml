@@ -27,11 +27,6 @@ type BenchmarkDragTargetPoint = {
   y: number
 }
 
-type BenchmarkPoint = {
-  x: number
-  y: number
-}
-
 type BenchmarkSummary = {
   drag: FrameProbeResult
   fixture: {
@@ -178,7 +173,6 @@ const installStyleProbe = async (page: Page) => {
             probe.lastSignature = nextSignature
             probe.mutationTimes.push(performance.now())
           }
-
         }
 
         probe.intervalHandle = window.setInterval(tick, 8)
@@ -241,38 +235,6 @@ const installStyleProbe = async (page: Page) => {
       }
     }
   })
-}
-
-const startStyleProbe = async (page: Page, target: StyleProbeTarget) => {
-  await page.evaluate((nextTarget) => {
-    const typedWindow = window as ProbeWindow
-
-    typedWindow.__PGML_STYLE_PROBE__?.start(nextTarget)
-  }, target)
-}
-
-const stopStyleProbe = async (page: Page) => {
-  const result = await page.evaluate(() => {
-    const typedWindow = window as ProbeWindow
-
-    return typedWindow.__PGML_STYLE_PROBE__?.stop() || {
-      avgFps: 0,
-      durationMs: 0,
-      frameCount: 0,
-      longestFrameMs: 0,
-      medianFrameMs: 0,
-      p95FrameMs: 0
-    }
-  })
-
-  return {
-    avgFps: roundMetric(result.avgFps),
-    durationMs: roundMetric(result.durationMs),
-    frameCount: result.frameCount,
-    longestFrameMs: roundMetric(result.longestFrameMs),
-    medianFrameMs: roundMetric(result.medianFrameMs),
-    p95FrameMs: roundMetric(result.p95FrameMs)
-  } satisfies FrameProbeResult
 }
 
 const hideChromeAroundDiagram = async (page: Page) => {
@@ -429,29 +391,6 @@ const getDragTargetPoint = async (page: Page) => {
       y: bounds.top + bounds.height / 2
     } satisfies BenchmarkDragTargetPoint
   })
-}
-
-const runSteppedMouseGesture = async (
-  page: Page,
-  startPoint: BenchmarkPoint,
-  deltaX: number,
-  deltaY: number
-) => {
-  await page.mouse.move(startPoint.x, startPoint.y)
-  await page.mouse.down()
-
-  for (let step = 1; step <= benchmarkStepCount; step += 1) {
-    const progress = step / benchmarkStepCount
-
-    await page.mouse.move(
-      startPoint.x + deltaX * progress,
-      startPoint.y + deltaY * progress
-    )
-    await page.waitForTimeout(benchmarkStepDelayMs)
-  }
-
-  await page.mouse.up()
-  await page.waitForTimeout(250)
 }
 
 const readInlineStyle = async (page: Page, selector: string) => {

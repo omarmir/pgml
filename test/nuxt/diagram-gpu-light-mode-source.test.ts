@@ -14,6 +14,20 @@ describe('diagram GPU light mode source', () => {
     expect(sceneFile).toContain(':${hashDiagramRenderSignature(sceneThemeSignature)}`')
   })
 
+  it('keeps light-mode group chrome translucent without darkened canvas blends', () => {
+    const sceneFile = readSourceFile('app/components/pgml/PgmlDiagramGpuScene.vue')
+
+    expect(sceneFile).toContain('context.fillStyle = withAlpha(color, 0.14)')
+    expect(sceneFile).toContain('context.fillStyle = colors.fill || \'rgba(255, 255, 255, 0.014)\'')
+    expect(sceneFile).toContain('context.strokeStyle = colors.stroke || \'rgba(255, 255, 255, 0.05)\'')
+    expect(sceneFile).toContain('const shellFill = compositeColors(sceneTheme.groupSurface, sceneTheme.background)')
+    expect(sceneFile).toContain('const bodyOverlayFill = compositeColors(withAlpha(group.color, 0.02), shellFill)')
+    expect(sceneFile).toContain('headerGradient.addColorStop(headerFadeOutStop, bodyOverlayFill)')
+    expect(sceneFile).toContain('const chipBaseFill = compositeColors(sceneTheme.control, bodyOverlayFill)')
+    expect(sceneFile).toContain('alphaMode: \'premultiply-alpha-on-upload\'')
+    expect(sceneFile).not.toContain('alphaMode: \'premultiplied-alpha\'')
+  })
+
   it('uses live studio tokens for the viewport chrome and svg export palette', () => {
     const shellFile = readSourceFile('app/components/pgml/PgmlDiagramCanvasGpuShell.vue')
 

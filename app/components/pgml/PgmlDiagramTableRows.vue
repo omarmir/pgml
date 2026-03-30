@@ -6,6 +6,7 @@ import type {
   TableAttachmentFlag,
   TableRow
 } from '~/utils/pgml-diagram-canvas'
+import { diagramTableRowHeight } from '~/utils/diagram-gpu-scene'
 
 const {
   attachmentPopoverContent,
@@ -141,7 +142,12 @@ const handleAttachmentDoubleClick = (attachment: TableAttachment) => {
           ? 'pgml-selection-glow pgml-selection-glow-subtle'
           : ''
       ]"
-      :style="getColumnRowStyle(row.column.name)"
+      :style="[
+        getColumnRowStyle(row.column.name),
+        {
+          height: `${diagramTableRowHeight}px`
+        }
+      ]"
       :data-selection-active="isColumnSelectionActive(tableId, row.column.name) ? 'true' : undefined"
       :data-relational-highlighted="isHighlightedRelationalRow(tableId, row.column.name) ? 'true' : undefined"
     >
@@ -188,7 +194,12 @@ const handleAttachmentDoubleClick = (attachment: TableAttachment) => {
           attachmentButtonClass,
           isAttachmentSelectionActive(tableId, row.attachment.id) ? 'pgml-selection-glow' : ''
         ]"
-        :style="getAttachmentButtonStyle(row.attachment)"
+        :style="[
+          getAttachmentButtonStyle(row.attachment),
+          {
+            height: `${diagramTableRowHeight}px`
+          }
+        ]"
         :aria-label="`${row.attachment.kind} ${row.attachment.title}`"
         :data-selection-active="isAttachmentSelectionActive(tableId, row.attachment.id) ? 'true' : undefined"
         @pointerdown.stop

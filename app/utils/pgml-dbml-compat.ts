@@ -119,7 +119,7 @@ const stripCommentsFromLine = (
       continue
     }
 
-    if (character === '\'' ) {
+    if (character === '\'') {
       insideSingleQuote = true
       index += 1
       continue

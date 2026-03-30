@@ -152,7 +152,7 @@ const normalizeDbmlSerialColumns = (source: string) => {
         const columnName = columnMatch[2] || ''
         const serialType = columnMatch[3] || 'serial'
         const modifierGroup = columnMatch[4] || ''
-        const suffix = originalLine.slice(columnMatch[0].length)
+        const suffix = originalLine.slice(visibleLine.trimEnd().length)
         const nextBaseType = normalizeSerialBaseType(serialType)
         const sequenceName = `${currentTable.table}_${columnName}_seq`
         const qualifiedSequenceName = `${currentTable.schema}.${sequenceName}`
@@ -201,9 +201,9 @@ export const convertDbmlToPgml = (input: {
   const extractedCommentEntities = input.parseExecutableComments
     ? extractExecutableEntitiesFromDbmlComments(strippedDbml)
     : {
-      executableBlocks: [],
-      source: strippedDbml
-    }
+        executableBlocks: [],
+        source: strippedDbml
+      }
   const normalizedDbml = normalizeDbmlSerialColumns(extractedCommentEntities.source)
 
   if (normalizedDbml.length === 0) {

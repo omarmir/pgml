@@ -3356,12 +3356,12 @@ Properties "group:Commerce" {
 
 Properties "group:Programs" {
   x: 40
-  y: 430
+  y: 1380
 }
 
 Properties "group:Analytics" {
   x: 520
-  y: 430
+  y: 1380
   color: #0f766e
   masonry: true
   table_columns: 2

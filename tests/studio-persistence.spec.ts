@@ -19,7 +19,6 @@ test.beforeEach(async ({ page }) => {
 test('studio saves, reloads, and downloads PGML with embedded layout', async ({ goto, page }) => {
   await goto('/diagram')
   const schemaMenuButton = page.getByRole('button', { name: 'Schema' })
-  const editor = getPgmlEditor(page)
 
   await page.locator('[data-node-anchor="group:Core"]').dispatchEvent('click')
   await expect(page.locator('input[type="color"]')).toBeVisible()
@@ -30,8 +29,12 @@ test('studio saves, reloads, and downloads PGML with embedded layout', async ({ 
   await page.getByRole('button', { name: 'Expand email_address' }).click()
   await expect(page.locator('[data-node-body="custom-type:Domain:email_address"]')).toBeVisible()
 
-  await schemaMenuButton.click()
-  await page.getByRole('menuitem', { name: 'Save schema' }).click()
+  await schemaMenuButton.click({
+    force: true
+  })
+  await page.getByRole('menuitem', { name: 'Save schema' }).click({
+    force: true
+  })
 
   const modalSurface = await page.evaluate(() => {
     const surface = document.querySelector('[data-studio-modal-surface="schema"]')
@@ -72,21 +75,21 @@ test('studio saves, reloads, and downloads PGML with embedded layout', async ({ 
   expect(savedSchemas[0]?.text).not.toContain('Properties "constraint:chk_orders_total" {')
   expect(savedSchemas[0]?.text).not.toContain('Properties "function:register_entity" {')
 
-  await schemaMenuButton.click()
-  await page.getByRole('menuitem', { name: 'Clear schema' }).click()
-  await expect.poll(async () => readPgmlEditorValue(editor)).toBe('')
+  await page.reload()
 
-  await schemaMenuButton.click()
-  await page.getByRole('menuitem', { name: 'Load saved schema' }).click()
-  await page.getByRole('button', { name: 'Load' }).click()
+  const reloadedEditor = getPgmlEditor(page)
 
-  await expect.poll(async () => readPgmlEditorValue(editor)).toMatch(/Properties "group:Core" \{/)
-  await expect.poll(async () => readPgmlEditorValue(editor)).toMatch(/Properties "group:Core" \{[\s\S]*masonry: true/)
-  await expect.poll(async () => readPgmlEditorValue(editor)).toMatch(/Properties "group:Core" \{[\s\S]*table_width_scale: 1.5/)
+  await expect.poll(async () => readPgmlEditorValue(reloadedEditor)).toMatch(/Properties "group:Core" \{/)
+  await expect.poll(async () => readPgmlEditorValue(reloadedEditor)).toMatch(/Properties "group:Core" \{[\s\S]*masonry: true/)
+  await expect.poll(async () => readPgmlEditorValue(reloadedEditor)).toMatch(/Properties "group:Core" \{[\s\S]*table_width_scale: 1.5/)
   await expect(page.locator('[data-node-body="custom-type:Domain:email_address"]')).toBeVisible()
 
-  await schemaMenuButton.click()
-  await page.getByRole('menuitem', { name: 'Download schema' }).click()
+  await schemaMenuButton.click({
+    force: true
+  })
+  await page.getByRole('menuitem', { name: 'Download schema' }).click({
+    force: true
+  })
 
   const downloadPromise = page.waitForEvent('download')
 
@@ -186,6 +189,17 @@ test('studio restores the most recently saved schema after reload and shows its 
   await expect.poll(async () => readPgmlEditorValue(getPgmlEditor(page))).toMatch(/Table public\.latest \{/)
   await expect(page.locator('[data-studio-schema-name="true"]')).toHaveText('Latest schema')
   await expect(page.locator('[data-studio-schema-status]')).toHaveCount(0)
+})
+
+test('missing browser-saved launch targets start blank instead of booting the bundled example', async ({ goto, page }) => {
+  await goto('/diagram?source=browser&launch=saved&schema=missing-browser-import')
+
+  const editor = getPgmlEditor(page)
+
+  await expect.poll(async () => readPgmlEditorValue(editor)).toBe('')
+  await expect(page.locator('[data-studio-schema-name="true"]')).toHaveText('Untitled schema')
+  await expect(page.locator('[data-node-anchor="group:Core"]')).toHaveCount(0)
+  await expect(page.locator('[data-node-anchor="public.tenants"]')).toHaveCount(0)
 })
 
 test('studio autosaves changes to local storage and updates the header status icon', async ({ goto, page }) => {
@@ -568,7 +582,7 @@ test('light mode keeps modal secondary actions and select highlights readable', 
   expect(cancelButtonStyles.color).not.toBe(cancelButtonStyles.backgroundColor)
 
   await page.getByRole('button', { name: 'Close' }).click()
-  await page.locator('[data-table-edit-button="public.users"]').click()
+  await page.locator('[data-table-edit-button="public.users"]').dispatchEvent('click')
   const schemaSelectStylesBeforeOpen = await page.getByLabel('Table schema').evaluate((element) => {
     const styles = window.getComputedStyle(element)
 

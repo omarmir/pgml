@@ -53,6 +53,11 @@ type DbmlCommentExecutableImport = DbmlCommentIndexImport
   | DbmlCommentSequenceImport
   | DbmlCommentTriggerImport
 
+type DbmlCommentExecutableImportWithoutNote = Omit<DbmlCommentIndexImport, 'note'>
+  | Omit<DbmlCommentRoutineImport, 'note'>
+  | Omit<DbmlCommentSequenceImport, 'note'>
+  | Omit<DbmlCommentTriggerImport, 'note'>
+
 type DbmlBlockCommentRange = {
   end: number
   start: number
@@ -761,7 +766,7 @@ const isCommentSeparatorLine = (value: string) => {
   return /^[-=*#]{3,}$/u.test(value.trim())
 }
 
-const createImportIdentityCandidates = (entry: DbmlCommentExecutableImport) => {
+const createImportIdentityCandidates = (entry: DbmlCommentExecutableImportWithoutNote) => {
   const candidates = new Set<string>()
   const addCandidate = (value: string) => {
     const normalizedValue = value.trim().toLowerCase()
@@ -787,7 +792,7 @@ const createImportIdentityCandidates = (entry: DbmlCommentExecutableImport) => {
 
 const buildCommentEntityNote = (
   contextLines: string[],
-  entry: DbmlCommentExecutableImport,
+  entry: DbmlCommentExecutableImportWithoutNote,
   sqlSource: string
 ) => {
   const notes: string[] = []
@@ -840,12 +845,7 @@ const countNewlines = (value: string) => {
 const extractExecutableEntitiesFromCommentBlock = (source: string) => {
   const normalizedSource = normalizeLineEndings(source)
   const lines = normalizedSource.split('\n')
-  const recognizedEntries: Array<
-    Omit<DbmlCommentRoutineImport, 'note'>
-    | Omit<DbmlCommentSequenceImport, 'note'>
-    | Omit<DbmlCommentTriggerImport, 'note'>
-    | Omit<DbmlCommentIndexImport, 'note'>
-  > = []
+  const recognizedEntries: DbmlCommentExecutableImportWithoutNote[] = []
 
   let lineIndex = 0
 

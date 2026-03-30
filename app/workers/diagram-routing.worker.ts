@@ -122,8 +122,8 @@ type WorkerRouteResponse = {
   requestId: number
 }
 
-const groupLaneSameGroupBaseOffset = 8
-const groupLaneSameGroupGap = 10
+const groupLaneSameGroupBaseOffset = 2
+const groupLaneSameGroupGap = 2
 const groupLaneOuterBaseOffset = 18
 const groupLaneOuterGap = 18
 const groupHeaderLaneClearance = 16
@@ -673,6 +673,61 @@ const countPathBends = (points: LayoutPoint[]) => {
   return bends
 }
 
+const segmentHitsRect = (
+  from: LayoutPoint,
+  to: LayoutPoint,
+  rect: DiagramRect
+) => {
+  if (Math.abs(from.x - to.x) < 0.5) {
+    const x = from.x
+
+    if (x < rect.left || x > rect.right) {
+      return false
+    }
+
+    const minY = Math.min(from.y, to.y)
+    const maxY = Math.max(from.y, to.y)
+
+    return maxY > rect.top && minY < rect.bottom
+  }
+
+  if (Math.abs(from.y - to.y) < 0.5) {
+    const y = from.y
+
+    if (y < rect.top || y > rect.bottom) {
+      return false
+    }
+
+    const minX = Math.min(from.x, to.x)
+    const maxX = Math.max(from.x, to.x)
+
+    return maxX > rect.left && minX < rect.right
+  }
+
+  return false
+}
+
+const countPathHeaderBandHits = (
+  points: LayoutPoint[],
+  headerBands: DiagramRect[]
+) => {
+  return points.slice(1).reduce((count, point, index) => {
+    const previous = points[index]
+
+    if (!previous) {
+      return count
+    }
+
+    if (headerBands.some((rect) => {
+      return segmentHitsRect(previous, point, rect)
+    })) {
+      return count + 1
+    }
+
+    return count
+  }, 0)
+}
+
 const getPathLength = (points: LayoutPoint[]) => {
   return points.slice(1).reduce((total, point, index) => {
     const previous = points[index]
@@ -685,16 +740,16 @@ const getPathLength = (points: LayoutPoint[]) => {
   }, 0)
 }
 
-const getOppositeHorizontalSide = (side: AnchorSide) => {
-  if (side === 'left') {
-    return 'right'
+const getCandidateForcedSides = (initialSide: AnchorSide) => {
+  if (initialSide === 'left') {
+    return [null, 'right'] as const
   }
 
-  if (side === 'right') {
-    return 'left'
+  if (initialSide === 'right') {
+    return [null, 'left'] as const
   }
 
-  return null
+  return [null, 'left', 'right'] as const
 }
 
 const isFieldEndpointGeometry = (geometry: WorkerConnectionGeometry) => {
@@ -1080,6 +1135,7 @@ const buildConnectionLines = (input: WorkerRouteRequest) => {
 
       return {
         candidate,
+        headerHitCount: countPathHeaderBandHits(candidate.points, headerBands),
         inwardCount: Number(Boolean(fromInwardSide)) + Number(Boolean(toInwardSide)),
         backtrackCount: Number(Boolean(fromBacktrackSide)) + Number(Boolean(toBacktrackSide)),
         bendCount: countPathBends(candidate.points),
@@ -1090,12 +1146,10 @@ const buildConnectionLines = (input: WorkerRouteRequest) => {
 
     const initialCandidate = buildCandidate()
     const candidates = [initialCandidate]
-    const forcedFromSide = getOppositeHorizontalSide(initialCandidate.fromLeg.side)
-    const forcedToSide = getOppositeHorizontalSide(initialCandidate.toLeg.side)
     const seenCandidateKeys = new Set<string>(['default'])
 
-    for (const fromSide of [null, forcedFromSide] as Array<'left' | 'right' | null>) {
-      for (const toSide of [null, forcedToSide] as Array<'left' | 'right' | null>) {
+    for (const fromSide of getCandidateForcedSides(initialCandidate.fromLeg.side)) {
+      for (const toSide of getCandidateForcedSides(initialCandidate.toLeg.side)) {
         if (!fromSide && !toSide) {
           continue
         }
@@ -1116,6 +1170,10 @@ const buildConnectionLines = (input: WorkerRouteRequest) => {
 
     const scoredCandidates = candidates.map(describeCandidate)
     const chosenCandidate = scoredCandidates.sort((left, right) => {
+      if (left.headerHitCount !== right.headerHitCount) {
+        return left.headerHitCount - right.headerHitCount
+      }
+
       if (left.inwardCount !== right.inwardCount) {
         return left.inwardCount - right.inwardCount
       }

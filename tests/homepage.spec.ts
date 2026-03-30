@@ -461,10 +461,12 @@ test('spec page keeps the table of contents pinned while scrolling', async ({ go
   await goto('/spec')
 
   const tableOfContents = page.locator('aside')
+  const firstDocumentationSection = page.locator('#reasons')
 
   await expect(tableOfContents).toBeVisible()
+  await expect(firstDocumentationSection).toBeVisible()
 
-  await page.evaluate(() => window.scrollTo(0, 1400))
+  await firstDocumentationSection.scrollIntoViewIfNeeded()
 
   await expect.poll(async () => {
     const box = await tableOfContents.boundingBox()

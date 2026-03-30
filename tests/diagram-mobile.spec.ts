@@ -247,3 +247,202 @@ test('mobile studio diagram supports pinch zoom on the GPU viewport', async ({ b
     })
   }).toBeGreaterThan(initialScale + 0.05)
 })
+
+test('mobile GPU group drags keep both node and line state stable after drop', async ({ browserName, goto, page }) => {
+  test.skip(browserName !== 'chromium', 'CDP touch drag dispatch is Chromium-only.')
+
+  await page.setViewportSize({
+    width: 390,
+    height: 844
+  })
+  await goto('/diagram')
+
+  const viewport = page.locator('[data-diagram-viewport="true"]')
+
+  await expect(viewport).toBeVisible()
+  await page.waitForFunction(() => {
+    const debugWindow = window as Window & {
+      __pgmlSceneDebug?: {
+        connectionSignature?: string
+        groupCards?: Array<{ height: number, id: string, width: number, x: number, y: number }>
+      }
+      __pgmlSceneRendererDebug?: {
+        panX: number
+        panY: number
+        renderedGroupCards?: Array<{ id: string, x: number, y: number }>
+        scale: number
+      }
+    }
+
+    return typeof debugWindow.__pgmlSceneRendererDebug?.scale === 'number'
+      && Array.isArray(debugWindow.__pgmlSceneDebug?.groupCards)
+      && (debugWindow.__pgmlSceneDebug?.groupCards.length || 0) > 0
+      && Array.isArray(debugWindow.__pgmlSceneRendererDebug?.renderedGroupCards)
+      && (debugWindow.__pgmlSceneRendererDebug?.renderedGroupCards.length || 0) > 0
+  })
+
+  const viewportBox = await viewport.boundingBox()
+
+  if (!viewportBox) {
+    throw new Error('Diagram viewport is not measurable.')
+  }
+
+  const readSceneState = async () => {
+    return await page.evaluate(() => {
+      const debugWindow = window as Window & {
+        __pgmlSceneDebug?: {
+          connectionSignature?: string
+          groupCards?: Array<{ height: number, id: string, width: number, x: number, y: number }>
+        }
+        __pgmlSceneRendererDebug?: {
+          panX: number
+          panY: number
+          renderedGroupCards?: Array<{ id: string, x: number, y: number }>
+          scale: number
+        }
+      }
+      const group = debugWindow.__pgmlSceneDebug?.groupCards?.[0] || null
+      const renderedGroup = group
+        ? debugWindow.__pgmlSceneRendererDebug?.renderedGroupCards?.find(card => card.id === group.id) || null
+        : null
+      const renderer = debugWindow.__pgmlSceneRendererDebug || null
+
+      if (!group || !renderedGroup || !renderer) {
+        return null
+      }
+
+      return {
+        connectionSignature: debugWindow.__pgmlSceneDebug?.connectionSignature || '',
+        group,
+        renderedGroup,
+        renderer
+      }
+    })
+  }
+
+  const initialState = await readSceneState()
+
+  if (!initialState) {
+    throw new Error('Diagram debug state is not available for the mobile group drag test.')
+  }
+
+  const client = await page.context().newCDPSession(page)
+  const buildTouchPoint = (id: number, x: number, y: number) => {
+    return {
+      force: 1,
+      id,
+      radiusX: 14,
+      radiusY: 14,
+      x: Math.round(x),
+      y: Math.round(y)
+    }
+  }
+
+  const startX = viewportBox.x
+    + initialState.renderer.panX
+    + initialState.renderedGroup.x * initialState.renderer.scale
+    + initialState.group.width * initialState.renderer.scale * 0.5
+  const startY = viewportBox.y
+    + initialState.renderer.panY
+    + initialState.renderedGroup.y * initialState.renderer.scale
+    + Math.min(24, initialState.group.height * 0.18) * initialState.renderer.scale
+  const endX = startX + 92
+  const endY = startY + 46
+
+  await client.send('Input.dispatchTouchEvent', {
+    touchPoints: [
+      buildTouchPoint(1, startX, startY)
+    ],
+    type: 'touchStart'
+  })
+  await client.send('Input.dispatchTouchEvent', {
+    touchPoints: [
+      buildTouchPoint(1, startX + 48, startY + 24)
+    ],
+    type: 'touchMove'
+  })
+  await client.send('Input.dispatchTouchEvent', {
+    touchPoints: [
+      buildTouchPoint(1, endX, endY)
+    ],
+    type: 'touchMove'
+  })
+  await client.send('Input.dispatchTouchEvent', {
+    touchPoints: [],
+    type: 'touchEnd'
+  })
+
+  await expect.poll(async () => {
+    const nextState = await readSceneState()
+
+    return nextState
+      ? {
+          connectionSignature: nextState.connectionSignature,
+          renderedX: nextState.renderedGroup.x,
+          renderedY: nextState.renderedGroup.y,
+          x: nextState.group.x,
+          y: nextState.group.y
+        }
+      : null
+  }).not.toEqual({
+    connectionSignature: initialState.connectionSignature,
+    renderedX: initialState.renderedGroup.x,
+    renderedY: initialState.renderedGroup.y,
+    x: initialState.group.x,
+    y: initialState.group.y
+  })
+
+  const droppedState = await readSceneState()
+
+  if (!droppedState) {
+    throw new Error('Dropped scene state is not available for the mobile group drag test.')
+  }
+
+  const postDropStates = await page.evaluate(async () => {
+    const samples: Array<{
+      connectionSignature: string
+      renderedX: number | null
+      renderedY: number | null
+      x: number | null
+      y: number | null
+    }> = []
+
+    for (let index = 0; index < 12; index += 1) {
+      await new Promise<void>((resolve) => {
+        requestAnimationFrame(() => resolve())
+      })
+
+      const debugWindow = window as Window & {
+        __pgmlSceneDebug?: {
+          connectionSignature?: string
+          groupCards?: Array<{ id: string, x: number, y: number }>
+        }
+        __pgmlSceneRendererDebug?: {
+          renderedGroupCards?: Array<{ id: string, x: number, y: number }>
+        }
+      }
+      const group = debugWindow.__pgmlSceneDebug?.groupCards?.[0] || null
+      const renderedGroup = group
+        ? debugWindow.__pgmlSceneRendererDebug?.renderedGroupCards?.find(card => card.id === group.id) || null
+        : null
+
+      samples.push({
+        connectionSignature: debugWindow.__pgmlSceneDebug?.connectionSignature || '',
+        renderedX: renderedGroup?.x ?? null,
+        renderedY: renderedGroup?.y ?? null,
+        x: group?.x ?? null,
+        y: group?.y ?? null
+      })
+    }
+
+    return samples
+  })
+
+  expect(postDropStates.every((state) => {
+    return state.connectionSignature === droppedState.connectionSignature
+      && state.x === droppedState.group.x
+      && state.y === droppedState.group.y
+      && state.renderedX === droppedState.renderedGroup.x
+      && state.renderedY === droppedState.renderedGroup.y
+  })).toBe(true)
+})

@@ -16,4 +16,14 @@ describe('diagram GPU shell group layout source', () => {
 
     expect(shellFile).toContain('bottom: group.y + diagramGroupHeaderBandHeight')
   })
+
+  it('includes persisted group masonry state when serializing node layout properties', () => {
+    const sceneUtilsFile = readSourceFile('app/utils/diagram-gpu-scene.ts')
+    const shellFile = readSourceFile('app/components/pgml/PgmlDiagramCanvasGpuShell.vue')
+
+    expect(shellFile).toContain('kind: \'group\' as const')
+    expect(shellFile).toContain('masonry: group.masonry')
+    expect(shellFile).toContain('tableWidthScale: group.tableWidthScale')
+    expect(sceneUtilsFile).toContain('masonry: typeof entry.masonry === \'boolean\' ? entry.masonry : previousEntry.masonry')
+  })
 })

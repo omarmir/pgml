@@ -20,18 +20,10 @@ type DiagramConnectionRenderLine = {
   toOwnerNodeId: string | null
 }
 
-type DiagramConnectionPathBatch = {
-  animated: boolean
-  color: string
-  dashPattern: string
-  key: string
-  pathData: string
-}
-
 type DiagramConnectionRenderLayer = {
-  bridgedBatches: DiagramConnectionPathBatch[]
-  staticBatches: DiagramConnectionPathBatch[]
-  translatedBatches: DiagramConnectionPathBatch[]
+  bridgedLines: DiagramConnectionRenderLine[]
+  staticLines: DiagramConnectionRenderLine[]
+  translatedLines: DiagramConnectionRenderLine[]
   zIndex: number
 }
 
@@ -81,55 +73,23 @@ const getPreviewPath = (line: DiagramConnectionRenderLine) => {
 }
 
 const getBatchKey = (line: DiagramConnectionRenderLine) => {
-  return `${line.color}:${line.animated ? 'animated' : line.dashPattern}`
-}
-
-const buildPathBatches = (
-  lineSet: DiagramConnectionRenderLine[],
-  kind: 'static' | 'bridged'
-) => {
-  const batchesByKey = new Map<string, DiagramConnectionPathBatch>()
-
-  lineSet.forEach((line) => {
-    const batchKey = getBatchKey(line)
-    const pathData = kind === 'bridged' ? getPreviewPath(line) : line.path
-    const existingBatch = batchesByKey.get(batchKey)
-
-    if (existingBatch) {
-      existingBatch.pathData = `${existingBatch.pathData} ${pathData}`
-      return
-    }
-
-    batchesByKey.set(batchKey, {
-      animated: line.animated,
-      color: line.color,
-      dashPattern: line.dashPattern,
-      key: batchKey,
-      pathData
-    })
-  })
-
-  return Array.from(batchesByKey.values())
+  return `${line.color}:${line.animated ? 'animated' : line.dashPattern}:${line.key}`
 }
 
 const renderLayers = computed<DiagramConnectionRenderLayer[]>(() => {
   return layers.reduce<DiagramConnectionRenderLayer[]>((entries, layer) => {
-    const staticBatches = buildPathBatches(layer.staticLines, 'static')
-    const bridgedBatches = buildPathBatches(layer.bridgedLines, 'bridged')
-    const translatedBatches = buildPathBatches(layer.translatedLines, 'static')
-
     if (
-      staticBatches.length === 0
-      && bridgedBatches.length === 0
-      && translatedBatches.length === 0
+      layer.staticLines.length === 0
+      && layer.bridgedLines.length === 0
+      && layer.translatedLines.length === 0
     ) {
       return entries
     }
 
     entries.push({
-      bridgedBatches,
-      staticBatches,
-      translatedBatches,
+      bridgedLines: layer.bridgedLines,
+      staticLines: layer.staticLines,
+      translatedLines: layer.translatedLines,
       zIndex: layer.zIndex
     })
 
@@ -149,49 +109,55 @@ const renderLayers = computed<DiagramConnectionRenderLayer[]>(() => {
     preserveAspectRatio="none"
   >
     <path
-      v-for="batch in layer.staticBatches"
-      :key="`static:${batch.key}`"
-      :class="batch.animated ? 'pgml-reference-race-path' : undefined"
-      :d="batch.pathData"
+      v-for="line in layer.staticLines"
+      :key="`static:${getBatchKey(line)}`"
+      :data-connection-highlighted="line.animated ? 'true' : undefined"
+      :data-connection-key="line.key"
+      :class="line.animated ? 'pgml-reference-race-path' : undefined"
+      :d="line.path"
       fill="none"
-      :stroke="batch.color"
+      :stroke="line.color"
       stroke-width="2"
-      :stroke-dasharray="batch.dashPattern"
-      :style="batch.animated ? getReferenceRaceStyle(batch.color) : undefined"
+      :stroke-dasharray="line.dashPattern"
+      :style="line.animated ? getReferenceRaceStyle(line.color) : undefined"
       stroke-linecap="square"
       stroke-linejoin="miter"
       opacity="0.9"
     />
     <path
-      v-for="batch in layer.bridgedBatches"
-      :key="`bridged:${batch.key}`"
-      :class="batch.animated ? 'pgml-reference-race-path' : undefined"
-      :d="batch.pathData"
+      v-for="line in layer.bridgedLines"
+      :key="`bridged:${getBatchKey(line)}`"
+      :data-connection-highlighted="line.animated ? 'true' : undefined"
+      :data-connection-key="line.key"
+      :class="line.animated ? 'pgml-reference-race-path' : undefined"
+      :d="getPreviewPath(line)"
       fill="none"
-      :stroke="batch.color"
+      :stroke="line.color"
       stroke-width="2"
-      :stroke-dasharray="batch.dashPattern"
-      :style="batch.animated ? getReferenceRaceStyle(batch.color) : undefined"
+      :stroke-dasharray="line.dashPattern"
+      :style="line.animated ? getReferenceRaceStyle(line.color) : undefined"
       stroke-linecap="square"
       stroke-linejoin="miter"
       opacity="0.9"
     />
     <g
-      v-if="activeDrag && layer.translatedBatches.length > 0"
+      v-if="activeDrag && layer.translatedLines.length > 0"
       data-connection-drag-preview="true"
       :data-connection-drag-node="activeDrag.nodeId"
       :transform="`translate(${activeDrag.deltaX} ${activeDrag.deltaY})`"
     >
       <path
-        v-for="batch in layer.translatedBatches"
-        :key="`translated:${batch.key}`"
-        :class="batch.animated ? 'pgml-reference-race-path' : undefined"
-        :d="batch.pathData"
+        v-for="line in layer.translatedLines"
+        :key="`translated:${getBatchKey(line)}`"
+        :data-connection-highlighted="line.animated ? 'true' : undefined"
+        :data-connection-key="line.key"
+        :class="line.animated ? 'pgml-reference-race-path' : undefined"
+        :d="line.path"
         fill="none"
-        :stroke="batch.color"
+        :stroke="line.color"
         stroke-width="2"
-        :stroke-dasharray="batch.dashPattern"
-        :style="batch.animated ? getReferenceRaceStyle(batch.color) : undefined"
+        :stroke-dasharray="line.dashPattern"
+        :style="line.animated ? getReferenceRaceStyle(line.color) : undefined"
         stroke-linecap="square"
         stroke-linejoin="miter"
         opacity="0.9"

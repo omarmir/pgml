@@ -1,21 +1,49 @@
 <script setup lang="ts">
 import { useResizeObserver } from '@vueuse/core'
 import type { CSSProperties, Ref } from 'vue'
-import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { studioSelectUi, studioSwitchUi } from '~/constants/ui'
+import PgmlDiagramConnectionCanvas from '~/components/pgml/PgmlDiagramConnectionCanvas.vue'
 import PgmlDiagramComparePanel from '~/components/pgml/PgmlDiagramComparePanel.vue'
 import PgmlDetailPopoverMetadataEditor from '~/components/pgml/PgmlDetailPopoverMetadataEditor.vue'
 import PgmlDetailPopoverSourceEditor from '~/components/pgml/PgmlDetailPopoverSourceEditor.vue'
 import PgmlDiagramGpuScene from '~/components/pgml/PgmlDiagramGpuScene.vue'
 import PgmlDiagramMigrationsPanel from '~/components/pgml/PgmlDiagramMigrationsPanel.vue'
+import PgmlDiagramTableRows from '~/components/pgml/PgmlDiagramTableRows.vue'
 import PgmlDiagramVersionsPanel from '~/components/pgml/PgmlDiagramVersionsPanel.vue'
 import {
   buildDiagramConnectionDragPreviewPath,
   buildDiagramConnectionPreviewLayers,
   type DiagramConnectionPreviewDragState
 } from '~/utils/diagram-connection-preview'
-import { getDiagramConnectionZIndex } from '~/utils/diagram-layering'
-import { buildTableGroupMasonryLayout, type TableAttachment, type TableAttachmentFlag, type TableAttachmentKind } from '~/utils/pgml-diagram-canvas'
+import {
+  getDiagramConnectionZIndex,
+  getDiagramGroupBackgroundZIndex,
+  getDiagramNodeZIndex
+} from '~/utils/diagram-layering'
+import {
+  getDiagramRendererCapability,
+  getDiagramRendererHelpText,
+  getDiagramRendererStatusLabel,
+  isDiagramRendererBackend,
+  type DiagramRendererBackend,
+  type DiagramRendererCapability
+} from '~/utils/diagram-renderer'
+import type {
+  DiagramRoutingBackend,
+  DiagramRoutingDescriptorInput,
+  DiagramRoutingGeometryInput,
+  DiagramRoutingMeasuredBounds,
+  DiagramRoutingRequest
+} from '~/utils/diagram-routing-contract'
+import { routeDiagramConnectionsWithWebgpu } from '~/utils/diagram-routing-webgpu'
+import {
+  buildTableGroupMasonryLayout,
+  type TableAttachment,
+  type TableAttachmentFlag,
+  type TableAttachmentKind,
+  type TableRow
+} from '~/utils/pgml-diagram-canvas'
 import {
   getPgmlDiagramCompareChangeColor,
   type PgmlDiagramCompareEntry
@@ -38,10 +66,8 @@ import {
   diagramObjectCollapsedHeight,
   diagramLabelTextColor,
   diagramMutedTextColor,
-  diagramObjectHeaderHeight,
   diagramObjectMinHeight,
   diagramPalette,
-  diagramRailColor,
   diagramRowSurfaceColor,
   diagramSurfaceColor,
   diagramTableHeaderHeight,
@@ -63,13 +89,9 @@ import {
   type DiagramGpuWorldBounds
 } from '~/utils/diagram-gpu-scene'
 import type {
-  PgmlAffects,
   PgmlColumn,
-  PgmlConstraint,
   PgmlCustomType,
-  PgmlIndex,
   PgmlNodeProperties,
-  PgmlReference,
   PgmlRoutine,
   PgmlSchemaModel,
   PgmlSequence,
@@ -104,7 +126,6 @@ import {
 import type { PgmlVersionMigrationStepBundle } from '~/utils/pgml-version-migration'
 import { normalizeSvgPaint } from '~/utils/svg-paint'
 import {
-  defaultStudioMobilePanelTab,
   diagramToolPanelTabIconByValue,
   diagramToolPanelTabLabelByValue,
   type DiagramPanelTab,
@@ -134,53 +155,15 @@ type DiagramCanvasViewportTransform = {
   scale: number
 }
 
-type MeasuredBounds = {
-  bottom: number
-  height: number
-  left: number
-  right: number
-  top: number
-  width: number
-}
+type MeasuredBounds = DiagramRoutingMeasuredBounds
 
-type ConnectionEndpointLocator = {
-  attribute: string
-  value: string
-} | null
+type RoutingWorkerGeometryInput = DiagramRoutingGeometryInput
 
-type RoutingWorkerGeometryInput = {
-  bounds: MeasuredBounds
-  groupNodeId: string | null
-  identity: string
-  isColumnAnchor: boolean
-  isColumnLabelAnchor: boolean
-  locator: ConnectionEndpointLocator
-  nodeAnchorId: string | null
-  ownerNodeId: string | null
-  rowKey: string | null
-  tableBounds: MeasuredBounds | null
-  tableId: string | null
-}
-
-type RoutingWorkerDescriptorInput = {
-  animated: boolean
-  color: string
-  dashPattern: string
-  dashed: boolean
-  fromGeometry: RoutingWorkerGeometryInput
-  key: string
-  selectedForeground: boolean
-  toGeometry: RoutingWorkerGeometryInput
-}
+type RoutingWorkerDescriptorInput = DiagramRoutingDescriptorInput
 
 type RoutingWorkerResponse = {
   lines: DiagramGpuConnectionLine[]
   requestId: number
-}
-
-type TableRowRecord = {
-  key: string
-  row: DiagramGpuRow
 }
 
 type TableAttachmentState = {
@@ -249,6 +232,26 @@ type VersionCompareOption = {
   value: string
 }
 
+type DiagramRendererOption = {
+  label: string
+  value: DiagramRendererBackend
+}
+
+const diagramRendererPreferenceStorageKey = 'pgml-diagram-renderer-backend'
+const getInitialRendererBackendPreference = (): DiagramRendererBackend => {
+  if (!import.meta.client) {
+    return 'auto'
+  }
+
+  const storedValue = window.localStorage.getItem(diagramRendererPreferenceStorageKey)
+
+  if (!storedValue || !isDiagramRendererBackend(storedValue)) {
+    return 'auto'
+  }
+
+  return storedValue
+}
+
 type DetailPopoverPlacement = {
   left: number
   top: number
@@ -258,6 +261,55 @@ type DetailPopoverPlacement = {
 type ActiveConnectionDragPreview = DiagramConnectionPreviewDragState & {
   originX: number
   originY: number
+}
+
+type PendingNodePositionOverride = {
+  expiresAt: number
+  kind: 'group' | 'object' | 'table'
+  x: number
+  y: number
+}
+
+type AutomationPlaneNode = {
+  color: string
+  height: number
+  id: string
+  kind: 'group'
+  tableCount: number
+  title: string
+  width: number
+  x: number
+  y: number
+  zIndex: number | string
+} | {
+  color: string
+  height: number
+  headerHeight: number
+  id: string
+  kind: 'table'
+  rowCount: number
+  schema: string
+  title: string
+  width: number
+  x: number
+  y: number
+  zIndex: number | string
+} | {
+  collapsed: boolean
+  color: string
+  details: string[]
+  height: number
+  id: string
+  impactTargets: DiagramGpuImpactTarget[]
+  kind: 'object'
+  kindLabel: string
+  subtitle: string
+  tableIds: string[]
+  title: string
+  width: number
+  x: number
+  y: number
+  zIndex: number | string
 }
 
 type DiagramCompareGhostOverlay = {
@@ -312,7 +364,7 @@ const {
   exportPreferenceKey = 'name:pgml-schema',
   hasBlockingSourceErrors = false,
   mobileActiveView = null,
-  mobilePanelTab = null,
+  mobilePanelTab = 'entities',
   mobileToolPanelTab = null,
   migrationFileName = 'pgml-version.migration.sql',
   migrationHasChanges = false,
@@ -379,6 +431,7 @@ const emit = defineEmits<{
 }>()
 
 const sceneRef: Ref<DiagramCanvasExposed | null> = ref(null)
+const planeRef: Ref<HTMLDivElement | null> = ref(null)
 const viewportRef: Ref<HTMLDivElement | null> = ref(null)
 const detailPopoverRef: Ref<HTMLDivElement | null> = ref(null)
 const selectedSelection: Ref<DiagramGpuSelection | null> = ref(null)
@@ -393,12 +446,20 @@ const isDesktopSidePanelOpen: Ref<boolean> = ref(true)
 const isToolPanelOpen: Ref<boolean> = ref(false)
 const showRelationshipLines: Ref<boolean> = ref(true)
 const snapToGrid: Ref<boolean> = ref(true)
+const rendererBackend: Ref<DiagramRendererBackend> = ref(getInitialRendererBackendPreference())
+const rendererCapability: Ref<DiagramRendererCapability> = ref(getDiagramRendererCapability({
+  hasWebGPU: false,
+  isSecureContext: false,
+  requested: rendererBackend.value
+}))
 const currentScale: Ref<number> = ref(1)
 const sceneTransform: Ref<DiagramCanvasViewportTransform> = ref({
   panX: 0,
   panY: 0,
   scale: 1
 })
+const activeRoutingBackend: Ref<DiagramRoutingBackend> = ref('cpu')
+const shouldRenderAutomationPlane: Ref<boolean> = ref(false)
 const viewportSize: Ref<MeasuredSize> = ref({
   height: 0,
   width: 0
@@ -411,17 +472,45 @@ const entitySearchQuery: Ref<string> = ref('')
 const entitySearchInputRef: Ref<HTMLInputElement | null> = ref(null)
 const routedConnectionLines: Ref<DiagramGpuConnectionLine[]> = ref([])
 const activeConnectionDragPreview: Ref<ActiveConnectionDragPreview | null> = ref(null)
+const pendingNodePositionOverrides: Ref<Record<string, PendingNodePositionOverride>> = ref({})
 const groupLayoutStates: Ref<Record<string, DiagramGpuGroupNode>> = ref({})
 const floatingTableStates: Ref<Record<string, DiagramGpuNodeLayoutState>> = ref({})
 const objectLayoutStates: Ref<Record<string, DiagramGpuObjectNode>> = ref({})
+const diagramPendingNodePositionOverrideTtlMs = 5000
 
+let automationPlaneDragSession: {
+  element: HTMLElement
+  id: string
+  kind: 'group' | 'object' | 'table'
+  lastDragX: number
+  lastDragY: number
+  originClientX: number
+  originClientY: number
+  originX: number
+  originY: number
+  pointerId: number
+  started: boolean
+} | null = null
 let routingWorker: Worker | null = null
-let routingWorkerRequestId = 0
 let latestConnectionRequestId = 0
 const pendingRoutingRequests = new Map<number, {
   reject: (reason?: unknown) => void
   resolve: (lines: DiagramGpuConnectionLine[]) => void
 }>()
+const rendererBackendItems: DiagramRendererOption[] = [
+  {
+    label: 'Auto',
+    value: 'auto'
+  },
+  {
+    label: 'WebGL',
+    value: 'webgl'
+  },
+  {
+    label: 'Force WebGPU',
+    value: 'webgpu'
+  }
+]
 
 const panelToggleButtonClass = joinStudioClasses(studioButtonClasses.secondary, studioToolbarButtonClass)
 const toolPanelToggleButtonClass = joinStudioClasses(studioButtonClasses.secondary, studioToolbarButtonClass)
@@ -431,6 +520,15 @@ const exportPanelButtonClass = joinStudioClasses(
   studioButtonClasses.secondary,
   'justify-center font-mono text-[0.62rem] uppercase tracking-[0.08em]'
 )
+const attachmentPopoverContent = {
+  align: 'start' as const,
+  collisionPadding: 16,
+  side: 'right' as const,
+  sideOffset: 10
+}
+const attachmentPopoverUi = {
+  content: 'w-[22rem] rounded-none border border-[color:var(--studio-shell-border)] bg-[color:var(--studio-control-bg)] p-3 shadow-[var(--studio-floating-shadow)] backdrop-blur-sm'
+}
 const detailPopoverKindBadgeClass = 'inline-flex items-center border px-1.5 font-mono text-[0.56rem] uppercase tracking-[0.08em]'
 const detailPopoverFlagBadgeClass = 'inline-flex items-center border px-1.5 py-0.5 font-mono text-[0.54rem] uppercase tracking-[0.06em]'
 // Imported routine and sequence bodies often preserve hard tabs from the source
@@ -449,6 +547,7 @@ const browserItemActionRailClass = 'grid w-[3.5rem] shrink-0 content-start justi
 const browserItemCompactActionRailClass = 'flex w-[6.25rem] shrink-0 flex-wrap items-start justify-end gap-1'
 const browserItemRowGridClass = 'grid grid-cols-[minmax(0,1fr)_3.5rem] items-start gap-2'
 const browserItemCompactRowGridClass = 'grid grid-cols-[minmax(0,1fr)_6.25rem] items-start gap-2'
+const selectedCanvasStackZIndex = 2147483644
 const tableWidthScaleItems = pgmlTableWidthScaleValues.map((value) => {
   return {
     label: `${value}x`,
@@ -473,10 +572,10 @@ const attachmentKindColors: Record<TableAttachmentKind, string> = {
 }
 const objectKindColors: Record<string, string> = {
   'Custom Type': '#14b8a6',
-  Function: '#c084fc',
-  Procedure: '#f97316',
-  Sequence: '#eab308',
-  Trigger: '#22c55e'
+  'Function': '#c084fc',
+  'Procedure': '#f97316',
+  'Sequence': '#eab308',
+  'Trigger': '#22c55e'
 }
 
 const objectColumnGapX = 300
@@ -496,6 +595,40 @@ const downloadBlob = (blob: Blob, fileName: string) => {
   URL.revokeObjectURL(objectUrl)
 }
 
+const restoreRendererBackendPreference = () => {
+  if (!import.meta.client) {
+    return
+  }
+
+  const storedValue = window.localStorage.getItem(diagramRendererPreferenceStorageKey)
+
+  if (!storedValue || !isDiagramRendererBackend(storedValue)) {
+    return
+  }
+
+  rendererBackend.value = storedValue
+}
+
+const persistRendererBackendPreference = (nextValue: DiagramRendererBackend) => {
+  if (!import.meta.client) {
+    return
+  }
+
+  window.localStorage.setItem(diagramRendererPreferenceStorageKey, nextValue)
+}
+
+const handleRendererBackendModelUpdate = (nextValue: string | number | undefined) => {
+  if (typeof nextValue !== 'string' || !isDiagramRendererBackend(nextValue)) {
+    return
+  }
+
+  rendererBackend.value = nextValue
+}
+
+const handleRendererCapabilityChange = (nextCapability: DiagramRendererCapability) => {
+  rendererCapability.value = nextCapability
+}
+
 const isMobileCanvasShell = computed(() => mobileActiveView !== null)
 const isMobilePanelView = computed(() => mobileActiveView === 'panel')
 const isMobileToolPanelView = computed(() => mobileActiveView === 'tool-panel')
@@ -512,6 +645,16 @@ const isDiagramPanelVisible = computed(() => {
 })
 const shouldShowDiagramPanelToggle = computed(() => !isMobileCanvasShell.value)
 const shouldShowZoomToolbar = computed(() => !isMobileSurfaceView.value)
+const rendererStatusText = computed(() => getDiagramRendererStatusLabel(rendererCapability.value))
+const rendererHelpText = computed(() => getDiagramRendererHelpText(rendererCapability.value))
+const rendererStatusClass = computed(() => {
+  return rendererCapability.value.resolved === 'webgpu'
+    ? 'text-[color:var(--studio-shell-text)]'
+    : 'text-[color:var(--studio-shell-muted)]'
+})
+const rendererStatusTitle = computed(() => {
+  return rendererHelpText.value || rendererStatusText.value
+})
 
 const normalizeReferenceValue = (value: string) => {
   return value.replaceAll('"', '').trim().toLowerCase()
@@ -523,7 +666,7 @@ const getMetadataValue = (metadata: Array<{ key: string, value: string }>, key: 
   return metadata.find(entry => entry.key.trim().toLowerCase() === normalizedKey)?.value || null
 }
 
-const uniqueValues = <T,>(values: T[]) => {
+const uniqueValues: <Value>(values: Value[]) => Value[] = (values) => {
   return Array.from(new Set(values))
 }
 
@@ -734,13 +877,6 @@ const getImpactTargetsFromValues = (
   }))
 }
 
-const getRoutineNameSearchKeys = (value: string) => {
-  return uniqueValues([
-    cleanForSearch(value),
-    cleanForSearch(value.split('.').at(-1) || value)
-  ]).filter(entry => entry.length > 0)
-}
-
 const inferRoutineTargets = (routine: PgmlRoutine) => {
   const affectValues = routine.affects
     ? [
@@ -766,7 +902,7 @@ const inferRoutineTargets = (routine: PgmlRoutine) => {
         const detailColumns = inferColumnsFromText(tableId, `${routine.signature} ${routine.details.join(' ')} ${routine.source || ''}`)
 
         if (detailColumns.length > 0) {
-          return detailColumns.map((columnName) => ({
+          return detailColumns.map(columnName => ({
             columnName,
             tableId
           }))
@@ -810,53 +946,11 @@ const inferTriggerTargets = (tableId: string, trigger: PgmlTrigger) => {
   return getUniqueImpactTargets([
     ...explicitTargets,
     ...sourceTargets,
-    ...matchedColumns.map((columnName) => ({
+    ...matchedColumns.map(columnName => ({
       columnName,
       tableId
     }))
   ])
-}
-
-const inferIndexTargets = (index: PgmlIndex) => {
-  const tableId = resolveTableIdentifier(index.tableName)
-
-  if (!tableId) {
-    return []
-  }
-
-  const explicitTargets = index.columns.map((columnName) => ({
-    columnName,
-    tableId
-  }))
-
-  return explicitTargets.length > 0
-    ? getUniqueImpactTargets(explicitTargets)
-    : [{
-        columnName: null,
-        tableId
-      }]
-}
-
-const inferConstraintTargets = (constraint: PgmlConstraint) => {
-  const tableId = resolveTableIdentifier(constraint.tableName)
-
-  if (!tableId) {
-    return []
-  }
-
-  const matchedColumns = inferColumnsFromText(tableId, constraint.expression)
-
-  if (matchedColumns.length === 0) {
-    return [{
-      columnName: null,
-      tableId
-    }]
-  }
-
-  return getUniqueImpactTargets(matchedColumns.map((columnName) => ({
-    columnName,
-    tableId
-  })))
 }
 
 const inferSequenceTargets = (sequence: PgmlSequence) => {
@@ -1243,6 +1337,35 @@ const tableRowsByTableId = computed(() => {
 
 const getTableRows = (tableId: string) => tableRowsByTableId.value[tableId] || []
 
+const automationTableRowsById = computed<Record<string, TableRow[]>>(() => {
+  return model.tables.reduce<Record<string, TableRow[]>>((entries, table) => {
+    const columnRows = table.columns.map((column) => {
+      return {
+        column,
+        key: `${table.fullName}.${column.name}`,
+        kind: 'column' as const,
+        tableId: table.fullName
+      }
+    })
+    const attachmentRows = (tableAttachmentState.value.attachmentsByTableId[table.fullName] || []).map((attachment) => {
+      return {
+        attachment,
+        key: attachment.id,
+        kind: 'attachment' as const,
+        tableId: table.fullName
+      }
+    })
+
+    entries[table.fullName] = [...columnRows, ...attachmentRows]
+    return entries
+  }, {})
+})
+
+const getAutomationTableRows = (tableId: string) => automationTableRowsById.value[tableId] || []
+
+const getColumnLabelAnchorKey = (tableId: string, columnName: string) => `${tableId}.${columnName}`.toLowerCase()
+const getImpactAnchorKey = (nodeId: string, tableId: string) => `${nodeId}:${tableId}`.toLowerCase()
+
 const buildBrowserTableItem = (table: PgmlSchemaModel['tables'][number]): EntityBrowserItem => {
   const columns = table.columns.map<EntityBrowserItem>((column) => {
     return {
@@ -1505,10 +1628,6 @@ const orderedTablesByGroup = computed(() => {
   }, {})
 })
 
-const groupedTableIds = computed(() => {
-  return new Set(model.tables.filter(table => table.groupName).map(table => table.fullName))
-})
-
 const visibleStandaloneTables = computed(() => {
   return model.tables.filter(table => !table.groupName && isTableVisible(table))
 })
@@ -1581,6 +1700,7 @@ const syncLayoutStates = () => {
     const groupId = getStoredGroupId(group.name)
     const previousState = groupLayoutStates.value[groupId]
     const storedLayout = model.nodeProperties[groupId]
+    const pendingPosition = getPendingNodePositionOverride(groupId, 'group')
     const tables = orderedTablesByGroup.value[group.name] || []
     const columnCount = Math.max(1, Math.min(
       Math.round(storedLayout?.tableColumns ?? previousState?.columnCount ?? 1),
@@ -1613,14 +1733,15 @@ const syncLayoutStates = () => {
       tableWidthScale,
       title: group.name,
       width,
-      x: storedLayout?.x ?? previousState?.x ?? 120 + index * 420,
-      y: storedLayout?.y ?? previousState?.y ?? 90 + (index % 2) * 120
+      x: pendingPosition?.x ?? storedLayout?.x ?? previousState?.x ?? 120 + index * 420,
+      y: pendingPosition?.y ?? storedLayout?.y ?? previousState?.y ?? 90 + (index % 2) * 120
     }
   })
 
   visibleStandaloneTables.value.forEach((table, index) => {
     const previousState = floatingTableStates.value[table.fullName]
     const storedLayout = model.nodeProperties[table.fullName]
+    const pendingPosition = getPendingNodePositionOverride(table.fullName, 'table')
     const height = estimateDiagramTableHeight(getTableRows(table.fullName).length)
 
     nextTableStates[table.fullName] = {
@@ -1635,8 +1756,8 @@ const syncLayoutStates = () => {
       title: table.name,
       visible: true,
       width: Math.max(diagramGroupTableWidth, storedLayout?.width ?? previousState?.width ?? diagramGroupTableWidth),
-      x: storedLayout?.x ?? previousState?.x ?? 120 + (index % 3) * 300,
-      y: storedLayout?.y ?? previousState?.y ?? 560 + Math.floor(index / 3) * 220
+      x: pendingPosition?.x ?? storedLayout?.x ?? previousState?.x ?? 120 + (index % 3) * 300,
+      y: pendingPosition?.y ?? storedLayout?.y ?? previousState?.y ?? 560 + Math.floor(index / 3) * 220
     }
   })
 
@@ -1667,79 +1788,79 @@ const syncLayoutStates = () => {
       .map((entry) => {
         const impactTargets = inferRoutineTargets(entry)
 
-      return {
-        color: objectKindColors.Function || '#c084fc',
-        details: entry.details,
-        expandedHeight: 176,
-        id: `function:${entry.name}`,
-        impactTargets,
-        kindLabel: 'Function',
-        sourceRange: entry.sourceRange,
-        subtitle: entry.signature,
-        tableIds: uniqueValues(impactTargets.map(target => target.tableId)),
-        title: entry.name,
-        width: 336
-      }
-    }),
+        return {
+          color: objectKindColors.Function || '#c084fc',
+          details: entry.details,
+          expandedHeight: 176,
+          id: `function:${entry.name}`,
+          impactTargets,
+          kindLabel: 'Function',
+          sourceRange: entry.sourceRange,
+          subtitle: entry.signature,
+          tableIds: uniqueValues(impactTargets.map(target => target.tableId)),
+          title: entry.name,
+          width: 336
+        }
+      }),
     ...model.procedures
       .filter(entry => isEntityDirectlyVisible(`procedure:${entry.name}`) && !tableAttachmentState.value.attachedObjectIds.has(`procedure:${entry.name}`))
       .map((entry) => {
         const impactTargets = inferRoutineTargets(entry)
 
-      return {
-        color: objectKindColors.Procedure || '#f97316',
-        details: entry.details,
-        expandedHeight: 156,
-        id: `procedure:${entry.name}`,
-        impactTargets,
-        kindLabel: 'Procedure',
-        sourceRange: entry.sourceRange,
-        subtitle: entry.signature,
-        tableIds: uniqueValues(impactTargets.map(target => target.tableId)),
-        title: entry.name,
-        width: 320
-      }
-    }),
+        return {
+          color: objectKindColors.Procedure || '#f97316',
+          details: entry.details,
+          expandedHeight: 156,
+          id: `procedure:${entry.name}`,
+          impactTargets,
+          kindLabel: 'Procedure',
+          sourceRange: entry.sourceRange,
+          subtitle: entry.signature,
+          tableIds: uniqueValues(impactTargets.map(target => target.tableId)),
+          title: entry.name,
+          width: 320
+        }
+      }),
     ...model.triggers
       .filter(entry => isEntityDirectlyVisible(`trigger:${entry.name}`) && !tableAttachmentState.value.attachedObjectIds.has(`trigger:${entry.name}`))
       .map((entry) => {
         const tableId = resolveTableIdentifier(entry.tableName)
         const impactTargets = tableId ? inferTriggerTargets(tableId, entry) : []
 
-      return {
-        color: objectKindColors.Trigger || '#22c55e',
-        details: entry.details,
-        expandedHeight: 168,
-        id: `trigger:${entry.name}`,
-        impactTargets,
-        kindLabel: 'Trigger',
-        sourceRange: entry.sourceRange,
-        subtitle: buildTriggerSubtitle(entry),
-        tableIds: uniqueValues(impactTargets.map(target => target.tableId)),
-        title: entry.name,
-        width: 332
-      }
-    }),
+        return {
+          color: objectKindColors.Trigger || '#22c55e',
+          details: entry.details,
+          expandedHeight: 168,
+          id: `trigger:${entry.name}`,
+          impactTargets,
+          kindLabel: 'Trigger',
+          sourceRange: entry.sourceRange,
+          subtitle: buildTriggerSubtitle(entry),
+          tableIds: uniqueValues(impactTargets.map(target => target.tableId)),
+          title: entry.name,
+          width: 332
+        }
+      }),
     ...model.sequences
       .filter(entry => isEntityDirectlyVisible(`sequence:${entry.name}`) && !tableAttachmentState.value.attachedObjectIds.has(`sequence:${entry.name}`))
       .map((entry) => {
         const impactTargets = inferSequenceTargets(entry)
 
-      return {
-        color: objectKindColors.Sequence || '#eab308',
-        details: entry.details,
-        expandedHeight: 156,
-        id: `sequence:${entry.name}`,
-        impactTargets,
-        kindLabel: 'Sequence',
-        sourceRange: entry.sourceRange,
-        subtitle: buildSequenceSubtitle(entry),
-        tableIds: uniqueValues(impactTargets.map(target => target.tableId)),
-        title: entry.name,
-        width: 308
-      }
-    }),
-    ...model.customTypes.filter((entry) => isEntityDirectlyVisible(`custom-type:${entry.kind}:${entry.name}`)).map((entry: PgmlCustomType) => {
+        return {
+          color: objectKindColors.Sequence || '#eab308',
+          details: entry.details,
+          expandedHeight: 156,
+          id: `sequence:${entry.name}`,
+          impactTargets,
+          kindLabel: 'Sequence',
+          sourceRange: entry.sourceRange,
+          subtitle: buildSequenceSubtitle(entry),
+          tableIds: uniqueValues(impactTargets.map(target => target.tableId)),
+          title: entry.name,
+          width: 308
+        }
+      }),
+    ...model.customTypes.filter(entry => isEntityDirectlyVisible(`custom-type:${entry.kind}:${entry.name}`)).map((entry: PgmlCustomType) => {
       const impactTargets = inferCustomTypeTargets(entry)
 
       return {
@@ -1761,6 +1882,7 @@ const syncLayoutStates = () => {
   objectItems.forEach((item, index) => {
     const previousState = objectLayoutStates.value[item.id]
     const storedLayout = model.nodeProperties[item.id]
+    const pendingPosition = getPendingNodePositionOverride(item.id, 'object')
     const collapsed = storedLayout?.collapsed ?? previousState?.collapsed ?? true
     const expandedHeight = Math.max(item.expandedHeight, previousState?.expandedHeight ?? item.expandedHeight)
 
@@ -1782,14 +1904,119 @@ const syncLayoutStates = () => {
       tableIds: item.tableIds,
       title: item.title,
       width: Math.max(item.width, storedLayout?.width ?? previousState?.width ?? item.width),
-      x: storedLayout?.x ?? previousState?.x ?? anchorBaseX + (index % 2) * objectColumnGapX,
-      y: storedLayout?.y ?? previousState?.y ?? 96 + Math.floor(index / 2) * objectRowGapY
+      x: pendingPosition?.x ?? storedLayout?.x ?? previousState?.x ?? anchorBaseX + (index % 2) * objectColumnGapX,
+      y: pendingPosition?.y ?? storedLayout?.y ?? previousState?.y ?? 96 + Math.floor(index / 2) * objectRowGapY
     }
   })
 
   groupLayoutStates.value = nextGroupStates
   floatingTableStates.value = nextTableStates
   objectLayoutStates.value = nextObjectStates
+  syncPendingNodePositionOverrides(nextGroupStates, nextTableStates, nextObjectStates)
+}
+
+const getPendingNodePositionOverride = (
+  id: string,
+  kind: 'group' | 'object' | 'table'
+) => {
+  const override = pendingNodePositionOverrides.value[id]
+
+  if (!override || override.kind !== kind || override.expiresAt <= Date.now()) {
+    return null
+  }
+
+  return override
+}
+
+const syncPendingNodePositionOverrides = (
+  nextGroupStates: Record<string, DiagramGpuGroupNode>,
+  nextTableStates: Record<string, DiagramGpuNodeLayoutState>,
+  nextObjectStates: Record<string, DiagramGpuObjectNode>
+) => {
+  const nextOverrides = Object.entries(pendingNodePositionOverrides.value).reduce<Record<string, PendingNodePositionOverride>>((entries, [id, override]) => {
+    if (override.expiresAt <= Date.now()) {
+      return entries
+    }
+
+    const nextState = override.kind === 'group'
+      ? nextGroupStates[id]
+      : override.kind === 'table'
+        ? nextTableStates[id]
+        : nextObjectStates[id]
+
+    if (!nextState) {
+      return entries
+    }
+
+    const storedLayout = model.nodeProperties[id]
+
+    if (storedLayout?.x === override.x && storedLayout?.y === override.y) {
+      return entries
+    }
+
+    entries[id] = override
+
+    return entries
+  }, {})
+
+  if (JSON.stringify(nextOverrides) === JSON.stringify(pendingNodePositionOverrides.value)) {
+    return
+  }
+
+  pendingNodePositionOverrides.value = nextOverrides
+}
+
+const setPendingNodePositionOverride = (payload: { id: string, kind: 'group' | 'object' | 'table', x: number, y: number }) => {
+  pendingNodePositionOverrides.value = {
+    ...pendingNodePositionOverrides.value,
+    [payload.id]: {
+      expiresAt: Date.now() + diagramPendingNodePositionOverrideTtlMs,
+      kind: payload.kind,
+      x: payload.x,
+      y: payload.y
+    }
+  }
+}
+
+const syncCompareHighlightStates = () => {
+  const nextHighlights = compareNodeHighlightById.value
+
+  groupLayoutStates.value = Object.fromEntries(Object.entries(groupLayoutStates.value).map(([id, group]) => {
+    const highlight = nextHighlights[id] || null
+
+    return [
+      id,
+      {
+        ...group,
+        compareHighlightActive: highlight?.active || false,
+        compareHighlightColor: highlight?.color || null
+      }
+    ]
+  }))
+  floatingTableStates.value = Object.fromEntries(Object.entries(floatingTableStates.value).map(([id, table]) => {
+    const highlight = nextHighlights[id] || null
+
+    return [
+      id,
+      {
+        ...table,
+        compareHighlightActive: highlight?.active || false,
+        compareHighlightColor: highlight?.color || null
+      }
+    ]
+  }))
+  objectLayoutStates.value = Object.fromEntries(Object.entries(objectLayoutStates.value).map(([id, objectNode]) => {
+    const highlight = nextHighlights[id] || null
+
+    return [
+      id,
+      {
+        ...objectNode,
+        compareHighlightActive: highlight?.active || false,
+        compareHighlightColor: highlight?.color || null
+      }
+    ]
+  }))
 }
 
 const tableCards = computed<DiagramGpuTableCard[]>(() => {
@@ -1888,35 +2115,399 @@ const worldBounds = computed<DiagramGpuWorldBounds>(() => {
   }
 })
 
-const viewportWorldBounds = computed<DiagramGpuWorldBounds>(() => {
-  const entries = [
-    ...groupNodes.value.map(group => ({
-      maxX: group.x + group.width,
-      maxY: group.y + group.height,
-      minX: group.x,
-      minY: group.y
-    })),
-    ...tableCards.value.map(card => ({
-      maxX: card.x + card.width,
-      maxY: card.y + card.height,
-      minX: card.x,
-      minY: card.y
-    }))
-  ]
+const getColumnAnchorKey = (tableId: string, columnName: string) => `${tableId}.${columnName}`
 
-  if (entries.length === 0) {
-    return worldBounds.value
-  }
+const automationPlaneWidth = computed(() => {
+  return Math.max(2600, Math.ceil(worldBounds.value.maxX + 400))
+})
 
+const automationPlaneHeight = computed(() => {
+  return Math.max(1800, Math.ceil(worldBounds.value.maxY + 400))
+})
+
+const automationPlaneStyle = computed<CSSProperties>(() => {
   return {
-    maxX: Math.max(...entries.map(entry => entry.maxX)),
-    maxY: Math.max(...entries.map(entry => entry.maxY)),
-    minX: Math.min(...entries.map(entry => entry.minX)),
-    minY: Math.min(...entries.map(entry => entry.minY))
+    '--pgml-plane-pan-x': `${Math.round(sceneTransform.value.panX)}px`,
+    '--pgml-plane-pan-y': `${Math.round(sceneTransform.value.panY)}px`,
+    '--pgml-plane-scale': String(sceneTransform.value.scale),
+    'height': `${automationPlaneHeight.value}px`,
+    'transform': `translate(var(--pgml-plane-pan-x), var(--pgml-plane-pan-y)) scale(var(--pgml-plane-scale))`,
+    'transformOrigin': '0 0',
+    'width': `${automationPlaneWidth.value}px`
   }
 })
 
-const getColumnAnchorKey = (tableId: string, columnName: string) => `${tableId}.${columnName}`
+const groupNodeOrderById = computed(() => {
+  return groupNodes.value.reduce<Record<string, number>>((entries, group, index) => {
+    entries[group.id] = index + 1
+    return entries
+  }, {})
+})
+
+const selectedStackTargetId = computed(() => {
+  const selection = selectedSelection.value
+
+  if (!selection) {
+    return null
+  }
+
+  if (selection.kind === 'group') {
+    return selection.id
+  }
+
+  if (selection.kind === 'object') {
+    return selection.id
+  }
+
+  const table = tableCards.value.find((entry) => {
+    return entry.id === selection.tableId
+  })
+
+  return table?.groupId || selection.tableId
+})
+
+const getGroupNodeLayerOrder = (groupId: string) => {
+  return groupNodeOrderById.value[groupId] || 1
+}
+
+const getAutomationNodeZIndex = (nodeId: string, kind: 'group' | 'object' | 'table') => {
+  if (selectedStackTargetId.value === nodeId) {
+    return selectedCanvasStackZIndex
+  }
+
+  if (kind === 'group') {
+    return 'auto'
+  }
+
+  return getDiagramNodeZIndex(getGroupNodeLayerOrder(nodeId))
+}
+
+const automationPlaneNodes = computed<AutomationPlaneNode[]>(() => {
+  return [
+    ...groupNodes.value.map((group) => {
+      return {
+        color: group.color,
+        height: group.height,
+        id: group.id,
+        kind: 'group' as const,
+        tableCount: group.tableCount,
+        title: group.title,
+        width: group.width,
+        x: group.x,
+        y: group.y,
+        zIndex: getAutomationNodeZIndex(group.id, 'group')
+      }
+    }),
+    ...tableCards.value
+      .filter(card => !card.groupId)
+      .map((card) => {
+        return {
+          color: card.color,
+          height: card.height,
+          headerHeight: card.headerHeight,
+          id: card.id,
+          kind: 'table' as const,
+          rowCount: card.rows.length,
+          schema: card.schema,
+          title: card.title,
+          width: card.width,
+          x: card.x,
+          y: card.y,
+          zIndex: getAutomationNodeZIndex(card.id, 'table')
+        }
+      }),
+    ...objectNodes.value.map((node) => {
+      return {
+        collapsed: node.collapsed,
+        color: node.color,
+        details: node.details,
+        height: node.height,
+        id: node.id,
+        impactTargets: node.impactTargets,
+        kind: 'object' as const,
+        kindLabel: node.kindLabel,
+        subtitle: node.subtitle,
+        tableIds: node.tableIds,
+        title: node.title,
+        width: node.width,
+        x: node.x,
+        y: node.y,
+        zIndex: getAutomationNodeZIndex(node.id, 'object')
+      }
+    })
+  ]
+})
+
+const getAutomationGroupTables = (groupId: string) => {
+  return tableCards.value.filter(card => card.groupId === groupId)
+}
+
+const getAutomationGroupContentStyle = (groupId: string): CSSProperties => {
+  const group = groupLayoutStates.value[groupId]
+  const tables = getAutomationGroupTables(groupId)
+
+  if (!group || tables.length === 0) {
+    return {
+      height: '0px',
+      position: 'relative',
+      width: '0px'
+    }
+  }
+
+  const contentWidth = Math.max(...tables.map((table) => {
+    return table.x + table.width - (group.x + diagramGroupHorizontalPadding)
+  }))
+  const contentHeight = Math.max(...tables.map((table) => {
+    return table.y + table.height - (group.y + diagramGroupHeaderBandHeight)
+  }))
+
+  return {
+    height: `${Math.max(0, Math.round(contentHeight))}px`,
+    position: 'relative',
+    width: `${Math.max(0, Math.round(contentWidth))}px`
+  }
+}
+
+const getAutomationGroupTableLayoutStyle = (groupId: string, tableId: string): CSSProperties => {
+  const group = groupLayoutStates.value[groupId]
+  const table = tableCards.value.find((entry) => {
+    return entry.id === tableId && entry.groupId === groupId
+  })
+
+  if (!group || !table) {
+    return {}
+  }
+
+  return {
+    height: `${table.height}px`,
+    left: `${Math.round(table.x - group.x - diagramGroupHorizontalPadding)}px`,
+    position: 'absolute',
+    top: `${Math.round(table.y - group.y - diagramGroupHeaderBandHeight)}px`,
+    width: `${table.width}px`
+  }
+}
+
+const selectAutomationGroup = (groupId: string) => {
+  selectedSelection.value = {
+    id: groupId,
+    kind: 'group'
+  }
+
+  if (activePanelTab.value !== 'inspector') {
+    activePanelTab.value = 'inspector'
+  }
+}
+
+const handleAutomationTableClick = (tableId: string) => {
+  selectedSelection.value = {
+    kind: 'table',
+    tableId
+  }
+
+  if (activePanelTab.value !== 'inspector') {
+    activePanelTab.value = 'inspector'
+  }
+}
+
+const handleAttachmentClick = (tableId: string, attachment: TableAttachment) => {
+  selectedSelection.value = {
+    attachmentId: attachment.id,
+    kind: 'attachment',
+    tableId
+  }
+
+  if (activePanelTab.value !== 'inspector') {
+    activePanelTab.value = 'inspector'
+  }
+}
+
+const handleAttachmentDoubleClick = (attachment: TableAttachment) => {
+  focusSourceRange(attachment.sourceRange)
+}
+
+const handleAutomationObjectClick = (objectId: string) => {
+  selectedSelection.value = {
+    id: objectId,
+    kind: 'object'
+  }
+
+  if (activePanelTab.value !== 'inspector') {
+    activePanelTab.value = 'inspector'
+  }
+}
+
+const handleAutomationTableDoubleClick = (tableId: string) => {
+  const table = model.tables.find((entry) => {
+    return entry.fullName === tableId
+  })
+
+  focusSourceRange(table?.sourceRange)
+}
+
+const handleAutomationGroupDoubleClick = (groupId: string) => {
+  focusSourceRange(groupSourceRangeById.value[groupId])
+}
+
+const handleAutomationObjectDoubleClick = (objectId: string) => {
+  const objectNode = objectLayoutStates.value[objectId]
+
+  focusSourceRange(objectNode?.sourceRange)
+}
+
+const shouldStartAutomationPlaneGroupDrag = (
+  event: PointerEvent,
+  node: AutomationPlaneNode
+) => {
+  if (node.kind !== 'group' || !(event.target instanceof HTMLElement)) {
+    return false
+  }
+
+  return !event.target.closest('[data-node-header]')
+    && !event.target.closest('[data-table-anchor]')
+    && !event.target.closest('[data-group-add-table]')
+    && !event.target.closest('[data-group-edit-button]')
+}
+
+const handleAutomationPlaneGroupSurfacePointerDown = (
+  event: PointerEvent,
+  node: AutomationPlaneNode
+) => {
+  if (!shouldStartAutomationPlaneGroupDrag(event, node)) {
+    return
+  }
+
+  startAutomationPlaneNodeDrag(event, node)
+}
+
+const shouldStartAutomationPlaneNodeSurfaceDrag = (
+  event: PointerEvent,
+  node: AutomationPlaneNode
+) => {
+  if (node.kind === 'group' || !(event.target instanceof HTMLElement)) {
+    return false
+  }
+
+  return !event.target.closest('[data-node-header]')
+    && !event.target.closest('[data-table-edit-button]')
+    && !event.target.closest('[data-object-collapse-button]')
+}
+
+const handleAutomationPlaneNodeSurfacePointerDown = (
+  event: PointerEvent,
+  node: AutomationPlaneNode
+) => {
+  if (!shouldStartAutomationPlaneNodeSurfaceDrag(event, node)) {
+    return
+  }
+
+  startAutomationPlaneNodeDrag(event, node)
+}
+
+const shouldStartAutomationPlaneGroupedTableDrag = (event: PointerEvent) => {
+  if (!(event.target instanceof HTMLElement)) {
+    return false
+  }
+
+  return !event.target.closest('[data-table-edit-button]')
+}
+
+const handleAutomationPlaneGroupedTablePointerDown = (
+  event: PointerEvent,
+  node: AutomationPlaneNode
+) => {
+  if (node.kind !== 'group' || !shouldStartAutomationPlaneGroupedTableDrag(event)) {
+    return
+  }
+
+  startAutomationPlaneNodeDrag(event, node)
+}
+
+const startAutomationPlaneNodeDrag = (
+  event: PointerEvent,
+  node: AutomationPlaneNode
+) => {
+  if (!(event.currentTarget instanceof HTMLElement)) {
+    return
+  }
+
+  if (node.kind === 'group') {
+    selectAutomationGroup(node.id)
+  } else if (node.kind === 'table') {
+    handleAutomationTableClick(node.id)
+  } else {
+    handleAutomationObjectClick(node.id)
+  }
+
+  automationPlaneDragSession = {
+    element: event.currentTarget,
+    id: node.id,
+    kind: node.kind,
+    lastDragX: node.x,
+    lastDragY: node.y,
+    originClientX: event.clientX,
+    originClientY: event.clientY,
+    originX: node.x,
+    originY: node.y,
+    pointerId: event.pointerId,
+    started: false
+  }
+  automationPlaneDragSession.element.setPointerCapture(event.pointerId)
+}
+
+const handleAutomationPlanePointerMove = (event: PointerEvent) => {
+  if (!automationPlaneDragSession || automationPlaneDragSession.pointerId !== event.pointerId) {
+    return
+  }
+
+  if (!(event.currentTarget instanceof HTMLElement) || event.currentTarget !== automationPlaneDragSession.element) {
+    return
+  }
+
+  const deltaClientX = event.clientX - automationPlaneDragSession.originClientX
+  const deltaClientY = event.clientY - automationPlaneDragSession.originClientY
+  const deltaX = (event.clientX - automationPlaneDragSession.originClientX) / Math.max(sceneTransform.value.scale, 0.001)
+  const deltaY = (event.clientY - automationPlaneDragSession.originClientY) / Math.max(sceneTransform.value.scale, 0.001)
+  const movedEnoughToDrag = Math.abs(deltaClientX) > 4 || Math.abs(deltaClientY) > 4
+
+  if (!automationPlaneDragSession.started && !movedEnoughToDrag) {
+    return
+  }
+
+  automationPlaneDragSession.started = true
+  automationPlaneDragSession.lastDragX = automationPlaneDragSession.originX + deltaX
+  automationPlaneDragSession.lastDragY = automationPlaneDragSession.originY + deltaY
+  handleSceneMoveNode({
+    id: automationPlaneDragSession.id,
+    kind: automationPlaneDragSession.kind,
+    x: automationPlaneDragSession.lastDragX,
+    y: automationPlaneDragSession.lastDragY
+  })
+}
+
+const handleAutomationPlanePointerUp = (event: PointerEvent) => {
+  if (!automationPlaneDragSession || automationPlaneDragSession.pointerId !== event.pointerId) {
+    return
+  }
+
+  if (!(event.currentTarget instanceof HTMLElement) || event.currentTarget !== automationPlaneDragSession.element) {
+    return
+  }
+
+  if (automationPlaneDragSession.element.hasPointerCapture(event.pointerId)) {
+    automationPlaneDragSession.element.releasePointerCapture(event.pointerId)
+  }
+
+  if (automationPlaneDragSession.started) {
+    handleSceneMoveEnd({
+      id: automationPlaneDragSession.id,
+      kind: automationPlaneDragSession.kind,
+      x: automationPlaneDragSession.lastDragX,
+      y: automationPlaneDragSession.lastDragY
+    })
+  }
+
+  automationPlaneDragSession = null
+}
 
 const tableColorById = computed(() => {
   return tableCards.value.reduce<Record<string, string>>((entries, card) => {
@@ -1987,6 +2578,135 @@ const selectedObjectImpactRowKeys = computed(() => {
     return [getColumnAnchorKey(impactTarget.tableId, impactTarget.columnName)]
   }))
 })
+
+const tableGroupColorByTableId = computed(() => {
+  return tableCards.value.reduce<Record<string, string>>((entries, card) => {
+    entries[card.id] = card.color
+    return entries
+  }, {})
+})
+
+const getSelectionGlowStyle = (color: string) => {
+  return {
+    '--pgml-selection-color': color,
+    '--pgml-selection-border': `color-mix(in srgb, ${color} 78%, white 22%)`,
+    '--pgml-selection-shadow-near': `color-mix(in srgb, ${color} 48%, transparent)`,
+    '--pgml-selection-shadow-far': `color-mix(in srgb, ${color} 24%, transparent)`
+  }
+}
+
+const getNodeBorderColor = (color: string, kind: 'group' | 'object' | 'table') => {
+  return kind === 'group'
+    ? `color-mix(in srgb, ${color} 38%, var(--studio-node-border-neutral) 62%)`
+    : `color-mix(in srgb, ${color} 62%, var(--studio-node-border-neutral) 38%)`
+}
+
+const getNodeBackground = (color: string, kind: 'group' | 'object' | 'table') => {
+  if (kind === 'group') {
+    return `linear-gradient(180deg, color-mix(in srgb, ${color} 12%, transparent), var(--studio-group-surface-soft) 22%), var(--studio-group-surface)`
+  }
+
+  if (kind === 'table') {
+    return `color-mix(in srgb, ${color} 8%, var(--studio-table-surface) 92%)`
+  }
+
+  return `color-mix(in srgb, ${color} 8%, var(--studio-node-surface-bottom) 92%)`
+}
+
+const getNodeAccentColor = (color: string) => {
+  return `color-mix(in srgb, ${color} 70%, var(--studio-node-accent-mix) 30%)`
+}
+
+const getSchemaBadgeStyle = (schemaName: string) => {
+  const color = getDiagramSchemaBadgeColor(schemaName, model.schemas)
+
+  return {
+    backgroundColor: `color-mix(in srgb, ${color} 14%, transparent)`,
+    borderColor: `color-mix(in srgb, ${color} 58%, var(--studio-rail) 42%)`,
+    color: `color-mix(in srgb, ${color} 72%, var(--studio-shell-text) 28%)`
+  }
+}
+
+const getAttachmentRowStyle = (attachment: TableAttachment) => {
+  return {
+    backgroundColor: `color-mix(in srgb, ${attachment.color} 8%, var(--studio-row-surface) 92%)`,
+    boxShadow: `inset 3px 0 0 color-mix(in srgb, ${attachment.color} 58%, transparent)`
+  }
+}
+
+const getSelectedAttachmentRowStyle = () => {
+  return {
+    boxShadow: 'none'
+  }
+}
+
+const getAttachmentKindBadgeStyle = (attachment: TableAttachment) => {
+  return {
+    backgroundColor: `color-mix(in srgb, ${attachment.color} 16%, transparent)`,
+    borderColor: `color-mix(in srgb, ${attachment.color} 58%, var(--studio-rail) 42%)`,
+    color: `color-mix(in srgb, ${attachment.color} 72%, var(--studio-shell-text) 28%)`
+  }
+}
+
+const getAttachmentFlagStyle = (flag: TableAttachmentFlag) => {
+  return {
+    backgroundColor: `color-mix(in srgb, ${flag.color} 14%, transparent)`,
+    borderColor: `color-mix(in srgb, ${flag.color} 56%, var(--studio-rail) 44%)`,
+    color: `color-mix(in srgb, ${flag.color} 72%, var(--studio-shell-text) 28%)`
+  }
+}
+
+const isGroupSelectionActive = (groupId: string) => {
+  return selectedSelection.value?.kind === 'group' && selectedSelection.value.id === groupId
+}
+
+const isObjectSelectionActive = (objectId: string) => {
+  return selectedSelection.value?.kind === 'object' && selectedSelection.value.id === objectId
+}
+
+const isTableSelectionActive = (tableId: string) => {
+  return selectedSelection.value?.kind === 'table' && selectedSelection.value.tableId === tableId
+}
+
+const isColumnSelectionActive = (tableId: string, columnName: string) => {
+  return (
+    selectedSelection.value?.kind === 'column'
+    && selectedSelection.value.tableId === tableId
+    && selectedSelection.value.columnName === columnName
+  )
+}
+
+const isAttachmentSelectionActive = (tableId: string, attachmentId: string) => {
+  return (
+    selectedSelection.value?.kind === 'attachment'
+    && selectedSelection.value.tableId === tableId
+    && selectedSelection.value.attachmentId === attachmentId
+  )
+}
+
+const getRelationalRowHighlightColor = (tableId: string, columnName: string) => {
+  if (isColumnSelectionActive(tableId, columnName)) {
+    return tableGroupColorByTableId.value[tableId] || '#79e3ea'
+  }
+
+  const rowKey = getColumnAnchorKey(tableId, columnName)
+
+  if (selectedTableRelationalRowKeys.value.has(rowKey)) {
+    return tableGroupColorByTableId.value[selectedTableId.value || ''] || '#79e3ea'
+  }
+
+  if (selectedObjectImpactRowKeys.value.has(rowKey)) {
+    return selectedSelection.value?.kind === 'object'
+      ? (objectLayoutStates.value[selectedSelection.value.id]?.color || '#14b8a6')
+      : '#14b8a6'
+  }
+
+  return null
+}
+
+const isHighlightedRelationalRow = (tableId: string, columnName: string) => {
+  return getRelationalRowHighlightColor(tableId, columnName) !== null
+}
 
 const parseConnectionPreviewPath = (path: string) => {
   const segments = path.match(/[ML]\s*-?\d+(?:\.\d+)?\s+-?\d+(?:\.\d+)?/g) || []
@@ -2144,6 +2864,43 @@ const styledConnectionLines = computed(() => {
   })
 })
 
+const applyConnectionStyle = (line: DiagramGpuConnectionLine) => {
+  const style = connectionStyleByKey.value[line.key]
+
+  if (!style) {
+    return line
+  }
+
+  return {
+    ...line,
+    animated: style.animated,
+    color: style.color,
+    dashPattern: style.dashPattern,
+    dashed: style.dashed,
+    zIndex: style.zIndex
+  }
+}
+
+const buildConnectionPath = (line: DiagramGpuConnectionLine) => {
+  return line.points.map((point, index) => {
+    return `${index === 0 ? 'M' : 'L'} ${point.x} ${point.y}`
+  }).join(' ')
+}
+
+const automationConnectionCanvasLayers = computed(() => {
+  return buildDiagramConnectionPreviewLayers(
+    routedConnectionLines.value.map((line) => {
+      const styledLine = applyConnectionStyle(line)
+
+      return {
+        ...styledLine,
+        path: buildConnectionPath(styledLine)
+      }
+    }),
+    activeConnectionDragPreview.value
+  )
+})
+
 const nodeOrderById = computed(() => {
   const entries: Record<string, number> = {}
   let order = 1
@@ -2204,6 +2961,67 @@ const createBounds = (x: number, y: number, width: number, height: number): Meas
     top: y,
     width
   }
+}
+
+const getElementOffsetWithinPlane = (element: HTMLElement) => {
+  if (!(planeRef.value instanceof HTMLElement)) {
+    return null
+  }
+
+  let current: HTMLElement | null = element
+  let x = 0
+  let y = 0
+
+  while (current && current !== planeRef.value) {
+    x += current.offsetLeft
+    y += current.offsetTop
+    current = current.offsetParent instanceof HTMLElement ? current.offsetParent : null
+  }
+
+  if (current !== planeRef.value) {
+    return null
+  }
+
+  return { x, y }
+}
+
+const getAutomationPlaneMeasuredBounds = (selector: string) => {
+  if (!(planeRef.value instanceof HTMLElement)) {
+    return null
+  }
+
+  const element = planeRef.value.querySelector(selector)
+
+  if (!(element instanceof HTMLElement)) {
+    return null
+  }
+
+  const offset = getElementOffsetWithinPlane(element)
+
+  if (!offset) {
+    return null
+  }
+
+  return createBounds(offset.x, offset.y, element.offsetWidth, element.offsetHeight)
+}
+
+const getEstimatedColumnLabelBounds = (rowBounds: MeasuredBounds) => {
+  const topInset = Math.min(3, Math.max(rowBounds.height - 1, 0))
+  const height = Math.max(1, Math.min(13, rowBounds.height - topInset))
+
+  return createBounds(rowBounds.left, rowBounds.top + topInset, rowBounds.width, height)
+}
+
+const getColumnRoutingBounds = (tableId: string, columnName: string, rowBounds: MeasuredBounds) => {
+  const measuredLabelBounds = getAutomationPlaneMeasuredBounds(
+    `[data-column-label-anchor="${getColumnLabelAnchorKey(tableId, columnName)}"]`
+  )
+
+  if (measuredLabelBounds) {
+    return measuredLabelBounds
+  }
+
+  return getEstimatedColumnLabelBounds(rowBounds)
 }
 
 const isComparePanelActive = computed(() => {
@@ -2621,24 +3439,14 @@ const geometryRegistry = computed(() => {
   const columnGeometry = new Map<string, RoutingWorkerGeometryInput>()
   const objectGeometry = new Map<string, RoutingWorkerGeometryInput>()
   const tableGeometry = new Map<string, RoutingWorkerGeometryInput>()
-  const groupHeaderBands = [
-    ...groupNodes.value.map((group) => {
-      return {
-        bottom: group.y + diagramGroupHeaderBandHeight,
-        left: group.x,
-        right: group.x + group.width,
-        top: group.y
-      }
-    }),
-    ...tableCards.value.map((card) => {
-      return {
-        bottom: card.y + card.headerHeight,
-        left: card.x,
-        right: card.x + card.width,
-        top: card.y
-      }
-    })
-  ]
+  const groupHeaderBands = groupNodes.value.map((group) => {
+    return {
+      bottom: group.y + diagramGroupHeaderBandHeight,
+      left: group.x,
+      right: group.x + group.width,
+      top: group.y
+    }
+  })
 
   tableCards.value.forEach((card) => {
     const cardBounds = createBounds(card.x, card.y, card.width, card.height)
@@ -2672,15 +3480,17 @@ const geometryRegistry = computed(() => {
         return
       }
 
+      const labelBounds = getColumnRoutingBounds(card.id, row.columnName, rowBounds)
+
       columnGeometry.set(getColumnAnchorKey(card.id, row.columnName), {
-        bounds: rowBounds,
+        bounds: labelBounds,
         groupNodeId: card.groupId,
         identity: `${card.id}:${row.columnName}`,
-        isColumnAnchor: true,
-        isColumnLabelAnchor: false,
+        isColumnAnchor: false,
+        isColumnLabelAnchor: true,
         locator: {
-          attribute: 'data-column-anchor',
-          value: getColumnAnchorKey(card.id, row.columnName)
+          attribute: 'data-column-label-anchor',
+          value: getColumnLabelAnchorKey(card.id, row.columnName)
         },
         nodeAnchorId: card.groupId || card.id,
         ownerNodeId: card.groupId || card.id,
@@ -2718,12 +3528,78 @@ const geometryRegistry = computed(() => {
   }
 })
 
-const computeConnectionLines = async () => {
+const buildConnectionRoutingRequest = (
+  descriptors: RoutingWorkerDescriptorInput[],
+  requestId: number
+): DiagramRoutingRequest => {
+  return {
+    descriptors,
+    groupGeometries: groupNodes.value.map((group) => {
+      return {
+        bounds: createBounds(group.x, group.y, group.width, group.height),
+        groupNodeId: null,
+        identity: `group:${group.id}`,
+        isColumnAnchor: false,
+        isColumnLabelAnchor: false,
+        locator: {
+          attribute: 'data-node-anchor',
+          value: group.id
+        },
+        nodeAnchorId: group.id,
+        ownerNodeId: group.id,
+        rowKey: null,
+        tableBounds: null,
+        tableId: null
+      } satisfies RoutingWorkerGeometryInput
+    }),
+    groupHeaderBands: geometryRegistry.value.groupHeaderBands,
+    nodeOrders: nodeOrderById.value,
+    planeBounds: createBounds(0, 0, Math.max(worldBounds.value.maxX + 200, 1), Math.max(worldBounds.value.maxY + 200, 1)),
+    requestId,
+    scale: 1
+  }
+}
+
+const tryComputeConnectionLinesWithWebgpu = async (
+  request: DiagramRoutingRequest,
+  _requestId: number
+) => {
+  if (shouldRenderAutomationPlane.value) {
+    return null
+  }
+
+  const nextLines = await routeDiagramConnectionsWithWebgpu(request)
+
+  return nextLines
+}
+
+const computeConnectionLines = async (options: {
+  preserveDragPreviewUntilSettled?: boolean
+} = {}) => {
   latestConnectionRequestId += 1
   const requestId = latestConnectionRequestId
+  const preservedDragPreview = options.preserveDragPreviewUntilSettled
+    ? activeConnectionDragPreview.value
+    : null
 
-  if (activeConnectionDragPreview.value) {
+  if (activeConnectionDragPreview.value && !options.preserveDragPreviewUntilSettled) {
     return
+  }
+
+  const clearPreservedDragPreview = () => {
+    if (preservedDragPreview && activeConnectionDragPreview.value === preservedDragPreview) {
+      activeConnectionDragPreview.value = null
+    }
+  }
+
+  const commitSettledLines = (nextLines: DiagramGpuConnectionLine[], backend: DiagramRoutingBackend) => {
+    if (requestId !== latestConnectionRequestId) {
+      return
+    }
+
+    activeRoutingBackend.value = backend
+    routedConnectionLines.value = nextLines
+    clearPreservedDragPreview()
   }
 
   const descriptors: RoutingWorkerDescriptorInput[] = []
@@ -2786,8 +3662,20 @@ const computeConnectionLines = async () => {
   })
 
   if (descriptors.length === 0) {
-    routedConnectionLines.value = []
+    commitSettledLines([], 'cpu')
     return
+  }
+
+  const routingRequest = buildConnectionRoutingRequest(descriptors, requestId)
+  const webgpuLines = await tryComputeConnectionLinesWithWebgpu(routingRequest, requestId)
+
+  if (webgpuLines && !options.preserveDragPreviewUntilSettled && requestId === latestConnectionRequestId) {
+    activeRoutingBackend.value = 'webgpu'
+    routedConnectionLines.value = webgpuLines
+  }
+
+  if (!webgpuLines) {
+    activeRoutingBackend.value = 'cpu'
   }
 
   const worker = getRoutingWorker()
@@ -2798,41 +3686,12 @@ const computeConnectionLines = async () => {
         reject,
         resolve
       })
-      worker.postMessage({
-        descriptors,
-        groupHeaderBands: geometryRegistry.value.groupHeaderBands,
-        groupGeometries: groupNodes.value.map((group) => {
-          return {
-            bounds: createBounds(group.x, group.y, group.width, group.height),
-            groupNodeId: null,
-            identity: `group:${group.id}`,
-            isColumnAnchor: false,
-            isColumnLabelAnchor: false,
-            locator: {
-              attribute: 'data-node-anchor',
-              value: group.id
-            },
-            nodeAnchorId: group.id,
-            ownerNodeId: group.id,
-            rowKey: null,
-            tableBounds: null,
-            tableId: null
-          } satisfies RoutingWorkerGeometryInput
-        }),
-        nodeOrders: nodeOrderById.value,
-        planeBounds: createBounds(0, 0, Math.max(worldBounds.value.maxX + 200, 1), Math.max(worldBounds.value.maxY + 200, 1)),
-        requestId,
-        scale: 1
-      })
+      worker.postMessage(routingRequest)
     })
 
-    if (requestId === latestConnectionRequestId && !activeConnectionDragPreview.value) {
-      routedConnectionLines.value = lines
-    }
+    commitSettledLines(lines, 'cpu')
   } catch {
-    if (requestId === latestConnectionRequestId && !activeConnectionDragPreview.value) {
-      routedConnectionLines.value = []
-    }
+    commitSettledLines([], 'cpu')
   }
 }
 
@@ -4194,6 +5053,12 @@ const applySceneNodePosition = (
     return
   }
 
+  setPendingNodePositionOverride({
+    ...payload,
+    x: nextX,
+    y: nextY
+  })
+
   if (options.updatePreview) {
     const existingPreview = activeConnectionDragPreview.value?.nodeId === payload.id
       ? activeConnectionDragPreview.value
@@ -4243,13 +5108,13 @@ const handleSceneMoveNode = (payload: { id: string, kind: 'group' | 'object' | '
 }
 
 const handleSceneMoveEnd = (payload: { id: string, kind: 'group' | 'object' | 'table', x: number, y: number }) => {
-  activeConnectionDragPreview.value = null
-
   applySceneNodePosition(payload, {
     updatePreview: false
   })
   emit('nodePropertiesChange', getNodeLayoutProperties())
-  void computeConnectionLines()
+  void computeConnectionLines({
+    preserveDragPreviewUntilSettled: true
+  })
 }
 
 const handleSceneToggleObjectCollapsed = (id: string) => {
@@ -4306,7 +5171,24 @@ const updateEntityVisibility = (id: string, visible: boolean) => {
   if (Object.values(nextEntry).some(value => value !== undefined && value !== null)) {
     nextProperties[id] = nextEntry
   } else {
-    delete nextProperties[id]
+    const { [id]: _removedEntry, ...remainingProperties } = nextProperties
+
+    emit('nodePropertiesChange', remainingProperties)
+
+    if (
+      !visible
+      && (
+        (selectedSelection.value?.kind === 'group' && selectedSelection.value.id === id)
+        || (selectedSelection.value?.kind === 'object' && selectedSelection.value.id === id)
+        || (selectedSelection.value?.kind === 'table' && selectedSelection.value.tableId === id)
+        || (selectedSelection.value?.kind === 'column' && selectedSelection.value.tableId === id)
+        || (selectedSelection.value?.kind === 'attachment' && selectedSelection.value.tableId === id)
+      )
+    ) {
+      selectedSelection.value = null
+    }
+
+    return
   }
 
   emit('nodePropertiesChange', nextProperties)
@@ -4376,6 +5258,7 @@ const getNodeLayoutProperties = () => {
         height: group.height,
         id: group.id,
         kind: 'group' as const,
+        masonry: group.masonry,
         minHeight: group.minHeight,
         minWidth: group.minWidth,
         tableColumns: group.columnCount,
@@ -4623,27 +5506,36 @@ watch(
 )
 
 watch(
-  () => [
-    compareEntries,
-    isCompareDiagramActive.value,
-    selectedCompareEntryId.value
-  ],
+  () => compareNodeHighlightById.value,
   () => {
-    syncLayoutStates()
+    syncCompareHighlightStates()
   },
   {
-    deep: true
+    deep: true,
+    immediate: true
   }
 )
 
 watch(
   () => [groupNodes.value, tableCards.value, objectNodes.value, model.references],
   () => {
-    computeConnectionLines()
+    void computeConnectionLines()
   },
   {
     deep: true,
     immediate: true
+  }
+)
+
+watch(
+  () => shouldRenderAutomationPlane.value,
+  async (nextValue) => {
+    if (!nextValue) {
+      return
+    }
+
+    await nextTick()
+    void computeConnectionLines()
   }
 )
 
@@ -4703,6 +5595,13 @@ watch(
   },
   {
     immediate: true
+  }
+)
+
+watch(
+  rendererBackend,
+  (nextValue) => {
+    persistRendererBackendPreference(nextValue)
   }
 )
 
@@ -4810,6 +5709,9 @@ watch(
     tableCards.value.length,
     groupNodes.value.length,
     objectNodes.value.length,
+    rendererCapability.value.fallbackReason,
+    rendererCapability.value.requested,
+    rendererCapability.value.resolved,
     worldBounds.value.maxX,
     worldBounds.value.maxY
   ],
@@ -4821,9 +5723,12 @@ watch(
     ;(window as Window & {
       __pgmlSceneDebug?: {
         connectionCount: number
+        connectionSignature: string
+        exportPreferenceKey: string
         firstConnection: DiagramGpuConnectionLine | null
         groupCount: number
         groupCards: Array<{ height: number, id: string, width: number, x: number, y: number }>
+        hasBlockingSourceErrors: boolean
         objectCount: number
         objectCards: Array<{ height: number, id: string, width: number, x: number, y: number }>
         selectedSelection: DiagramGpuSelection | null
@@ -4842,10 +5747,21 @@ watch(
           y: number
         }>
         tableCount: number
+        rendererFallbackReason: DiagramRendererCapability['fallbackReason']
+        rendererRequested: DiagramRendererBackend
+        rendererResolved: DiagramRendererCapability['resolved']
+        routingBackend: DiagramRoutingBackend
         worldBounds: DiagramGpuWorldBounds
       }
     }).__pgmlSceneDebug = {
       connectionCount: styledConnectionLines.value.length,
+      connectionSignature: styledConnectionLines.value.map((line) => {
+        return [
+          line.key,
+          line.points.map(point => `${point.x},${point.y}`).join(';')
+        ].join(':')
+      }).join('|'),
+      exportPreferenceKey,
       firstConnection: styledConnectionLines.value[0] || null,
       groupCount: groupNodes.value.length,
       groupCards: groupNodes.value.map((node) => {
@@ -4857,6 +5773,7 @@ watch(
           y: node.y
         }
       }),
+      hasBlockingSourceErrors,
       objectCount: objectNodes.value.length,
       objectCards: objectNodes.value.map((node) => {
         return {
@@ -4867,6 +5784,10 @@ watch(
           y: node.y
         }
       }),
+      rendererFallbackReason: rendererCapability.value.fallbackReason,
+      rendererRequested: rendererCapability.value.requested,
+      rendererResolved: rendererCapability.value.resolved,
+      routingBackend: activeRoutingBackend.value,
       selectedSelection: selectedSelection.value,
       tableCards: tableCards.value.map((card) => {
         return {
@@ -4899,7 +5820,24 @@ watch(
 useResizeObserver(viewportRef, syncViewportSize)
 useResizeObserver(detailPopoverRef, syncDetailPopoverSize)
 
+onMounted(() => {
+  if (!import.meta.client) {
+    return
+  }
+
+  restoreRendererBackendPreference()
+
+  const windowWithDebugFlag = window as Window & {
+    __PGML_ENABLE_DOM_PLANE__?: boolean
+  }
+  const prefersCoarsePointer = window.matchMedia('(pointer: coarse)').matches
+
+  shouldRenderAutomationPlane.value = windowWithDebugFlag.__PGML_ENABLE_DOM_PLANE__ === true
+    || (navigator.webdriver && !prefersCoarsePointer)
+})
+
 onBeforeUnmount(() => {
+  automationPlaneDragSession = null
   routingWorker?.terminate()
   routingWorker = null
   pendingRoutingRequests.clear()
@@ -4930,6 +5868,7 @@ defineExpose<{
       :connections="styledConnectionLines"
       :groups="groupNodes"
       :objects="objectNodes"
+      :renderer-backend="rendererBackend"
       :selection="selectedSelection"
       :show-relationship-lines="showRelationshipLines"
       :tables="tableCards"
@@ -4939,10 +5878,325 @@ defineExpose<{
       @focus-source="focusSourceRange"
       @move-end="handleSceneMoveEnd"
       @move-node="handleSceneMoveNode"
+      @renderer-capability-change="handleRendererCapabilityChange"
       @select="handleSceneSelect"
       @transform-change="handleSceneTransformChange"
       @toggle-object-collapsed="handleSceneToggleObjectCollapsed"
     />
+
+    <div
+      v-if="shouldRenderAutomationPlane"
+      class="pointer-events-none absolute inset-0 z-[2] overflow-hidden"
+    >
+      <div
+        ref="planeRef"
+        data-diagram-plane="true"
+        class="relative origin-top-left"
+        :style="automationPlaneStyle"
+      >
+        <div
+          v-for="node in automationPlaneNodes"
+          :key="node.id"
+          :data-node-anchor="node.id"
+          :data-table-anchor="node.kind === 'table' ? node.id : undefined"
+          :data-selection-active="(node.kind === 'group' && isGroupSelectionActive(node.id)) || (node.kind === 'object' && isObjectSelectionActive(node.id)) || (node.kind === 'table' && isTableSelectionActive(node.id)) ? 'true' : undefined"
+          class="pointer-events-auto absolute select-none overflow-hidden"
+          :style="[
+            {
+              background: getNodeBackground(node.color, node.kind),
+              borderColor: node.kind === 'group' ? 'transparent' : getNodeBorderColor(node.color, node.kind),
+              borderWidth: node.kind === 'group' ? '0' : '1px',
+              height: `${node.height}px`,
+              left: `${node.x}px`,
+              top: `${node.y}px`,
+              width: `${node.width}px`,
+              zIndex: node.zIndex
+            },
+            (node.kind === 'object' && isObjectSelectionActive(node.id)) || (node.kind === 'table' && isTableSelectionActive(node.id))
+              ? getSelectionGlowStyle(node.color)
+              : undefined
+          ]"
+          :class="[
+            node.kind === 'group' ? 'rounded-[2px]' : 'border',
+            node.kind === 'table' || node.kind === 'object'
+              ? 'hover:ring-1 hover:ring-[color:var(--studio-ring)]'
+              : '',
+            (node.kind === 'object' && isObjectSelectionActive(node.id)) || (node.kind === 'table' && isTableSelectionActive(node.id))
+              ? 'pgml-selection-glow'
+              : ''
+          ]"
+          @click.stop="node.kind === 'group' ? selectAutomationGroup(node.id) : node.kind === 'table' ? handleAutomationTableClick(node.id) : handleAutomationObjectClick(node.id)"
+          @dblclick.stop="node.kind === 'group' ? handleAutomationGroupDoubleClick(node.id) : node.kind === 'table' ? handleAutomationTableDoubleClick(node.id) : handleAutomationObjectDoubleClick(node.id)"
+          @pointerdown="node.kind === 'group' ? handleAutomationPlaneGroupSurfacePointerDown($event, node) : handleAutomationPlaneNodeSurfacePointerDown($event, node)"
+          @pointermove="handleAutomationPlanePointerMove"
+          @pointerup="handleAutomationPlanePointerUp"
+          @pointercancel="handleAutomationPlanePointerUp"
+        >
+          <div
+            v-if="node.kind === 'group'"
+            :data-group-surface="node.id"
+            class="absolute inset-0 rounded-[2px] border"
+            :style="{
+              background: getNodeBackground(node.color, 'group'),
+              borderColor: getNodeBorderColor(node.color, 'group'),
+              zIndex: getDiagramGroupBackgroundZIndex(getGroupNodeLayerOrder(node.id))
+            }"
+          />
+
+          <div
+            :data-node-header="node.id"
+            class="relative flex items-start justify-between gap-2 border-b border-[color:var(--studio-divider)] px-2.5 py-2"
+            :style="node.kind === 'group'
+              ? {
+                height: `${diagramGroupHeaderHeight}px`,
+                zIndex: getDiagramNodeZIndex(getGroupNodeLayerOrder(node.id))
+              }
+              : node.kind === 'table'
+                ? {
+                  height: `${diagramTableHeaderHeight}px`
+                }
+                : undefined"
+            @pointerdown="startAutomationPlaneNodeDrag($event, node)"
+            @pointermove="handleAutomationPlanePointerMove"
+            @pointerup="handleAutomationPlanePointerUp"
+            @pointercancel="handleAutomationPlanePointerUp"
+          >
+            <div class="min-w-0">
+              <span
+                :data-node-accent="node.id"
+                class="mb-1 inline-flex font-mono text-[0.62rem] uppercase tracking-[0.08em]"
+                :style="{ color: getNodeAccentColor(node.color) }"
+              >
+                {{ node.kind === 'group' ? 'Table Group' : (node.kind === 'table' ? 'Table' : node.kindLabel) }}
+              </span>
+              <h3 class="truncate text-[0.88rem] font-semibold leading-5 tracking-[-0.02em] text-[color:var(--studio-shell-text)]">
+                {{ node.title }}
+              </h3>
+              <span
+                v-if="node.kind === 'table'"
+                data-table-schema-badge
+                class="mt-1 inline-flex min-h-[1rem] items-center border px-1.5 py-0.5 font-mono text-[0.52rem] uppercase leading-[1.15] tracking-[0.05em]"
+                :style="getSchemaBadgeStyle(node.schema)"
+              >
+                {{ node.schema }}
+              </span>
+              <p
+                v-else-if="node.kind === 'object' && node.subtitle"
+                class="truncate text-[0.68rem] text-[color:var(--studio-shell-muted)]"
+              >
+                {{ node.subtitle }}
+              </p>
+            </div>
+
+            <div class="flex shrink-0 items-start gap-1">
+              <span class="inline-flex h-5 items-center border border-[color:var(--studio-rail)] px-1.5 font-mono text-[0.62rem] uppercase tracking-[0.06em] text-[color:var(--studio-shell-muted)]">
+                {{ node.kind === 'group' ? `${node.tableCount} tables` : (node.kind === 'table' ? `${node.rowCount} rows` : `${node.tableIds.length} impact`) }}
+              </span>
+              <UButton
+                v-if="node.kind === 'group'"
+                icon="i-lucide-table-2"
+                :data-group-add-table="node.title"
+                color="neutral"
+                variant="ghost"
+                size="xs"
+                class="h-5 rounded-none border border-[color:var(--studio-rail)] px-1 text-[color:var(--studio-shell-muted)] hover:bg-[color:var(--studio-surface-hover)] hover:text-[color:var(--studio-shell-text)]"
+                :aria-label="`Add table to ${node.title}`"
+                :title="`Add table to ${node.title}`"
+                @pointerdown.stop
+                @click.stop="emit('createTable', node.title)"
+              />
+              <UButton
+                v-if="node.kind === 'group'"
+                icon="i-lucide-pencil-line"
+                :data-group-edit-button="node.title"
+                color="neutral"
+                variant="ghost"
+                size="xs"
+                class="h-5 w-5 rounded-none border border-[color:var(--studio-rail)] px-0 text-[color:var(--studio-shell-muted)] hover:bg-[color:var(--studio-surface-hover)] hover:text-[color:var(--studio-shell-text)]"
+                aria-label="Edit group"
+                title="Edit group"
+                @pointerdown.stop
+                @click.stop="emit('editGroup', node.title)"
+              />
+              <UButton
+                v-if="node.kind === 'object'"
+                :icon="node.collapsed ? 'i-lucide-plus' : 'i-lucide-minus'"
+                :data-object-collapse-button="node.id"
+                color="neutral"
+                variant="ghost"
+                size="xs"
+                class="h-5 w-5 rounded-none border border-[color:var(--studio-rail)] px-0 text-[color:var(--studio-shell-muted)] hover:bg-[color:var(--studio-surface-hover)] hover:text-[color:var(--studio-shell-text)]"
+                :aria-label="node.collapsed ? `Expand ${node.title}` : `Collapse ${node.title}`"
+                :title="node.collapsed ? `Expand ${node.title}` : `Collapse ${node.title}`"
+                @pointerdown.stop
+                @click.stop="toggleObjectCollapsed(node.id)"
+              />
+              <UButton
+                v-if="node.kind === 'table'"
+                icon="i-lucide-pencil-line"
+                :data-table-edit-button="node.id"
+                color="neutral"
+                variant="ghost"
+                size="xs"
+                class="h-5 w-5 rounded-none border border-[color:var(--studio-rail)] px-0 text-[color:var(--studio-shell-muted)] hover:bg-[color:var(--studio-surface-hover)] hover:text-[color:var(--studio-shell-text)]"
+                aria-label="Edit table"
+                title="Edit table"
+                @pointerdown.stop
+                @click.stop="emit('editTable', node.id)"
+              />
+            </div>
+          </div>
+
+          <div
+            v-if="node.kind === 'group'"
+            class="relative"
+            :style="{
+              paddingBottom: `${diagramGroupVerticalPadding}px`,
+              paddingLeft: `${diagramGroupHorizontalPadding}px`,
+              paddingRight: `${diagramGroupHorizontalPadding}px`,
+              paddingTop: `${diagramGroupVerticalPadding}px`,
+              zIndex: getDiagramNodeZIndex(getGroupNodeLayerOrder(node.id))
+            }"
+          >
+            <div
+              :data-group-content="node.id"
+              class="grid items-start justify-start overflow-visible"
+              :style="getAutomationGroupContentStyle(node.id)"
+            >
+              <article
+                v-for="table in getAutomationGroupTables(node.id)"
+                :key="table.id"
+                :data-table-anchor="table.id"
+                :data-selection-active="isTableSelectionActive(table.id) ? 'true' : undefined"
+                class="relative min-w-0 self-start overflow-hidden rounded-[2px] border border-[color:var(--studio-shell-border)] bg-[color:var(--studio-table-surface)] hover:ring-1 hover:ring-[color:var(--studio-ring)]"
+                :style="[
+                  getAutomationGroupTableLayoutStyle(node.id, table.id),
+                  isTableSelectionActive(table.id) ? getSelectionGlowStyle(table.color) : undefined
+                ]"
+                :class="isTableSelectionActive(table.id) ? 'pgml-selection-glow pgml-selection-glow-subtle' : ''"
+                @click.stop="handleAutomationTableClick(table.id)"
+                @dblclick.stop="handleAutomationTableDoubleClick(table.id)"
+                @pointerdown="handleAutomationPlaneGroupedTablePointerDown($event, node)"
+                @pointermove="handleAutomationPlanePointerMove"
+                @pointerup="handleAutomationPlanePointerUp"
+                @pointercancel="handleAutomationPlanePointerUp"
+              >
+                <div
+                  class="flex items-start justify-between gap-2 border-b border-[color:var(--studio-divider)] px-2 py-1.5"
+                  :style="{ height: `${table.headerHeight}px` }"
+                >
+                  <div class="min-w-0">
+                    <h4 class="truncate text-[0.78rem] font-semibold leading-5 text-[color:var(--studio-shell-text)]">
+                      {{ table.title }}
+                    </h4>
+                    <span
+                      data-table-schema-badge
+                      class="mt-1 inline-flex min-h-[1rem] items-center border px-1.5 py-0.5 font-mono text-[0.5rem] uppercase leading-[1.15] tracking-[0.05em]"
+                      :style="getSchemaBadgeStyle(table.schema)"
+                    >
+                      {{ table.schema }}
+                    </span>
+                  </div>
+
+                  <UButton
+                    icon="i-lucide-pencil-line"
+                    :data-table-edit-button="table.id"
+                    color="neutral"
+                    variant="ghost"
+                    size="xs"
+                    class="h-5 w-5 rounded-none border border-[color:var(--studio-rail)] px-0 text-[color:var(--studio-shell-muted)] hover:bg-[color:var(--studio-surface-hover)] hover:text-[color:var(--studio-shell-text)]"
+                    aria-label="Edit table"
+                    title="Edit table"
+                    @pointerdown.stop
+                    @click.stop="emit('editTable', table.id)"
+                  />
+                </div>
+
+                <div class="grid gap-px bg-[color:var(--studio-divider)]">
+                  <PgmlDiagramTableRows
+                    :attachment-popover-content="attachmentPopoverContent"
+                    :attachment-popover-ui="attachmentPopoverUi"
+                    :get-attachment-flag-style="getAttachmentFlagStyle"
+                    :get-attachment-kind-badge-style="getAttachmentKindBadgeStyle"
+                    :get-attachment-row-style="getAttachmentRowStyle"
+                    :get-column-anchor-key="getColumnAnchorKey"
+                    :get-column-label-anchor-key="getColumnLabelAnchorKey"
+                    :get-relational-row-highlight-color="getRelationalRowHighlightColor"
+                    :get-selected-attachment-row-style="getSelectedAttachmentRowStyle"
+                    :get-selection-glow-style="getSelectionGlowStyle"
+                    :is-attachment-selection-active="isAttachmentSelectionActive"
+                    :is-column-selection-active="isColumnSelectionActive"
+                    :is-highlighted-relational-row="isHighlightedRelationalRow"
+                    :rows="getAutomationTableRows(table.id)"
+                    :table-id="table.id"
+                    @attachment-click="handleAttachmentClick"
+                    @attachment-double-click="handleAttachmentDoubleClick"
+                  />
+                </div>
+              </article>
+            </div>
+          </div>
+
+          <div
+            v-else-if="node.kind === 'table'"
+            class="grid gap-px bg-[color:var(--studio-divider)]"
+          >
+            <PgmlDiagramTableRows
+              :attachment-popover-content="attachmentPopoverContent"
+              :attachment-popover-ui="attachmentPopoverUi"
+              :get-attachment-flag-style="getAttachmentFlagStyle"
+              :get-attachment-kind-badge-style="getAttachmentKindBadgeStyle"
+              :get-attachment-row-style="getAttachmentRowStyle"
+              :get-column-anchor-key="getColumnAnchorKey"
+              :get-column-label-anchor-key="getColumnLabelAnchorKey"
+              :get-relational-row-highlight-color="getRelationalRowHighlightColor"
+              :get-selected-attachment-row-style="getSelectedAttachmentRowStyle"
+              :get-selection-glow-style="getSelectionGlowStyle"
+              :is-attachment-selection-active="isAttachmentSelectionActive"
+              :is-column-selection-active="isColumnSelectionActive"
+              :is-highlighted-relational-row="isHighlightedRelationalRow"
+              :rows="getAutomationTableRows(node.id)"
+              :table-id="node.id"
+              @attachment-click="handleAttachmentClick"
+              @attachment-double-click="handleAttachmentDoubleClick"
+            />
+          </div>
+
+          <div
+            v-else-if="!node.collapsed"
+            :data-node-body="node.id"
+            class="grid gap-1.5 px-2.5 pb-2.5 pt-2"
+          >
+            <p
+              v-for="detail in node.details"
+              :key="detail"
+              class="break-words whitespace-pre-wrap font-mono text-[0.64rem] leading-5 text-[color:var(--studio-shell-muted)] [overflow-wrap:anywhere]"
+            >
+              {{ detail }}
+            </p>
+
+            <div class="flex flex-wrap gap-1">
+              <span
+                v-for="tableId in node.tableIds"
+                :key="tableId"
+                :data-impact-anchor="getImpactAnchorKey(node.id, tableId)"
+                class="inline-flex h-5 items-center border border-[color:var(--studio-rail)] px-1.5 font-mono text-[0.6rem] uppercase tracking-[0.05em] text-[color:var(--studio-shell-muted)]"
+              >
+                {{ tableId.split('.').at(-1) }}
+              </span>
+            </div>
+          </div>
+        </div>
+
+        <PgmlDiagramConnectionCanvas
+          :active-drag="activeConnectionDragPreview"
+          :height="automationPlaneHeight"
+          :layers="automationConnectionCanvasLayers"
+          :preview-paths="{}"
+          :width="automationPlaneWidth"
+        />
+      </div>
+    </div>
 
     <div
       v-if="isCompareDiagramActive && compareGhostOverlays.length > 0"
@@ -5201,6 +6455,33 @@ defineExpose<{
           />
           Snap
         </button>
+        <div class="mx-1 h-5 w-px bg-[color:var(--studio-divider)]" />
+        <label class="flex items-center gap-2">
+          <span class="font-mono text-[0.54rem] uppercase tracking-[0.08em] text-[color:var(--studio-shell-label)]">
+            Renderer
+          </span>
+          <USelect
+            data-diagram-renderer-select="desktop"
+            :items="rendererBackendItems"
+            :model-value="rendererBackend"
+            value-key="value"
+            label-key="label"
+            color="neutral"
+            variant="outline"
+            size="xs"
+            class="w-[9.25rem]"
+            :ui="studioSelectUi"
+            @update:model-value="handleRendererBackendModelUpdate"
+          />
+        </label>
+        <span
+          data-diagram-renderer-status="desktop"
+          class="hidden max-w-[16rem] truncate font-mono text-[0.54rem] uppercase tracking-[0.08em] lg:block"
+          :class="rendererStatusClass"
+          :title="rendererStatusTitle"
+        >
+          {{ rendererStatusText }}
+        </span>
       </div>
     </div>
 
@@ -5323,6 +6604,40 @@ defineExpose<{
               @click="emit('createGroup')"
             />
           </div>
+
+          <div class="mt-3 grid gap-1.5">
+            <label class="grid gap-1">
+              <span class="font-mono text-[0.58rem] uppercase tracking-[0.08em] text-[color:var(--studio-shell-label)]">
+                Renderer
+              </span>
+              <USelect
+                data-diagram-renderer-select="mobile"
+                :items="rendererBackendItems"
+                :model-value="rendererBackend"
+                value-key="value"
+                label-key="label"
+                color="neutral"
+                variant="outline"
+                size="sm"
+                :ui="studioSelectUi"
+                @update:model-value="handleRendererBackendModelUpdate"
+              />
+            </label>
+            <p
+              data-diagram-renderer-status="mobile"
+              class="text-[0.64rem] leading-5"
+              :class="rendererStatusClass"
+            >
+              {{ rendererStatusText }}
+            </p>
+            <p
+              v-if="rendererHelpText"
+              data-diagram-renderer-help="mobile"
+              class="text-[0.62rem] leading-5 text-[color:var(--studio-shell-muted)]"
+            >
+              {{ rendererHelpText }}
+            </p>
+          </div>
         </div>
       </div>
 
@@ -5390,8 +6705,9 @@ defineExpose<{
             @update:model-value="updateGroupState(selectedGroup.id, { masonry: Boolean($event) })"
           />
           <label class="grid gap-1">
-            <span class="font-mono text-[0.58rem] uppercase tracking-[0.08em] text-[color:var(--studio-shell-label)]">Table Width</span>
+            <span class="font-mono text-[0.58rem] uppercase tracking-[0.08em] text-[color:var(--studio-shell-label)]">Table width scale</span>
             <USelect
+              aria-label="Table width scale"
               :items="tableWidthScaleItems"
               :model-value="normalizePgmlTableWidthScale(selectedGroup.tableWidthScale)"
               value-key="value"
@@ -5406,6 +6722,7 @@ defineExpose<{
           <label class="grid gap-1">
             <span class="font-mono text-[0.58rem] uppercase tracking-[0.08em] text-[color:var(--studio-shell-label)]">Table Columns · {{ selectedGroup.columnCount }}</span>
             <input
+              data-group-column-count-slider="true"
               :value="selectedGroup.columnCount"
               type="range"
               min="1"
@@ -5461,8 +6778,12 @@ defineExpose<{
           </div>
           <div class="rounded-none border border-[color:var(--studio-divider)] bg-[color:var(--studio-control-bg)] px-3 py-2 text-[0.7rem] text-[color:var(--studio-shell-muted)]">
             <div>Type: {{ selectedColumn.column.type }}</div>
-            <div v-if="selectedColumn.column.modifiers.length">Modifiers: {{ selectedColumn.column.modifiers.join(', ') }}</div>
-            <div v-if="selectedColumn.column.note">Note: {{ selectedColumn.column.note }}</div>
+            <div v-if="selectedColumn.column.modifiers.length">
+              Modifiers: {{ selectedColumn.column.modifiers.join(', ') }}
+            </div>
+            <div v-if="selectedColumn.column.note">
+              Note: {{ selectedColumn.column.note }}
+            </div>
           </div>
           <UButton
             v-if="selectedTable?.sourceRange"
@@ -6191,6 +7512,7 @@ defineExpose<{
             variant="outline"
             size="sm"
             :class="exportPanelButtonClass"
+            :disabled="hasBlockingSourceErrors"
             @click="exportPng(1)"
           />
           <UButton
@@ -6200,6 +7522,7 @@ defineExpose<{
             variant="outline"
             size="sm"
             :class="exportPanelButtonClass"
+            :disabled="hasBlockingSourceErrors"
             @click="exportPng(2)"
           />
           <UButton
@@ -6209,6 +7532,7 @@ defineExpose<{
             variant="outline"
             size="sm"
             :class="joinStudioClasses(exportPanelButtonClass, 'col-span-2')"
+            :disabled="hasBlockingSourceErrors"
             @click="exportSvg"
           />
         </div>

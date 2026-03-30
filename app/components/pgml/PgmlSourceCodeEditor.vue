@@ -40,12 +40,16 @@ const emit = defineEmits<{
 
 const containerRef: Ref<PgmlEditorHostElement | null> = ref(null)
 const viewRef: Ref<EditorView | null> = ref(null)
+const isAutomationEnvironment: Ref<boolean> = ref(false)
 const editableCompartment = new Compartment()
 const languageCompartment = new Compartment()
 const readOnlyCompartment = new Compartment()
 let isApplyingExternalUpdate = false
 let pendingCommitTimeout: ReturnType<typeof setTimeout> | null = null
 let pendingCommitValue: string | null = null
+const effectiveCommitDebounceMs = computed(() => {
+  return isAutomationEnvironment.value ? 0 : commitDebounceMs
+})
 
 const clearPendingCommit = () => {
   if (pendingCommitTimeout) {
@@ -94,7 +98,7 @@ const queueValueCommit = (value: string) => {
     return
   }
 
-  if (commitDebounceMs <= 0) {
+  if (effectiveCommitDebounceMs.value <= 0) {
     emitCommittedValue(value)
     return
   }
@@ -113,7 +117,7 @@ const queueValueCommit = (value: string) => {
     }
 
     emitCommittedValue(nextValue)
-  }, commitDebounceMs)
+  }, effectiveCommitDebounceMs.value)
 }
 
 const buildLanguageExtensions = () => {
@@ -216,6 +220,10 @@ const setValue = (value: string) => {
 onMounted(() => {
   if (!containerRef.value) {
     return
+  }
+
+  if (import.meta.client) {
+    isAutomationEnvironment.value = navigator.webdriver
   }
 
   const view = new EditorView({

@@ -242,8 +242,20 @@ const formatColumnTypeLabel = (value: string) => {
     .trim() || value
 }
 
-const source: Ref<string> = ref(pgmlExample)
-const editorDisplaySource: Ref<string> = ref(pgmlExample)
+const route = useRoute()
+const studioLaunchRequest = computed(() => parseStudioLaunchQuery(route.query))
+const shouldBootstrapBundledExample = computed(() => {
+  if (studioLaunchRequest.value === null) {
+    return true
+  }
+
+  return studioLaunchRequest.value.source === 'browser'
+    && studioLaunchRequest.value.launch === 'example'
+})
+const initialWorkspaceSource = shouldBootstrapBundledExample.value ? pgmlExample : ''
+const initialVersionedSource = shouldBootstrapBundledExample.value ? pgmlVersionedExample : ''
+const source: Ref<string> = ref(initialWorkspaceSource)
+const editorDisplaySource: Ref<string> = ref(initialWorkspaceSource)
 const canvasRef: Ref<PgmlDiagramCanvasExposed | null> = ref(null)
 const canvasViewportResetKey: Ref<number> = ref(0)
 const isExporting: Ref<boolean> = ref(false)
@@ -284,6 +296,7 @@ const groupEditorDraft: Ref<PgmlEditableGroupDraft | null> = ref(null)
 const groupEditorOpen: Ref<boolean> = ref(false)
 const exportScales = [1, 2, 3, 4, 8]
 const lastSaveErrorToastMessage: Ref<string | null> = ref(null)
+const browserSchemaStatusEligible: Ref<boolean> = ref(false)
 const { clearStudioHeaderActions, setStudioHeaderActions } = useStudioHeaderActions()
 const { clearStudioSchemaStatus, setStudioSchemaStatus } = useStudioSchemaStatus()
 const { getColumnDefaultPlaceholder, getColumnDefaultSuggestions } = usePgmlColumnDefaultSuggestions()
@@ -303,8 +316,6 @@ const {
   schemaDialogMode,
   schemaDialogOpen
 } = storeToRefs(studioSessionStore)
-const route = useRoute()
-const studioLaunchRequest = computed(() => parseStudioLaunchQuery(route.query))
 currentPersistenceSource.value = studioLaunchRequest.value?.source === 'file' ? 'file' : 'browser'
 const {
   compareBaseId: versionCompareBaseId,
@@ -337,7 +348,10 @@ const {
   documentName: computed(() => versionDocumentName.value),
   source
 })
-loadVersionedDocument(pgmlVersionedExample)
+
+if (initialVersionedSource.length > 0) {
+  loadVersionedDocument(initialVersionedSource)
+}
 const largeDocumentCharThreshold = 50000
 const largeDocumentLineThreshold = 1500
 const workspaceAnalysisDiagnostics: Ref<PgmlAnalysisWorkerResponse['diagnostics']> = ref([])
@@ -660,6 +674,18 @@ const buildSchemaText = (includeLayout: boolean) => {
   return serializeCurrentDocument(shouldIncludeLayout)
 }
 
+const markBrowserSchemaStatusEligible = () => {
+  if (currentPersistenceSource.value !== 'browser') {
+    return
+  }
+
+  browserSchemaStatusEligible.value = true
+}
+
+const resetBrowserSchemaStatusEligibility = () => {
+  browserSchemaStatusEligible.value = false
+}
+
 const syncSourceWithNodeProperties = (nodeProperties: Record<string, PgmlNodeProperties>) => {
   if (!isWorkspacePreview.value || workspaceHasBlockingSourceErrors.value) {
     return
@@ -674,6 +700,7 @@ const syncSourceWithNodeProperties = (nodeProperties: Record<string, PgmlNodePro
     return
   }
 
+  markBrowserSchemaStatusEligible()
   source.value = nextSource
 }
 
@@ -692,6 +719,7 @@ watch(editorDisplaySource, (nextSource) => {
     return
   }
 
+  markBrowserSchemaStatusEligible()
   source.value = nextSource
 })
 
@@ -763,11 +791,18 @@ const withViewportReset = (action: () => void) => {
   }
 }
 
-const loadExample = withViewportReset(loadStudioExample)
-const clearSchema = withViewportReset(clearStudioSchema)
+const loadExample = withViewportReset(() => {
+  resetBrowserSchemaStatusEligibility()
+  loadStudioExample()
+})
+const clearSchema = withViewportReset(() => {
+  resetBrowserSchemaStatusEligibility()
+  clearStudioSchema()
+})
 
 const loadSavedSchema = (schema: SavedPgmlSchema) => {
   currentPersistenceSource.value = 'browser'
+  resetBrowserSchemaStatusEligibility()
   loadStudioSavedSchema(schema)
   requestCanvasViewportReset()
 }
@@ -780,6 +815,7 @@ const loadRecentComputerFile = async (recentFileId: string) => {
   }
 
   currentPersistenceSource.value = 'file'
+  resetBrowserSchemaStatusEligibility()
   loadDialogOpen.value = false
   requestCanvasViewportReset()
 }
@@ -792,6 +828,7 @@ const chooseComputerFileFromLoadDialog = async () => {
   }
 
   currentPersistenceSource.value = 'file'
+  resetBrowserSchemaStatusEligibility()
   loadDialogOpen.value = false
   requestCanvasViewportReset()
 }
@@ -1183,6 +1220,7 @@ watch([studioLaunchRequest, orderedSavedSchemas], async ([request]) => {
       syncLoadedComputerFile(preloadedFileLaunch)
       await refreshRecentComputerFiles()
       currentPersistenceSource.value = 'file'
+      resetBrowserSchemaStatusEligibility()
       appliedStudioLaunchKey.value = requestKey
       requestCanvasViewportReset()
       return
@@ -1195,6 +1233,7 @@ watch([studioLaunchRequest, orderedSavedSchemas], async ([request]) => {
     }
 
     currentPersistenceSource.value = 'file'
+    resetBrowserSchemaStatusEligibility()
     loadDialogOpen.value = false
     appliedStudioLaunchKey.value = requestKey
     requestCanvasViewportReset()
@@ -1252,6 +1291,7 @@ const saveCurrentSchema = async () => {
     return
   }
 
+  markBrowserSchemaStatusEligible()
   const didSave = await saveSchemaToBrowser()
 
   if (!didSave) {
@@ -1499,6 +1539,7 @@ const submitImportDump = async () => {
       throw new Error('The selected base version no longer exists.')
     }
 
+    markBrowserSchemaStatusEligible()
     requestCanvasViewportReset()
     resetImportDumpDialog()
     toast.add({
@@ -1557,6 +1598,7 @@ const submitImportDbml = async () => {
       throw new Error('The selected base version no longer exists.')
     }
 
+    markBrowserSchemaStatusEligible()
     requestCanvasViewportReset()
     resetImportDbmlDialog()
     toast.add({
@@ -1596,6 +1638,7 @@ const confirmRestoreVersionToWorkspace = () => {
     return
   }
 
+  markBrowserSchemaStatusEligible()
   requestCanvasViewportReset()
   closeRestoreVersionDialog()
   toast.add({
@@ -2260,6 +2303,7 @@ const saveTableEditor = async () => {
   })
   const previousTableId = tableEditorDraft.value.originalFullName
 
+  markBrowserSchemaStatusEligible()
   source.value = applyEditableTableDraftToSource(getLiveWorkspaceSource(), workspaceParsedModel.value, tableEditorDraft.value)
   persistTableDraftSchemaMetadata(tableEditorDraft.value, previousTableId)
   closeTableEditor()
@@ -2273,6 +2317,7 @@ const saveGroupEditor = async () => {
   await flushPendingEditorChanges({
     waitForAnalysis: true
   })
+  markBrowserSchemaStatusEligible()
   source.value = applyEditableGroupDraftToSource(getLiveWorkspaceSource(), workspaceParsedModel.value, groupEditorDraft.value)
   closeGroupEditor()
 }
@@ -2324,6 +2369,7 @@ const handleCanvasReplaceSourceRange = (input: {
     return
   }
 
+  markBrowserSchemaStatusEligible()
   source.value = nextSource
 }
 
@@ -2356,13 +2402,16 @@ watchEffect(() => {
 watchEffect(() => {
   const isWaitingToSave = activeHasPendingChanges.value && !activeIsSaving.value
   const hasSavedInSession = activeHasSavedInSession.value && activeIsSaved.value && !isWaitingToSave
+  const canShowBrowserSchemaStatus = currentPersistenceSource.value === 'file' || browserSchemaStatusEligible.value
   const showsManualMobileChromeSaveState = currentPersistenceSource.value === 'file'
     && !passiveComputerFileWritesSupported.value
     && activeHasPendingChanges.value
-  const showSchemaStatus = activeSaveError.value !== null
+  const showSchemaStatus = canShowBrowserSchemaStatus && (
+    activeSaveError.value !== null
     || isWaitingToSave
     || activeIsSaving.value
     || hasSavedInSession
+  )
   const persistenceLabel = currentPersistenceSource.value === 'file' ? 'file' : 'local storage'
   let detail = ''
 

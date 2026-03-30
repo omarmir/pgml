@@ -215,15 +215,15 @@ test('studio canvas stays viewport-bound and starts centered on the diagram', as
       }
     }).__pgmlSceneRendererDebug?.scale === 'number'
     && !!(window as Window & {
-        __pgmlSceneDebug?: {
-          worldBounds: {
-            maxX: number
-            maxY: number
-            minX: number
-            minY: number
-          }
+      __pgmlSceneDebug?: {
+        worldBounds: {
+          maxX: number
+          maxY: number
+          minX: number
+          minY: number
         }
-      }).__pgmlSceneDebug?.worldBounds
+      }
+    }).__pgmlSceneDebug?.worldBounds
   })
 
   const diagnostics = await page.evaluate(() => {
@@ -304,15 +304,15 @@ test('studio canvas refits when the workspace shrinks after the initial fit', as
       }
     }).__pgmlSceneRendererDebug?.scale === 'number'
     && !!(window as Window & {
-        __pgmlSceneDebug?: {
-          worldBounds: {
-            maxX: number
-            maxY: number
-            minX: number
-            minY: number
-          }
+      __pgmlSceneDebug?: {
+        worldBounds: {
+          maxX: number
+          maxY: number
+          minX: number
+          minY: number
         }
-      }).__pgmlSceneDebug?.worldBounds
+      }
+    }).__pgmlSceneDebug?.worldBounds
   })
 
   const initialScale = await page.evaluate(() => {
@@ -476,6 +476,195 @@ test('table groups keep their required width after changing the table column cou
       return Math.round(element.offsetWidth)
     })
   }).toBe(settledWidth)
+})
+
+test('table groups keep their final drop position after dragging from the header', async ({ goto, page }) => {
+  await goto('/diagram')
+
+  const commerceGroup = page.locator('[data-node-anchor="group:Commerce"]')
+  const commerceGroupHeader = page.locator('[data-node-header="group:Commerce"]')
+
+  await expect(commerceGroup).toBeVisible()
+  await expect(commerceGroupHeader).toBeVisible()
+
+  const initialPosition = await commerceGroup.evaluate((element) => {
+    const rect = element.getBoundingClientRect()
+
+    return {
+      x: Math.round(rect.x),
+      y: Math.round(rect.y)
+    }
+  })
+
+  const headerBox = await commerceGroupHeader.boundingBox()
+
+  if (!headerBox) {
+    throw new Error('Group header is not measurable.')
+  }
+
+  const startX = headerBox.x + headerBox.width / 2
+  const startY = headerBox.y + 18
+
+  await page.mouse.move(startX, startY)
+  await page.mouse.down()
+  await page.mouse.move(startX + 108, startY + 36)
+  await page.mouse.up()
+
+  await expect.poll(async () => {
+    return commerceGroup.evaluate((element) => {
+      const rect = element.getBoundingClientRect()
+
+      return {
+        x: Math.round(rect.x),
+        y: Math.round(rect.y)
+      }
+    })
+  }).not.toEqual(initialPosition)
+
+  const droppedPosition = await commerceGroup.evaluate((element) => {
+    const rect = element.getBoundingClientRect()
+
+    return {
+      x: Math.round(rect.x),
+      y: Math.round(rect.y)
+    }
+  })
+
+  const postDropPositions = await commerceGroup.evaluate(async (element) => {
+    const positions: Array<{ x: number, y: number }> = []
+
+    for (let index = 0; index < 12; index += 1) {
+      await new Promise<void>((resolve) => {
+        requestAnimationFrame(() => resolve())
+      })
+
+      const rect = element.getBoundingClientRect()
+
+      positions.push({
+        x: Math.round(rect.x),
+        y: Math.round(rect.y)
+      })
+    }
+
+    return positions
+  })
+
+  expect(postDropPositions.every((position) => {
+    return position.x === droppedPosition.x && position.y === droppedPosition.y
+  })).toBe(true)
+})
+
+test('table groups can be dragged from a grouped table surface without a post-drop nudge', async ({ goto, page }) => {
+  await goto('/diagram')
+
+  const coreGroup = page.locator('[data-node-anchor="group:Core"]')
+  const groupedTenantsTable = page.locator('[data-node-anchor="group:Core"] [data-table-anchor="public.tenants"]')
+
+  await expect(coreGroup).toBeVisible()
+  await expect(groupedTenantsTable).toBeVisible()
+
+  const initialPosition = await coreGroup.evaluate((element) => {
+    const rect = element.getBoundingClientRect()
+
+    return {
+      x: Math.round(rect.x),
+      y: Math.round(rect.y)
+    }
+  })
+
+  const tableBox = await groupedTenantsTable.boundingBox()
+
+  if (!tableBox) {
+    throw new Error('Grouped tenants table is not measurable.')
+  }
+
+  const startX = tableBox.x + tableBox.width / 2
+  const startY = tableBox.y + tableBox.height * 0.65
+
+  await page.mouse.move(startX, startY)
+  await page.mouse.down()
+  await page.mouse.move(startX + 104, startY + 42)
+  await page.mouse.up()
+
+  await expect.poll(async () => {
+    return coreGroup.evaluate((element) => {
+      const rect = element.getBoundingClientRect()
+
+      return {
+        x: Math.round(rect.x),
+        y: Math.round(rect.y)
+      }
+    })
+  }).not.toEqual(initialPosition)
+
+  const droppedPosition = await coreGroup.evaluate((element) => {
+    const rect = element.getBoundingClientRect()
+
+    return {
+      x: Math.round(rect.x),
+      y: Math.round(rect.y)
+    }
+  })
+
+  await page.waitForTimeout(200)
+
+  const settledPosition = await coreGroup.evaluate((element) => {
+    const rect = element.getBoundingClientRect()
+
+    return {
+      x: Math.round(rect.x),
+      y: Math.round(rect.y)
+    }
+  })
+
+  expect(settledPosition).toEqual(droppedPosition)
+})
+
+test('floating custom types can be dragged from their body', async ({ goto, page }) => {
+  await goto('/diagram')
+
+  const customTypeNode = page.locator('[data-node-anchor="custom-type:Domain:email_address"]')
+
+  await page.getByRole('button', { name: 'Expand email_address' }).click()
+
+  const customTypeBody = page.locator('[data-node-body="custom-type:Domain:email_address"]')
+
+  await expect(customTypeNode).toBeVisible()
+  await expect(customTypeBody).toBeVisible()
+
+  const initialPosition = await customTypeNode.evaluate((element) => {
+    const rect = element.getBoundingClientRect()
+
+    return {
+      x: Math.round(rect.x),
+      y: Math.round(rect.y)
+    }
+  })
+
+  const bodyBox = await customTypeBody.boundingBox()
+
+  if (!bodyBox) {
+    throw new Error('Custom type body is not measurable.')
+  }
+
+  const startX = bodyBox.x + bodyBox.width / 2
+  const startY = bodyBox.y + bodyBox.height / 2
+
+  await page.mouse.move(startX, startY)
+  await page.mouse.down()
+  await page.mouse.move(startX + 86, startY + 58)
+  await page.mouse.up()
+
+  await expect.poll(async () => {
+    return customTypeNode.evaluate((element) => {
+      const rect = element.getBoundingClientRect()
+
+      return {
+        x: Math.round(rect.x),
+        y: Math.round(rect.y)
+      }
+    })
+  }).not.toEqual(initialPosition)
 })
 
 test('group inspector allows as many columns as there are visible tables in the group', async ({ goto, page }) => {
@@ -1217,13 +1406,13 @@ Properties "group:Core" {
           } | null
           selectedSelection:
             | {
-                kind: 'table'
-                tableId: string
-              }
+              kind: 'table'
+              tableId: string
+            }
             | {
-                id: string
-                kind: string
-              }
+              id: string
+              kind: string
+            }
             | null
         }
       }
