@@ -1041,6 +1041,20 @@ const getPgmlDocumentScopeVersionId = (scope: PgmlDocumentEditorScope) => {
   return scope.replace(/^version:/, '')
 }
 
+const serializeStandalonePgmlDocumentScope = (
+  document: PgmlVersionSetDocument,
+  scope: Exclude<PgmlDocumentEditorScope, 'all'>
+) => {
+  if (scope === 'workspace-block') {
+    return serializePgmlWorkspaceBlock(document.workspace)
+  }
+
+  const versionId = getPgmlDocumentScopeVersionId(scope)
+  const version = getPgmlVersionById(document, versionId)
+
+  return version ? serializePgmlVersionBlock(version) : serializePgmlDocument(document)
+}
+
 export const normalizePgmlDocumentEditorScope = (
   document: PgmlVersionSetDocument,
   scope: PgmlDocumentEditorScope
@@ -1064,14 +1078,7 @@ export const serializePgmlDocumentScope = (
     return serializePgmlDocument(document)
   }
 
-  if (normalizedScope === 'workspace-block') {
-    return serializePgmlWorkspaceBlock(document.workspace)
-  }
-
-  const versionId = getPgmlDocumentScopeVersionId(normalizedScope)
-  const version = getPgmlVersionById(document, versionId)
-
-  return version ? serializePgmlVersionBlock(version) : serializePgmlDocument(document)
+  return serializeStandalonePgmlDocumentScope(document, normalizedScope)
 }
 
 export const createInitialPgmlDocument = (input?: {
