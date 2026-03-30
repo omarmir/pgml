@@ -28,6 +28,8 @@ type PgmlVersionDiffSectionSource = {
 const fullDocumentEditorDescription = 'Showing the full VersionSet document, including locked checkpoints and workspace metadata.'
 const workspaceDocumentEditorDescription = 'Showing only the Workspace block from the VersionSet document so you can inspect draft metadata without the rest of history.'
 const emptyCompareDeltaDescription = 'No visible delta in the selected comparison.'
+const currentWorkspacePreviewLabel = 'Current workspace'
+const selectedVersionPreviewLabel = 'Selected version'
 
 const buildCountLabel = (count: number, singularLabel: string, pluralLabel?: string) => {
   return `${count} ${count === 1 ? singularLabel : pluralLabel || `${singularLabel}s`}`
@@ -146,10 +148,10 @@ export const buildPgmlPreviewTargetLabel = (input: {
   // Preview targets can outlive renamed or removed versions, so the UI keeps a
   // friendly fallback instead of leaking raw ids back into the shell chrome.
   if (input.previewTargetId === 'workspace') {
-    return input.workspaceLabel || 'Current workspace'
+    return input.workspaceLabel || currentWorkspacePreviewLabel
   }
 
-  return input.fallbackLabel || 'Selected version'
+  return input.fallbackLabel || selectedVersionPreviewLabel
 }
 
 export const buildPgmlWorkspaceBaseLabel = (input: {
