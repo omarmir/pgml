@@ -461,6 +461,13 @@ export const usePgmlStudioVersionHistory = (
 
     return nextDocument.versions.at(-1) || null
   }
+  // Restores and imports both replace the live workspace, so they should land
+  // back on the editable draft with a compare pair anchored to that new base.
+  const resetWorkspaceSelectionState = (baseId: string | null) => {
+    previewTargetId.value = 'workspace'
+    compareBaseId.value = baseId
+    compareTargetId.value = 'workspace'
+  }
 
   const replaceWorkspaceFromVersion = (versionId: string) => {
     const targetVersion = document.value.versions.find(version => version.id === versionId)
@@ -475,9 +482,7 @@ export const usePgmlStudioVersionHistory = (
       updatedAt: new Date().toISOString()
     })
     input.source.value = targetVersion.snapshot.source
-    previewTargetId.value = 'workspace'
-    compareBaseId.value = targetVersion.parentVersionId
-    compareTargetId.value = 'workspace'
+    resetWorkspaceSelectionState(targetVersion.parentVersionId)
 
     return true
   }
@@ -497,9 +502,7 @@ export const usePgmlStudioVersionHistory = (
       updatedAt: new Date().toISOString()
     })
     input.source.value = document.value.workspace.snapshot.source
-    previewTargetId.value = 'workspace'
-    compareBaseId.value = inputOptions.basedOnVersionId
-    compareTargetId.value = 'workspace'
+    resetWorkspaceSelectionState(inputOptions.basedOnVersionId)
 
     return true
   }
