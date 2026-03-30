@@ -43,29 +43,34 @@ const searchQuery: Ref<string> = ref('')
 const filterKind: Ref<'all' | 'added' | 'modified' | 'removed'> = ref('all')
 const filterButtonClass = joinStudioClasses(studioButtonClasses.secondary, 'text-[0.62rem]')
 const activeFilterButtonClass = joinStudioClasses(studioButtonClasses.primary, 'text-[0.62rem]')
+const buildEntrySearchHaystack = (entry: PgmlDiagramCompareEntry) => {
+  return [
+    entry.label,
+    entry.description,
+    entry.entityKind,
+    entry.changedFields.join(' '),
+    entry.fields.map(field => `${field.label} ${field.before || ''} ${field.after || ''}`).join(' ')
+  ].join(' ').toLowerCase()
+}
+const entryMatchesCurrentFilters = (
+  entry: PgmlDiagramCompareEntry,
+  normalizedQuery: string
+) => {
+  if (filterKind.value !== 'all' && entry.changeKind !== filterKind.value) {
+    return false
+  }
+
+  if (normalizedQuery.length === 0) {
+    return true
+  }
+
+  return buildEntrySearchHaystack(entry).includes(normalizedQuery)
+}
 
 const filteredEntries = computed(() => {
   const normalizedQuery = searchQuery.value.trim().toLowerCase()
 
-  return entries.filter((entry) => {
-    if (filterKind.value !== 'all' && entry.changeKind !== filterKind.value) {
-      return false
-    }
-
-    if (normalizedQuery.length === 0) {
-      return true
-    }
-
-    const haystack = [
-      entry.label,
-      entry.description,
-      entry.entityKind,
-      entry.changedFields.join(' '),
-      entry.fields.map(field => `${field.label} ${field.before || ''} ${field.after || ''}`).join(' ')
-    ].join(' ').toLowerCase()
-
-    return haystack.includes(normalizedQuery)
-  })
+  return entries.filter(entry => entryMatchesCurrentFilters(entry, normalizedQuery))
 })
 
 const contextEntries = computed(() => {
