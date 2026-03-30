@@ -20,6 +20,13 @@ const buildCountLabel = (count: number, singularLabel: string, pluralLabel?: str
   return `${count} ${count === 1 ? singularLabel : pluralLabel || `${singularLabel}s`}`
 }
 
+const buildChangedSectionCount = (
+  diffSections: PgmlVersionDiffSection[],
+  layoutChanged: number
+) => {
+  return diffSections.length + (layoutChanged > 0 ? 1 : 0)
+}
+
 const buildDiffSectionEntries = (diff: PgmlSchemaDiff) => {
   return [
     {
@@ -103,7 +110,7 @@ export const buildPgmlVersionCompareSummary = (input: {
 }) => {
   return {
     baseLabel: input.compareBaseLabel || 'Empty schema',
-    changedSectionCount: input.diffSections.length + (input.layoutChanged > 0 ? 1 : 0),
+    changedSectionCount: buildChangedSectionCount(input.diffSections, input.layoutChanged),
     targetLabel: input.compareTargetLabel || 'Current workspace'
   } satisfies PgmlVersionCompareSummary
 }
