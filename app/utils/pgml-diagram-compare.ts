@@ -287,6 +287,42 @@ const buildEntryFromDiff = <T>(input: {
   return input.entries.map(entry => input.buildEntry(entry))
 }
 
+const buildStandaloneObjectEntry = <T>(input: {
+  buildObjectId: (value: T) => string
+  buildRowKey?: (value: T) => string | null
+  entry: PgmlDiffEntry<T>
+  entityKind: 'custom-type' | 'function' | 'procedure' | 'sequence'
+  idPrefix: string
+  sourceRange: (value: T) => PgmlSourceRange | null | undefined
+}) => {
+  // Standalone compare objects share the same delta shape: they render as
+  // inspector entries plus optional diagram object selection when the target
+  // side still exists. Keep that mapping centralized so the object families do
+  // not drift apart over time.
+  const afterObjectId = input.entry.after ? input.buildObjectId(input.entry.after) : null
+  const beforeObjectId = input.entry.before ? input.buildObjectId(input.entry.before) : null
+
+  return {
+    afterSnapshot: formatCompareSnapshot(input.entry.after),
+    baseNodeIds: buildNodeIds(beforeObjectId),
+    beforeSnapshot: formatCompareSnapshot(input.entry.before),
+    changeKind: input.entry.kind,
+    changedFields: input.entry.changes || [],
+    description: buildEntryDescription(input.entry.kind, input.entityKind, input.entry.label),
+    entityKind: input.entityKind,
+    fields: buildFieldRecords(input.entry.before || null, input.entry.after || null, input.entry.changes || []),
+    id: `${input.idPrefix}:${input.entry.id}`,
+    label: input.entry.label,
+    rowKey: input.entry.after && input.buildRowKey ? input.buildRowKey(input.entry.after) : null,
+    selectionCandidates: buildObjectSelectionCandidates(afterObjectId, Boolean(input.entry.after)),
+    sourceRange: pickSourceRange(
+      input.entry.after ? input.sourceRange(input.entry.after) : null,
+      input.entry.before ? input.sourceRange(input.entry.before) : null
+    ),
+    targetNodeIds: buildNodeIds(afterObjectId)
+  } satisfies PgmlDiagramCompareEntry
+}
+
 export const getPgmlDiagramCompareEntityKindLabel = (kind: PgmlDiagramCompareEntityKind) => {
   return compareEntityKindLabelByValue[kind]
 }
@@ -523,25 +559,14 @@ export const buildPgmlDiagramCompareEntries = (
     entityKind: 'function' | 'procedure',
     entry: PgmlDiffEntry<PgmlRoutine>
   ) => {
-    const routine = entry.after || entry.before
-    const objectId = routine ? buildRoutineObjectId(kind, routine.name) : null
-
-    return {
-      afterSnapshot: formatCompareSnapshot(entry.after),
-      baseNodeIds: buildNodeIds(entry.before ? buildRoutineObjectId(kind, entry.before.name) : null),
-      beforeSnapshot: formatCompareSnapshot(entry.before),
-      changeKind: entry.kind,
-      changedFields: entry.changes || [],
-      description: buildEntryDescription(entry.kind, entityKind, entry.label),
+    return buildStandaloneObjectEntry({
+      buildObjectId: value => buildRoutineObjectId(kind, value.name),
+      buildRowKey: value => buildRoutineObjectId(kind, value.name),
+      entry,
       entityKind,
-      fields: buildFieldRecords(entry.before || null, entry.after || null, entry.changes || []),
-      id: `${entityKind}:${entry.id}`,
-      label: entry.label,
-      rowKey: entry.after ? objectId : null,
-      selectionCandidates: buildObjectSelectionCandidates(objectId, Boolean(entry.after)),
-      sourceRange: pickSourceRange(entry.after?.sourceRange, entry.before?.sourceRange),
-      targetNodeIds: buildNodeIds(entry.after ? objectId : null)
-    } satisfies PgmlDiagramCompareEntry
+      idPrefix: entityKind,
+      sourceRange: value => value.sourceRange
+    })
   }
 
   entries.push(...buildEntryFromDiff({
@@ -593,50 +618,27 @@ export const buildPgmlDiagramCompareEntries = (
 
   entries.push(...buildEntryFromDiff({
     buildEntry: (entry) => {
-      const sequence = entry.after || entry.before
-      const objectId = sequence ? buildRoutineObjectId('sequence', sequence.name) : null
-
-      return {
-        afterSnapshot: formatCompareSnapshot(entry.after),
-        baseNodeIds: buildNodeIds(entry.before ? buildRoutineObjectId('sequence', entry.before.name) : null),
-        beforeSnapshot: formatCompareSnapshot(entry.before),
-        changeKind: entry.kind,
-        changedFields: entry.changes || [],
-        description: buildEntryDescription(entry.kind, 'sequence', entry.label),
+      return buildStandaloneObjectEntry({
+        buildObjectId: value => buildRoutineObjectId('sequence', value.name),
+        buildRowKey: value => buildRoutineObjectId('sequence', value.name),
+        entry,
         entityKind: 'sequence',
-        fields: buildFieldRecords(entry.before || null, entry.after || null, entry.changes || []),
-        id: `sequence:${entry.id}`,
-        label: entry.label,
-        rowKey: entry.after && sequence ? buildRoutineObjectId('sequence', sequence.name) : null,
-        selectionCandidates: buildObjectSelectionCandidates(objectId, Boolean(entry.after)),
-        sourceRange: pickSourceRange(entry.after?.sourceRange, entry.before?.sourceRange),
-        targetNodeIds: buildNodeIds(entry.after ? objectId : null)
-      } satisfies PgmlDiagramCompareEntry
+        idPrefix: 'sequence',
+        sourceRange: value => value.sourceRange
+      })
     },
     entries: diff.sequences
   }))
 
   entries.push(...buildEntryFromDiff({
     buildEntry: (entry) => {
-      const customType = entry.after || entry.before
-      const objectId = customType ? buildCustomTypeObjectId(customType) : null
-
-      return {
-        afterSnapshot: formatCompareSnapshot(entry.after),
-        baseNodeIds: buildNodeIds(entry.before ? buildCustomTypeObjectId(entry.before) : null),
-        beforeSnapshot: formatCompareSnapshot(entry.before),
-        changeKind: entry.kind,
-        changedFields: entry.changes || [],
-        description: buildEntryDescription(entry.kind, 'custom-type', entry.label),
+      return buildStandaloneObjectEntry({
+        buildObjectId: buildCustomTypeObjectId,
+        entry,
         entityKind: 'custom-type',
-        fields: buildFieldRecords(entry.before || null, entry.after || null, entry.changes || []),
-        id: `custom-type:${entry.id}`,
-        label: entry.label,
-        rowKey: null,
-        selectionCandidates: buildObjectSelectionCandidates(objectId, Boolean(entry.after)),
-        sourceRange: pickSourceRange(entry.after?.sourceRange, entry.before?.sourceRange),
-        targetNodeIds: buildNodeIds(entry.after ? objectId : null)
-      } satisfies PgmlDiagramCompareEntry
+        idPrefix: 'custom-type',
+        sourceRange: value => value.sourceRange
+      })
     },
     entries: diff.customTypes
   }))
