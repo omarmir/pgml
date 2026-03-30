@@ -346,21 +346,29 @@ const handleDownloadMigration = () => {
   URL.revokeObjectURL(objectUrl)
 }
 
+const normalizeCompareSelectValue = (value: unknown) => {
+  return typeof value === 'string' && value.length > 0 ? value : null
+}
+
 const updateCompareBaseId = (value: unknown) => {
-  if (typeof value !== 'string' || value.length === 0) {
+  const nextValue = normalizeCompareSelectValue(value)
+
+  if (nextValue === null) {
     emit('update:compareBaseId', null)
     return
   }
 
-  emit('update:compareBaseId', value)
+  emit('update:compareBaseId', nextValue)
 }
 
 const updateCompareTargetId = (value: unknown) => {
-  if (typeof value !== 'string' || value.length === 0) {
+  const nextValue = normalizeCompareSelectValue(value)
+
+  if (nextValue === null) {
     return
   }
 
-  emit('update:compareTargetId', value)
+  emit('update:compareTargetId', nextValue)
 }
 
 const applyComparePreset = (input: {
