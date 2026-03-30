@@ -73,15 +73,15 @@ export const buildPgmlImportMissingInputMessage = () => {
 }
 
 export const buildPgmlImportDbmlDialogDescription = (baseVersionLabel: string) => {
-  return buildPgmlImportDialogDescription({
+  return `${buildPgmlImportDialogDescription({
     baseVersionLabel,
     fileLabel: 'a DBML file',
     pasteLabel: 'DBML text'
-  })
+  })} You can also opt into extracting recognized SQL entities from DBML block comments during the import.`
 }
 
 export const buildPgmlImportDbmlInputDescription = () => {
-  return buildPgmlImportInputDescription()
+  return `${buildPgmlImportInputDescription()} The DBML path imports compatible table, enum, and ref blocks directly, and the comment parsing toggle can additionally extract recognized functions, procedures, triggers, sequences, and simple indexes from block comments.`
 }
 
 export const buildPgmlImportDbmlDialogTitle = () => {

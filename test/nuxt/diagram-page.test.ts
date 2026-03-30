@@ -27,6 +27,7 @@ describe('diagram page source', () => {
       '@version-import-dbml="openImportDbmlDialog"',
       '@version-import-dump="openImportDumpDialog"',
       'Import DBML onto version',
+      'importDbmlParseExecutableComments',
       'buildPgmlCheckpointName(versionDocument.value',
       'checkpointNameIsSuggested',
       ':can-create-checkpoint="canCheckpoint"',

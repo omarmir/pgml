@@ -1,3 +1,4 @@
+import { extractExecutableEntitiesFromDbmlComments } from './dbml-comment-executables'
 import { parsePgml } from './pgml'
 import { normalizePgmlCompatSource } from './pgml-dbml-compat'
 import { normalizeSchemaName } from './studio-browser-schemas'
@@ -193,21 +194,34 @@ const normalizeDbmlSerialColumns = (source: string) => {
 
 export const convertDbmlToPgml = (input: {
   dbml: string
+  parseExecutableComments?: boolean
   preferredName?: string | null
 }): DbmlImportResult => {
-  const normalizedDbml = normalizeDbmlSerialColumns(stripDbmlProjectBlocks(input.dbml))
+  const strippedDbml = stripDbmlProjectBlocks(input.dbml)
+  const extractedCommentEntities = input.parseExecutableComments
+    ? extractExecutableEntitiesFromDbmlComments(strippedDbml)
+    : {
+      executableBlocks: [],
+      source: strippedDbml
+    }
+  const normalizedDbml = normalizeDbmlSerialColumns(extractedCommentEntities.source)
 
   if (normalizedDbml.length === 0) {
     throw new Error('No importable schema objects were found in that DBML.')
   }
 
+  const pgmlSections = [
+    dbmlCommentLines.join('\n'),
+    normalizedDbml
+  ].filter(section => section.trim().length > 0)
+
   // Reuse the PGML parser as the compatibility gate. If this DBML subset can
   // be parsed as PGML, the studio can open and edit it without a separate
   // DBML-only execution path.
-  parsePgml(normalizedDbml)
+  parsePgml(pgmlSections.join('\n\n'))
 
   return {
-    pgml: `${dbmlCommentLines.join('\n')}\n\n${normalizedDbml}`,
+    pgml: pgmlSections.join('\n\n'),
     schemaName: deriveDbmlSchemaName({
       preferredName: input.preferredName,
       source: input.dbml

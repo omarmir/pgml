@@ -1,7 +1,8 @@
 <script setup lang="ts">
 import type { Ref } from 'vue'
 import {
-  studioFieldUi
+  studioFieldUi,
+  studioSwitchUi
 } from '~/constants/ui'
 import {
   joinStudioClasses,
@@ -20,6 +21,7 @@ const {
   isSubmitting = false,
   modelValue,
   open,
+  parseExecutableComments = false,
   selectedFileName = '',
   title
 } = defineProps<{
@@ -30,6 +32,7 @@ const {
   isSubmitting?: boolean
   modelValue: string
   open: boolean
+  parseExecutableComments?: boolean
   selectedFileName?: string
   title: string
 }>()
@@ -38,6 +41,7 @@ const emit = defineEmits<{
   'clear-file': []
   'select-file': [files: FileList | null]
   'submit': []
+  'update:parseExecutableComments': [value: boolean]
   'update:modelValue': [value: string]
   'update:open': [value: boolean]
 }>()
@@ -113,6 +117,26 @@ const handleTextInput = (event: Event) => {
       </div>
 
       <slot name="before-inputs" />
+
+      <div :class="fileSelectionPanelClass">
+        <div class="flex items-start justify-between gap-4">
+          <div class="grid gap-1">
+            <div :class="studioFieldKickerClass">
+              Comment parsing
+            </div>
+            <p :class="studioBodyCopyClass">
+              Try to extract functions, triggers, procedures, sequences, simple indexes, and similar SQL entities from DBML block comments. When PGML can recognize one cleanly, it removes that SQL from the comment and carries the nearby comment context into the imported object note.
+            </p>
+          </div>
+
+          <USwitch
+            :model-value="parseExecutableComments"
+            color="neutral"
+            :ui="studioSwitchUi"
+            @update:model-value="emit('update:parseExecutableComments', $event === true)"
+          />
+        </div>
+      </div>
 
       <label class="grid gap-2">
         <div class="flex items-center justify-between gap-3">

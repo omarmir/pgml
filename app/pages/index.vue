@@ -127,6 +127,7 @@ type ImportDialogCopy = {
 const computerFileAccessDialogOpen: Ref<boolean> = ref(false)
 const dbmlImportDialogOpen: Ref<boolean> = ref(false)
 const dbmlImportError: Ref<string | null> = ref(null)
+const dbmlImportParseExecutableComments: Ref<boolean> = ref(false)
 const dbmlImportSelectedFile: Ref<File | null> = ref(null)
 const dbmlImportTarget: Ref<PgDumpImportTarget | null> = ref(null)
 const dbmlImportText: Ref<string> = ref('')
@@ -546,6 +547,7 @@ const queueComputerFileAccessAction = (action: PendingComputerFileAction) => {
   computerFileAccessDialogOpen.value = true
 }
 const openDbmlImportDialog = (cardId: SourceCardId) => {
+  dbmlImportParseExecutableComments.value = false
   openImportDialogForCard(dbmlImportState, cardId)
 }
 const openPgDumpImportDialog = (cardId: SourceCardId) => {
@@ -555,7 +557,14 @@ const handlePgDumpImportDialogOpenChange = (nextOpen: boolean) => {
   handleImportDialogOpenChange(pgDumpImportState, nextOpen)
 }
 const handleDbmlImportDialogOpenChange = (nextOpen: boolean) => {
-  handleImportDialogOpenChange(dbmlImportState, nextOpen)
+  if (nextOpen) {
+    dbmlImportParseExecutableComments.value = false
+    dbmlImportState.dialogOpen.value = true
+    return
+  }
+
+  dbmlImportParseExecutableComments.value = false
+  closeImportDialog(dbmlImportState)
 }
 const setDbmlImportText = (value: string) => {
   setImportText(dbmlImportState, value, dbmlImportConflictErrorMessage)
@@ -572,6 +581,7 @@ const submitDbmlImport = async () => {
     convert: ({ preferredName, sourceText }) => {
       return convertDbmlToPgml({
         dbml: sourceText,
+        parseExecutableComments: dbmlImportParseExecutableComments.value,
         preferredName
       })
     },
@@ -766,20 +776,20 @@ const dbmlImportDialogCopy = computed(() => {
   const copyByTarget: Record<PgDumpImportTarget, ImportDialogCopy> = {
     browser: {
       confirmLabel: 'Import into browser storage',
-      description: 'Paste DBML text or upload a DBML file. PGML will validate the schema surface and open the result in browser local storage.',
-      inputDescription: 'Use one input method only. PGML imports the DBML-compatible table, enum, and ref surface it already understands, then opens the result as versioned PGML.',
+      description: 'Paste DBML text or upload a DBML file. PGML will validate the schema surface, optionally extract recognized SQL entities from block comments, and open the result in browser local storage.',
+      inputDescription: 'Use one input method only. PGML imports the DBML-compatible table, enum, and ref surface it already understands. You can also opt into comment parsing for functions, triggers, procedures, sequences, and simple indexes when they are embedded in block comments.',
       title: 'Import DBML into browser storage'
     },
     file: {
       confirmLabel: 'Import into new file',
-      description: 'Paste DBML text or upload a DBML file. PGML will validate the schema surface and then ask where the new `.pgml` file should be saved.',
-      inputDescription: 'Use one input method only. PGML imports the DBML-compatible table, enum, and ref surface it already understands, then opens the result as versioned PGML.',
+      description: 'Paste DBML text or upload a DBML file. PGML will validate the schema surface, optionally extract recognized SQL entities from block comments, and then ask where the new `.pgml` file should be saved.',
+      inputDescription: 'Use one input method only. PGML imports the DBML-compatible table, enum, and ref surface it already understands. You can also opt into comment parsing for functions, triggers, procedures, sequences, and simple indexes when they are embedded in block comments.',
       title: 'Import DBML into a new computer file'
     },
     hosted: {
       confirmLabel: 'Import into browser storage',
-      description: 'Paste DBML text or upload a DBML file. Hosted persistence is still a placeholder, so this import opens as a browser-backed PGML schema for now.',
-      inputDescription: 'Use one input method only. PGML imports the DBML-compatible table, enum, and ref surface it already understands, then opens the result as versioned PGML.',
+      description: 'Paste DBML text or upload a DBML file. Hosted persistence is still a placeholder, so this import opens as a browser-backed PGML schema for now after validating the schema surface and optionally extracting recognized SQL entities from block comments.',
+      inputDescription: 'Use one input method only. PGML imports the DBML-compatible table, enum, and ref surface it already understands. You can also opt into comment parsing for functions, triggers, procedures, sequences, and simple indexes when they are embedded in block comments.',
       title: 'Import DBML from the hosted lane'
     }
   }
@@ -1110,11 +1120,13 @@ onBeforeRouteLeave((to) => {
         :confirm-label="dbmlImportDialogCopy.confirmLabel"
         :input-description="dbmlImportDialogCopy.inputDescription"
         :model-value="dbmlImportText"
+        :parse-executable-comments="dbmlImportParseExecutableComments"
         :selected-file-name="dbmlImportSelectedFileName"
         :error-message="dbmlImportError"
         :is-submitting="isSubmittingDbmlImport"
         @update:open="handleDbmlImportDialogOpenChange"
         @update:model-value="setDbmlImportText"
+        @update:parse-executable-comments="dbmlImportParseExecutableComments = $event"
         @select-file="setDbmlImportFile"
         @clear-file="clearDbmlImportFile"
         @submit="submitDbmlImport"

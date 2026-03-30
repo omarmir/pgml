@@ -251,6 +251,7 @@ const checkpointRole: Ref<'design' | 'implementation'> = ref('design')
 const importDbmlDialogOpen: Ref<boolean> = ref(false)
 const importDbmlBaseVersionId: Ref<string | null> = ref(null)
 const importDbmlError: Ref<string | null> = ref(null)
+const importDbmlParseExecutableComments: Ref<boolean> = ref(false)
 const importDbmlSelectedFile: Ref<File | null> = ref(null)
 const importDbmlText: Ref<string> = ref('')
 const isSubmittingImportDbml: Ref<boolean> = ref(false)
@@ -1102,6 +1103,7 @@ const syncImportDbmlConflictError = () => {
 const resetImportDbmlDialog = () => {
   importDbmlDialogOpen.value = false
   importDbmlError.value = null
+  importDbmlParseExecutableComments.value = false
   importDbmlSelectedFile.value = null
   importDbmlText.value = ''
   importDbmlBaseVersionId.value = null
@@ -1140,6 +1142,7 @@ const openImportDbmlDialog = () => {
 
   importDbmlDialogOpen.value = true
   importDbmlError.value = null
+  importDbmlParseExecutableComments.value = false
   importDbmlSelectedFile.value = null
   importDbmlText.value = ''
   importDbmlBaseVersionId.value = getPreferredImportBaseVersionId()
@@ -1279,6 +1282,7 @@ const submitImportDbml = async () => {
     const importedDbml = selectedFile ? await selectedFile.text() : importDbmlText.value
     const importedSchema = convertDbmlToPgml({
       dbml: importedDbml,
+      parseExecutableComments: importDbmlParseExecutableComments.value,
       preferredName: selectedFile?.name
     })
 
@@ -2403,11 +2407,13 @@ onBeforeUnmount(() => {
         :confirm-label="importDbmlDialogCopy.confirmLabel"
         :input-description="importDbmlDialogCopy.inputDescription"
         :model-value="importDbmlText"
+        :parse-executable-comments="importDbmlParseExecutableComments"
         :selected-file-name="importDbmlSelectedFileName"
         :error-message="importDbmlError"
         :is-submitting="isSubmittingImportDbml"
         @update:open="handleImportDbmlDialogOpenChange"
         @update:model-value="setImportDbmlText"
+        @update:parse-executable-comments="importDbmlParseExecutableComments = $event"
         @select-file="setImportDbmlFile"
         @clear-file="clearImportDbmlFile"
         @submit="submitImportDbml"

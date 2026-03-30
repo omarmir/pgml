@@ -41,6 +41,7 @@ describe('Index page source', () => {
     expect(file).toContain('open-pg-dump-import')
     expect(file).toContain('computerFileAccessDialogOpen')
     expect(file).toContain('dbmlImportDialogOpen')
+    expect(file).toContain('dbmlImportParseExecutableComments')
     expect(file).toContain('pgDumpImportDialogOpen')
     expect(file).toContain('Allow computer file access')
     expect(file).toContain('@action="handleSourceCardAction"')
