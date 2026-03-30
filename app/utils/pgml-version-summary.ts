@@ -139,6 +139,8 @@ export const buildPgmlPreviewTargetLabel = (input: {
   previewTargetId: string
   workspaceLabel?: string | null
 }) => {
+  // Preview targets can outlive renamed or removed versions, so the UI keeps a
+  // friendly fallback instead of leaking raw ids back into the shell chrome.
   if (input.previewTargetId === 'workspace') {
     return input.workspaceLabel || 'Current workspace'
   }
@@ -189,6 +191,9 @@ export const buildPgmlDocumentEditorModeDescription = (input?: {
   scope?: 'all' | 'version' | 'workspace'
   scopeLabel?: string | null
 }) => {
+  // Document mode has three different reading contexts. Centralizing this copy
+  // keeps the editor framing consistent between workspace, version, and full
+  // VersionSet scopes as the UI evolves.
   const scope = input?.scope || 'all'
   const scopeLabel = input?.scopeLabel || 'the selected Version block'
 
