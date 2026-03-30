@@ -887,24 +887,11 @@ export const getPgmlDescendantVersions = (
   document: PgmlVersionSetDocument,
   versionId: string | null
 ) => {
-  const descendants: PgmlVersionDocumentBlock[] = []
-  const pendingVersionIds = getPgmlChildVersions(document, versionId).map(version => version.id)
-
-  while (pendingVersionIds.length > 0) {
-    const nextVersionId = pendingVersionIds.shift() || null
-    const nextVersion = getPgmlVersionById(document, nextVersionId)
-
-    if (!nextVersion) {
-      continue
-    }
-
-    descendants.push(nextVersion)
-    getPgmlChildVersions(document, nextVersion.id).forEach((childVersion) => {
-      pendingVersionIds.push(childVersion.id)
-    })
-  }
-
-  return descendants
+  return walkPgmlVersionBreadthFirst(
+    document,
+    getPgmlChildVersions(document, versionId),
+    nextVersionId => getPgmlChildVersions(document, nextVersionId)
+  )
 }
 
 export const getPgmlDescendantVersionCount = (
@@ -1014,9 +1001,16 @@ const getSortedPgmlChildVersions = (
   return sortVersionSiblings(getPgmlChildVersions(document, versionId))
 }
 
-export const getPgmlVersionsInTopologicalOrder = (document: PgmlVersionSetDocument) => {
-  const orderedVersions: PgmlVersionDocumentBlock[] = []
-  const pendingVersions = getSortedPgmlChildVersions(document, null)
+const walkPgmlVersionBreadthFirst = (
+  document: PgmlVersionSetDocument,
+  initialVersions: PgmlVersionDocumentBlock[],
+  getChildren: (versionId: string) => PgmlVersionDocumentBlock[]
+) => {
+  // Compare, restore, serialization, and lineage metrics all rely on a stable
+  // breadth-first walk of the version graph. Keep the queue semantics in one
+  // helper so graph ordering stays consistent across those consumers.
+  const visitedVersions: PgmlVersionDocumentBlock[] = []
+  const pendingVersions = [...initialVersions]
 
   while (pendingVersions.length > 0) {
     const nextVersion = pendingVersions.shift() || null
@@ -1025,13 +1019,21 @@ export const getPgmlVersionsInTopologicalOrder = (document: PgmlVersionSetDocume
       continue
     }
 
-    orderedVersions.push(nextVersion)
-    getSortedPgmlChildVersions(document, nextVersion.id).forEach((childVersion) => {
+    visitedVersions.push(nextVersion)
+    getChildren(nextVersion.id).forEach((childVersion) => {
       pendingVersions.push(childVersion)
     })
   }
 
-  return orderedVersions
+  return visitedVersions
+}
+
+export const getPgmlVersionsInTopologicalOrder = (document: PgmlVersionSetDocument) => {
+  return walkPgmlVersionBreadthFirst(
+    document,
+    getSortedPgmlChildVersions(document, null),
+    versionId => getSortedPgmlChildVersions(document, versionId)
+  )
 }
 
 export const serializePgmlDocument = (document: PgmlVersionSetDocument) => {
