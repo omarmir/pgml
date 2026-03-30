@@ -89,6 +89,16 @@ const getLatestPgmlVersionFromList = (versions: PgmlVersionDocumentBlock[]) => {
   return [...versions].sort(comparePgmlVersionsByRecency)[0] || null
 }
 
+const getLatestPgmlVersionByPredicate = (
+  document: PgmlVersionSetDocument,
+  predicate: (version: PgmlVersionDocumentBlock) => boolean
+) => {
+  // Most "latest" lookups differ only by the subset of versions they consider.
+  // Centralizing the filter keeps recency semantics consistent across roots,
+  // leaves, role-specific helpers, and future graph-derived selectors.
+  return getLatestPgmlVersionFromList(document.versions.filter(predicate))
+}
+
 const filterPgmlVersionsByParentId = (
   document: PgmlVersionSetDocument,
   parentVersionId: string | null
@@ -188,40 +198,48 @@ export const getPgmlNearestCommonAncestor = (
 }
 
 export const getLatestPgmlVersion = (document: PgmlVersionSetDocument) => {
-  return getLatestPgmlVersionFromList(document.versions)
+  return getLatestPgmlVersionByPredicate(document, () => true)
 }
 
 export const getLatestPgmlVersionByRole = (
   document: PgmlVersionSetDocument,
   role: PgmlVersionRole
 ) => {
-  return getLatestPgmlVersionFromList(document.versions.filter(version => version.role === role))
+  return getLatestPgmlVersionByPredicate(document, version => version.role === role)
 }
 
 export const getLatestPgmlLeafVersion = (document: PgmlVersionSetDocument) => {
-  return getLatestPgmlVersionFromList(getPgmlLeafVersions(document))
+  const leafVersionIds = new Set(getPgmlLeafVersions(document).map(version => version.id))
+
+  return getLatestPgmlVersionByPredicate(document, version => leafVersionIds.has(version.id))
 }
 
 export const getLatestPgmlLeafVersionByRole = (
   document: PgmlVersionSetDocument,
   role: PgmlVersionRole
 ) => {
-  return getLatestPgmlVersionFromList(
-    getPgmlLeafVersions(document).filter(version => version.role === role)
-  )
+  const leafVersionIds = new Set(getPgmlLeafVersions(document).map(version => version.id))
+
+  return getLatestPgmlVersionByPredicate(document, (version) => {
+    return version.role === role && leafVersionIds.has(version.id)
+  })
 }
 
 export const getLatestPgmlRootVersion = (document: PgmlVersionSetDocument) => {
-  return getLatestPgmlVersionFromList(getPgmlRootVersions(document))
+  const rootVersionIds = new Set(getPgmlRootVersions(document).map(version => version.id))
+
+  return getLatestPgmlVersionByPredicate(document, version => rootVersionIds.has(version.id))
 }
 
 export const getLatestPgmlRootVersionByRole = (
   document: PgmlVersionSetDocument,
   role: PgmlVersionRole
 ) => {
-  return getLatestPgmlVersionFromList(
-    getPgmlRootVersions(document).filter(version => version.role === role)
-  )
+  const rootVersionIds = new Set(getPgmlRootVersions(document).map(version => version.id))
+
+  return getLatestPgmlVersionByPredicate(document, (version) => {
+    return version.role === role && rootVersionIds.has(version.id)
+  })
 }
 
 export const getPgmlRootVersions = (document: PgmlVersionSetDocument) => {
