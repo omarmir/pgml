@@ -55,6 +55,7 @@ type VersionPanelItem = {
 
 const {
   canCreateCheckpoint = true,
+  canEditDetailSource = false,
   compareBaseLabel = 'Base',
   compareBaseModel = null,
   compareEntries = [],
@@ -75,6 +76,7 @@ const {
   migrationSql = '',
   migrationWarnings = [],
   previewTargetId = 'workspace',
+  sourceText = '',
   versionCompareBaseId = null,
   versionCompareOptions = [],
   versionCompareTargetId = 'workspace',
@@ -85,6 +87,7 @@ const {
   viewportResetKey = 0
 } = defineProps<{
   canCreateCheckpoint?: boolean
+  canEditDetailSource?: boolean
   compareBaseLabel?: string
   compareBaseModel?: PgmlSchemaModel | null
   compareEntries?: PgmlDiagramCompareEntry[]
@@ -105,6 +108,7 @@ const {
   migrationWarnings?: string[]
   model: PgmlSchemaModel
   previewTargetId?: string
+  sourceText?: string
   versionCompareBaseId?: string | null
   versionCompareOptions?: VersionCompareOption[]
   versionCompareTargetId?: string
@@ -123,6 +127,7 @@ const emit = defineEmits<{
   focusSource: [sourceRange: PgmlSourceRange]
   nodePropertiesChange: [properties: Record<string, PgmlNodeProperties>]
   panelTabChange: [tab: DiagramPanelTab]
+  replaceSourceRange: [payload: { nextText: string, sourceRange: PgmlSourceRange }]
   restoreVersion: [versionId: string]
   updateVersionCompareBaseId: [value: string | null]
   updateVersionCompareTargetId: [value: string]
@@ -153,6 +158,7 @@ defineExpose<CanvasHandle>({
   <PgmlDiagramCanvasGpuShell
     ref="shellRef"
     :can-create-checkpoint="canCreateCheckpoint"
+    :can-edit-detail-source="canEditDetailSource"
     :compare-base-label="compareBaseLabel"
     :compare-base-model="compareBaseModel"
     :compare-entries="compareEntries"
@@ -173,6 +179,7 @@ defineExpose<CanvasHandle>({
     :migration-warnings="migrationWarnings"
     :model="model"
     :preview-target-id="previewTargetId"
+    :source-text="sourceText"
     :version-compare-base-id="versionCompareBaseId"
     :version-compare-options="versionCompareOptions"
     :version-compare-target-id="versionCompareTargetId"
@@ -188,6 +195,7 @@ defineExpose<CanvasHandle>({
     @focus-source="emit('focusSource', $event)"
     @node-properties-change="emit('nodePropertiesChange', $event)"
     @panel-tab-change="emit('panelTabChange', $event)"
+    @replace-source-range="emit('replaceSourceRange', $event)"
     @restore-version="emit('restoreVersion', $event)"
     @update-version-compare-base-id="emit('updateVersionCompareBaseId', $event)"
     @update-version-compare-target-id="emit('updateVersionCompareTargetId', $event)"

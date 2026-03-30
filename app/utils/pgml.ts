@@ -227,10 +227,30 @@ const cleanName = (value: string) => value.replaceAll('"', '').trim()
 const cleanText = (value: string) => value.trim().replace(/^"(.*)"$/, '$1').replace(/^'(.*)'$/, '$1')
 const readMatch = (value: string | undefined) => value || ''
 const trimMultiline = (value: string) => value.replace(/^\n+|\n+$/g, '')
+const splitNormalizedLines = (value: string) => value.replaceAll('\r\n', '\n').split('\n')
 const getLeadingWhitespaceWidth = (value: string) => {
   const match = value.match(/^[\t ]+/)
 
   return match ? match[0].length : 0
+}
+const getCommonLeadingWhitespace = (value: string) => {
+  const nonEmptyLines = splitNormalizedLines(trimMultiline(value)).filter(line => line.trim().length > 0)
+
+  if (nonEmptyLines.length === 0) {
+    return ''
+  }
+
+  const minimumWhitespaceWidth = nonEmptyLines.reduce((minimum, line) => {
+    return Math.min(minimum, getLeadingWhitespaceWidth(line))
+  }, Number.POSITIVE_INFINITY)
+
+  if (!Number.isFinite(minimumWhitespaceWidth) || minimumWhitespaceWidth <= 0) {
+    return ''
+  }
+
+  const anchorLine = nonEmptyLines.find(line => getLeadingWhitespaceWidth(line) >= minimumWhitespaceWidth) || nonEmptyLines[0] || ''
+
+  return anchorLine.slice(0, minimumWhitespaceWidth)
 }
 const normalizeExecutableDetailSource = (value: string) => {
   const trimmedSource = trimMultiline(value)
@@ -1004,6 +1024,121 @@ export const getPgmlSourceSelectionRange = (source: string, sourceRange: PgmlSou
     start,
     end: Math.max(start, end)
   }
+}
+
+export const dedentPgmlSourceForEditor = (value: string) => {
+  const normalizedValue = trimMultiline(value.replaceAll('\r\n', '\n'))
+  const sharedIndent = getCommonLeadingWhitespace(normalizedValue)
+  const dedentedLines = splitNormalizedLines(normalizedValue)
+    .map((line) => {
+      return sharedIndent.length > 0 && line.startsWith(sharedIndent)
+        ? line.slice(sharedIndent.length)
+        : line
+    })
+    .map(line => line.replace(/[ \t]+$/g, ''))
+
+  while (dedentedLines[0]?.trim().length === 0) {
+    dedentedLines.shift()
+  }
+
+  while (dedentedLines.at(-1)?.trim().length === 0) {
+    dedentedLines.pop()
+  }
+
+  if (dedentedLines.length === 0) {
+    return ''
+  }
+
+  return dedentedLines.join('\n')
+}
+
+export const reindentPgmlEditorText = (
+  value: string,
+  referenceText: string
+) => {
+  const normalizedValue = trimMultiline(value.replaceAll('\r\n', '\n'))
+  const sharedIndent = getCommonLeadingWhitespace(referenceText)
+
+  if (sharedIndent.length === 0) {
+    return normalizedValue
+  }
+
+  return splitNormalizedLines(normalizedValue)
+    .map((line) => {
+      return line.trim().length > 0 ? `${sharedIndent}${line}` : ''
+    })
+    .join('\n')
+}
+
+export const replacePgmlExecutableSourceInBlock = (
+  blockSource: string,
+  nextExecutableSource: string
+) => {
+  const normalizedBlockSource = blockSource.replaceAll('\r\n', '\n')
+  const sourceMatch = normalizedBlockSource.match(
+    /^([ \t]*(?:source|definition):\s*(\$(?:[A-Za-z0-9_]+)?\$)\s*\n)([\s\S]*?)(\n([ \t]*)\2)/m
+  )
+
+  if (!sourceMatch) {
+    return null
+  }
+
+  const header = sourceMatch[1] || ''
+  const currentBody = sourceMatch[3] || ''
+  const closingLine = sourceMatch[4] || ''
+  const propertyIndent = sourceMatch[5] || ''
+  const bodyIndent = getCommonLeadingWhitespace(currentBody) || `${propertyIndent}  `
+  const normalizedExecutableSource = trimMultiline(nextExecutableSource.replaceAll('\r\n', '\n'))
+  const indentedBody = normalizedExecutableSource.length === 0
+    ? ''
+    : splitNormalizedLines(normalizedExecutableSource)
+        .map((line) => {
+          return line.trim().length > 0 ? `${bodyIndent}${line}` : ''
+        })
+        .join('\n')
+
+  return normalizedBlockSource.replace(
+    sourceMatch[0],
+    indentedBody.length > 0 ? `${header}${indentedBody}${closingLine}` : `${header}${closingLine}`
+  )
+}
+
+export const replacePgmlConstraintExpressionInBlock = (
+  blockSource: string,
+  nextExpression: string
+) => {
+  const normalizedBlockSource = blockSource.replaceAll('\r\n', '\n')
+  const trimmedExpression = trimMultiline(nextExpression).trim()
+
+  if (trimmedExpression.length === 0) {
+    return normalizedBlockSource
+  }
+
+  return normalizedBlockSource.replace(
+    /^(\s*Constraint\s+[^:]+:\s*)(.+)$/m,
+    `$1${trimmedExpression}`
+  )
+}
+
+export const replacePgmlSourceRange = (
+  source: string,
+  sourceRange: PgmlSourceRange,
+  nextText: string
+) => {
+  // Source-range edits are line-oriented across the studio. Normalize to LF
+  // first so popup edits, main-editor focus, and serialized workspace updates
+  // all operate on the same offsets.
+  const normalizedSource = source.replaceAll('\r\n', '\n')
+  const normalizedNextText = nextText.replaceAll('\r\n', '\n')
+  const selectionRange = getPgmlSourceSelectionRange(normalizedSource, sourceRange)
+
+  if (!selectionRange) {
+    return null
+  }
+
+  return normalizedSource.slice(0, selectionRange.start)
+    + normalizedNextText
+    + normalizedSource.slice(selectionRange.end)
 }
 
 export const getPgmlSourceScrollTop = (

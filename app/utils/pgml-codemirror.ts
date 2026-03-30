@@ -56,7 +56,7 @@ const pgmlHighlightStyle = HighlightStyle.define([
   { tag: [tags.punctuation, tags.separator], color: 'var(--studio-editor-punctuation)' }
 ])
 
-const pgmlEditorTheme = EditorView.theme({
+export const studioCodeMirrorTheme = EditorView.theme({
   '&': {
     height: '100%',
     backgroundColor: 'var(--studio-shell-bg)',
@@ -525,7 +525,7 @@ export const createPgmlCodeMirrorExtensions = (options: PgmlCodeMirrorOptions = 
     }),
     lintGutter(),
     placeholder(placeholderText),
-    pgmlEditorTheme,
+    studioCodeMirrorTheme,
     EditorView.contentAttributes.of({
       'spellcheck': 'false',
       'aria-label': 'PGML editor',

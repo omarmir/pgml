@@ -86,6 +86,7 @@ import {
   parsePgml,
   pgmlExample,
   pgmlVersionedExample,
+  replacePgmlSourceRange,
   stripPgmlPropertiesBlocks,
   type PgmlNodeProperties,
   type PgmlSourceRange
@@ -1740,6 +1741,23 @@ const handleCanvasFocusSource = (sourceRange: PgmlSourceRange) => {
   focusEditorSourceRange(sourceRange)
 }
 
+const handleCanvasReplaceSourceRange = (input: {
+  nextText: string
+  sourceRange: PgmlSourceRange
+}) => {
+  if (!isWorkspacePreview.value) {
+    return
+  }
+
+  const nextSource = replacePgmlSourceRange(source.value, input.sourceRange, input.nextText)
+
+  if (nextSource === null || nextSource === source.value) {
+    return
+  }
+
+  source.value = nextSource
+}
+
 const handleCanvasPanelTabChange = (nextTab: DiagramPanelTab) => {
   mobilePanelTab.value = nextTab
 }
@@ -1810,6 +1828,7 @@ onBeforeUnmount(() => {
         <PgmlDiagramCanvas
           ref="canvasRef"
           :can-create-checkpoint="canCheckpoint"
+          :can-edit-detail-source="isWorkspacePreview"
           :compare-base-label="compareBaseLabel"
           :compare-base-model="compareBaseModel"
           :compare-entries="compareEntries"
@@ -1830,6 +1849,7 @@ onBeforeUnmount(() => {
           :mobile-active-view="mobileCanvasView"
           :mobile-panel-tab="mobilePanelTab"
           :preview-target-id="previewTargetId"
+          :source-text="source"
           :version-compare-base-id="versionCompareBaseId"
           :version-compare-options="versionCompareOptions"
           :version-compare-target-id="versionCompareTargetId"
@@ -1841,6 +1861,7 @@ onBeforeUnmount(() => {
           @create-group="openGroupCreator"
           @focus-source="handleCanvasFocusSource"
           @panel-tab-change="handleCanvasPanelTabChange"
+          @replace-source-range="handleCanvasReplaceSourceRange"
           @create-table="openTableCreator"
           @edit-group="openGroupEditor"
           @edit-table="openTableEditor"
@@ -1910,6 +1931,7 @@ onBeforeUnmount(() => {
         <PgmlDiagramCanvas
           ref="canvasRef"
           :can-create-checkpoint="canCheckpoint"
+          :can-edit-detail-source="isWorkspacePreview"
           :compare-base-label="compareBaseLabel"
           :compare-base-model="compareBaseModel"
           :compare-entries="compareEntries"
@@ -1928,6 +1950,7 @@ onBeforeUnmount(() => {
           :migration-warnings="compareMigrationBundle.sql.migration.warnings"
           :latest-version-id="latestVersionId"
           :preview-target-id="previewTargetId"
+          :source-text="source"
           :version-compare-base-id="versionCompareBaseId"
           :version-compare-options="versionCompareOptions"
           :version-compare-target-id="versionCompareTargetId"
@@ -1939,6 +1962,7 @@ onBeforeUnmount(() => {
           @create-group="openGroupCreator"
           @focus-source="handleCanvasFocusSource"
           @panel-tab-change="handleCanvasPanelTabChange"
+          @replace-source-range="handleCanvasReplaceSourceRange"
           @create-table="openTableCreator"
           @edit-group="openGroupEditor"
           @edit-table="openTableEditor"

@@ -1,12 +1,17 @@
 import { describe, expect, it } from 'vitest'
 
 import {
+  dedentPgmlSourceForEditor,
   getOrderedGroupTables,
   getPgmlSourceScrollTop,
   getPgmlSourceSelectionRange,
   parsePgml,
   pgmlExample,
-  pgmlVersionedExample
+  pgmlVersionedExample,
+  reindentPgmlEditorText,
+  replacePgmlConstraintExpressionInBlock,
+  replacePgmlExecutableSourceInBlock,
+  replacePgmlSourceRange
 } from '../../app/utils/pgml'
 import { parsePgmlDocument } from '../../app/utils/pgml-document'
 
@@ -269,6 +274,84 @@ Function orphan_report() {
     select 1;
   $sql$
 }`)
+  })
+
+  it('replaces the selected source block while preserving surrounding workspace text', () => {
+    const source = `Table public.orders {
+  id integer [pk]
+}
+
+Function orphan_report() {
+  language: sql
+  source: $sql$
+    select 1;
+  $sql$
+}
+
+Table public.audit_log {
+  id integer [pk]
+}`
+
+    const nextSource = replacePgmlSourceRange(source, {
+      startLine: 5,
+      endLine: 10
+    }, `Function orphan_report() {
+  language: sql
+  source: $sql$
+    select 2;
+  $sql$
+}`)
+
+    expect(nextSource).toBe(`Table public.orders {
+  id integer [pk]
+}
+
+Function orphan_report() {
+  language: sql
+  source: $sql$
+    select 2;
+  $sql$
+}
+
+Table public.audit_log {
+  id integer [pk]
+}`)
+  })
+
+  it('dedents and reapplies table-body PGML snippets for popup editing', () => {
+    const originalSnippet = `  Constraint chk_orders_total: total_cents >= 0`
+
+    expect(dedentPgmlSourceForEditor(originalSnippet)).toBe('Constraint chk_orders_total: total_cents >= 0')
+    expect(reindentPgmlEditorText('Constraint chk_orders_total: total_cents > 0', originalSnippet)).toBe(
+      '  Constraint chk_orders_total: total_cents > 0'
+    )
+  })
+
+  it('replaces executable source bodies without exposing the PGML wrapper to the popup editor', () => {
+    const nextBlock = replacePgmlExecutableSourceInBlock(`Function orphan_report() {
+  language: sql
+  source: $sql$
+    select 1;
+  $sql$
+}`, `select
+  2;`)
+
+    expect(nextBlock).toBe(`Function orphan_report() {
+  language: sql
+  source: $sql$
+    select
+      2;
+  $sql$
+}`)
+  })
+
+  it('replaces constraint expressions directly for popup SQL editing', () => {
+    const nextBlock = replacePgmlConstraintExpressionInBlock(
+      '  Constraint chk_orders_total: total_cents >= 0',
+      'total_cents > 0'
+    )
+
+    expect(nextBlock).toBe('  Constraint chk_orders_total: total_cents > 0')
   })
 
   it('computes editor scroll offsets from the source block start', () => {

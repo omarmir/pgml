@@ -4,6 +4,7 @@ import type { CSSProperties, Ref } from 'vue'
 import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
 import { studioSelectUi, studioSwitchUi } from '~/constants/ui'
 import PgmlDiagramComparePanel from '~/components/pgml/PgmlDiagramComparePanel.vue'
+import PgmlDetailPopoverSourceEditor from '~/components/pgml/PgmlDetailPopoverSourceEditor.vue'
 import PgmlDiagramGpuScene from '~/components/pgml/PgmlDiagramGpuScene.vue'
 import PgmlDiagramVersionsPanel from '~/components/pgml/PgmlDiagramVersionsPanel.vue'
 import { buildTableGroupMasonryLayout, type TableAttachment, type TableAttachmentFlag, type TableAttachmentKind } from '~/utils/pgml-diagram-canvas'
@@ -68,7 +69,15 @@ import type {
   PgmlSourceRange,
   PgmlTrigger
 } from '~/utils/pgml'
-import { getOrderedGroupTables, getSequenceAttachedTableIds } from '~/utils/pgml'
+import {
+  dedentPgmlSourceForEditor,
+  getOrderedGroupTables,
+  getPgmlSourceSelectionRange,
+  reindentPgmlEditorText,
+  replacePgmlConstraintExpressionInBlock,
+  replacePgmlExecutableSourceInBlock,
+  getSequenceAttachedTableIds
+} from '~/utils/pgml'
 import { normalizeSvgPaint } from '~/utils/svg-paint'
 import {
   defaultStudioMobilePanelTab,
@@ -242,8 +251,17 @@ type DiagramCompareNodeHighlight = {
   entryIds: string[]
 }
 
+type DetailPopoverEditorSpec = {
+  description: string
+  languageMode: 'pgml' | 'sql'
+  source: string
+  title: string
+  toReplacementText: (nextSource: string) => string | null
+}
+
 const {
   canCreateCheckpoint = true,
+  canEditDetailSource = false,
   compareBaseLabel = 'Base',
   compareBaseModel = null,
   compareEntries = [],
@@ -264,6 +282,7 @@ const {
   migrationWarnings = [],
   model,
   previewTargetId = 'workspace',
+  sourceText = '',
   versionCompareBaseId = null,
   versionCompareOptions = [],
   versionCompareTargetId = 'workspace',
@@ -274,6 +293,7 @@ const {
   viewportResetKey = 0
 } = defineProps<{
   canCreateCheckpoint?: boolean
+  canEditDetailSource?: boolean
   compareBaseLabel?: string
   compareBaseModel?: PgmlSchemaModel | null
   compareEntries?: PgmlDiagramCompareEntry[]
@@ -294,6 +314,7 @@ const {
   migrationWarnings?: string[]
   model: PgmlSchemaModel
   previewTargetId?: string
+  sourceText?: string
   versionCompareBaseId?: string | null
   versionCompareOptions?: VersionCompareOption[]
   versionCompareTargetId?: string
@@ -312,6 +333,7 @@ const emit = defineEmits<{
   focusSource: [sourceRange: PgmlSourceRange]
   nodePropertiesChange: [properties: Record<string, PgmlNodeProperties>]
   panelTabChange: [tab: DiagramPanelTab]
+  replaceSourceRange: [payload: { nextText: string, sourceRange: PgmlSourceRange }]
   restoreVersion: [versionId: string]
   updateVersionCompareBaseId: [value: string | null]
   updateVersionCompareTargetId: [value: string]
@@ -325,6 +347,8 @@ const viewportRef: Ref<HTMLDivElement | null> = ref(null)
 const detailPopoverRef: Ref<HTMLDivElement | null> = ref(null)
 const selectedSelection: Ref<DiagramGpuSelection | null> = ref(null)
 const selectedCompareEntryId: Ref<string | null> = ref(null)
+const isEditingDetailSource: Ref<boolean> = ref(false)
+const detailPopoverEditorSource: Ref<string> = ref('')
 const activePanelTab: Ref<DiagramPanelTab> = ref('inspector')
 const isDesktopSidePanelOpen: Ref<boolean> = ref(true)
 const showRelationshipLines: Ref<boolean> = ref(true)
@@ -2671,6 +2695,174 @@ const selectedDetailPopover = computed<DiagramDetailPopover | null>(() => {
   }
 })
 
+const selectedDetailEditorKey = computed(() => {
+  const detailPopover = selectedDetailPopover.value
+
+  if (!detailPopover?.sourceRange) {
+    return detailPopover ? `${detailPopover.kind}:${detailPopover.id}:none` : 'none'
+  }
+
+  return `${detailPopover.kind}:${detailPopover.id}:${detailPopover.sourceRange.startLine}:${detailPopover.sourceRange.endLine}`
+})
+
+const selectedDetailSourceSelectionRange = computed(() => {
+  const sourceRange = selectedDetailPopover.value?.sourceRange
+
+  if (!sourceRange) {
+    return null
+  }
+
+  return getPgmlSourceSelectionRange(sourceText, sourceRange)
+})
+
+const selectedDetailSourceSnippet = computed(() => {
+  const selectionRange = selectedDetailSourceSelectionRange.value
+
+  if (!selectionRange) {
+    return ''
+  }
+
+  return sourceText.slice(selectionRange.start, selectionRange.end)
+})
+
+const buildPgmlBlockEditorSpec = (
+  blockSource: string,
+  kindLabel: string
+): DetailPopoverEditorSpec => {
+  return {
+    description: `Edit the selected ${kindLabel.toLowerCase()} block directly in PGML syntax.`,
+    languageMode: 'pgml',
+    source: dedentPgmlSourceForEditor(blockSource),
+    title: `Editing ${kindLabel} PGML`,
+    toReplacementText: (nextSource: string) => reindentPgmlEditorText(nextSource, blockSource)
+  }
+}
+
+const buildExecutableSqlEditorSpec = (
+  blockSource: string,
+  kindLabel: string,
+  executableSource: string | null
+) => {
+  if (!executableSource || executableSource.trim().length === 0) {
+    return null
+  }
+
+  return {
+    description: `Edit the SQL stored inside this ${kindLabel.toLowerCase()} without the surrounding PGML wrapper.`,
+    languageMode: 'sql' as const,
+    source: dedentPgmlSourceForEditor(executableSource),
+    title: `Editing ${kindLabel} SQL`,
+    toReplacementText: (nextSource: string) => replacePgmlExecutableSourceInBlock(blockSource, nextSource)
+  }
+}
+
+const resolveSelectedRoutineSource = (
+  id: string,
+  routines: PgmlRoutine[],
+  prefix: 'function:' | 'procedure:'
+) => {
+  return routines.find(entry => `${prefix}${entry.name}` === id)?.source || null
+}
+
+const selectedDetailEditorSpec = computed<DetailPopoverEditorSpec | null>(() => {
+  const detailPopover = selectedDetailPopover.value
+  const blockSource = selectedDetailSourceSnippet.value
+
+  if (!detailPopover?.sourceRange || blockSource.trim().length === 0) {
+    return null
+  }
+
+  if (selectedAttachment.value?.kind === 'Constraint') {
+    return {
+      description: 'Edit the SQL check expression directly instead of the indented table row wrapper.',
+      languageMode: 'sql',
+      source: selectedAttachment.value.subtitle.trim(),
+      title: 'Editing Constraint Expression',
+      toReplacementText: (nextSource: string) => replacePgmlConstraintExpressionInBlock(blockSource, nextSource)
+    }
+  }
+
+  if (selectedAttachment.value?.kind === 'Function') {
+    return buildExecutableSqlEditorSpec(
+      blockSource,
+      selectedAttachment.value.kind,
+      resolveSelectedRoutineSource(selectedAttachment.value.id, model.functions, 'function:')
+    ) || buildPgmlBlockEditorSpec(blockSource, selectedAttachment.value.kind)
+  }
+
+  if (selectedAttachment.value?.kind === 'Procedure') {
+    return buildExecutableSqlEditorSpec(
+      blockSource,
+      selectedAttachment.value.kind,
+      resolveSelectedRoutineSource(selectedAttachment.value.id, model.procedures, 'procedure:')
+    ) || buildPgmlBlockEditorSpec(blockSource, selectedAttachment.value.kind)
+  }
+
+  if (selectedAttachment.value?.kind === 'Trigger') {
+    return buildExecutableSqlEditorSpec(
+      blockSource,
+      selectedAttachment.value.kind,
+      model.triggers.find(entry => `trigger:${entry.name}` === selectedAttachment.value?.id)?.source || null
+    ) || buildPgmlBlockEditorSpec(blockSource, selectedAttachment.value.kind)
+  }
+
+  if (selectedAttachment.value?.kind === 'Sequence') {
+    return buildExecutableSqlEditorSpec(
+      blockSource,
+      selectedAttachment.value.kind,
+      model.sequences.find(entry => `sequence:${entry.name}` === selectedAttachment.value?.id)?.source || null
+    ) || buildPgmlBlockEditorSpec(blockSource, selectedAttachment.value.kind)
+  }
+
+  if (selectedObject.value?.kindLabel === 'Function') {
+    return buildExecutableSqlEditorSpec(
+      blockSource,
+      selectedObject.value.kindLabel,
+      resolveSelectedRoutineSource(selectedObject.value.id, model.functions, 'function:')
+    ) || buildPgmlBlockEditorSpec(blockSource, selectedObject.value.kindLabel)
+  }
+
+  if (selectedObject.value?.kindLabel === 'Procedure') {
+    return buildExecutableSqlEditorSpec(
+      blockSource,
+      selectedObject.value.kindLabel,
+      resolveSelectedRoutineSource(selectedObject.value.id, model.procedures, 'procedure:')
+    ) || buildPgmlBlockEditorSpec(blockSource, selectedObject.value.kindLabel)
+  }
+
+  if (selectedObject.value?.kindLabel === 'Trigger') {
+    return buildExecutableSqlEditorSpec(
+      blockSource,
+      selectedObject.value.kindLabel,
+      model.triggers.find(entry => `trigger:${entry.name}` === selectedObject.value?.id)?.source || null
+    ) || buildPgmlBlockEditorSpec(blockSource, selectedObject.value.kindLabel)
+  }
+
+  if (selectedObject.value?.kindLabel === 'Sequence') {
+    return buildExecutableSqlEditorSpec(
+      blockSource,
+      selectedObject.value.kindLabel,
+      model.sequences.find(entry => `sequence:${entry.name}` === selectedObject.value?.id)?.source || null
+    ) || buildPgmlBlockEditorSpec(blockSource, selectedObject.value.kindLabel)
+  }
+
+  return buildPgmlBlockEditorSpec(blockSource, detailPopover.kindLabel)
+})
+
+const canEditSelectedDetailSource = computed(() => {
+  return canEditDetailSource
+    && !!selectedDetailPopover.value?.sourceRange
+    && selectedDetailEditorSpec.value !== null
+})
+
+const detailPopoverSourceHasChanges = computed(() => {
+  return detailPopoverEditorSource.value !== (selectedDetailEditorSpec.value?.source || '')
+})
+
+const detailPopoverEditButtonLabel = computed(() => {
+  return selectedDetailEditorSpec.value?.languageMode === 'sql' ? 'Edit SQL' : 'Edit block'
+})
+
 const shouldShowDetailPopover = computed(() => {
   return selectedDetailPopover.value !== null && !isMobilePanelView.value
 })
@@ -2739,10 +2931,14 @@ const detailPopoverPlacement = computed<DetailPopoverPlacement | null>(() => {
 
   const margin = 12
   const gap = 14
-  const minimumPopoverWidth = 220
-  const fallbackPopoverWidth = 160
-  const preferredPopoverWidth = 360
-  const popoverHeight = detailPopoverSize.value.height > 0 ? detailPopoverSize.value.height : 260
+  const minimumPopoverWidth = isEditingDetailSource.value ? 320 : 220
+  const fallbackPopoverWidth = isEditingDetailSource.value ? 260 : 160
+  const preferredPopoverWidth = isEditingDetailSource.value ? 560 : 360
+  const popoverHeight = detailPopoverSize.value.height > 0
+    ? detailPopoverSize.value.height
+    : isEditingDetailSource.value
+      ? 420
+      : 260
   const usableViewportWidth = Math.max(margin, safeViewportWidth - detailPopoverViewportInsetRight.value)
   const availableRightWidth = Math.max(0, usableViewportWidth - margin - anchorBounds.right - gap)
   const availableLeftWidth = Math.max(0, anchorBounds.left - gap - margin)
@@ -2819,7 +3015,41 @@ const getDetailPopoverFlagStyle = (flag: TableAttachmentFlag) => {
 }
 
 const closeDetailPopover = () => {
+  isEditingDetailSource.value = false
   selectedSelection.value = null
+}
+
+const syncDetailPopoverEditorSource = () => {
+  detailPopoverEditorSource.value = selectedDetailEditorSpec.value?.source || ''
+}
+
+const openDetailPopoverSourceEditor = () => {
+  if (!canEditSelectedDetailSource.value) {
+    return
+  }
+
+  syncDetailPopoverEditorSource()
+  isEditingDetailSource.value = true
+}
+
+const cancelDetailPopoverSourceEditor = () => {
+  syncDetailPopoverEditorSource()
+  isEditingDetailSource.value = false
+}
+
+const applyDetailPopoverSourceEditor = () => {
+  const sourceRange = selectedDetailPopover.value?.sourceRange
+  const replacementText = selectedDetailEditorSpec.value?.toReplacementText(detailPopoverEditorSource.value) || null
+
+  if (!sourceRange || !canEditSelectedDetailSource.value || replacementText === null) {
+    return
+  }
+
+  emit('replaceSourceRange', {
+    nextText: replacementText,
+    sourceRange
+  })
+  isEditingDetailSource.value = false
 }
 
 const diagramSelectionEquals = (left: DiagramGpuSelection | null, right: DiagramGpuSelection) => {
@@ -3707,6 +3937,29 @@ watch(
 )
 
 watch(
+  () => [selectedDetailEditorKey.value, sourceText],
+  () => {
+    isEditingDetailSource.value = false
+    syncDetailPopoverEditorSource()
+  },
+  {
+    immediate: true
+  }
+)
+
+watch(
+  () => canEditSelectedDetailSource.value,
+  (canEdit) => {
+    if (!canEdit) {
+      isEditingDetailSource.value = false
+    }
+  },
+  {
+    immediate: true
+  }
+)
+
+watch(
   () => selectedDiagramCompareEntryIds.value,
   (nextEntryIds) => {
     if (activePanelTab.value !== 'compare' || nextEntryIds.length === 0) {
@@ -3988,7 +4241,19 @@ defineExpose<{
           </div>
         </div>
 
-        <div class="grid max-h-64 gap-1 overflow-auto border border-[color:var(--studio-rail)] bg-[color:var(--studio-input-bg)] px-2 py-2">
+        <PgmlDetailPopoverSourceEditor
+          v-if="isEditingDetailSource"
+          v-model="detailPopoverEditorSource"
+          :description="selectedDetailEditorSpec?.description"
+          :language-mode="selectedDetailEditorSpec?.languageMode || 'pgml'"
+          :original-value="selectedDetailEditorSpec?.source || ''"
+          :title="selectedDetailEditorSpec?.title || 'Editing PGML block'"
+        />
+
+        <div
+          v-else
+          class="grid max-h-64 gap-1 overflow-auto border border-[color:var(--studio-rail)] bg-[color:var(--studio-input-bg)] px-2 py-2"
+        >
           <p
             v-for="detail in selectedDetailPopover.details"
             :key="detail"
@@ -4003,6 +4268,39 @@ defineExpose<{
           v-if="selectedDetailPopover.sourceRange"
           class="flex flex-wrap gap-2"
         >
+          <UButton
+            v-if="canEditSelectedDetailSource && !isEditingDetailSource"
+            data-detail-popover-edit-source="true"
+            :label="detailPopoverEditButtonLabel"
+            leading-icon="i-lucide-pencil-line"
+            color="neutral"
+            variant="outline"
+            size="xs"
+            :class="sidePanelActionButtonClass"
+            @click="openDetailPopoverSourceEditor"
+          />
+          <UButton
+            v-if="isEditingDetailSource"
+            data-detail-popover-cancel-source="true"
+            label="Cancel edit"
+            leading-icon="i-lucide-rotate-ccw"
+            color="neutral"
+            variant="ghost"
+            size="xs"
+            :class="sidePanelActionButtonClass"
+            @click="cancelDetailPopoverSourceEditor"
+          />
+          <UButton
+            v-if="isEditingDetailSource"
+            data-detail-popover-apply-source="true"
+            :label="detailPopoverSourceHasChanges ? 'Apply changes' : 'Keep current block'"
+            leading-icon="i-lucide-check"
+            color="primary"
+            variant="solid"
+            size="xs"
+            :class="sidePanelActionButtonClass"
+            @click="applyDetailPopoverSourceEditor"
+          />
           <UButton
             label="Focus source"
             leading-icon="i-lucide-braces"

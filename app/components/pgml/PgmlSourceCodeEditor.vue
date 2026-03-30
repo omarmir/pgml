@@ -4,17 +4,22 @@ import type { PgmlSourceRange } from '~/utils/pgml'
 import { Compartment, EditorSelection, EditorState } from '@codemirror/state'
 import { EditorView } from '@codemirror/view'
 import { createPgmlCodeMirrorExtensions } from '~/utils/pgml-codemirror'
+import { createSqlCodeMirrorExtensions } from '~/utils/sql-codemirror'
 import { getPgmlSourceSelectionRange } from '~/utils/pgml'
+
+type SourceEditorLanguageMode = 'pgml' | 'sql'
 
 type PgmlEditorHostElement = HTMLDivElement & {
   __pgmlEditorView?: EditorView
 }
 
 const {
+  languageMode = 'pgml',
   modelValue,
   placeholder = 'Paste PGML here...',
   readOnly = false
 } = defineProps<{
+  languageMode?: SourceEditorLanguageMode
   modelValue: string
   placeholder?: string
   readOnly?: boolean
@@ -27,8 +32,19 @@ const emit = defineEmits<{
 const containerRef: Ref<PgmlEditorHostElement | null> = ref(null)
 const viewRef: Ref<EditorView | null> = ref(null)
 const editableCompartment = new Compartment()
+const languageCompartment = new Compartment()
 const readOnlyCompartment = new Compartment()
 let isApplyingExternalUpdate = false
+
+const buildLanguageExtensions = () => {
+  return languageMode === 'sql'
+    ? createSqlCodeMirrorExtensions({
+        placeholder
+      })
+    : createPgmlCodeMirrorExtensions({
+        placeholder
+      })
+}
 
 const focusOffset = (from: number, to?: number) => {
   if (!viewRef.value) {
@@ -119,10 +135,8 @@ onMounted(() => {
       doc: modelValue,
       extensions: [
         editableCompartment.of(EditorView.editable.of(!readOnly)),
+        languageCompartment.of(buildLanguageExtensions()),
         readOnlyCompartment.of(EditorState.readOnly.of(readOnly)),
-        createPgmlCodeMirrorExtensions({
-          placeholder
-        }),
         EditorView.updateListener.of((update) => {
           if (!update.docChanged || isApplyingExternalUpdate) {
             return
@@ -157,6 +171,16 @@ watch(() => readOnly, (nextValue) => {
   })
 })
 
+watch(() => [languageMode, placeholder], () => {
+  if (!viewRef.value) {
+    return
+  }
+
+  viewRef.value.dispatch({
+    effects: languageCompartment.reconfigure(buildLanguageExtensions())
+  })
+})
+
 onBeforeUnmount(() => {
   if (containerRef.value) {
     delete containerRef.value.__pgmlEditorView
@@ -181,6 +205,7 @@ defineExpose({
   <div
     ref="containerRef"
     data-pgml-editor="true"
+    :data-pgml-editor-language="languageMode"
     class="h-full min-h-0 w-full overflow-hidden bg-[color:var(--studio-shell-bg)]"
   />
 </template>

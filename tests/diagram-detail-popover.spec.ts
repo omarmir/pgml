@@ -2,6 +2,7 @@ import { expect, test } from '@nuxt/test-utils/playwright'
 import type { Page } from '@playwright/test'
 import {
   getPgmlEditor,
+  readPgmlEditorValue,
   setPgmlEditorValue
 } from './helpers/pgml-editor'
 import { authorizeStudioLaunchAccess } from './helpers/studio-launch'
@@ -244,4 +245,69 @@ CREATE OR REPLACE PROCEDURE public.archive_orders(retention_days integer)
 LANGUAGE plpgsql
 AS $$
 BEGIN`)
+})
+
+test('detail popovers edit executable SQL directly inside the embedded source editor', async ({ goto, page }) => {
+  await goto('/diagram')
+
+  const mainEditor = getPgmlEditor(page).first()
+
+  await setPgmlEditorValue(mainEditor, `Table public.orders {
+  id integer [pk]
+}
+
+Function orphan_report() {
+  language: sql
+  source: $sql$
+    select 1;
+  $sql$
+}`)
+
+  await page.locator('[data-diagram-panel-tab="entities"]').click()
+  await page.locator('[data-browser-entity-row="function:orphan_report"] button').first().click()
+
+  const popover = page.locator('[data-object-popover="function:orphan_report"]')
+
+  await expect(popover).toBeVisible()
+  await expect(popover.locator('[data-detail-popover-edit-source="true"]')).toContainText('Edit SQL')
+  await popover.locator('[data-detail-popover-edit-source="true"]').click()
+
+  const popupEditor = popover.locator('[data-detail-popover-source-editor="true"] [data-pgml-editor="true"]')
+
+  await expect(popupEditor).toBeVisible()
+  await expect(popupEditor).toHaveAttribute('data-pgml-editor-language', 'sql')
+  await expect.poll(async () => {
+    return readPgmlEditorValue(popupEditor)
+  }).toBe('select 1;')
+  await setPgmlEditorValue(popupEditor, `select
+  2;`)
+  await popover.locator('[data-detail-popover-apply-source="true"]').click()
+
+  await expect(popover).toContainText('select')
+  await expect(popover).toContainText('2;')
+  await expect.poll(async () => {
+    return readPgmlEditorValue(mainEditor)
+  }).toContain(`source: $sql$
+    select
+      2;
+  $sql$`)
+})
+
+test('constraint popovers edit a trimmed SQL expression instead of the indented table row', async ({ goto, page }) => {
+  await goto('/diagram')
+  await page.locator('[data-diagram-panel-tab="entities"]').click()
+  await page.locator('[data-browser-entity-row="constraint:chk_orders_total"] button').first().click()
+
+  const popover = page.locator('[data-attachment-popover="constraint:chk_orders_total"]')
+
+  await expect(popover).toBeVisible()
+  await expect(popover.locator('[data-detail-popover-edit-source="true"]')).toContainText('Edit SQL')
+  await popover.locator('[data-detail-popover-edit-source="true"]').click()
+
+  const popupEditor = popover.locator('[data-detail-popover-source-editor="true"] [data-pgml-editor="true"]')
+
+  await expect(popupEditor).toHaveAttribute('data-pgml-editor-language', 'sql')
+  await expect.poll(async () => {
+    return readPgmlEditorValue(popupEditor)
+  }).toBe('total_cents >= 0')
 })
