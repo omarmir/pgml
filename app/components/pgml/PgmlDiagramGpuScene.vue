@@ -69,6 +69,7 @@ type TextureCacheEntry = {
 }
 
 type DragSession = {
+  dragStarted?: boolean
   groupId?: string
   mode: 'pan' | 'drag' | 'select'
   nodeId?: string
@@ -2148,6 +2149,14 @@ const handlePointerMove = (event: PointerEvent) => {
     return
   }
 
+  const movedEnoughToDrag = Math.abs(deltaClientX) > 4 || Math.abs(deltaClientY) > 4
+
+  if (!dragSession.dragStarted && !movedEnoughToDrag) {
+    return
+  }
+
+  dragSession.dragStarted = true
+
   const deltaWorldX = deltaClientX / Math.max(worldScale, 0.001)
   const deltaWorldY = deltaClientY / Math.max(worldScale, 0.001)
 
@@ -2207,15 +2216,11 @@ const handlePointerUp = (event: PointerEvent) => {
     return
   }
 
-  const deltaX = Math.abs(event.clientX - dragSession.originClientX)
-  const deltaY = Math.abs(event.clientY - dragSession.originClientY)
-  const moved = deltaX > 4 || deltaY > 4
-
   if (overlayRef.value?.hasPointerCapture(event.pointerId)) {
     overlayRef.value.releasePointerCapture(event.pointerId)
   }
 
-  if (moved && dragSession.nodeId && dragSession.nodeKind && dragSession.mode === 'drag') {
+  if (dragSession.dragStarted && dragSession.nodeId && dragSession.nodeKind && dragSession.mode === 'drag') {
     emit('moveEnd', {
       id: dragSession.nodeId,
       kind: dragSession.nodeKind,
@@ -2224,7 +2229,7 @@ const handlePointerUp = (event: PointerEvent) => {
     })
   }
 
-  if (!moved) {
+  if (!dragSession.dragStarted) {
     if (dragSession.pressedTarget?.kind === 'object-toggle' && dragSession.pressedTarget.objectId) {
       emit('toggleObjectCollapsed', dragSession.pressedTarget.objectId)
     }

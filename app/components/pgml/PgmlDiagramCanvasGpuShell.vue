@@ -14,6 +14,7 @@ import {
   buildDiagramConnectionPreviewLayers,
   type DiagramConnectionPreviewDragState
 } from '~/utils/diagram-connection-preview'
+import { getDiagramConnectionZIndex } from '~/utils/diagram-layering'
 import { buildTableGroupMasonryLayout, type TableAttachment, type TableAttachmentFlag, type TableAttachmentKind } from '~/utils/pgml-diagram-canvas'
 import {
   getPgmlDiagramCompareChangeColor,
@@ -408,7 +409,7 @@ const detailPopoverSize: Ref<MeasuredSize> = ref({
 })
 const entitySearchQuery: Ref<string> = ref('')
 const entitySearchInputRef: Ref<HTMLInputElement | null> = ref(null)
-const connectionLines: Ref<DiagramGpuConnectionLine[]> = ref([])
+const routedConnectionLines: Ref<DiagramGpuConnectionLine[]> = ref([])
 const activeConnectionDragPreview: Ref<ActiveConnectionDragPreview | null> = ref(null)
 const groupLayoutStates: Ref<Record<string, DiagramGpuGroupNode>> = ref({})
 const floatingTableStates: Ref<Record<string, DiagramGpuNodeLayoutState>> = ref({})
@@ -2033,10 +2034,10 @@ const displayedConnectionLines = computed(() => {
   const activeDrag = activeConnectionDragPreview.value
 
   if (!activeDrag || (activeDrag.deltaX === 0 && activeDrag.deltaY === 0)) {
-    return connectionLines.value
+    return routedConnectionLines.value
   }
 
-  const layers = buildDiagramConnectionPreviewLayers(connectionLines.value, activeDrag)
+  const layers = buildDiagramConnectionPreviewLayers(routedConnectionLines.value, activeDrag)
 
   return layers.flatMap((layer) => {
     return [
@@ -2065,6 +2066,81 @@ const displayedConnectionLines = computed(() => {
         return buildPreviewLine(line, previewPoints)
       })
     ]
+  })
+})
+
+const connectionStyleByKey = computed<Record<string, {
+  animated: boolean
+  color: string
+  dashPattern: string
+  dashed: boolean
+  zIndex: number
+}>>(() => {
+  const entries: Record<string, {
+    animated: boolean
+    color: string
+    dashPattern: string
+    dashed: boolean
+    zIndex: number
+  }> = {}
+
+  model.references.forEach((reference) => {
+    const isSelectedOutgoingReference = selectedTableId.value !== null && reference.fromTable === selectedTableId.value
+    const color = isSelectedOutgoingReference
+      ? (tableColorById.value[reference.fromTable] || tableColorById.value[reference.toTable] || '#79e3ea')
+      : (tableColorById.value[reference.toTable] || '#79e3ea')
+
+    entries[`ref:${reference.fromTable}:${reference.fromColumn}:${reference.toTable}:${reference.toColumn}`] = {
+      animated: isSelectedOutgoingReference,
+      color,
+      dashPattern: isSelectedOutgoingReference ? '10 7' : '0',
+      dashed: isSelectedOutgoingReference,
+      zIndex: getDiagramConnectionZIndex(0, 0, isSelectedOutgoingReference)
+    }
+  })
+
+  objectNodes.value.forEach((node) => {
+    const impactTargets = node.impactTargets.length > 0
+      ? node.impactTargets
+      : node.tableIds.map((tableId) => {
+          return {
+            columnName: null,
+            tableId
+          } satisfies DiagramGpuImpactTarget
+        })
+
+    impactTargets.forEach((impactTarget) => {
+      const isSelectedObjectImpact = selectedSelection.value?.kind === 'object' && selectedSelection.value.id === node.id
+
+      entries[`${node.id}->${impactTarget.tableId}:${impactTarget.columnName || '*'}`] = {
+        animated: isSelectedObjectImpact,
+        color: node.color,
+        dashPattern: node.kindLabel === 'Custom Type' && !isSelectedObjectImpact ? '2 5' : '10 7',
+        dashed: true,
+        zIndex: getDiagramConnectionZIndex(0, 0, isSelectedObjectImpact)
+      }
+    })
+  })
+
+  return entries
+})
+
+const styledConnectionLines = computed(() => {
+  return displayedConnectionLines.value.map((line) => {
+    const style = connectionStyleByKey.value[line.key]
+
+    if (!style) {
+      return line
+    }
+
+    return {
+      ...line,
+      animated: style.animated,
+      color: style.color,
+      dashPattern: style.dashPattern,
+      dashed: style.dashed,
+      zIndex: style.zIndex
+    }
   })
 })
 
@@ -2660,18 +2736,14 @@ const computeConnectionLines = async () => {
       return
     }
 
-    const isSelectedOutgoingReference = selectedTableId.value !== null && reference.fromTable === selectedTableId.value
-
     descriptors.push({
-      animated: isSelectedOutgoingReference,
-      color: isSelectedOutgoingReference
-        ? (tableColorById.value[reference.fromTable] || tableColorById.value[reference.toTable] || '#79e3ea')
-        : (tableColorById.value[reference.toTable] || '#79e3ea'),
-      dashPattern: isSelectedOutgoingReference ? '10 7' : '0',
-      dashed: isSelectedOutgoingReference,
+      animated: false,
+      color: '#79e3ea',
+      dashPattern: '0',
+      dashed: false,
       fromGeometry,
       key: `ref:${reference.fromTable}:${reference.fromColumn}:${reference.toTable}:${reference.toColumn}`,
-      selectedForeground: isSelectedOutgoingReference,
+      selectedForeground: false,
       toGeometry
     })
   })
@@ -2700,23 +2772,21 @@ const computeConnectionLines = async () => {
         return
       }
 
-      const isSelectedObjectImpact = selectedSelection.value?.kind === 'object' && selectedSelection.value.id === node.id
-
       descriptors.push({
-        animated: isSelectedObjectImpact,
+        animated: false,
         color: node.color,
-        dashPattern: node.kindLabel === 'Custom Type' && !isSelectedObjectImpact ? '2 5' : '10 7',
+        dashPattern: '10 7',
         dashed: true,
         fromGeometry,
         key: `${node.id}->${impactTarget.tableId}:${impactTarget.columnName || '*'}`,
-        selectedForeground: isSelectedObjectImpact,
+        selectedForeground: false,
         toGeometry
       })
     })
   })
 
   if (descriptors.length === 0) {
-    connectionLines.value = []
+    routedConnectionLines.value = []
     return
   }
 
@@ -2757,11 +2827,11 @@ const computeConnectionLines = async () => {
     })
 
     if (requestId === latestConnectionRequestId && !activeConnectionDragPreview.value) {
-      connectionLines.value = lines
+      routedConnectionLines.value = lines
     }
   } catch {
     if (requestId === latestConnectionRequestId && !activeConnectionDragPreview.value) {
-      connectionLines.value = []
+      routedConnectionLines.value = []
     }
   }
 }
@@ -2845,7 +2915,7 @@ const inspectorOverviewStats = computed(() => {
     {
       key: 'lines',
       label: 'Lines',
-      value: connectionLines.value.length
+      value: routedConnectionLines.value.length
     }
   ]
 })
@@ -4420,7 +4490,7 @@ const buildExportSvg = () => {
     )
   })
 
-  connectionLines.value.forEach((line) => {
+  styledConnectionLines.value.forEach((line) => {
     const path = line.points.map((point, index) => {
       const x = point.x + offsetX
       const y = point.y + offsetY
@@ -4567,7 +4637,7 @@ watch(
 )
 
 watch(
-  () => [groupNodes.value, tableCards.value, selectedTableId.value],
+  () => [groupNodes.value, tableCards.value, objectNodes.value, model.references],
   () => {
     computeConnectionLines()
   },
@@ -4633,16 +4703,6 @@ watch(
   },
   {
     immediate: true
-  }
-)
-
-watch(
-  () => selectedSelection.value,
-  () => {
-    computeConnectionLines()
-  },
-  {
-    deep: true
   }
 )
 
@@ -4746,7 +4806,7 @@ watch(
 
 watch(
   () => [
-    connectionLines.value.length,
+    styledConnectionLines.value.length,
     tableCards.value.length,
     groupNodes.value.length,
     objectNodes.value.length,
@@ -4785,8 +4845,8 @@ watch(
         worldBounds: DiagramGpuWorldBounds
       }
     }).__pgmlSceneDebug = {
-      connectionCount: connectionLines.value.length,
-      firstConnection: connectionLines.value[0] || null,
+      connectionCount: styledConnectionLines.value.length,
+      firstConnection: styledConnectionLines.value[0] || null,
       groupCount: groupNodes.value.length,
       groupCards: groupNodes.value.map((node) => {
         return {
@@ -4867,7 +4927,7 @@ defineExpose<{
   >
     <PgmlDiagramGpuScene
       ref="sceneRef"
-      :connections="displayedConnectionLines"
+      :connections="styledConnectionLines"
       :groups="groupNodes"
       :objects="objectNodes"
       :selection="selectedSelection"
