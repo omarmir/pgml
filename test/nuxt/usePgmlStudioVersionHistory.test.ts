@@ -43,6 +43,24 @@ const mountVersionHistoryComposable = async (input?: {
   }
 }
 
+const createDesignCheckpoint = (
+  api: ReturnType<typeof usePgmlStudioVersionHistory>,
+  name = 'Initial design'
+) => {
+  const checkpoint = api.createCheckpoint({
+    createdAt: '2026-03-29T12:00:00.000Z',
+    includeLayout: true,
+    name,
+    role: 'design'
+  })
+
+  if (!checkpoint) {
+    throw new Error('Expected the checkpoint to be created.')
+  }
+
+  return checkpoint
+}
+
 describe('usePgmlStudioVersionHistory', () => {
   it('creates checkpoints, previews locked versions, restores them, and replaces the workspace from imports', async () => {
     const { api, source } = await mountVersionHistoryComposable()
@@ -50,16 +68,7 @@ describe('usePgmlStudioVersionHistory', () => {
     expect(api.workspaceDirty.value).toBe(true)
     expect(api.canCheckpoint.value).toBe(true)
 
-    const initialVersion = api.createCheckpoint({
-      createdAt: '2026-03-29T12:00:00.000Z',
-      includeLayout: true,
-      name: 'Initial design',
-      role: 'design'
-    })
-
-    if (!initialVersion) {
-      throw new Error('Expected the checkpoint to be created.')
-    }
+    const initialVersion = createDesignCheckpoint(api)
 
     expect(api.document.value.workspace.basedOnVersionId).toBe(initialVersion.id)
     expect(api.workspaceBaseVersion.value?.id).toBe(initialVersion.id)
@@ -144,16 +153,7 @@ describe('usePgmlStudioVersionHistory', () => {
 
   it('exposes document scope options and serializes the selected document slice', async () => {
     const { api } = await mountVersionHistoryComposable()
-    const initialVersion = api.createCheckpoint({
-      createdAt: '2026-03-29T12:00:00.000Z',
-      includeLayout: true,
-      name: 'Initial design',
-      role: 'design'
-    })
-
-    if (!initialVersion) {
-      throw new Error('Expected the checkpoint to be created.')
-    }
+    const initialVersion = createDesignCheckpoint(api)
 
     expect(api.versionedDocumentScopeItems.value).toEqual(expect.arrayContaining([
       {
@@ -224,16 +224,7 @@ Properties "public.users" {
 
   it('clamps invalid preview and compare ids back to valid version history targets', async () => {
     const { api } = await mountVersionHistoryComposable()
-    const initialVersion = api.createCheckpoint({
-      createdAt: '2026-03-29T12:00:00.000Z',
-      includeLayout: true,
-      name: 'Initial design',
-      role: 'design'
-    })
-
-    if (!initialVersion) {
-      throw new Error('Expected the checkpoint to be created.')
-    }
+    const initialVersion = createDesignCheckpoint(api)
 
     api.setPreviewTarget('missing-version')
     api.setCompareTargets({
@@ -248,16 +239,7 @@ Properties "public.users" {
 
   it('enriches version history items with branch depth and child counts', async () => {
     const { api, source } = await mountVersionHistoryComposable()
-    const rootVersion = api.createCheckpoint({
-      createdAt: '2026-03-29T12:00:00.000Z',
-      includeLayout: true,
-      name: 'Initial design',
-      role: 'design'
-    })
-
-    if (!rootVersion) {
-      throw new Error('Expected the checkpoint to be created.')
-    }
+    const rootVersion = createDesignCheckpoint(api)
 
     source.value = importedWorkspaceSource
 
