@@ -141,51 +141,42 @@ const getDiffKindClass = (kind: 'added' | 'modified' | 'removed') => {
 const buildCountLabel = (count: number, singularLabel: string, pluralLabel?: string) => {
   return `${count} ${count === 1 ? singularLabel : pluralLabel || `${singularLabel}s`}`
 }
+const appendMetricBadge = (badges: PgmlVersionMetricBadge[], label: string) => {
+  badges.push({
+    label
+  })
+}
 const buildVersionMetricBadges = (version: PgmlVersionPanelItem) => {
   const badges: PgmlVersionMetricBadge[] = [{
     label: `Level ${version.depth}`
   }]
 
   if (version.childCount > 0) {
-    badges.push({
-      label: buildCountLabel(version.childCount, 'branch', 'branches')
-    })
+    appendMetricBadge(badges, buildCountLabel(version.childCount, 'branch', 'branches'))
   }
 
   if (version.siblingCount > 0) {
-    badges.push({
-      label: buildCountLabel(version.siblingCount, 'sibling')
-    })
+    appendMetricBadge(badges, buildCountLabel(version.siblingCount, 'sibling'))
   }
 
   if (version.descendantCount > 0) {
-    badges.push({
-      label: buildCountLabel(version.descendantCount, 'descendant')
-    })
+    appendMetricBadge(badges, buildCountLabel(version.descendantCount, 'descendant'))
   }
 
   if (version.ancestorCount > 0) {
-    badges.push({
-      label: buildCountLabel(version.ancestorCount, 'ancestor')
-    })
+    appendMetricBadge(badges, buildCountLabel(version.ancestorCount, 'ancestor'))
   }
 
   if (version.branchVersionCount > 1) {
-    badges.push({
-      label: `Branch size ${version.branchVersionCount}`
-    })
+    appendMetricBadge(badges, `Branch size ${version.branchVersionCount}`)
   }
 
   if (version.branchLeafCount > 0) {
-    badges.push({
-      label: `Branch leaves ${version.branchLeafCount}`
-    })
+    appendMetricBadge(badges, `Branch leaves ${version.branchLeafCount}`)
   }
 
   if (version.branchMaxDepth > version.depth) {
-    badges.push({
-      label: `Branch depth ${version.branchMaxDepth}`
-    })
+    appendMetricBadge(badges, `Branch depth ${version.branchMaxDepth}`)
   }
 
   return badges
