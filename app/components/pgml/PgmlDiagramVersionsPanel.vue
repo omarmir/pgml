@@ -291,6 +291,11 @@ const hasActiveMigration = computed(() => {
     ? hasMigrationSql.value
     : hasMigrationKysely.value
 })
+const getActiveMigrationMimeType = () => {
+  return isSqlMigrationFormat.value
+    ? 'text/sql;charset=utf-8'
+    : 'text/plain;charset=utf-8'
+}
 const compareSummary = computed(() => {
   return buildPgmlVersionCompareSummary({
     compareBaseLabel: compareBaseOption.value?.label || null,
@@ -330,9 +335,7 @@ const handleDownloadMigration = () => {
   }
 
   const blob = new Blob([activeMigrationContent.value], {
-    type: isSqlMigrationFormat.value
-      ? 'text/sql;charset=utf-8'
-      : 'text/plain;charset=utf-8'
+    type: getActiveMigrationMimeType()
   })
   const objectUrl = URL.createObjectURL(blob)
   const anchor = document.createElement('a')
