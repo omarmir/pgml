@@ -30,6 +30,7 @@ const workspaceDocumentEditorDescription = 'Showing only the Workspace block fro
 const emptyCompareDeltaDescription = 'No visible delta in the selected comparison.'
 const currentWorkspacePreviewLabel = 'Current workspace'
 const selectedVersionPreviewLabel = 'Selected version'
+const noWorkspaceBaseLabel = 'No locked base version yet.'
 
 const buildCountLabel = (count: number, singularLabel: string, pluralLabel?: string) => {
   return `${count} ${count === 1 ? singularLabel : pluralLabel || `${singularLabel}s`}`
@@ -160,7 +161,7 @@ export const buildPgmlWorkspaceBaseLabel = (input: {
   versionLabel?: string | null
 }) => {
   if (!input.basedOnVersionId) {
-    return 'No locked base version yet.'
+    return noWorkspaceBaseLabel
   }
 
   if (input.versionLabel) {
