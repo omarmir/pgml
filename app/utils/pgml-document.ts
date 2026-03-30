@@ -93,6 +93,9 @@ const comparePgmlVersionsByRecency = (
 }
 
 const getLatestPgmlVersionFromList = (versions: PgmlVersionDocumentBlock[]) => {
+  // Callers often need the most recent item from a pre-filtered slice such as
+  // roots, leaves, or one role. Centralizing the sort keeps those selectors in
+  // sync with the same timestamp + id ordering semantics.
   return [...versions].sort(comparePgmlVersionsByRecency)[0] || null
 }
 
