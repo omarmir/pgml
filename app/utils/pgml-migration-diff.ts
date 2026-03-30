@@ -182,6 +182,8 @@ const buildKyselyMigrationContent = (
   baseName: string,
   statements: string[]
 ) => {
+  // Kysely exports intentionally mirror the SQL statement order one-for-one so
+  // history-aware validation can compare the two artifacts mechanically.
   const statementBlocks = statements.map((statement) => {
     return `  await sql\`
 ${escapeTemplateLiteralContent(statement)}
@@ -213,6 +215,8 @@ export const buildPgmlMigrationArtifactsFromPlan = (
     baseName?: string
   } = {}
 ): PgmlMigrationDiffBundle => {
+  // The artifact bundle is the shared currency between direct diffs and
+  // history-aware version exports, so SQL/Kysely metadata stays aligned here.
   const baseName = normalizeExportBaseName(options.baseName || 'pgml-version')
 
   return {
