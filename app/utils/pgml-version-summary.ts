@@ -16,6 +16,15 @@ export type PgmlVersionCompareSummary = {
   targetLabel: string
 }
 
+type PgmlVersionDiffSectionSource = {
+  getItems: (diff: PgmlSchemaDiff) => Array<{
+    id: string
+    kind: 'added' | 'modified' | 'removed'
+    label: string
+  }>
+  label: string
+}
+
 const buildCountLabel = (count: number, singularLabel: string, pluralLabel?: string) => {
   return `${count} ${count === 1 ? singularLabel : pluralLabel || `${singularLabel}s`}`
 }
@@ -27,46 +36,56 @@ const buildChangedSectionCount = (
   return diffSections.length + (layoutChanged > 0 ? 1 : 0)
 }
 
+const versionDiffSectionSources: PgmlVersionDiffSectionSource[] = [
+  {
+    getItems: diff => diff.tables,
+    label: 'Tables'
+  },
+  {
+    getItems: diff => diff.columns,
+    label: 'Columns'
+  },
+  {
+    getItems: diff => diff.references,
+    label: 'References'
+  },
+  {
+    getItems: diff => diff.indexes,
+    label: 'Indexes'
+  },
+  {
+    getItems: diff => diff.constraints,
+    label: 'Constraints'
+  },
+  {
+    getItems: diff => diff.groups,
+    label: 'Groups'
+  },
+  {
+    // Functions, procedures, triggers, and sequences all land in the same UI
+    // section because the compare surface treats them as migration-oriented
+    // executable objects rather than separate layout entities.
+    getItems: diff => [
+      ...diff.functions,
+      ...diff.procedures,
+      ...diff.triggers,
+      ...diff.sequences
+    ],
+    label: 'Routines'
+  },
+  {
+    getItems: diff => diff.customTypes,
+    label: 'Types'
+  }
+]
+
 const buildDiffSectionEntries = (diff: PgmlSchemaDiff) => {
-  return [
-    {
-      items: diff.tables,
-      label: 'Tables'
-    },
-    {
-      items: diff.columns,
-      label: 'Columns'
-    },
-    {
-      items: diff.references,
-      label: 'References'
-    },
-    {
-      items: diff.indexes,
-      label: 'Indexes'
-    },
-    {
-      items: diff.constraints,
-      label: 'Constraints'
-    },
-    {
-      items: diff.groups,
-      label: 'Groups'
-    },
-    {
-      items: [
-        ...diff.functions,
-        ...diff.procedures,
-        ...diff.triggers,
-        ...diff.sequences
-      ],
-      label: 'Routines'
-    },
-    {
-      items: diff.customTypes,
-      label: 'Types'
+  return versionDiffSectionSources.map((entry) => {
+    return {
+      items: entry.getItems(diff),
+      label: entry.label
     }
-  ]
+  })
 }
 
 const buildVersionDiffSection = (entry: {
