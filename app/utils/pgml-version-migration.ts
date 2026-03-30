@@ -197,6 +197,30 @@ const buildExpectedKyselySnippets = (plan: PgmlMigrationDiffPlan) => {
   return plan.statements.map(statement => escapeTemplateLiteralContent(statement))
 }
 
+const buildExpectedCombinedSqlSnippets = (steps: PgmlPlannedVersionMigrationStep[]) => {
+  return steps.flatMap((step) => {
+    return [
+      `${sqlStepPrefix}${step.index + 1}: ${step.label}`,
+      ...step.plan.warnings.map(warning => `${sqlWarningPrefix}${warning}`),
+      ...(step.plan.statements.length > 0
+        ? buildExpectedSqlSnippets(step.plan)
+        : [`-- ${noAutomaticSqlStepComment}`])
+    ]
+  })
+}
+
+const buildExpectedCombinedKyselySnippets = (steps: PgmlPlannedVersionMigrationStep[]) => {
+  return steps.flatMap((step) => {
+    return [
+      `${kyselyStepPrefix}${step.index + 1}: ${step.label}`,
+      ...step.plan.warnings.map(warning => `${kyselyWarningPrefix}${warning}`),
+      ...(step.plan.statements.length > 0
+        ? buildExpectedKyselySnippets(step.plan)
+        : [`  // ${noAutomaticSqlStepComment}`])
+    ]
+  })
+}
+
 const validateStepMigrationArtifacts = (input: {
   index: number
   label: string
@@ -250,24 +274,8 @@ const validateCombinedHistoryArtifacts = (input: {
   // step descriptors. The validation keeps the aggregate view honest by
   // proving the rendered file preserves that same lineage sequence.
   const issues: string[] = []
-  const expectedSqlSnippets = input.stepDescriptors.flatMap((step) => {
-    return [
-      `${sqlStepPrefix}${step.index + 1}: ${step.label}`,
-      ...step.plan.warnings.map(warning => `${sqlWarningPrefix}${warning}`),
-      ...(step.plan.statements.length > 0
-        ? step.plan.statements
-        : [`-- ${noAutomaticSqlStepComment}`])
-    ]
-  })
-  const expectedKyselySnippets = input.stepDescriptors.flatMap((step) => {
-    return [
-      `${kyselyStepPrefix}${step.index + 1}: ${step.label}`,
-      ...step.plan.warnings.map(warning => `${kyselyWarningPrefix}${warning}`),
-      ...(step.plan.statements.length > 0
-        ? step.plan.statements.map(statement => escapeTemplateLiteralContent(statement))
-        : [`  // ${noAutomaticSqlStepComment}`])
-    ]
-  })
+  const expectedSqlSnippets = buildExpectedCombinedSqlSnippets(input.stepDescriptors)
+  const expectedKyselySnippets = buildExpectedCombinedKyselySnippets(input.stepDescriptors)
 
   if (!validateOrderedContentSnippets(input.combinedArtifacts.sql.content, expectedSqlSnippets)) {
     issues.push('Combined SQL history migration does not match the expected PGML version sequence.')
