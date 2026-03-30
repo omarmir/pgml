@@ -61,6 +61,22 @@ const createDesignCheckpoint = (
   return checkpoint
 }
 
+const createSerializedImplementationDocument = (workspaceSource = importedWorkspaceSource) => {
+  return serializePgmlDocument(createInitialPgmlDocument({
+    initialVersion: {
+      createdAt: '2026-03-29T12:00:00.000Z',
+      name: 'Initial implementation',
+      parentVersionId: null,
+      role: 'implementation',
+      snapshot: {
+        source: baseWorkspaceSource
+      }
+    },
+    name: 'Billing',
+    workspaceSource
+  }))
+}
+
 describe('usePgmlStudioVersionHistory', () => {
   it('creates checkpoints, previews locked versions, restores them, and replaces the workspace from imports', async () => {
     const { api, source } = await mountVersionHistoryComposable()
@@ -128,21 +144,8 @@ describe('usePgmlStudioVersionHistory', () => {
     const { api, source } = await mountVersionHistoryComposable({
       source: ''
     })
-    const document = createInitialPgmlDocument({
-      initialVersion: {
-        createdAt: '2026-03-29T12:00:00.000Z',
-        name: 'Initial implementation',
-        parentVersionId: null,
-        role: 'implementation',
-        snapshot: {
-          source: baseWorkspaceSource
-        }
-      },
-      name: 'Billing',
-      workspaceSource: importedWorkspaceSource
-    })
 
-    api.loadDocument(serializePgmlDocument(document))
+    api.loadDocument(createSerializedImplementationDocument())
 
     expect(source.value).toContain('Table public.users')
     expect(source.value).toContain('status text')
