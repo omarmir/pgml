@@ -276,6 +276,12 @@ const buildDocumentScopeItem = (
   } satisfies PgmlVersionedDocumentScopeItem
 }
 
+const buildVersionScopeItemLabel = (version: PgmlVersionDocumentBlock) => {
+  // Scope menus should expose the role context as well as the version label so
+  // implementation/design checkpoints remain distinguishable in long histories.
+  return `${getPgmlVersionRoleDisplayLabel(version.role)} · ${getPgmlVersionDisplayLabel(version)}`
+}
+
 const buildVersionedDocumentScopeItems = (
   document: PgmlVersionSetDocument
 ) => {
@@ -287,7 +293,7 @@ const buildVersionedDocumentScopeItems = (
     buildDocumentScopeItem('Workspace block', 'workspace-block'),
     ...document.versions.map((version) => {
       return buildDocumentScopeItem(
-        `${getPgmlVersionRoleDisplayLabel(version.role)} · ${getPgmlVersionDisplayLabel(version)}`,
+        buildVersionScopeItemLabel(version),
         `version:${version.id}`
       )
     })
