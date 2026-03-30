@@ -225,6 +225,17 @@ const buildTableSelectionCandidates = (input: {
   ])
 }
 
+const buildObjectSelectionCandidates = (objectId: string | null, isTargetObjectAvailable: boolean) => {
+  return buildSelectionCandidates([
+    objectId && isTargetObjectAvailable
+      ? {
+          id: objectId,
+          kind: 'object'
+        }
+      : null
+  ])
+}
+
 const buildLayoutSelectionCandidates = (
   nodeId: string,
   baseModel: PgmlSchemaModel,
@@ -527,14 +538,7 @@ export const buildPgmlDiagramCompareEntries = (
       id: `${entityKind}:${entry.id}`,
       label: entry.label,
       rowKey: entry.after ? objectId : null,
-      selectionCandidates: buildSelectionCandidates([
-        entry.after && objectId
-          ? {
-              id: objectId,
-              kind: 'object'
-            }
-          : null
-      ]),
+      selectionCandidates: buildObjectSelectionCandidates(objectId, Boolean(entry.after)),
       sourceRange: pickSourceRange(entry.after?.sourceRange, entry.before?.sourceRange),
       targetNodeIds: buildNodeIds(entry.after ? objectId : null)
     } satisfies PgmlDiagramCompareEntry
@@ -577,14 +581,7 @@ export const buildPgmlDiagramCompareEntries = (
                 tableId: targetTable.fullName
               }
             : null,
-          extraSelections: [
-            entry.after && objectId
-              ? {
-                  id: objectId,
-                  kind: 'object'
-                }
-              : null
-          ],
+          extraSelections: buildObjectSelectionCandidates(objectId, Boolean(entry.after)),
           targetTable
         }),
         sourceRange: pickSourceRange(entry.after?.sourceRange, entry.before?.sourceRange, targetTable?.sourceRange),
@@ -611,14 +608,7 @@ export const buildPgmlDiagramCompareEntries = (
         id: `sequence:${entry.id}`,
         label: entry.label,
         rowKey: entry.after && sequence ? buildRoutineObjectId('sequence', sequence.name) : null,
-        selectionCandidates: buildSelectionCandidates([
-          entry.after && objectId
-            ? {
-                id: objectId,
-                kind: 'object'
-              }
-            : null
-        ]),
+        selectionCandidates: buildObjectSelectionCandidates(objectId, Boolean(entry.after)),
         sourceRange: pickSourceRange(entry.after?.sourceRange, entry.before?.sourceRange),
         targetNodeIds: buildNodeIds(entry.after ? objectId : null)
       } satisfies PgmlDiagramCompareEntry
@@ -643,14 +633,7 @@ export const buildPgmlDiagramCompareEntries = (
         id: `custom-type:${entry.id}`,
         label: entry.label,
         rowKey: null,
-        selectionCandidates: buildSelectionCandidates([
-          entry.after && objectId
-            ? {
-                id: objectId,
-                kind: 'object'
-              }
-            : null
-        ]),
+        selectionCandidates: buildObjectSelectionCandidates(objectId, Boolean(entry.after)),
         sourceRange: pickSourceRange(entry.after?.sourceRange, entry.before?.sourceRange),
         targetNodeIds: buildNodeIds(entry.after ? objectId : null)
       } satisfies PgmlDiagramCompareEntry
