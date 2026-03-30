@@ -263,6 +263,18 @@ type DetailPopoverEditorSpec = {
   toReplacementText: (nextSource: string) => string | null
 }
 
+type VersionMigrationArtifactsProps = {
+  // The shell owns the versions panel render branch, so naming the migration
+  // prop bundle here keeps the contract readable despite the large prop list.
+  migrationFileName?: string
+  migrationHasChanges?: boolean
+  migrationKysely?: string
+  migrationKyselyFileName?: string
+  migrationSql?: string
+  migrationSteps?: PgmlVersionMigrationStepBundle[]
+  migrationWarnings?: string[]
+}
+
 const {
   canCreateCheckpoint = true,
   canEditDetailSource = false,
@@ -296,7 +308,7 @@ const {
   workspaceBaseLabel = 'No base version yet',
   workspaceStatus = 'Draft is ready to checkpoint.',
   viewportResetKey = 0
-} = defineProps<{
+} = defineProps<VersionMigrationArtifactsProps & {
   canCreateCheckpoint?: boolean
   canEditDetailSource?: boolean
   compareBaseLabel?: string
@@ -311,13 +323,6 @@ const {
   latestVersionId?: string | null
   mobileActiveView?: StudioMobileCanvasView | null
   mobilePanelTab?: DiagramPanelTab | null
-  migrationFileName?: string
-  migrationHasChanges?: boolean
-  migrationKysely?: string
-  migrationKyselyFileName?: string
-  migrationSql?: string
-  migrationSteps?: PgmlVersionMigrationStepBundle[]
-  migrationWarnings?: string[]
   model: PgmlSchemaModel
   previewTargetId?: string
   sourceText?: string
