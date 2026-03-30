@@ -267,6 +267,21 @@ Properties "public.users" {
     expect(api.compareTargetId.value).toBe('workspace')
   })
 
+  it('allows the workspace to act as the compare base for version-to-workspace symmetry', async () => {
+    const { api } = await mountVersionHistoryComposable()
+    const initialVersion = createDesignCheckpoint(api)
+
+    api.setCompareTargets({
+      baseId: 'workspace',
+      targetId: initialVersion.id
+    })
+
+    expect(api.compareBaseId.value).toBe('workspace')
+    expect(api.compareBaseSource.value).toBe(baseWorkspaceSource)
+    expect(api.compareTargetId.value).toBe(initialVersion.id)
+    expect(api.compareRelationshipSummary.value).toContain('against the current workspace')
+  })
+
   it('clamps invalid preview and compare ids back to valid version history targets', async () => {
     const { api } = await mountVersionHistoryComposable()
     const initialVersion = createDesignCheckpoint(api)

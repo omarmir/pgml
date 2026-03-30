@@ -3,13 +3,21 @@ import { describe, expect, it } from 'vitest'
 import { parsePgmlDocument } from '../../app/utils/pgml-document'
 import { buildPgmlVersionMigrationBundle } from '../../app/utils/pgml-version-migration'
 
+const buildExpectedStepFilePrefix = (stepIndex: number) => {
+  return `${String(stepIndex + 1).padStart(3, '0')}-`
+}
+
 const expectValidMigrationStep = (
   bundle: ReturnType<typeof buildPgmlVersionMigrationBundle>,
   stepIndex: number
 ) => {
   expect(bundle.steps[stepIndex]!.validation.isValid).toBe(true)
-  expect(bundle.steps[stepIndex]!.sql.migration.fileName).toContain(`-step-${stepIndex + 1}-`)
-  expect(bundle.steps[stepIndex]!.kysely.migration.fileName).toContain(`-step-${stepIndex + 1}-`)
+  expect(bundle.steps[stepIndex]!.sql.migration.fileName).toMatch(
+    new RegExp(`^${buildExpectedStepFilePrefix(stepIndex)}`)
+  )
+  expect(bundle.steps[stepIndex]!.kysely.migration.fileName).toMatch(
+    new RegExp(`^${buildExpectedStepFilePrefix(stepIndex)}`)
+  )
 }
 
 describe('PGML version migration helpers', () => {
@@ -158,6 +166,10 @@ describe('PGML version migration helpers', () => {
     expect(bundle.kysely.migration.content).toContain('// Step 2: Add user email -> Current workspace')
     expect(bundle.steps[0]!.kysely.migration.content).toContain('ALTER TABLE "public"."users" ADD COLUMN "email" text;')
     expect(bundle.steps[1]!.kysely.migration.content).toContain('CREATE TABLE "public"."orders" (')
+    expect(bundle.steps.map(step => step.sql.migration.fileName)).toEqual([
+      expect.stringMatching(/^001-/),
+      expect.stringMatching(/^002-/)
+    ])
   })
 
   it('falls back to aggregate diff warnings when compare targets are not a forward lineage', () => {

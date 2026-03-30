@@ -240,12 +240,24 @@ export const buildPgmlEmptyBaseCompareRelationshipSummary = () => {
   return 'Comparing the current workspace against an empty base.'
 }
 
+export const buildPgmlEmptyBaseToVersionCompareRelationshipSummary = (targetLabel: string) => {
+  return `Comparing ${targetLabel} against an empty base.`
+}
+
 export const buildPgmlWorkspaceBaseCompareRelationshipSummary = (baseLabel: string) => {
   return `Comparing the current workspace against its locked base ${baseLabel}.`
 }
 
 export const buildPgmlWorkspaceCompareRelationshipSummary = (baseLabel: string) => {
   return `Comparing the current workspace against ${baseLabel}.`
+}
+
+export const buildPgmlWorkspaceAsBaseCompareRelationshipSummary = (targetLabel: string) => {
+  return `Comparing ${targetLabel} against the current workspace.`
+}
+
+export const buildPgmlSelfCompareRelationshipSummary = (label: string) => {
+  return `Comparing ${label} against itself.`
 }
 
 export const buildPgmlInvalidCompareRelationshipSummary = () => {

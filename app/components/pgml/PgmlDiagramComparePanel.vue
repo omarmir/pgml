@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import type { Ref } from 'vue'
 import { computed, ref, watch } from 'vue'
+import { studioSelectUi } from '~/constants/ui'
 import {
   getPgmlDiagramCompareChangeColor,
   getPgmlDiagramCompareChangeVerb,
@@ -19,6 +20,9 @@ import {
 
 const {
   baseLabel,
+  compareBaseId = null,
+  compareOptions,
+  compareTargetId,
   entries,
   relationshipSummary = '',
   selectedDiagramContextIds = [],
@@ -26,6 +30,12 @@ const {
   targetLabel
 } = defineProps<{
   baseLabel: string
+  compareBaseId?: string | null
+  compareOptions: Array<{
+    label: string
+    value: string
+  }>
+  compareTargetId: string
   entries: PgmlDiagramCompareEntry[]
   relationshipSummary?: string
   selectedDiagramContextIds?: string[]
@@ -37,6 +47,8 @@ const emit = defineEmits<{
   'focus-source': [sourceRange: PgmlSourceRange]
   'focus-target': [entryId: string]
   'select-entry': [entryId: string]
+  'update:compareBaseId': [value: string | null]
+  'update:compareTargetId': [value: string]
 }>()
 
 type PgmlCompareFilterKind = 'all' | 'added' | 'modified' | 'removed'
@@ -143,6 +155,24 @@ const compareStats = computed(() => {
   return buildCompareStats(entries)
 })
 
+const normalizeCompareSelectValue = (value: unknown) => {
+  return typeof value === 'string' && value.length > 0 ? value : null
+}
+
+const updateCompareBaseId = (value: unknown) => {
+  emit('update:compareBaseId', normalizeCompareSelectValue(value))
+}
+
+const updateCompareTargetId = (value: unknown) => {
+  const nextValue = normalizeCompareSelectValue(value)
+
+  if (nextValue === null) {
+    return
+  }
+
+  emit('update:compareTargetId', nextValue)
+}
+
 // Keep the active detail selection valid when filters or compare sources change.
 watch(filteredEntries, (nextEntries) => {
   if (nextEntries.length === 0) {
@@ -204,6 +234,40 @@ const clearFilters = () => {
       >
         {{ relationshipSummary }}
       </p>
+
+      <div class="grid gap-2 md:grid-cols-2">
+        <label class="grid gap-1">
+          <span class="text-[0.68rem] text-[color:var(--studio-shell-muted)]">Base version</span>
+          <USelect
+            data-compare-base-select="true"
+            :items="compareOptions"
+            :model-value="compareBaseId || undefined"
+            value-key="value"
+            label-key="label"
+            color="neutral"
+            variant="outline"
+            size="sm"
+            :ui="studioSelectUi"
+            @update:model-value="updateCompareBaseId"
+          />
+        </label>
+
+        <label class="grid gap-1">
+          <span class="text-[0.68rem] text-[color:var(--studio-shell-muted)]">Target</span>
+          <USelect
+            data-compare-target-select="true"
+            :items="compareOptions"
+            :model-value="compareTargetId"
+            value-key="value"
+            label-key="label"
+            color="neutral"
+            variant="outline"
+            size="sm"
+            :ui="studioSelectUi"
+            @update:model-value="updateCompareTargetId"
+          />
+        </label>
+      </div>
 
       <div class="grid grid-cols-3 gap-2 text-[0.66rem] text-[color:var(--studio-shell-muted)]">
         <div class="border border-[color:var(--studio-divider)] bg-[color:var(--studio-input-bg)] px-3 py-2.5">

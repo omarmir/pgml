@@ -6,6 +6,7 @@ import { studioSelectUi, studioSwitchUi } from '~/constants/ui'
 import PgmlDiagramComparePanel from '~/components/pgml/PgmlDiagramComparePanel.vue'
 import PgmlDetailPopoverSourceEditor from '~/components/pgml/PgmlDetailPopoverSourceEditor.vue'
 import PgmlDiagramGpuScene from '~/components/pgml/PgmlDiagramGpuScene.vue'
+import PgmlDiagramMigrationsPanel from '~/components/pgml/PgmlDiagramMigrationsPanel.vue'
 import PgmlDiagramVersionsPanel from '~/components/pgml/PgmlDiagramVersionsPanel.vue'
 import { buildTableGroupMasonryLayout, type TableAttachment, type TableAttachmentFlag, type TableAttachmentKind } from '~/utils/pgml-diagram-canvas'
 import {
@@ -293,6 +294,7 @@ const {
   latestVersionId = null,
   mobileActiveView = null,
   mobilePanelTab = null,
+  mobileToolPanelTab = null,
   migrationFileName = 'pgml-version.migration.sql',
   migrationHasChanges = false,
   migrationKysely = '',
@@ -326,6 +328,7 @@ const {
   latestVersionId?: string | null
   mobileActiveView?: StudioMobileCanvasView | null
   mobilePanelTab?: DiagramPanelTab | null
+  mobileToolPanelTab?: DiagramToolPanelTab | null
   model: PgmlSchemaModel
   previewTargetId?: string
   sourceText?: string
@@ -345,8 +348,10 @@ const emit = defineEmits<{
   editGroup: [groupName: string]
   editTable: [tableId: string]
   focusSource: [sourceRange: PgmlSourceRange]
+  mobileCanvasViewChange: [view: StudioMobileCanvasView]
   nodePropertiesChange: [properties: Record<string, PgmlNodeProperties>]
   panelTabChange: [tab: DiagramPanelTab]
+  toolPanelTabChange: [tab: DiagramToolPanelTab]
   replaceSourceRange: [payload: { nextText: string, sourceRange: PgmlSourceRange }]
   restoreVersion: [versionId: string]
   updateVersionCompareBaseId: [value: string | null]
@@ -402,6 +407,10 @@ const panelToggleButtonClass = joinStudioClasses(studioButtonClasses.secondary, 
 const toolPanelToggleButtonClass = joinStudioClasses(studioButtonClasses.secondary, studioToolbarButtonClass)
 const sidePanelActionButtonClass = joinStudioClasses(studioButtonClasses.secondary, studioToolbarButtonClass)
 const sidePanelCloseButtonClass = joinStudioClasses(studioButtonClasses.iconGhost, 'h-7 w-7 justify-center px-0')
+const exportPanelButtonClass = joinStudioClasses(
+  studioButtonClasses.secondary,
+  'justify-center font-mono text-[0.62rem] uppercase tracking-[0.08em]'
+)
 const detailPopoverKindBadgeClass = 'inline-flex items-center border px-1.5 font-mono text-[0.56rem] uppercase tracking-[0.08em]'
 const detailPopoverFlagBadgeClass = 'inline-flex items-center border px-1.5 py-0.5 font-mono text-[0.54rem] uppercase tracking-[0.06em]'
 // Imported routine and sequence bodies often preserve hard tabs from the source
@@ -469,6 +478,10 @@ const downloadBlob = (blob: Blob, fileName: string) => {
 
 const isMobileCanvasShell = computed(() => mobileActiveView !== null)
 const isMobilePanelView = computed(() => mobileActiveView === 'panel')
+const isMobileToolPanelView = computed(() => mobileActiveView === 'tool-panel')
+const isMobileSurfaceView = computed(() => {
+  return isMobilePanelView.value || isMobileToolPanelView.value
+})
 const previewableObjectKindLabels = new Set(['Function', 'Procedure', 'Sequence', 'Trigger'])
 const isDiagramPanelVisible = computed(() => {
   if (isMobileCanvasShell.value) {
@@ -478,7 +491,7 @@ const isDiagramPanelVisible = computed(() => {
   return isDesktopSidePanelOpen.value
 })
 const shouldShowDiagramPanelToggle = computed(() => !isMobileCanvasShell.value)
-const shouldShowZoomToolbar = computed(() => !isMobilePanelView.value)
+const shouldShowZoomToolbar = computed(() => !isMobileSurfaceView.value)
 
 const normalizeReferenceValue = (value: string) => {
   return value.replaceAll('"', '').trim().toLowerCase()
@@ -2343,6 +2356,11 @@ const syncComparePreviewTarget = () => {
 const openToolPanel = (tab: DiagramToolPanelTab) => {
   activeToolPanelTab.value = tab
   isToolPanelOpen.value = true
+  emit('toolPanelTabChange', tab)
+
+  if (isMobileCanvasShell.value) {
+    emit('mobileCanvasViewChange', 'tool-panel')
+  }
 
   if (tab === 'compare') {
     syncComparePreviewTarget()
@@ -2351,6 +2369,10 @@ const openToolPanel = (tab: DiagramToolPanelTab) => {
 
 const closeToolPanel = () => {
   isToolPanelOpen.value = false
+
+  if (isMobileToolPanelView.value) {
+    emit('mobileCanvasViewChange', 'diagram')
+  }
 }
 
 const toggleToolPanel = (tab: DiagramToolPanelTab) => {
@@ -2368,6 +2390,10 @@ const openComparator = () => {
 
 const openVersionsPanel = () => {
   openToolPanel('versions')
+}
+
+const openMigrationsPanel = () => {
+  openToolPanel('migrations')
 }
 
 const focusCompareEntry = (entryId: string) => {
@@ -3407,7 +3433,11 @@ const toolPanelTitle = computed(() => {
     return selectedCompareEntry.value ? selectedCompareEntry.value.label : 'Compare changes'
   }
 
-  return 'Versions and migrations'
+  if (activeToolPanelTab.value === 'migrations') {
+    return 'Migrations'
+  }
+
+  return 'Versions'
 })
 
 const toolPanelDescription = computed(() => {
@@ -3419,7 +3449,11 @@ const toolPanelDescription = computed(() => {
     return `${compareEntries.length} highlighted change${compareEntries.length === 1 ? '' : 's'} between ${compareBaseLabel} and ${compareTargetLabel}.`
   }
 
-  return 'Lock checkpoints, compare snapshots, and export SQL or Kysely migrations for each version step.'
+  if (activeToolPanelTab.value === 'migrations') {
+    return 'Preview, copy, and download SQL or Kysely files for the current compare lineage.'
+  }
+
+  return 'Lock checkpoints, manage preview targets, and choose the compare pair that powers compare and migrations.'
 })
 
 const diagramViewportStyle: CSSProperties = {
@@ -3444,6 +3478,18 @@ const toolPanelSurfaceClass = computed(() => {
   return isMobileCanvasShell.value
     ? 'absolute inset-0 z-[5] grid min-h-0 w-full grid-rows-[auto_auto_minmax(0,1fr)] overflow-hidden'
     : 'absolute bottom-3 right-3 top-14 z-[4] grid min-h-0 grid-rows-[auto_auto_minmax(0,1fr)] overflow-hidden border max-[900px]:left-3'
+})
+
+const shouldShowToolPanel = computed(() => {
+  if (!isToolPanelOpen.value) {
+    return false
+  }
+
+  if (!isMobileCanvasShell.value) {
+    return true
+  }
+
+  return isMobileToolPanelView.value
 })
 
 const toolPanelSurfaceStyle = computed<CSSProperties>(() => {
@@ -4025,6 +4071,41 @@ watch(
 )
 
 watch(
+  () => mobileToolPanelTab,
+  (nextToolPanelTab) => {
+    if (!nextToolPanelTab || nextToolPanelTab === activeToolPanelTab.value) {
+      return
+    }
+
+    activeToolPanelTab.value = nextToolPanelTab
+  },
+  {
+    immediate: true
+  }
+)
+
+watch(
+  () => mobileActiveView,
+  (nextMobileView) => {
+    if (!isMobileCanvasShell.value) {
+      return
+    }
+
+    if (nextMobileView === 'tool-panel') {
+      openToolPanel(mobileToolPanelTab || activeToolPanelTab.value)
+      return
+    }
+
+    if (isToolPanelOpen.value) {
+      isToolPanelOpen.value = false
+    }
+  },
+  {
+    immediate: true
+  }
+)
+
+watch(
   () => selectedSelection.value,
   () => {
     computeConnectionLines()
@@ -4511,6 +4592,17 @@ defineExpose<{
         class="pointer-events-auto"
         :class="toolPanelToggleButtonClass"
         @click="toggleToolPanel('compare')"
+      />
+      <UButton
+        data-diagram-tool-toggle="migrations"
+        :label="diagramToolPanelTabLabelByValue.migrations"
+        :leading-icon="diagramToolPanelTabIconByValue.migrations"
+        :variant="isToolPanelOpen && activeToolPanelTab === 'migrations' ? 'soft' : 'outline'"
+        color="neutral"
+        size="xs"
+        class="pointer-events-auto"
+        :class="toolPanelToggleButtonClass"
+        @click="toggleToolPanel('migrations')"
       />
       <UButton
         v-if="shouldShowDiagramPanelToggle"
@@ -5456,25 +5548,30 @@ defineExpose<{
         </div>
         <div class="grid grid-cols-2 gap-2">
           <UButton
+            data-diagram-export-button="png-1x"
             label="PNG 1x"
             color="neutral"
             variant="outline"
             size="sm"
+            :class="exportPanelButtonClass"
             @click="exportPng(1)"
           />
           <UButton
+            data-diagram-export-button="png-2x"
             label="PNG 2x"
             color="neutral"
             variant="outline"
             size="sm"
+            :class="exportPanelButtonClass"
             @click="exportPng(2)"
           />
           <UButton
+            data-diagram-export-button="svg"
             label="SVG"
             color="neutral"
             variant="outline"
             size="sm"
-            class="col-span-2"
+            :class="joinStudioClasses(exportPanelButtonClass, 'col-span-2')"
             @click="exportSvg"
           />
         </div>
@@ -5482,7 +5579,7 @@ defineExpose<{
     </aside>
 
     <aside
-      v-if="isToolPanelOpen"
+      v-if="shouldShowToolPanel"
       data-diagram-tool-panel="true"
       :data-diagram-tool-panel-mode="activeToolPanelTab"
       :class="toolPanelSurfaceClass"
@@ -5526,7 +5623,7 @@ defineExpose<{
         </div>
       </div>
 
-      <div class="grid grid-cols-2 border-b border-[color:var(--studio-divider)]">
+      <div class="grid grid-cols-3 border-b border-[color:var(--studio-divider)]">
         <button
           type="button"
           data-diagram-tool-panel-tab="versions"
@@ -5538,10 +5635,18 @@ defineExpose<{
         <button
           type="button"
           data-diagram-tool-panel-tab="compare"
-          :class="getStudioTabButtonClass({ active: activeToolPanelTab === 'compare' })"
+          :class="getStudioTabButtonClass({ active: activeToolPanelTab === 'compare', withTrailingBorder: true })"
           @click="openComparator"
         >
           Compare
+        </button>
+        <button
+          type="button"
+          data-diagram-tool-panel-tab="migrations"
+          :class="getStudioTabButtonClass({ active: activeToolPanelTab === 'migrations' })"
+          @click="openMigrationsPanel"
+        >
+          Migrations
         </button>
       </div>
 
@@ -5552,6 +5657,9 @@ defineExpose<{
       >
         <PgmlDiagramComparePanel
           :base-label="compareBaseLabel"
+          :compare-base-id="versionCompareBaseId"
+          :compare-options="versionCompareOptions"
+          :compare-target-id="versionCompareTargetId"
           :entries="compareEntries"
           :relationship-summary="compareRelationshipSummary"
           :selected-diagram-context-ids="selectedDiagramCompareEntryIds"
@@ -5560,11 +5668,13 @@ defineExpose<{
           @focus-source="focusSourceRange"
           @focus-target="focusCompareEntry"
           @select-entry="selectedCompareEntryId = $event"
+          @update:compare-base-id="emit('updateVersionCompareBaseId', $event)"
+          @update:compare-target-id="emit('updateVersionCompareTargetId', $event)"
         />
       </div>
 
       <PgmlDiagramVersionsPanel
-        v-else
+        v-else-if="activeToolPanelTab === 'versions'"
         :compare-base-id="versionCompareBaseId"
         :can-create-checkpoint="canCreateCheckpoint"
         :compare-options="versionCompareOptions"
@@ -5573,13 +5683,6 @@ defineExpose<{
         :diff-sections="versionDiffSections"
         :layout-changed="layoutChanged"
         :latest-version-id="latestVersionId"
-        :migration-file-name="migrationFileName"
-        :migration-has-changes="migrationHasChanges"
-        :migration-kysely="migrationKysely"
-        :migration-kysely-file-name="migrationKyselyFileName"
-        :migration-sql="migrationSql"
-        :migration-steps="migrationSteps"
-        :migration-warnings="migrationWarnings"
         :preview-target-id="previewTargetId"
         :versions="versionItems"
         :workspace-base-label="workspaceBaseLabel"
@@ -5587,10 +5690,24 @@ defineExpose<{
         @create-checkpoint="emit('versionCheckpoint')"
         @import-dump="emit('versionImportDump')"
         @open-comparator="openComparator"
+        @open-migrations="openMigrationsPanel"
         @restore-version="emit('restoreVersion', $event)"
         @update:compare-base-id="emit('updateVersionCompareBaseId', $event)"
         @update:compare-target-id="emit('updateVersionCompareTargetId', $event)"
         @view-target="emit('viewVersionTarget', $event)"
+      />
+
+      <PgmlDiagramMigrationsPanel
+        v-else
+        :compare-base-label="compareBaseLabel"
+        :compare-target-label="compareTargetLabel"
+        :migration-file-name="migrationFileName"
+        :migration-has-changes="migrationHasChanges"
+        :migration-kysely="migrationKysely"
+        :migration-kysely-file-name="migrationKyselyFileName"
+        :migration-sql="migrationSql"
+        :migration-steps="migrationSteps"
+        :migration-warnings="migrationWarnings"
       />
     </aside>
   </div>

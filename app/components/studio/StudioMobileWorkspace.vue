@@ -11,13 +11,19 @@ import {
 import {
   diagramPanelTabIconByValue,
   diagramPanelTabLabelByValue,
+  diagramToolPanelTabIconByValue,
+  diagramToolPanelTabLabelByValue,
   studioMobileWorkspaceViewIconByValue,
   studioMobileWorkspaceViewLabelByValue,
   type DiagramPanelTab,
+  type DiagramToolPanelTab,
   type StudioMobileWorkspaceView
 } from '~/utils/studio-workspace'
 
 const activePanelTab = defineModel<DiagramPanelTab>('activePanelTab', {
+  required: true
+})
+const activeToolPanelTab = defineModel<DiagramToolPanelTab>('activeToolPanelTab', {
   required: true
 })
 const activeView = defineModel<StudioMobileWorkspaceView>('activeView', {
@@ -33,15 +39,28 @@ const setPanelView = (tab: DiagramPanelTab) => {
   activeView.value = 'panel'
 }
 
+const setToolPanelView = (tab: DiagramToolPanelTab) => {
+  activeToolPanelTab.value = tab
+  activeView.value = 'tool-panel'
+}
+
 const currentViewLabel = computed(() => {
   if (activeView.value === 'panel') {
     return `${diagramPanelTabLabelByValue[activePanelTab.value]} panel`
   }
 
+  if (activeView.value === 'tool-panel') {
+    return diagramToolPanelTabLabelByValue[activeToolPanelTab.value]
+  }
+
   return studioMobileWorkspaceViewLabelByValue[activeView.value]
 })
 const currentCanvasView = computed(() => {
-  return activeView.value === 'panel' ? 'panel' : 'diagram'
+  if (activeView.value === 'panel' || activeView.value === 'tool-panel') {
+    return activeView.value
+  }
+
+  return 'diagram'
 })
 const mobileQuickViewButtons = computed(() => {
   return [
@@ -67,6 +86,14 @@ const mobileQuickViewButtons = computed(() => {
       label: studioMobileWorkspaceViewLabelByValue.pgml,
       onSelect: () => {
         setActiveView('pgml')
+      }
+    },
+    {
+      icon: studioMobileWorkspaceViewIconByValue['tool-panel'],
+      key: 'tool-panel',
+      label: studioMobileWorkspaceViewLabelByValue['tool-panel'],
+      onSelect: () => {
+        setActiveView('tool-panel')
       }
     }
   ] satisfies Array<{
@@ -119,6 +146,33 @@ const studioMenuItems = computed<DropdownMenuItem[][]>(() => {
           }
         }
       ]]
+    },
+    {
+      icon: studioMobileWorkspaceViewIconByValue['tool-panel'],
+      label: studioMobileWorkspaceViewLabelByValue['tool-panel'],
+      children: [[
+        {
+          icon: diagramToolPanelTabIconByValue.versions,
+          label: diagramToolPanelTabLabelByValue.versions,
+          onSelect: () => {
+            setToolPanelView('versions')
+          }
+        },
+        {
+          icon: diagramToolPanelTabIconByValue.compare,
+          label: diagramToolPanelTabLabelByValue.compare,
+          onSelect: () => {
+            setToolPanelView('compare')
+          }
+        },
+        {
+          icon: diagramToolPanelTabIconByValue.migrations,
+          label: diagramToolPanelTabLabelByValue.migrations,
+          onSelect: () => {
+            setToolPanelView('migrations')
+          }
+        }
+      ]]
     }
   ]]
 })
@@ -163,7 +217,7 @@ const studioMenuItems = computed<DropdownMenuItem[][]>(() => {
         </div>
       </div>
 
-      <div class="mt-2.5 grid grid-cols-3 gap-2">
+      <div class="mt-2.5 grid grid-cols-4 gap-2">
         <button
           v-for="button in mobileQuickViewButtons"
           :key="button.key"

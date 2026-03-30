@@ -1,6 +1,4 @@
 <script setup lang="ts">
-import type { Ref } from 'vue'
-import type { PgmlVersionMigrationStepBundle } from '~/utils/pgml-version-migration'
 import {
   studioSelectUi
 } from '~/constants/ui'
@@ -13,8 +11,7 @@ import {
   joinStudioClasses,
   studioButtonClasses,
   studioCompactBodyCopyClass,
-  studioEmptyStateClass,
-  studioPanelSurfaceClass
+  studioEmptyStateClass
 } from '~/utils/uiStyles'
 
 type PgmlVersionPanelItem = {
@@ -72,18 +69,6 @@ type PgmlVersionMetricBadge = {
   label: string
 }
 
-type PgmlMigrationFormat = 'sql' | 'kysely'
-type PgmlMigrationSelectionScope = 'combined' | `step:${number}`
-
-type PgmlVersionMigrationArtifact = {
-  content: string
-  fileName: string
-  hasChanges: boolean
-  label: string
-  mimeType: string
-  warnings: string[]
-}
-
 const {
   canCreateCheckpoint = true,
   compareBaseId = null,
@@ -93,13 +78,6 @@ const {
   diffSections,
   layoutChanged = 0,
   latestVersionId = null,
-  migrationFileName = 'pgml-version.migration.sql',
-  migrationHasChanges = false,
-  migrationKysely = '',
-  migrationKyselyFileName = 'pgml-version.migration.ts',
-  migrationSql = '',
-  migrationSteps = [],
-  migrationWarnings = [],
   previewTargetId = 'workspace',
   versions,
   workspaceBaseLabel = 'No base version yet',
@@ -113,13 +91,6 @@ const {
   diffSections: PgmlVersionDiffSection[]
   layoutChanged?: number
   latestVersionId?: string | null
-  migrationFileName?: string
-  migrationHasChanges?: boolean
-  migrationKysely?: string
-  migrationKyselyFileName?: string
-  migrationSql?: string
-  migrationSteps?: PgmlVersionMigrationStepBundle[]
-  migrationWarnings?: string[]
   previewTargetId?: string
   versions: PgmlVersionPanelItem[]
   workspaceBaseLabel?: string
@@ -130,19 +101,23 @@ const emit = defineEmits<{
   'create-checkpoint': []
   'import-dump': []
   'open-comparator': []
+  'open-migrations': []
   'restore-version': [versionId: string]
   'update:compareBaseId': [value: string | null]
   'update:compareTargetId': [value: string]
   'view-target': [targetId: string]
 }>()
 
-const copyState: Ref<'idle' | 'success' | 'error'> = ref('idle')
-const activeMigrationFormat: Ref<PgmlMigrationFormat> = ref('sql')
-const activeMigrationScope: Ref<PgmlMigrationSelectionScope> = ref('combined')
-const copyButtonClass = joinStudioClasses(studioButtonClasses.secondary, 'text-[0.65rem]')
-const primaryButtonClass = joinStudioClasses(studioButtonClasses.primary, 'text-[0.65rem]')
-const secondaryButtonClass = joinStudioClasses(studioButtonClasses.secondary, 'text-[0.65rem]')
-const mutedVersionBadgeClass = 'border border-[color:var(--studio-divider)] px-1.5 py-0.5 font-mono text-[0.52rem] uppercase tracking-[0.08em] text-[color:var(--studio-shell-muted)]'
+const primaryButtonClass = joinStudioClasses(
+  studioButtonClasses.primary,
+  'max-w-full whitespace-normal text-center text-[0.65rem] leading-4'
+)
+const secondaryButtonClass = joinStudioClasses(
+  studioButtonClasses.secondary,
+  'max-w-full whitespace-normal text-center text-[0.65rem] leading-4'
+)
+const stackedActionButtonClass = 'w-full justify-center sm:w-auto'
+const mutedVersionBadgeClass = 'max-w-full break-words border border-[color:var(--studio-divider)] px-1.5 py-0.5 font-mono text-[0.52rem] uppercase tracking-[0.08em] text-[color:var(--studio-shell-muted)] [overflow-wrap:anywhere]'
 const getDiffKindClass = (kind: 'added' | 'modified' | 'removed') => {
   if (kind === 'added') {
     return 'border-[color:var(--studio-shell-label)] text-[color:var(--studio-shell-text)]'
@@ -204,7 +179,6 @@ const compareTargetOption = computed(() => {
   return compareOptions.find(option => option.value === compareTargetId) || null
 })
 const hasDiffSections = computed(() => diffSections.length > 0 || layoutChanged > 0)
-const hasStepMigrationFiles = computed(() => migrationSteps.length > 0)
 const hasVersions = computed(() => versions.length > 0)
 const designVersionCount = computed(() => {
   return versions.filter(version => version.role === 'design').length
@@ -278,146 +252,6 @@ const comparePresetButtons = computed(() => {
     })
   ] satisfies PgmlComparePresetButton[]
 })
-// The migration preview, copy, and download controls all point at the same
-// active artifact. Keeping the SQL/Kysely metadata together avoids repeating
-// format branches across every derived computed.
-const createVersionMigrationArtifact = (input: {
-  content: string
-  fileName: string
-  hasChanges: boolean
-  label: string
-  mimeType: string
-  warnings: string[]
-}) => {
-  return {
-    content: input.content,
-    fileName: input.fileName,
-    hasChanges: input.hasChanges,
-    label: input.label,
-    mimeType: input.mimeType,
-    warnings: input.warnings
-  } satisfies PgmlVersionMigrationArtifact
-}
-// Warning-only migrations still deserve preview/download affordances because
-// they communicate manual follow-up that is part of the version transition.
-const hasUsableMigrationArtifact = (content: string, hasChanges: boolean, warnings: string[]) => {
-  return (hasChanges || warnings.length > 0) && content.trim().length > 0
-}
-const combinedMigrationArtifacts = computed<Record<PgmlMigrationFormat, PgmlVersionMigrationArtifact>>(() => {
-  return {
-    kysely: createVersionMigrationArtifact({
-      content: migrationKysely,
-      fileName: migrationKyselyFileName,
-      hasChanges: hasUsableMigrationArtifact(migrationKysely, migrationHasChanges, migrationWarnings),
-      label: 'Kysely',
-      mimeType: 'text/plain;charset=utf-8',
-      warnings: migrationWarnings
-    }),
-    sql: createVersionMigrationArtifact({
-      content: migrationSql,
-      fileName: migrationFileName,
-      hasChanges: hasUsableMigrationArtifact(migrationSql, migrationHasChanges, migrationWarnings),
-      label: 'SQL',
-      mimeType: 'text/sql;charset=utf-8',
-      warnings: migrationWarnings
-    })
-  }
-})
-const getMigrationScopeStepIndex = (scope: PgmlMigrationSelectionScope) => {
-  if (scope === 'combined') {
-    return null
-  }
-
-  return Number.parseInt(scope.replace('step:', ''), 10)
-}
-const buildMigrationScopeLabel = (step: PgmlVersionMigrationStepBundle | null) => {
-  if (!step) {
-    return 'Combined history sequence'
-  }
-
-  return `Step ${step.index + 1}: ${step.label}`
-}
-const buildMigrationFilePairLabel = (sqlFileName: string, kyselyFileName: string) => {
-  return `${sqlFileName} · ${kyselyFileName}`
-}
-const buildMigrationStepStatsLabel = (step: PgmlVersionMigrationStepBundle) => {
-  return `${step.meta.statementCount} statement${step.meta.statementCount === 1 ? '' : 's'} · ${step.meta.warningCount} warning${step.meta.warningCount === 1 ? '' : 's'}`
-}
-const selectedMigrationStep = computed(() => {
-  const selectedIndex = getMigrationScopeStepIndex(activeMigrationScope.value)
-
-  if (selectedIndex === null) {
-    return null
-  }
-
-  return migrationSteps.find(step => step.index === selectedIndex) || null
-})
-const getMigrationArtifactForFormat = (format: PgmlMigrationFormat) => {
-  if (!selectedMigrationStep.value) {
-    return combinedMigrationArtifacts.value[format]
-  }
-
-  // Step-scoped previews intentionally switch both the visible artifact and
-  // the copy/download metadata so each button maps to one lineage file.
-  const stepArtifact = format === 'sql'
-    ? selectedMigrationStep.value.sql.migration
-    : selectedMigrationStep.value.kysely.migration
-  const hasArtifact = selectedMigrationStep.value.meta.hasChanges || selectedMigrationStep.value.meta.warningCount > 0
-
-  return createVersionMigrationArtifact({
-    content: stepArtifact.content,
-    fileName: stepArtifact.fileName,
-    hasChanges: hasUsableMigrationArtifact(
-      stepArtifact.content,
-      hasArtifact,
-      stepArtifact.warnings
-    ),
-    label: stepArtifact.label,
-    mimeType: format === 'sql'
-      ? 'text/sql;charset=utf-8'
-      : 'text/plain;charset=utf-8',
-    warnings: stepArtifact.warnings
-  })
-}
-const hasMigrationSql = computed(() => getMigrationArtifactForFormat('sql').hasChanges)
-const hasMigrationKysely = computed(() => getMigrationArtifactForFormat('kysely').hasChanges)
-const activeMigrationArtifact = computed(() => {
-  return getMigrationArtifactForFormat(activeMigrationFormat.value)
-})
-const migrationLineCount = computed(() => {
-  const migrationContent = activeMigrationArtifact.value.content
-
-  return migrationContent.trim().length > 0
-    ? migrationContent.trim().split('\n').length
-    : 0
-})
-const activeMigrationFileName = computed(() => {
-  return activeMigrationArtifact.value.fileName
-})
-const activeMigrationLabel = computed(() => {
-  return activeMigrationArtifact.value.label
-})
-const activeMigrationContent = computed(() => {
-  return activeMigrationArtifact.value.content
-})
-const hasActiveMigration = computed(() => {
-  return activeMigrationArtifact.value.hasChanges
-})
-const selectedMigrationScopeLabel = computed(() => {
-  return buildMigrationScopeLabel(selectedMigrationStep.value)
-})
-const displayedMigrationWarnings = computed(() => {
-  return activeMigrationArtifact.value.warnings
-})
-const isMigrationScopeActive = (scope: PgmlMigrationSelectionScope) => {
-  return activeMigrationScope.value === scope
-}
-const selectMigrationScope = (scope: PgmlMigrationSelectionScope) => {
-  activeMigrationScope.value = scope
-}
-const getActiveMigrationMimeType = () => {
-  return activeMigrationArtifact.value.mimeType
-}
 const compareSummary = computed(() => {
   return buildPgmlVersionCompareSummary({
     compareBaseLabel: compareBaseOption.value?.label || null,
@@ -433,40 +267,6 @@ const previewLabel = computed(() => {
     workspaceLabel: 'Current workspace'
   })
 })
-
-const handleCopyMigration = async () => {
-  if (activeMigrationContent.value.trim().length === 0) {
-    return
-  }
-
-  try {
-    await navigator.clipboard.writeText(activeMigrationContent.value)
-    copyState.value = 'success'
-  } catch {
-    copyState.value = 'error'
-  }
-
-  window.setTimeout(() => {
-    copyState.value = 'idle'
-  }, 1600)
-}
-
-const handleDownloadMigration = () => {
-  if (activeMigrationContent.value.trim().length === 0) {
-    return
-  }
-
-  const blob = new Blob([activeMigrationContent.value], {
-    type: getActiveMigrationMimeType()
-  })
-  const objectUrl = URL.createObjectURL(blob)
-  const anchor = document.createElement('a')
-
-  anchor.href = objectUrl
-  anchor.download = activeMigrationFileName.value
-  anchor.click()
-  URL.revokeObjectURL(objectUrl)
-}
 
 const normalizeCompareSelectValue = (value: unknown) => {
   return typeof value === 'string' && value.length > 0 ? value : null
@@ -509,6 +309,14 @@ const openComparatorWithPreset = (input: {
   emit('open-comparator')
 }
 
+const setCompareBase = (baseId: string) => {
+  emit('update:compareBaseId', baseId)
+}
+
+const setCompareTarget = (targetId: string) => {
+  emit('update:compareTargetId', targetId)
+}
+
 const isComparePresetActive = (input: {
   baseId: string | null
   targetId: string
@@ -522,22 +330,10 @@ const swapComparePair = () => {
   }
 
   applyComparePreset({
-    baseId: compareTargetId === 'workspace' ? null : compareTargetId,
+    baseId: compareTargetId,
     targetId: compareBaseId
   })
 }
-
-watchEffect(() => {
-  if (activeMigrationScope.value === 'combined') {
-    return
-  }
-
-  // Compare selections can invalidate the currently viewed step. Falling back
-  // to the combined sequence avoids leaving the panel pointed at a dead scope.
-  if (!selectedMigrationStep.value) {
-    activeMigrationScope.value = 'combined'
-  }
-})
 </script>
 
 <template>
@@ -545,7 +341,10 @@ watchEffect(() => {
     data-diagram-versions-panel="true"
     class="grid content-start gap-3 overflow-auto px-3 py-3"
   >
-    <div class="sticky top-0 z-[1] grid gap-3 bg-[color:var(--studio-shell-bg)] pb-1">
+    <div
+      data-version-overview="true"
+      class="grid gap-3 border-b border-[color:var(--studio-divider)] pb-3"
+    >
       <div class="flex flex-wrap gap-2">
         <UButton
           data-version-create-checkpoint="true"
@@ -567,25 +366,23 @@ watchEffect(() => {
         />
       </div>
 
-      <div :class="joinStudioClasses(studioPanelSurfaceClass, 'px-3 py-3')">
-        <p :class="studioCompactBodyCopyClass">
-          Lock workspace checkpoints, compare snapshots, and export forward SQL from the selected base to the selected target.
-        </p>
-        <p
-          v-if="!canCreateCheckpoint"
-          class="mt-2 text-[0.66rem] text-[color:var(--studio-shell-muted)]"
-        >
-          The current workspace still matches its base version, so there is no new checkpoint to lock yet.
-        </p>
-        <p
-          v-if="!hasVersions"
-          class="mt-2 text-[0.66rem] text-[color:var(--studio-shell-muted)]"
-        >
-          Import stays locked until you create the first checkpointed base version.
-        </p>
-      </div>
+      <p :class="studioCompactBodyCopyClass">
+        Lock workspace checkpoints, choose compare pairs, and open the dedicated migrations tool for SQL or Kysely export.
+      </p>
+      <p
+        v-if="!canCreateCheckpoint"
+        class="text-[0.66rem] text-[color:var(--studio-shell-muted)]"
+      >
+        The current workspace still matches its base version, so there is no new checkpoint to lock yet.
+      </p>
+      <p
+        v-if="!hasVersions"
+        class="text-[0.66rem] text-[color:var(--studio-shell-muted)]"
+      >
+        Import stays locked until you create the first checkpointed base version.
+      </p>
 
-      <div class="grid grid-cols-3 gap-2 text-[0.66rem] text-[color:var(--studio-shell-muted)]">
+      <div class="grid grid-cols-1 gap-2 text-[0.66rem] text-[color:var(--studio-shell-muted)] sm:grid-cols-3">
         <div
           v-for="stat in versionStatCards"
           :key="stat.label"
@@ -608,13 +405,13 @@ watchEffect(() => {
 
       <div class="grid gap-2 border border-[color:var(--studio-divider)] bg-[color:var(--studio-input-bg)] px-3 py-3">
         <div class="flex flex-wrap items-center gap-2">
-          <span class="border border-[color:var(--studio-divider)] px-1.5 py-0.5 font-mono text-[0.52rem] uppercase tracking-[0.08em] text-[color:var(--studio-shell-muted)]">
+          <span class="max-w-full break-words border border-[color:var(--studio-divider)] px-1.5 py-0.5 font-mono text-[0.52rem] uppercase tracking-[0.08em] text-[color:var(--studio-shell-muted)] [overflow-wrap:anywhere]">
             {{ compareSummary.baseLabel }}
           </span>
           <span class="font-mono text-[0.58rem] uppercase tracking-[0.08em] text-[color:var(--studio-shell-muted)]">
             to
           </span>
-          <span class="border border-[color:var(--studio-ring)] px-1.5 py-0.5 font-mono text-[0.52rem] uppercase tracking-[0.08em] text-[color:var(--studio-shell-text)]">
+          <span class="max-w-full break-words border border-[color:var(--studio-ring)] px-1.5 py-0.5 font-mono text-[0.52rem] uppercase tracking-[0.08em] text-[color:var(--studio-shell-text)] [overflow-wrap:anywhere]">
             {{ compareSummary.targetLabel }}
           </span>
         </div>
@@ -659,15 +456,24 @@ watchEffect(() => {
         />
       </label>
 
-      <div class="flex flex-wrap gap-2">
+      <div class="grid grid-cols-1 gap-2 sm:flex sm:flex-wrap">
         <UButton
           data-version-open-comparator="true"
           label="Open comparator"
           color="neutral"
           variant="soft"
           size="xs"
-          :class="primaryButtonClass"
+          :class="joinStudioClasses(primaryButtonClass, stackedActionButtonClass)"
           @click="emit('open-comparator')"
+        />
+        <UButton
+          data-version-open-migrations="true"
+          label="Open migrations"
+          color="neutral"
+          variant="outline"
+          size="xs"
+          :class="joinStudioClasses(secondaryButtonClass, stackedActionButtonClass)"
+          @click="emit('open-migrations')"
         />
         <UButton
           v-for="preset in comparePresetButtons"
@@ -676,7 +482,7 @@ watchEffect(() => {
           color="neutral"
           variant="outline"
           size="xs"
-          :class="secondaryButtonClass"
+          :class="joinStudioClasses(secondaryButtonClass, stackedActionButtonClass)"
           :disabled="preset.disabled"
           @click="openComparatorWithPreset({ baseId: preset.baseId, targetId: preset.targetId })"
         />
@@ -685,7 +491,7 @@ watchEffect(() => {
           color="neutral"
           variant="outline"
           size="xs"
-          :class="secondaryButtonClass"
+          :class="joinStudioClasses(secondaryButtonClass, stackedActionButtonClass)"
           :disabled="compareBaseId === null"
           @click="swapComparePair"
         />
@@ -705,12 +511,12 @@ watchEffect(() => {
 
       <div
         v-if="hasDiffSections"
-        class="grid grid-cols-2 gap-2 text-[0.66rem] text-[color:var(--studio-shell-muted)]"
+        class="grid grid-cols-1 gap-2 text-[0.66rem] text-[color:var(--studio-shell-muted)] md:grid-cols-2"
       >
         <div
           v-for="section in diffSections"
           :key="section.label"
-          class="border border-[color:var(--studio-divider)] bg-[color:var(--studio-input-bg)] px-2 py-2"
+          class="min-w-0 border border-[color:var(--studio-divider)] bg-[color:var(--studio-input-bg)] px-2 py-2"
         >
           <div class="font-mono uppercase tracking-[0.08em] text-[color:var(--studio-shell-label)]">
             {{ section.label }}
@@ -724,7 +530,7 @@ watchEffect(() => {
               :key="item.id"
               class="flex items-start justify-between gap-2 text-[0.62rem]"
             >
-              <span class="min-w-0 truncate text-[color:var(--studio-shell-text)]">
+              <span class="min-w-0 break-words text-[color:var(--studio-shell-text)] [overflow-wrap:anywhere]">
                 {{ item.label }}
               </span>
               <span
@@ -742,7 +548,7 @@ watchEffect(() => {
             </div>
           </div>
         </div>
-        <div class="border border-[color:var(--studio-divider)] bg-[color:var(--studio-input-bg)] px-2 py-2">
+        <div class="min-w-0 border border-[color:var(--studio-divider)] bg-[color:var(--studio-input-bg)] px-2 py-2">
           <div class="font-mono uppercase tracking-[0.08em] text-[color:var(--studio-shell-label)]">
             Layout
           </div>
@@ -793,6 +599,29 @@ watchEffect(() => {
           </span>
         </button>
 
+        <div class="grid grid-cols-2 gap-2 sm:flex sm:flex-wrap">
+          <UButton
+            data-version-workspace-compare-base="true"
+            label="Base"
+            color="neutral"
+            variant="outline"
+            size="xs"
+            :class="joinStudioClasses(secondaryButtonClass, stackedActionButtonClass)"
+            :disabled="compareBaseId === 'workspace'"
+            @click="setCompareBase('workspace')"
+          />
+          <UButton
+            data-version-workspace-compare-target="true"
+            label="Target"
+            color="neutral"
+            variant="outline"
+            size="xs"
+            :class="joinStudioClasses(secondaryButtonClass, stackedActionButtonClass)"
+            :disabled="compareTargetId === 'workspace'"
+            @click="setCompareTarget('workspace')"
+          />
+        </div>
+
         <div
           v-if="!hasVersions"
           :class="studioEmptyStateClass"
@@ -807,7 +636,7 @@ watchEffect(() => {
           class="grid gap-2 border-l-2 border-[color:var(--studio-divider)] border-y border-r bg-[color:var(--studio-input-bg)] px-3 py-3"
           :class="previewTargetId === version.id ? 'border-[color:var(--studio-ring)]' : ''"
         >
-          <div class="flex items-start justify-between gap-3">
+          <div class="grid gap-3 md:grid-cols-[minmax(0,1fr)_auto] md:items-start">
             <div class="min-w-0">
               <div class="flex flex-wrap items-center gap-2">
                 <span class="border border-[color:var(--studio-divider)] px-1.5 py-0.5 font-mono text-[0.52rem] uppercase tracking-[0.08em] text-[color:var(--studio-shell-muted)]">
@@ -815,7 +644,7 @@ watchEffect(() => {
                 </span>
                 <div
                   data-version-label="true"
-                  class="truncate text-[0.8rem] font-semibold text-[color:var(--studio-shell-text)]"
+                  class="min-w-0 break-words text-[0.8rem] font-semibold text-[color:var(--studio-shell-text)] [overflow-wrap:anywhere]"
                 >
                   {{ version.label }}
                 </div>
@@ -866,7 +695,7 @@ watchEffect(() => {
                   Previewing now
                 </span>
               </div>
-              <div class="mt-1 text-[0.66rem] text-[color:var(--studio-shell-muted)]">
+              <div class="mt-1 break-words text-[0.66rem] text-[color:var(--studio-shell-muted)] [overflow-wrap:anywhere]">
                 {{ version.createdAt }}
                 <template v-if="version.parentVersionId">
                   · branches from {{ version.parentVersionId }}
@@ -875,26 +704,37 @@ watchEffect(() => {
                   · starting point
                 </template>
               </div>
-              <div class="mt-1 text-[0.62rem] text-[color:var(--studio-shell-muted)]">
+              <div class="mt-1 break-words text-[0.62rem] text-[color:var(--studio-shell-muted)] [overflow-wrap:anywhere]">
                 Path: {{ version.lineageLabel }}
               </div>
               <div
                 v-if="version.branchRootLabel"
-                class="mt-1 text-[0.62rem] text-[color:var(--studio-shell-muted)]"
+                class="mt-1 break-words text-[0.62rem] text-[color:var(--studio-shell-muted)] [overflow-wrap:anywhere]"
               >
                 Branch root: {{ version.branchRootLabel }}
               </div>
             </div>
 
-            <div class="flex flex-wrap gap-1">
+            <div class="grid grid-cols-2 gap-1 sm:flex sm:flex-wrap">
               <UButton
-                :data-version-compare="version.id"
-                label="Compare"
+                :data-version-compare-base="version.id"
+                label="Base"
                 color="neutral"
                 variant="outline"
                 size="xs"
-                :class="secondaryButtonClass"
-                @click="applyComparePreset({ baseId: version.id, targetId: 'workspace' })"
+                :class="joinStudioClasses(secondaryButtonClass, stackedActionButtonClass)"
+                :disabled="compareBaseId === version.id"
+                @click="setCompareBase(version.id)"
+              />
+              <UButton
+                :data-version-compare-target="version.id"
+                label="Target"
+                color="neutral"
+                variant="outline"
+                size="xs"
+                :class="joinStudioClasses(secondaryButtonClass, stackedActionButtonClass)"
+                :disabled="compareTargetId === version.id"
+                @click="setCompareTarget(version.id)"
               />
               <UButton
                 :data-version-view="version.id"
@@ -902,7 +742,7 @@ watchEffect(() => {
                 color="neutral"
                 variant="outline"
                 size="xs"
-                :class="secondaryButtonClass"
+                :class="joinStudioClasses(secondaryButtonClass, stackedActionButtonClass)"
                 :disabled="previewTargetId === version.id"
                 @click="emit('view-target', version.id)"
               />
@@ -912,7 +752,7 @@ watchEffect(() => {
                 color="neutral"
                 variant="soft"
                 size="xs"
-                :class="primaryButtonClass"
+                :class="joinStudioClasses(primaryButtonClass, stackedActionButtonClass)"
                 @click="emit('restore-version', version.id)"
               />
             </div>
@@ -923,142 +763,6 @@ watchEffect(() => {
       <p :class="studioCompactBodyCopyClass">
         Preview target: {{ previewLabel }}.
       </p>
-    </div>
-
-    <div class="grid gap-2 border border-[color:var(--studio-divider)] bg-[color:var(--studio-control-bg)] px-3 py-3">
-      <div class="flex items-center justify-between gap-3">
-        <div>
-          <div class="font-mono text-[0.6rem] uppercase tracking-[0.08em] text-[color:var(--studio-shell-label)]">
-            Migration Output
-          </div>
-          <div class="mt-1 text-[0.66rem] text-[color:var(--studio-shell-muted)]">
-            {{ hasActiveMigration ? `${selectedMigrationScopeLabel} · ${activeMigrationLabel} · ${migrationLineCount} line${migrationLineCount === 1 ? '' : 's'} ready · ${activeMigrationFileName}` : `No forward ${activeMigrationLabel.toLowerCase()} migration generated yet.` }}
-          </div>
-        </div>
-        <div class="flex flex-wrap gap-1">
-          <UButton
-            data-version-migration-format="sql"
-            label="SQL"
-            color="neutral"
-            :variant="activeMigrationFormat === 'sql' ? 'soft' : 'outline'"
-            size="xs"
-            :class="activeMigrationFormat === 'sql' ? primaryButtonClass : secondaryButtonClass"
-            :disabled="!hasMigrationSql && activeMigrationFormat !== 'sql'"
-            @click="activeMigrationFormat = 'sql'"
-          />
-          <UButton
-            data-version-migration-format="kysely"
-            label="Kysely"
-            color="neutral"
-            :variant="activeMigrationFormat === 'kysely' ? 'soft' : 'outline'"
-            size="xs"
-            :class="activeMigrationFormat === 'kysely' ? primaryButtonClass : secondaryButtonClass"
-            :disabled="!hasMigrationKysely && activeMigrationFormat !== 'kysely'"
-            @click="activeMigrationFormat = 'kysely'"
-          />
-          <UButton
-            :data-version-migration-copy="activeMigrationFormat"
-            :label="copyState === 'success' ? 'Copied' : (copyState === 'error' ? 'Copy failed' : 'Copy')"
-            color="neutral"
-            variant="outline"
-            size="xs"
-            :class="copyButtonClass"
-            :disabled="!hasActiveMigration"
-            @click="handleCopyMigration"
-          />
-          <UButton
-            :data-version-migration-download="activeMigrationFormat"
-            label="Download"
-            color="neutral"
-            variant="soft"
-            size="xs"
-            :class="primaryButtonClass"
-            :disabled="!hasActiveMigration"
-            @click="handleDownloadMigration"
-          />
-        </div>
-      </div>
-
-      <div
-        v-if="hasStepMigrationFiles"
-        class="grid gap-2 border border-[color:var(--studio-divider)] bg-[color:var(--studio-input-bg)] px-3 py-3"
-      >
-        <div class="font-mono text-[0.58rem] uppercase tracking-[0.08em] text-[color:var(--studio-shell-label)]">
-          Generated files
-        </div>
-        <button
-          type="button"
-          data-version-migration-scope="combined"
-          class="grid gap-1 border border-[color:var(--studio-divider)] bg-[color:var(--studio-control-bg)] px-3 py-2 text-left"
-          :class="isMigrationScopeActive('combined') ? 'border-[color:var(--studio-ring)]' : ''"
-          @click="selectMigrationScope('combined')"
-        >
-          <span class="text-[0.74rem] font-semibold text-[color:var(--studio-shell-text)]">
-            Combined history sequence
-          </span>
-          <span class="text-[0.64rem] text-[color:var(--studio-shell-muted)]">
-            Consolidated SQL and Kysely previews across every selected version transition.
-          </span>
-          <span class="font-mono text-[0.58rem] uppercase tracking-[0.08em] text-[color:var(--studio-shell-muted)]">
-            {{ buildMigrationFilePairLabel(migrationFileName, migrationKyselyFileName) }}
-          </span>
-        </button>
-        <button
-          v-for="step in migrationSteps"
-          :key="step.sql.migration.fileName"
-          type="button"
-          :data-version-migration-scope="`step:${step.index}`"
-          class="grid gap-1 border border-[color:var(--studio-divider)] bg-[color:var(--studio-control-bg)] px-3 py-2 text-left"
-          :class="isMigrationScopeActive(`step:${step.index}`) ? 'border-[color:var(--studio-ring)]' : ''"
-          @click="selectMigrationScope(`step:${step.index}`)"
-        >
-          <span class="text-[0.74rem] font-semibold text-[color:var(--studio-shell-text)]">
-            Step {{ step.index + 1 }}: {{ step.label }}
-          </span>
-          <span class="text-[0.64rem] text-[color:var(--studio-shell-muted)]">
-            {{ buildMigrationStepStatsLabel(step) }}
-          </span>
-          <span class="font-mono text-[0.58rem] uppercase tracking-[0.08em] text-[color:var(--studio-shell-muted)]">
-            {{ buildMigrationFilePairLabel(step.sql.migration.fileName, step.kysely.migration.fileName) }}
-          </span>
-          <span
-            v-if="!step.validation.isValid"
-            class="text-[0.64rem] text-[color:var(--studio-shell-error)]"
-          >
-            Validation issue: {{ step.validation.issues[0] }}
-          </span>
-        </button>
-      </div>
-
-      <div
-        v-if="displayedMigrationWarnings.length > 0"
-        data-version-migration-warnings="true"
-        class="grid gap-1 border border-[color:var(--studio-shell-error)]/30 bg-[color:var(--studio-shell-error)]/8 px-3 py-3 text-[0.68rem] text-[color:var(--studio-shell-text)]"
-      >
-        <div class="font-mono text-[0.58rem] uppercase tracking-[0.08em] text-[color:var(--studio-shell-error)]">
-          Warnings
-        </div>
-        <div
-          v-for="warning in displayedMigrationWarnings"
-          :key="warning"
-        >
-          {{ warning }}
-        </div>
-      </div>
-
-      <pre
-        v-if="hasActiveMigration"
-        data-version-migration-artifact="true"
-        :data-version-migration-format-active="activeMigrationFormat"
-        class="max-h-96 overflow-auto border border-[color:var(--studio-divider)] bg-[color:var(--studio-input-bg)] px-3 py-3 text-[0.68rem] leading-6 text-[color:var(--studio-shell-text)]"
-      >{{ activeMigrationContent }}</pre>
-
-      <div
-        v-else
-        :class="studioEmptyStateClass"
-      >
-        Choose a compare pair with schema changes to preview the forward migration output here.
-      </div>
     </div>
   </div>
 </template>

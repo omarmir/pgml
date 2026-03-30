@@ -264,6 +264,7 @@ test('light mode updates the GPU scene and svg export without a resize', async (
   await goto('/diagram')
 
   await page.getByRole('button', { name: 'Switch to light mode' }).click()
+  await page.locator('[data-diagram-panel-tab="export"]').click()
 
   await expect.poll(async () => {
     return page.evaluate(() => {
@@ -298,6 +299,20 @@ test('light mode updates the GPU scene and svg export without a resize', async (
 
   expect(panelStyles.backgroundColor).toBe('rgba(255, 255, 255, 0.92)')
   expect(panelStyles.borderColor).toBe('rgba(15, 23, 42, 0.08)')
+
+  const exportButtonStyles = await page.locator('[data-diagram-export-button="png-1x"]').evaluate((element) => {
+    const styles = window.getComputedStyle(element)
+
+    return {
+      backgroundColor: styles.backgroundColor,
+      borderColor: styles.borderColor,
+      color: styles.color
+    }
+  })
+
+  expect(exportButtonStyles.backgroundColor).not.toBe('rgba(0, 0, 0, 0)')
+  expect(exportButtonStyles.borderColor).not.toBe('rgba(0, 0, 0, 0)')
+  expect(exportButtonStyles.color).not.toBe(exportButtonStyles.backgroundColor)
 
   const exportMenuButton = page.getByTitle('Export')
 

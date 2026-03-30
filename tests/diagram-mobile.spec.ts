@@ -7,7 +7,7 @@ test.beforeEach(async ({ page }) => {
   await authorizeStudioLaunchAccess(page)
 })
 
-test('mobile studio exposes one-tap quick switches for diagram, panel, and PGML', async ({ goto, page }) => {
+test('mobile studio exposes one-tap quick switches for diagram, panel, PGML, and history tools', async ({ goto, page }) => {
   await page.setViewportSize({
     width: 390,
     height: 844
@@ -18,11 +18,14 @@ test('mobile studio exposes one-tap quick switches for diagram, panel, and PGML'
   const diagramQuickView = page.locator('[data-mobile-quick-view="diagram"]')
   const panelQuickView = page.locator('[data-mobile-quick-view="panel"]')
   const pgmlQuickView = page.locator('[data-mobile-quick-view="pgml"]')
+  const toolPanelQuickView = page.locator('[data-mobile-quick-view="tool-panel"]')
 
   await expect(diagramQuickView).toBeVisible()
   await expect(panelQuickView).toBeVisible()
   await expect(panelQuickView).toContainText('Entities panel')
   await expect(pgmlQuickView).toBeVisible()
+  await expect(toolPanelQuickView).toBeVisible()
+  await expect(toolPanelQuickView).toContainText('History tools')
 
   await pgmlQuickView.click()
   await expect(currentView).toHaveText('PGML')
@@ -36,6 +39,11 @@ test('mobile studio exposes one-tap quick switches for diagram, panel, and PGML'
   await expect(currentView).toHaveText('Entities panel')
   await expect(page.locator('[data-diagram-panel="true"]')).toBeVisible()
   await expect(page.locator('[data-entity-search="true"]')).toBeVisible()
+
+  await toolPanelQuickView.click()
+  await expect(currentView).toHaveText('Versions')
+  await expect(page.locator('[data-diagram-tool-panel="true"]')).toBeVisible()
+  await expect(page.locator('[data-diagram-tool-panel="true"]')).toHaveAttribute('data-diagram-tool-panel-mode', 'versions')
 })
 
 test('mobile studio menu switches views and keeps modals inside the viewport', async ({ goto, page }) => {
@@ -94,6 +102,14 @@ test('mobile studio menu switches views and keeps modals inside the viewport', a
   await expect(page.locator('[data-pgml-editor="true"]')).toBeVisible()
 
   await mobileStudioMenu.click()
+  await page.getByRole('menuitem', { name: 'History tools' }).click()
+  await page.getByRole('menuitem', { name: 'Compare' }).click()
+
+  await expect(currentView).toHaveText('Compare')
+  await expect(page.locator('[data-diagram-tool-panel="true"]')).toBeVisible()
+  await expect(page.locator('[data-diagram-tool-panel="true"]')).toHaveAttribute('data-diagram-tool-panel-mode', 'compare')
+
+  await mobileStudioMenu.click()
   await page.getByRole('menuitem', { name: 'Diagram panel' }).click()
   await page.getByRole('menuitem', { name: 'Entities' }).click()
   await page.getByRole('button', { name: 'Add group' }).click()
@@ -122,6 +138,33 @@ test('mobile studio menu switches views and keeps modals inside the viewport', a
   expect(modalBounds?.top || 0).toBeGreaterThanOrEqual(0)
   expect(modalBounds?.right || 0).toBeLessThanOrEqual(modalBounds?.viewportWidth || 0)
   expect(modalBounds?.bottom || 0).toBeLessThanOrEqual(modalBounds?.viewportHeight || 0)
+})
+
+test('mobile versions panel wraps controls and diff cards without horizontal overflow', async ({ goto, page }) => {
+  await page.setViewportSize({
+    width: 390,
+    height: 844
+  })
+  await goto('/diagram')
+
+  await page.locator('[data-mobile-quick-view="tool-panel"]').click()
+
+  const versionsPanel = page.locator('[data-diagram-versions-panel="true"]')
+
+  await expect(versionsPanel).toBeVisible()
+  await expect(page.locator('[data-version-open-migrations="true"]')).toBeVisible()
+  await expect(page.locator('[data-version-open-migrations="true"]')).toContainText('Open migrations')
+
+  const overflowMetrics = await versionsPanel.evaluate((element) => {
+    const panel = element as HTMLElement
+
+    return {
+      clientWidth: panel.clientWidth,
+      scrollWidth: panel.scrollWidth
+    }
+  })
+
+  expect(overflowMetrics.scrollWidth).toBeLessThanOrEqual(overflowMetrics.clientWidth + 1)
 })
 
 test('mobile studio diagram supports pinch zoom on the GPU viewport', async ({ browserName, goto, page }) => {

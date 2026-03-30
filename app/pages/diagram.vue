@@ -123,6 +123,7 @@ import {
 import {
   defaultStudioMobilePanelTab,
   type DiagramPanelTab,
+  type DiagramToolPanelTab,
   type StudioMobileCanvasView,
   type StudioMobileWorkspaceView
 } from '~/utils/studio-workspace'
@@ -233,6 +234,7 @@ const isExporting: Ref<boolean> = ref(false)
 const versionDocumentName: Ref<string> = ref('Untitled schema')
 const mobileWorkspaceView: Ref<StudioMobileWorkspaceView> = ref('diagram')
 const mobilePanelTab: Ref<DiagramPanelTab> = ref(defaultStudioMobilePanelTab)
+const mobileToolPanelTab: Ref<DiagramToolPanelTab> = ref('versions')
 const checkpointDialogOpen: Ref<boolean> = ref(false)
 const checkpointName: Ref<string> = ref('')
 const checkpointSuggestedCreatedAt: Ref<string | null> = ref(null)
@@ -422,7 +424,11 @@ const displayedEditorSource = computed(() => {
 })
 const importDumpSelectedFileName = computed(() => importDumpSelectedFile.value?.name || '')
 const mobileCanvasView = computed<StudioMobileCanvasView>(() => {
-  return mobileWorkspaceView.value === 'panel' ? 'panel' : 'diagram'
+  if (mobileWorkspaceView.value === 'panel' || mobileWorkspaceView.value === 'tool-panel') {
+    return mobileWorkspaceView.value
+  }
+
+  return 'diagram'
 })
 const assignEditorRef = (value: unknown) => {
   editorRef.value = value as PgmlSourceEditorHandle | null
@@ -1772,6 +1778,14 @@ const handleCanvasPanelTabChange = (nextTab: DiagramPanelTab) => {
   mobilePanelTab.value = nextTab
 }
 
+const handleCanvasToolPanelTabChange = (nextTab: DiagramToolPanelTab) => {
+  mobileToolPanelTab.value = nextTab
+}
+
+const handleMobileCanvasViewChange = (nextView: StudioMobileCanvasView) => {
+  mobileWorkspaceView.value = nextView
+}
+
 watchEffect(() => {
   setStudioHeaderActions({
     isLoading: isExporting.value,
@@ -1833,6 +1847,7 @@ onBeforeUnmount(() => {
       v-if="isCompactStudioLayout"
       v-model:active-view="mobileWorkspaceView"
       v-model:active-panel-tab="mobilePanelTab"
+      v-model:active-tool-panel-tab="mobileToolPanelTab"
     >
       <template #canvas>
         <PgmlDiagramCanvas
@@ -1859,6 +1874,7 @@ onBeforeUnmount(() => {
           :latest-version-id="latestVersionId"
           :mobile-active-view="mobileCanvasView"
           :mobile-panel-tab="mobilePanelTab"
+          :mobile-tool-panel-tab="mobileToolPanelTab"
           :preview-target-id="previewTargetId"
           :source-text="source"
           :version-compare-base-id="versionCompareBaseId"
@@ -1871,8 +1887,10 @@ onBeforeUnmount(() => {
           :viewport-reset-key="canvasViewportResetKey"
           @create-group="openGroupCreator"
           @focus-source="handleCanvasFocusSource"
+          @mobile-canvas-view-change="handleMobileCanvasViewChange"
           @panel-tab-change="handleCanvasPanelTabChange"
           @replace-source-range="handleCanvasReplaceSourceRange"
+          @tool-panel-tab-change="handleCanvasToolPanelTabChange"
           @create-table="openTableCreator"
           @edit-group="openGroupEditor"
           @edit-table="openTableEditor"
@@ -1973,8 +1991,10 @@ onBeforeUnmount(() => {
           :viewport-reset-key="canvasViewportResetKey"
           @create-group="openGroupCreator"
           @focus-source="handleCanvasFocusSource"
+          @mobile-canvas-view-change="handleMobileCanvasViewChange"
           @panel-tab-change="handleCanvasPanelTabChange"
           @replace-source-range="handleCanvasReplaceSourceRange"
+          @tool-panel-tab-change="handleCanvasToolPanelTabChange"
           @create-table="openTableCreator"
           @edit-group="openGroupEditor"
           @edit-table="openTableEditor"

@@ -3,8 +3,11 @@ import {
   buildPgmlDirectIncrementCompareRelationshipSummary,
   buildPgmlDivergedCompareRelationshipSummary,
   buildPgmlEmptyBaseCompareRelationshipSummary,
+  buildPgmlEmptyBaseToVersionCompareRelationshipSummary,
   buildPgmlInvalidCompareRelationshipSummary,
   buildPgmlNoCommonAncestorCompareRelationshipSummary,
+  buildPgmlSelfCompareRelationshipSummary,
+  buildPgmlWorkspaceAsBaseCompareRelationshipSummary,
   buildPgmlWorkspaceCompareRelationshipSummary,
   buildPgmlWorkspaceBaseCompareRelationshipSummary
 } from '~/utils/pgml-version-summary'
@@ -134,6 +137,10 @@ const normalizeCompareBaseSelection = (
   document: PgmlVersionSetDocument,
   baseId: string | null
 ) => {
+  if (baseId === 'workspace') {
+    return 'workspace'
+  }
+
   if (baseId && !getPgmlVersionById(document, baseId)) {
     return buildDefaultCompareBaseId(document)
   }
@@ -218,17 +225,46 @@ const buildVersionHistoryItem = (
 }
 
 const buildCompareRelationshipSummary = (input: {
+  compareBaseId: string | null
   compareBaseVersion: PgmlVersionDocumentBlock | null
   compareTargetId: string
   compareTargetVersion: PgmlVersionDocumentBlock | null
   document: PgmlVersionSetDocument
   workspaceBaseVersion: PgmlVersionDocumentBlock | null
 }) => {
+  if (input.compareBaseId === null) {
+    if (input.compareTargetId === 'workspace') {
+      return buildPgmlEmptyBaseCompareRelationshipSummary()
+    }
+
+    if (!input.compareTargetVersion) {
+      return buildPgmlInvalidCompareRelationshipSummary()
+    }
+
+    return buildPgmlEmptyBaseToVersionCompareRelationshipSummary(
+      getPgmlVersionDisplayLabel(input.compareTargetVersion)
+    )
+  }
+
+  if (input.compareBaseId === 'workspace') {
+    if (input.compareTargetId === 'workspace') {
+      return buildPgmlSelfCompareRelationshipSummary('the current workspace')
+    }
+
+    if (!input.compareTargetVersion) {
+      return buildPgmlInvalidCompareRelationshipSummary()
+    }
+
+    return buildPgmlWorkspaceAsBaseCompareRelationshipSummary(
+      getPgmlVersionDisplayLabel(input.compareTargetVersion)
+    )
+  }
+
   // Compare copy deliberately distinguishes the common workspace workflow
   // (current draft vs locked base) from version-to-version lineage comparisons.
   if (input.compareTargetId === 'workspace') {
     if (!input.compareBaseVersion) {
-      return buildPgmlEmptyBaseCompareRelationshipSummary()
+      return buildPgmlInvalidCompareRelationshipSummary()
     }
 
     if (input.compareBaseVersion.id === input.workspaceBaseVersion?.id) {
@@ -244,6 +280,12 @@ const buildCompareRelationshipSummary = (input: {
 
   if (!input.compareBaseVersion || !input.compareTargetVersion) {
     return buildPgmlInvalidCompareRelationshipSummary()
+  }
+
+  if (input.compareBaseVersion.id === input.compareTargetVersion.id) {
+    return buildPgmlSelfCompareRelationshipSummary(
+      getPgmlVersionDisplayLabel(input.compareTargetVersion)
+    )
   }
 
   if (input.compareTargetVersion.parentVersionId === input.compareBaseVersion.id) {
@@ -442,6 +484,10 @@ export const usePgmlStudioVersionHistory = (
   })
   const isWorkspacePreview = computed(() => previewTargetId.value === 'workspace')
   const compareBaseVersion = computed(() => {
+    if (compareBaseId.value === 'workspace') {
+      return null
+    }
+
     return getPgmlVersionById(document.value, compareBaseId.value)
   })
   const compareTargetVersion = computed<PgmlVersionDocumentBlock | null>(() => {
@@ -469,6 +515,7 @@ export const usePgmlStudioVersionHistory = (
   })
   const compareRelationshipSummary = computed(() => {
     return buildCompareRelationshipSummary({
+      compareBaseId: compareBaseId.value,
       compareBaseVersion: compareBaseVersion.value,
       compareTargetId: compareTargetId.value,
       compareTargetVersion: compareTargetVersion.value,

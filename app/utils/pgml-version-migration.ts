@@ -82,14 +82,19 @@ const escapeTemplateLiteralContent = (value: string) => {
     .replaceAll('${', '\\${')
 }
 
+const formatMigrationStepFileIndex = (stepIndex: number) => {
+  return String(stepIndex + 1).padStart(3, '0')
+}
+
 const buildStepBaseName = (
   baseName: string,
   stepIndex: number,
   step: PgmlResolvedVersionMigrationStep
 ) => {
   const normalizedTargetLabel = normalizeBaseName(`${step.baseLabel}-to-${step.targetLabel}`)
+  const stepFileIndex = formatMigrationStepFileIndex(stepIndex)
 
-  return `${baseName}.step-${stepIndex + 1}-${normalizedTargetLabel}`
+  return `${stepFileIndex}-${baseName}-${normalizedTargetLabel}`
 }
 
 const buildVersionHistorySqlContent = (steps: PgmlPlannedVersionMigrationStep[]) => {

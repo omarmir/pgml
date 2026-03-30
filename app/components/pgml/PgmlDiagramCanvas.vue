@@ -5,7 +5,7 @@ import PgmlDiagramCanvasGpuShell from '~/components/pgml/PgmlDiagramCanvasGpuShe
 import type { PgmlDiagramCompareEntry } from '~/utils/pgml-diagram-compare'
 import type { PgmlNodeProperties, PgmlSchemaModel, PgmlSourceRange } from '~/utils/pgml'
 import type { PgmlVersionMigrationStepBundle } from '~/utils/pgml-version-migration'
-import type { DiagramPanelTab, StudioMobileCanvasView } from '~/utils/studio-workspace'
+import type { DiagramPanelTab, DiagramToolPanelTab, StudioMobileCanvasView } from '~/utils/studio-workspace'
 
 type CanvasHandle = {
   exportDiagram: (format: 'svg' | 'png', scaleFactor?: number) => Promise<void>
@@ -81,6 +81,7 @@ const {
   latestVersionId = null,
   mobileActiveView = null,
   mobilePanelTab = null,
+  mobileToolPanelTab = null,
   model,
   migrationFileName = 'pgml-version.migration.sql',
   migrationHasChanges = false,
@@ -114,6 +115,7 @@ const {
   latestVersionId?: string | null
   mobileActiveView?: StudioMobileCanvasView | null
   mobilePanelTab?: DiagramPanelTab | null
+  mobileToolPanelTab?: DiagramToolPanelTab | null
   model: PgmlSchemaModel
   previewTargetId?: string
   sourceText?: string
@@ -133,8 +135,10 @@ const emit = defineEmits<{
   editGroup: [groupName: string]
   editTable: [tableId: string]
   focusSource: [sourceRange: PgmlSourceRange]
+  mobileCanvasViewChange: [view: StudioMobileCanvasView]
   nodePropertiesChange: [properties: Record<string, PgmlNodeProperties>]
   panelTabChange: [tab: DiagramPanelTab]
+  toolPanelTabChange: [tab: DiagramToolPanelTab]
   replaceSourceRange: [payload: { nextText: string, sourceRange: PgmlSourceRange }]
   restoreVersion: [versionId: string]
   updateVersionCompareBaseId: [value: string | null]
@@ -179,6 +183,7 @@ defineExpose<CanvasHandle>({
     :latest-version-id="latestVersionId"
     :mobile-active-view="mobileActiveView"
     :mobile-panel-tab="mobilePanelTab"
+    :mobile-tool-panel-tab="mobileToolPanelTab"
     :migration-file-name="migrationFileName"
     :migration-has-changes="migrationHasChanges"
     :migration-kysely="migrationKysely"
@@ -202,8 +207,10 @@ defineExpose<CanvasHandle>({
     @edit-group="emit('editGroup', $event)"
     @edit-table="emit('editTable', $event)"
     @focus-source="emit('focusSource', $event)"
+    @mobile-canvas-view-change="emit('mobileCanvasViewChange', $event)"
     @node-properties-change="emit('nodePropertiesChange', $event)"
     @panel-tab-change="emit('panelTabChange', $event)"
+    @tool-panel-tab-change="emit('toolPanelTabChange', $event)"
     @replace-source-range="emit('replaceSourceRange', $event)"
     @restore-version="emit('restoreVersion', $event)"
     @update-version-compare-base-id="emit('updateVersionCompareBaseId', $event)"

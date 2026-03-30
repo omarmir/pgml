@@ -1,6 +1,6 @@
 import { readFileSync } from 'node:fs'
 
-import type { Page } from '@playwright/test'
+import type { Download, Page } from '@playwright/test'
 import { expect, test } from '@nuxt/test-utils/playwright'
 import { getPgmlEditor, readPgmlEditorValue, setPgmlEditorValue } from './helpers/pgml-editor'
 import { authorizeStudioLaunchAccess } from './helpers/studio-launch'
@@ -15,8 +15,16 @@ const getVersionsPanel = (page: Page) => {
   return page.locator('[data-diagram-versions-panel="true"]')
 }
 
+const getVersionsOverview = (page: Page) => {
+  return getVersionsPanel(page).locator('[data-version-overview="true"]')
+}
+
 const getComparePanel = (page: Page) => {
   return page.locator('[data-diagram-compare-panel="true"]')
+}
+
+const getMigrationsPanel = (page: Page) => {
+  return page.locator('[data-diagram-migrations-panel="true"]')
 }
 
 const getHistoryToolsPanel = (page: Page) => {
@@ -24,14 +32,14 @@ const getHistoryToolsPanel = (page: Page) => {
 }
 
 const getMigrationArtifact = (page: Page) => {
-  return page.locator('[data-version-migration-artifact="true"]')
+  return getMigrationsPanel(page).locator('[data-version-migration-artifact="true"]')
 }
 
 const getMigrationScopeButton = (
   page: Page,
   scope: 'combined' | `step:${number}`
 ) => {
-  return getVersionsPanel(page).locator(`[data-version-migration-scope="${scope}"]`)
+  return getMigrationsPanel(page).locator(`[data-version-migration-scope="${scope}"]`)
 }
 
 const getDocumentScopeSelect = (page: Page) => {
@@ -52,6 +60,22 @@ const openVersionsPanel = async (page: Page) => {
   await expect(historyToolsPanel).toBeVisible()
   await expect(historyToolsPanel).toHaveAttribute('data-diagram-tool-panel-mode', 'versions')
   await expect(getVersionsPanel(page)).toBeVisible()
+}
+
+const openMigrationsPanel = async (page: Page) => {
+  const historyToolsPanel = getHistoryToolsPanel(page)
+
+  if (await historyToolsPanel.isVisible()) {
+    if ((await historyToolsPanel.getAttribute('data-diagram-tool-panel-mode')) !== 'migrations') {
+      await historyToolsPanel.locator('[data-diagram-tool-panel-tab="migrations"]').click()
+    }
+  } else {
+    await page.locator('[data-diagram-tool-toggle="migrations"]').click()
+  }
+
+  await expect(historyToolsPanel).toBeVisible()
+  await expect(historyToolsPanel).toHaveAttribute('data-diagram-tool-panel-mode', 'migrations')
+  await expect(getMigrationsPanel(page)).toBeVisible()
 }
 
 const selectMigrationScope = async (
@@ -103,7 +127,8 @@ const compareFromVersion = async (
   versionLabel: string
 ) => {
   await openVersionsPanel(page)
-  await clickVersionCardAction(page, versionLabel, '[data-version-compare]')
+  await clickVersionCardAction(page, versionLabel, '[data-version-compare-base]')
+  await getVersionsPanel(page).locator('[data-version-workspace-compare-target="true"]').click()
 }
 
 const openComparator = async (page: Page) => {
@@ -122,25 +147,47 @@ const openComparator = async (page: Page) => {
   await expect(getComparePanel(page)).toBeVisible()
 }
 
+const downloadMigrationArtifacts = async (
+  page: Page,
+  format: 'sql' | 'kysely',
+  expectedCount = 1
+) => {
+  // Combined lineage downloads should emit one file per version transition.
+  // Collect every download triggered by the single button click so the tests
+  // can prove the UI preserves the exact step order.
+  const downloads: Download[] = []
+  const handleDownload = (download: Download) => {
+    downloads.push(download)
+  }
+
+  page.on('download', handleDownload)
+
+  try {
+    await getMigrationsPanel(page).locator(`[data-version-migration-download="${format}"]`).click()
+    await expect.poll(() => downloads.length).toBe(expectedCount)
+
+    return await Promise.all(downloads.map(async (download) => {
+      const downloadPath = await download.path()
+
+      expect(downloadPath).not.toBeNull()
+
+      return {
+        content: readFileSync(downloadPath!, 'utf8'),
+        fileName: download.suggestedFilename()
+      }
+    }))
+  } finally {
+    page.off('download', handleDownload)
+  }
+}
+
 const downloadMigrationArtifact = async (
   page: Page,
   format: 'sql' | 'kysely'
 ) => {
-  // Download assertions intentionally return both the file name and file body
-  // so the tests can prove step selection affects artifact naming and content.
-  const downloadPromise = page.waitForEvent('download')
+  const [download] = await downloadMigrationArtifacts(page, format, 1)
 
-  await getVersionsPanel(page).locator(`[data-version-migration-download="${format}"]`).click()
-
-  const download = await downloadPromise
-  const downloadPath = await download.path()
-
-  expect(downloadPath).not.toBeNull()
-
-  return {
-    content: readFileSync(downloadPath!, 'utf8'),
-    fileName: download.suggestedFilename()
-  }
+  return download!
 }
 const selectDocumentScope = async (
   page: Page,
@@ -316,7 +363,9 @@ Trigger trg_touch_orders on public.orders {
 
   await compareFromVersion(page, 'Initial users')
 
-  const versionsPanel = getVersionsPanel(page)
+  await openMigrationsPanel(page)
+
+  const migrationsPanel = getMigrationsPanel(page)
   const migrationArtifact = getMigrationArtifact(page)
 
   await expect(migrationArtifact).toHaveAttribute('data-version-migration-format-active', 'sql')
@@ -329,10 +378,16 @@ Trigger trg_touch_orders on public.orders {
   await expect(migrationArtifact).toContainText('CREATE OR REPLACE FUNCTION public.touch_orders()')
   await expect(migrationArtifact).toContainText('CREATE TRIGGER trg_touch_orders')
 
-  const sqlDownload = await downloadMigrationArtifact(page, 'sql')
+  const sqlDownloads = await downloadMigrationArtifacts(page, 'sql', 2)
 
-  expect(sqlDownload.fileName).toContain('.migration.sql')
-  expect(sqlDownload.content).toContain('-- Step 2: Orders baseline -> Current workspace')
+  expect(sqlDownloads[0]!.fileName).toMatch(/^001-/)
+  expect(sqlDownloads[0]!.content).toContain('CREATE TABLE "public"."orders"')
+  expect(sqlDownloads[0]!.content).toContain('ALTER TABLE "public"."orders" ADD FOREIGN KEY ("user_id") REFERENCES "public"."users" ("id");')
+  expect(sqlDownloads[0]!.content).not.toContain(`ALTER TYPE "public"."order_status" ADD VALUE IF NOT EXISTS 'submitted' BEFORE 'paid';`)
+  expect(sqlDownloads[1]!.fileName).toMatch(/^002-/)
+  expect(sqlDownloads[1]!.content).toContain(`ALTER TYPE "public"."order_status" ADD VALUE IF NOT EXISTS 'submitted' BEFORE 'paid';`)
+  expect(sqlDownloads[1]!.content).toContain('CREATE TRIGGER trg_touch_orders')
+  expect(sqlDownloads[1]!.content).not.toContain('CREATE TABLE "public"."orders"')
 
   await selectMigrationScope(page, 'step:0')
   await expect(migrationArtifact).toContainText('CREATE TABLE "public"."orders"')
@@ -342,11 +397,11 @@ Trigger trg_touch_orders on public.orders {
 
   const stepOneSqlDownload = await downloadMigrationArtifact(page, 'sql')
 
-  expect(stepOneSqlDownload.fileName).toContain('-step-1-')
+  expect(stepOneSqlDownload.fileName).toMatch(/^001-/)
   expect(stepOneSqlDownload.content).toContain('CREATE TABLE "public"."orders"')
   expect(stepOneSqlDownload.content).not.toContain(`ALTER TYPE "public"."order_status" ADD VALUE IF NOT EXISTS 'submitted' BEFORE 'paid';`)
 
-  await versionsPanel.locator('[data-version-migration-format="kysely"]').click()
+  await migrationsPanel.locator('[data-version-migration-format="kysely"]').click()
   await expect(migrationArtifact).toHaveAttribute('data-version-migration-format-active', 'kysely')
   await expect(migrationArtifact).toContainText('await sql`')
   await expect(migrationArtifact).toContainText('CREATE TABLE "public"."orders"')
@@ -360,10 +415,129 @@ Trigger trg_touch_orders on public.orders {
 
   const kyselyDownload = await downloadMigrationArtifact(page, 'kysely')
 
-  expect(kyselyDownload.fileName).toContain('-step-2-')
+  expect(kyselyDownload.fileName).toMatch(/^002-/)
   expect(kyselyDownload.content).toContain(`ALTER TYPE "public"."order_status" ADD VALUE IF NOT EXISTS 'submitted' BEFORE 'paid';`)
   expect(kyselyDownload.content).toContain('CREATE OR REPLACE FUNCTION public.touch_orders()')
   expect(kyselyDownload.content).not.toContain('CREATE TABLE "public"."orders"')
+
+  await selectMigrationScope(page, 'combined')
+
+  const kyselyDownloads = await downloadMigrationArtifacts(page, 'kysely', 2)
+
+  expect(kyselyDownloads[0]!.fileName).toMatch(/^001-/)
+  expect(kyselyDownloads[0]!.content).toContain('CREATE TABLE "public"."orders"')
+  expect(kyselyDownloads[0]!.content).not.toContain(`ALTER TYPE "public"."order_status" ADD VALUE IF NOT EXISTS 'submitted' BEFORE 'paid';`)
+  expect(kyselyDownloads[1]!.fileName).toMatch(/^002-/)
+  expect(kyselyDownloads[1]!.content).toContain(`ALTER TYPE "public"."order_status" ADD VALUE IF NOT EXISTS 'submitted' BEFORE 'paid';`)
+  expect(kyselyDownloads[1]!.content).toContain('CREATE TRIGGER trg_touch_orders')
+})
+
+test('versions panel can compare two locked versions without forcing the workspace as the target', async ({ goto, page }) => {
+  await goto('/diagram')
+  const editor = getPgmlEditor(page)
+
+  await setPgmlEditorValue(editor, `Table public.users {
+  id uuid [pk]
+}`)
+  await createCheckpoint(page, 'Initial users')
+
+  await setPgmlEditorValue(editor, `Table public.users {
+  id uuid [pk]
+}
+
+Table public.orders {
+  id uuid [pk]
+  user_id uuid [not null]
+}
+
+Ref: public.orders.user_id > public.users.id`)
+  await createCheckpoint(page, 'Orders baseline')
+
+  await openVersionsPanel(page)
+  await clickVersionCardAction(page, 'Initial users', '[data-version-compare-base]')
+  await clickVersionCardAction(page, 'Orders baseline', '[data-version-compare-target]')
+  await getVersionsPanel(page).locator('[data-version-open-comparator="true"]').click()
+
+  const comparePanel = getComparePanel(page)
+
+  await expect(comparePanel).toContainText('Initial users')
+  await expect(comparePanel).toContainText('Orders baseline')
+  await expect(comparePanel).toContainText('increments directly from')
+  await expect(comparePanel).not.toContainText('Current workspace')
+
+  await openMigrationsPanel(page)
+  await expect(getMigrationArtifact(page)).toContainText('-- Step 1: Initial users -> Orders baseline')
+  await expect(getMigrationArtifact(page)).not.toContainText('Current workspace')
+})
+
+test('compare panel lets you switch the compare base and target directly', async ({ goto, page }) => {
+  await goto('/diagram')
+  const editor = getPgmlEditor(page)
+
+  await setPgmlEditorValue(editor, `Table public.users {
+  id uuid [pk]
+}`)
+  await createCheckpoint(page, 'Initial users')
+
+  await setPgmlEditorValue(editor, `Table public.users {
+  id uuid [pk]
+}
+
+Table public.orders {
+  id uuid [pk]
+  user_id uuid [not null]
+}
+
+Ref: public.orders.user_id > public.users.id`)
+  await createCheckpoint(page, 'Orders baseline')
+
+  await setPgmlEditorValue(editor, `Table public.users {
+  id uuid [pk]
+}
+
+Table public.orders {
+  id uuid [pk]
+  user_id uuid [not null]
+}
+
+Table public.audit_log {
+  id uuid [pk]
+}
+
+Ref: public.orders.user_id > public.users.id`)
+
+  await openComparator(page)
+
+  await getComparePanel(page).locator('[data-compare-base-select="true"]').click()
+  await page.getByRole('option', { name: 'Initial users' }).click()
+  await getComparePanel(page).locator('[data-compare-target-select="true"]').click()
+  await page.getByRole('option', { name: 'Orders baseline' }).click()
+
+  const comparePanel = getComparePanel(page)
+
+  await expect(comparePanel).toContainText('Initial users')
+  await expect(comparePanel).toContainText('Orders baseline')
+  await expect(comparePanel).toContainText('increments directly from')
+  await expect(comparePanel).not.toContainText('Current workspace')
+  await expect(comparePanel.locator('[data-compare-entry="table:public.orders"]')).toBeVisible()
+  await expect(comparePanel.locator('[data-compare-entry]').filter({ hasText: 'public.audit_log' })).toHaveCount(0)
+})
+
+test('versions overview controls render inline instead of as a sticky floating card', async ({ goto, page }) => {
+  await goto('/diagram')
+  await openVersionsPanel(page)
+
+  const overview = getVersionsOverview(page)
+
+  await expect(overview).toBeVisible()
+  await expect(overview.locator('[data-version-create-checkpoint="true"]')).toBeVisible()
+  await expect(overview.locator('[data-version-import-dump="true"]')).toBeVisible()
+  await expect(overview).toContainText('Locked')
+  await expect(overview).toContainText('Design')
+  await expect(overview).toContainText('Impl')
+  await expect.poll(async () => {
+    return overview.evaluate(element => getComputedStyle(element).position)
+  }).toBe('static')
 })
 
 test('versions panel keeps warning-only history steps visible in SQL and Kysely previews', async ({ goto, page }) => {
@@ -395,7 +569,9 @@ Table public.audit_log {
 
   await compareFromVersion(page, 'Full status')
 
-  const versionsPanel = getVersionsPanel(page)
+  await openMigrationsPanel(page)
+
+  const migrationsPanel = getMigrationsPanel(page)
   const migrationArtifact = getMigrationArtifact(page)
   const warningsPanel = page.locator('[data-version-migration-warnings="true"]')
 
@@ -414,7 +590,7 @@ Table public.audit_log {
   await expect(migrationArtifact).toContainText('CREATE TABLE "public"."audit_log"')
   await expect(warningsPanel).toHaveCount(0)
 
-  await versionsPanel.locator('[data-version-migration-format="kysely"]').click()
+  await migrationsPanel.locator('[data-version-migration-format="kysely"]').click()
 
   await expect(migrationArtifact).toHaveAttribute('data-version-migration-format-active', 'kysely')
   await expect(migrationArtifact).toContainText('CREATE TABLE "public"."audit_log"')
@@ -518,6 +694,8 @@ ALTER TABLE ONLY public.orders ADD CONSTRAINT orders_user_id_fkey FOREIGN KEY (u
   expect(importedSource).not.toContain('Table public.scratch_entries')
 
   await compareFromVersion(page, 'Users baseline')
+
+  await openMigrationsPanel(page)
 
   const migrationArtifact = getMigrationArtifact(page)
 
