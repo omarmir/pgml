@@ -14,6 +14,11 @@ import {
   type DiagramSpatialGridIndex
 } from '~/utils/diagram-spatial-index'
 import {
+  buildDiagramConnectionDragPreviewPoints,
+  type DiagramConnectionPreviewDragState,
+  type DiagramNodeDragPreview
+} from '~/utils/diagram-connection-preview'
+import {
   applyDiagramRendererInitFailure,
   getDiagramRendererCapability,
   type DiagramRendererBackend,
@@ -73,6 +78,11 @@ type TextureCacheEntry = {
   texture: PixiTexture
 }
 
+type VisibleConnectionBuckets = {
+  dynamicLines: DiagramGpuConnectionLine[]
+  staticLines: DiagramGpuConnectionLine[]
+}
+
 type DragSession = {
   dragStarted?: boolean
   groupId?: string
@@ -89,14 +99,6 @@ type DragSession = {
   originY?: number
   pressedTarget: HitTarget | null
   selectOnPress?: boolean
-}
-
-type TransientNodePositionOverride = {
-  expiresAt: number
-  id: string
-  kind: 'group' | 'object' | 'table'
-  x: number
-  y: number
 }
 
 type TouchPinchSession = {
@@ -156,7 +158,6 @@ const {
 const emit = defineEmits<{
   focusSource: [sourceRange: PgmlSourceRange]
   moveEnd: [payload: { id: string, kind: 'group' | 'object' | 'table', x: number, y: number }]
-  moveNode: [payload: { id: string, kind: 'group' | 'object' | 'table', x: number, y: number }]
   rendererCapabilityChange: [capability: DiagramRendererCapability]
   scaleChange: [scale: number]
   select: [selection: DiagramGpuSelection | null]
@@ -173,7 +174,8 @@ let stageContainer: PixiContainer | null = null
 let backgroundGraphics: PixiGraphics | null = null
 let worldContainer: PixiContainer | null = null
 let groupContainer: PixiContainer | null = null
-let lineGraphics: PixiGraphics | null = null
+let staticLineGraphics: PixiGraphics | null = null
+let dynamicLineGraphics: PixiGraphics | null = null
 let groupHeaderContainer: PixiContainer | null = null
 let tableContainer: PixiContainer | null = null
 let objectContainer: PixiContainer | null = null
@@ -205,9 +207,20 @@ let activeVisibleTableIds = new Set<string>()
 let activeVisibleGroupIds = new Set<string>()
 let activeVisibleObjectIds = new Set<string>()
 let activeVisibleConnectionIds = new Set<string>()
-let renderedDebugGroupCards: Array<{ id: string, x: number, y: number }> = []
-let renderedDebugObjectCards: Array<{ id: string, x: number, y: number }> = []
-let renderedDebugTableCards: Array<{ id: string, x: number, y: number }> = []
+let renderedDebugGroupCards: Array<{ height: number, id: string, width: number, x: number, y: number }> = []
+let renderedDebugObjectCards: Array<{ height: number, id: string, width: number, x: number, y: number }> = []
+let renderedDebugTableCards: Array<{ height: number, id: string, width: number, x: number, y: number }> = []
+let activeDynamicConnectionPreviewNodeId: string | null = null
+let connectionBucketCacheVersion = 0
+let cachedConnectionBucketVersion = -1
+let cachedConnectionBucketPreviewNodeId: string | null = null
+let cachedVisibleConnectionBuckets: VisibleConnectionBuckets = {
+  dynamicLines: [],
+  staticLines: []
+}
+let liveConnectionDragPreview: DiagramConnectionPreviewDragState | null = null
+let liveDragPreview: DiagramNodeDragPreview | null = null
+let dragPreviewRenderScheduled = false
 let fullRenderScheduled = false
 let transformRenderScheduled = false
 let deferredFullRenderTimeout: ReturnType<typeof setTimeout> | null = null
@@ -216,13 +229,11 @@ let lineAnimationOffset = 0
 let hasViewportInteraction = false
 let themeObserver: MutationObserver | null = null
 let activeRendererPreference: SceneRendererPreference = 'webgl'
-const transientNodePositionOverrides = new Map<string, TransientNodePositionOverride>()
 const diagramFallbackMaxTextureDimension = 4096
 const diagramTextureDimensionPadding = 64
 const diagramTextureAreaSafetyRatio = 0.82
 const diagramMinimumTextureResolution = 0.125
 const diagramTextureResolutionStep = 0.125
-const diagramTransientNodePositionOverrideTtlMs = 5000
 let maxSpriteTextureDimension = diagramFallbackMaxTextureDimension
 const rendererCapability: Ref<DiagramRendererCapability> = ref({
   fallbackReason: null,
@@ -559,68 +570,6 @@ const getDragWorldPosition = (session: DragSession, clientX: number, clientY: nu
     x: Math.round((session.originX || 0) + ((clientX - session.originClientX) / Math.max(worldScale, 0.001))),
     y: Math.round((session.originY || 0) + ((clientY - session.originClientY) / Math.max(worldScale, 0.001)))
   }
-}
-
-const getTransientNodePositionOverrideKey = (
-  kind: 'group' | 'object' | 'table',
-  id: string
-) => `${kind}:${id}`
-
-const setTransientNodePositionOverride = (payload: {
-  id: string
-  kind: 'group' | 'object' | 'table'
-  x: number
-  y: number
-}) => {
-  transientNodePositionOverrides.set(getTransientNodePositionOverrideKey(payload.kind, payload.id), {
-    expiresAt: Date.now() + diagramTransientNodePositionOverrideTtlMs,
-    id: payload.id,
-    kind: payload.kind,
-    x: payload.x,
-    y: payload.y
-  })
-}
-
-const getTransientNodePositionOverride = (
-  kind: 'group' | 'object' | 'table',
-  id: string
-) => {
-  const override = transientNodePositionOverrides.get(getTransientNodePositionOverrideKey(kind, id))
-
-  if (!override) {
-    return null
-  }
-
-  if (override.expiresAt <= Date.now()) {
-    transientNodePositionOverrides.delete(getTransientNodePositionOverrideKey(kind, id))
-    return null
-  }
-
-  return override
-}
-
-const syncTransientNodePositionOverrides = () => {
-  transientNodePositionOverrides.forEach((override, key) => {
-    if (override.expiresAt <= Date.now()) {
-      transientNodePositionOverrides.delete(key)
-      return
-    }
-
-    const matchingNode = override.kind === 'group'
-      ? groups.find(group => group.id === override.id)
-      : override.kind === 'table'
-        ? tables.find(table => table.id === override.id)
-        : objects.find(objectNode => objectNode.id === override.id)
-
-    if (!matchingNode) {
-      transientNodePositionOverrides.delete(key)
-      return
-    }
-
-    if (matchingNode.x === override.x && matchingNode.y === override.y) {
-      transientNodePositionOverrides.delete(key)
-    }
-  })
 }
 
 const getDragTargetForHitTarget = (target: HitTarget | null) => {
@@ -1754,23 +1703,39 @@ const publishRendererDebug = () => {
     return
   }
 
-  ;(window as Window & {
+  const typedWindow = window as Window & {
+    __PGML_ENABLE_SCENE_DEBUG__?: boolean
+    __PGML_FORCE_GPU_SCENE__?: boolean
     __pgmlSceneRendererDebug?: {
       background: string
+      connectionDragPreview: DiagramConnectionPreviewDragState | null
+      dragPreview: DiagramNodeDragPreview | null
       fallbackReason: DiagramRendererCapability['fallbackReason']
       isSecureContext: boolean
       rendererBackend: SceneRendererPreference
       requestedRendererBackend: DiagramRendererBackend
       panX: number
       panY: number
-      renderedGroupCards: Array<{ id: string, x: number, y: number }>
-      renderedObjectCards: Array<{ id: string, x: number, y: number }>
-      renderedTableCards: Array<{ id: string, x: number, y: number }>
+      renderedGroupCards: Array<{ height: number, id: string, width: number, x: number, y: number }>
+      renderedObjectCards: Array<{ height: number, id: string, width: number, x: number, y: number }>
+      renderedTableCards: Array<{ height: number, id: string, width: number, x: number, y: number }>
       resolvedRendererBackend: DiagramRendererCapability['resolved']
       scale: number
     }
-  }).__pgmlSceneRendererDebug = {
+  }
+
+  if (
+    typedWindow.__PGML_ENABLE_SCENE_DEBUG__ !== true
+    && typedWindow.__PGML_FORCE_GPU_SCENE__ !== true
+    && !navigator.webdriver
+  ) {
+    return
+  }
+
+  typedWindow.__pgmlSceneRendererDebug = {
     background: sceneTheme.background,
+    connectionDragPreview: liveConnectionDragPreview,
+    dragPreview: liveDragPreview,
     fallbackReason: rendererCapability.value.fallbackReason,
     isSecureContext: rendererCapability.value.isSecureContext,
     rendererBackend: activeRendererPreference,
@@ -1948,24 +1913,110 @@ const drawDashedPolyline = (
   }
 }
 
-const renderConnectionLayer = () => {
-  if (!lineGraphics) {
-    return
+const hasActiveConnectionPreview = (preview: DiagramConnectionPreviewDragState | null) => {
+  return Boolean(preview && (preview.deltaX !== 0 || preview.deltaY !== 0))
+}
+
+const getConnectionPreviewPoints = (
+  line: DiagramGpuConnectionLine,
+  preview: DiagramConnectionPreviewDragState | null
+) => {
+  if (!hasActiveConnectionPreview(preview)) {
+    return line.points
   }
 
-  const nextLineGraphics = lineGraphics
+  const movedFromNode = line.fromOwnerNodeId === preview?.nodeId
+  const movedToNode = line.toOwnerNodeId === preview?.nodeId
 
-  nextLineGraphics.clear()
-
-  if (!showRelationshipLines) {
-    return
+  if (movedFromNode && movedToNode) {
+    return line.points.map((point) => {
+      return {
+        x: point.x + (preview?.deltaX || 0),
+        y: point.y + (preview?.deltaY || 0)
+      }
+    })
   }
 
-  const visibleLines = connections
-    .filter(line => activeVisibleConnectionIds.has(line.key))
+  if (movedFromNode || movedToNode) {
+    return buildDiagramConnectionDragPreviewPoints(
+      line.points,
+      preview?.deltaX || 0,
+      preview?.deltaY || 0,
+      movedFromNode ? 'from' : 'to'
+    )
+  }
+
+  return line.points
+}
+
+const getDynamicConnectionPreviewNodeId = (preview: DiagramConnectionPreviewDragState | null) => {
+  return hasActiveConnectionPreview(preview) ? preview?.nodeId || null : null
+}
+
+const getVisibleConnectionLinesForPreviewNodeId = (previewNodeId: string | null) => {
+  return connections
+    .filter((line) => {
+      return activeVisibleConnectionIds.has(line.key)
+        || (
+          previewNodeId !== null
+          && (line.fromOwnerNodeId === previewNodeId || line.toOwnerNodeId === previewNodeId)
+        )
+    })
     .sort((left, right) => left.zIndex - right.zIndex)
+}
 
-  visibleLines.forEach((line) => {
+const buildVisibleConnectionBuckets = (previewNodeId: string | null): VisibleConnectionBuckets => {
+  const staticLines: DiagramGpuConnectionLine[] = []
+  const dynamicLines: DiagramGpuConnectionLine[] = []
+
+  getVisibleConnectionLinesForPreviewNodeId(previewNodeId).forEach((line) => {
+    const participatesInPreview = previewNodeId !== null
+      && (line.fromOwnerNodeId === previewNodeId || line.toOwnerNodeId === previewNodeId)
+
+    if (participatesInPreview || line.animated) {
+      dynamicLines.push(line)
+      return
+    }
+
+    staticLines.push(line)
+  })
+
+  return {
+    dynamicLines,
+    staticLines
+  }
+}
+
+const getVisibleConnectionBuckets = (preview: DiagramConnectionPreviewDragState | null) => {
+  const previewNodeId = getDynamicConnectionPreviewNodeId(preview)
+
+  if (
+    cachedConnectionBucketVersion === connectionBucketCacheVersion
+    && cachedConnectionBucketPreviewNodeId === previewNodeId
+  ) {
+    return cachedVisibleConnectionBuckets
+  }
+
+  cachedVisibleConnectionBuckets = buildVisibleConnectionBuckets(previewNodeId)
+  cachedConnectionBucketVersion = connectionBucketCacheVersion
+  cachedConnectionBucketPreviewNodeId = previewNodeId
+
+  return cachedVisibleConnectionBuckets
+}
+
+const drawConnectionLines = (
+  graphics: PixiGraphics,
+  lines: DiagramGpuConnectionLine[],
+  preview: DiagramConnectionPreviewDragState | null
+) => {
+  graphics.clear()
+
+  if (!showRelationshipLines || lines.length === 0) {
+    return
+  }
+
+  lines.forEach((line) => {
+    const linePoints = getConnectionPreviewPoints(line, preview)
     const color = hexToNumber(line.color, 0x79e3ea)
     const solidStyle = {
       alpha: line.animated ? 0.62 : 0.72,
@@ -1976,12 +2027,12 @@ const renderConnectionLayer = () => {
     } as const
 
     if (!line.dashed) {
-      drawSolidPolyline(nextLineGraphics, line.points, solidStyle)
+      drawSolidPolyline(graphics, linePoints, solidStyle)
       return
     }
 
     if (line.animated) {
-      drawSolidPolyline(nextLineGraphics, line.points, {
+      drawSolidPolyline(graphics, linePoints, {
         ...solidStyle,
         alpha: 0.18,
         width: 0.94
@@ -1990,8 +2041,8 @@ const renderConnectionLayer = () => {
 
     const dashPattern = parseDashPattern(line.dashPattern)
     drawDashedPolyline(
-      nextLineGraphics,
-      line.points,
+      graphics,
+      linePoints,
       dashPattern,
       line.animated ? lineAnimationOffset : 0,
       {
@@ -2005,9 +2056,33 @@ const renderConnectionLayer = () => {
   })
 }
 
+const renderConnectionLayer = (
+  preview: DiagramConnectionPreviewDragState | null = null,
+  options: {
+    includeStatic?: boolean
+  } = {}
+) => {
+  if (!staticLineGraphics || !dynamicLineGraphics) {
+    return
+  }
+
+  const {
+    includeStatic = true
+  } = options
+  const visibleLines = getVisibleConnectionBuckets(preview)
+
+  if (includeStatic) {
+    drawConnectionLines(staticLineGraphics, visibleLines.staticLines, null)
+  }
+
+  drawConnectionLines(dynamicLineGraphics, visibleLines.dynamicLines, preview)
+}
+
 const syncAnimatedLineLoop = () => {
-  const hasAnimatedVisibleLines = showRelationshipLines && connections.some((line) => {
-    return line.animated && line.dashed && activeVisibleConnectionIds.has(line.key)
+  const hasAnimatedVisibleLines = showRelationshipLines && getVisibleConnectionBuckets(
+    hasActiveConnectionPreview(liveConnectionDragPreview) ? liveConnectionDragPreview : null
+  ).dynamicLines.some((line) => {
+    return line.animated && line.dashed
   })
 
   if (!hasAnimatedVisibleLines) {
@@ -2026,7 +2101,9 @@ const syncAnimatedLineLoop = () => {
 
   const animate = (timestamp: number) => {
     lineAnimationOffset = (timestamp * 0.042) % 24
-    renderConnectionLayer()
+    renderConnectionLayer(hasActiveConnectionPreview(liveConnectionDragPreview) ? liveConnectionDragPreview : null, {
+      includeStatic: false
+    })
     app?.render()
     lineAnimationFrame = requestAnimationFrame(animate)
   }
@@ -2035,11 +2112,20 @@ const syncAnimatedLineLoop = () => {
 }
 
 const renderScene = () => {
-  if (!app || !pixi || !worldContainer || !groupContainer || !groupHeaderContainer || !lineGraphics || !tableContainer || !objectContainer) {
+  if (
+    !app
+    || !pixi
+    || !worldContainer
+    || !groupContainer
+    || !groupHeaderContainer
+    || !staticLineGraphics
+    || !dynamicLineGraphics
+    || !tableContainer
+    || !objectContainer
+  ) {
     return
   }
 
-  syncTransientNodePositionOverrides()
   updateWorldTransform()
 
   const visibleGroupIds = getVisibleIds(groupSpatialIndex, diagramNodeViewportOverscan)
@@ -2051,6 +2137,7 @@ const renderScene = () => {
   activeVisibleTableIds = visibleTableIds
   activeVisibleObjectIds = visibleObjectIds
   activeVisibleConnectionIds = visibleConnectionIds
+  connectionBucketCacheVersion += 1
 
   const groupBasePositionById = groups.reduce<Record<string, { x: number, y: number }>>((entries, group) => {
     entries[group.id] = {
@@ -2061,11 +2148,9 @@ const renderScene = () => {
     return entries
   }, {})
   const groupRenderPositionById = groups.reduce<Record<string, { x: number, y: number }>>((entries, group) => {
-    const override = getTransientNodePositionOverride('group', group.id)
-
     entries[group.id] = {
-      x: override?.x ?? group.x,
-      y: override?.y ?? group.y
+      x: group.x,
+      y: group.y
     }
 
     return entries
@@ -2117,7 +2202,9 @@ const renderScene = () => {
     headerEntry.sprite.position.set(groupRenderPosition.x, groupRenderPosition.y)
     headerEntry.sprite.zIndex = selection?.kind === 'group' && selection.id === group.id ? 4 : 0
     renderedDebugGroupCards.push({
+      height: group.height,
       id: group.id,
+      width: group.width,
       x: groupRenderPosition.x,
       y: groupRenderPosition.y
     })
@@ -2149,13 +2236,6 @@ const renderScene = () => {
         x: table.x + (groupRenderPositionById[table.groupId]?.x || 0) - (groupBasePositionById[table.groupId]?.x || 0),
         y: table.y + (groupRenderPositionById[table.groupId]?.y || 0) - (groupBasePositionById[table.groupId]?.y || 0)
       }
-    } else {
-      const override = getTransientNodePositionOverride('table', table.id)
-
-      renderedTablePosition = {
-        x: override?.x ?? table.x,
-        y: override?.y ?? table.y
-      }
     }
 
     entry.sprite.position.set(renderedTablePosition.x, renderedTablePosition.y)
@@ -2167,7 +2247,9 @@ const renderScene = () => {
           ? 14
           : 10
     renderedDebugTableCards.push({
+      height: table.height,
       id: table.id,
+      width: table.width,
       x: renderedTablePosition.x,
       y: renderedTablePosition.y
     })
@@ -2189,22 +2271,24 @@ const renderScene = () => {
     }
 
     entry.sprite.visible = visibleObjectIds.has(objectNode.id)
-    const override = getTransientNodePositionOverride('object', objectNode.id)
     const objectRenderPosition = {
-      x: override?.x ?? objectNode.x,
-      y: override?.y ?? objectNode.y
+      x: objectNode.x,
+      y: objectNode.y
     }
 
     entry.sprite.position.set(objectRenderPosition.x, objectRenderPosition.y)
     entry.sprite.zIndex = selection?.kind === 'object' && selection.id === objectNode.id ? 16 : 12
     renderedDebugObjectCards.push({
+      height: objectNode.height,
       id: objectNode.id,
+      width: objectNode.width,
       x: objectRenderPosition.x,
       y: objectRenderPosition.y
     })
   })
 
-  renderConnectionLayer()
+  activeDynamicConnectionPreviewNodeId = getDynamicConnectionPreviewNodeId(liveConnectionDragPreview)
+  renderConnectionLayer(liveConnectionDragPreview)
   syncAnimatedLineLoop()
 
   groupContainer.sortChildren()
@@ -2214,6 +2298,106 @@ const renderScene = () => {
 
   publishRendererDebug()
   app.render()
+}
+
+const applyDragPreviewSpritePositions = (preview: DiagramNodeDragPreview | null) => {
+  if (!preview) {
+    return
+  }
+
+  if (preview.kind === 'group') {
+    const groupEntry = groupSpriteEntries.get(preview.id)
+    const groupHeaderEntry = groupHeaderSpriteEntries.get(preview.id)
+
+    groupEntry?.sprite.position.set(preview.x, preview.y)
+    groupHeaderEntry?.sprite.position.set(preview.x, preview.y)
+
+    tables.forEach((table) => {
+      if (table.groupId !== preview.id) {
+        return
+      }
+
+      const tableEntry = tableSpriteEntries.get(table.id)
+
+      tableEntry?.sprite.position.set(table.x + preview.deltaX, table.y + preview.deltaY)
+    })
+
+    return
+  }
+
+  if (preview.kind === 'table') {
+    const tableEntry = tableSpriteEntries.get(preview.id)
+
+    tableEntry?.sprite.position.set(preview.x, preview.y)
+    return
+  }
+
+  const objectEntry = objectSpriteEntries.get(preview.id)
+
+  objectEntry?.sprite.position.set(preview.x, preview.y)
+}
+
+const renderDragPreview = () => {
+  if (!app || !worldContainer) {
+    return
+  }
+
+  updateWorldTransform()
+  applyDragPreviewSpritePositions(liveDragPreview)
+  const nextPreviewNodeId = getDynamicConnectionPreviewNodeId(liveConnectionDragPreview)
+
+  renderConnectionLayer(liveConnectionDragPreview, {
+    includeStatic: nextPreviewNodeId !== activeDynamicConnectionPreviewNodeId
+  })
+  activeDynamicConnectionPreviewNodeId = nextPreviewNodeId
+  syncAnimatedLineLoop()
+  publishRendererDebug()
+  app.render()
+}
+
+const scheduleDragPreviewRender = () => {
+  if (dragPreviewRenderScheduled || destroyed) {
+    return
+  }
+
+  dragPreviewRenderScheduled = true
+  requestAnimationFrame(() => {
+    dragPreviewRenderScheduled = false
+    renderDragPreview()
+  })
+}
+
+const hasActiveNodeDragPreview = (preview: DiagramNodeDragPreview | null) => {
+  return Boolean(preview && (preview.deltaX !== 0 || preview.deltaY !== 0))
+}
+
+const hasAnyActivePreview = () => {
+  return hasActiveNodeDragPreview(liveDragPreview) || hasActiveConnectionPreview(liveConnectionDragPreview)
+}
+
+const handlePreviewStateChange = (previousPreviewActive: boolean) => {
+  if (hasAnyActivePreview()) {
+    scheduleDragPreviewRender()
+    return
+  }
+
+  if (previousPreviewActive) {
+    scheduleFullRender()
+  }
+}
+
+const setDragPreview = (preview: DiagramNodeDragPreview | null) => {
+  const previousPreviewActive = hasAnyActivePreview()
+
+  liveDragPreview = preview
+  handlePreviewStateChange(previousPreviewActive)
+}
+
+const setConnectionDragPreview = (preview: DiagramConnectionPreviewDragState | null) => {
+  const previousPreviewActive = hasAnyActivePreview()
+
+  liveConnectionDragPreview = preview
+  handlePreviewStateChange(previousPreviewActive)
 }
 
 const getResetViewTransform = (
@@ -2505,20 +2689,21 @@ const handlePointerMove = (event: PointerEvent) => {
   const nextPosition = getDragWorldPosition(dragSession, event.clientX, event.clientY)
   dragSession.lastDragX = nextPosition.x
   dragSession.lastDragY = nextPosition.y
-  setTransientNodePositionOverride({
-    id: dragSession.nodeId,
-    kind: dragSession.nodeKind,
-    x: nextPosition.x,
-    y: nextPosition.y
-  })
-  scheduleFullRender()
 
-  emit('moveNode', {
+  const currentPreview: DiagramNodeDragPreview = {
+    deltaX: nextPosition.x - (dragSession.originX || 0),
+    deltaY: nextPosition.y - (dragSession.originY || 0),
     id: dragSession.nodeId,
     kind: dragSession.nodeKind,
+    nodeId: dragSession.nodeId,
+    originX: dragSession.originX || 0,
+    originY: dragSession.originY || 0,
     x: nextPosition.x,
     y: nextPosition.y
-  })
+  }
+
+  setDragPreview(currentPreview)
+  setConnectionDragPreview(currentPreview)
 }
 
 const handleTouchMove = (event: TouchEvent) => {
@@ -2586,13 +2771,6 @@ const handlePointerUp = (event: PointerEvent) => {
         }
       : getDragWorldPosition(dragSession, event.clientX, event.clientY)
 
-    setTransientNodePositionOverride({
-      id: dragSession.nodeId,
-      kind: dragSession.nodeKind,
-      x: finalPosition.x,
-      y: finalPosition.y
-    })
-    scheduleFullRender()
     emit('moveEnd', {
       id: dragSession.nodeId,
       kind: dragSession.nodeKind,
@@ -2790,7 +2968,8 @@ const initPixi = async (initialTransform: ViewTransform | null = null) => {
   backgroundGraphics = new pixi.Graphics()
   worldContainer = new pixi.Container()
   groupContainer = new pixi.Container()
-  lineGraphics = new pixi.Graphics()
+  staticLineGraphics = new pixi.Graphics()
+  dynamicLineGraphics = new pixi.Graphics()
   groupHeaderContainer = new pixi.Container()
   tableContainer = new pixi.Container()
   objectContainer = new pixi.Container()
@@ -2801,7 +2980,8 @@ const initPixi = async (initialTransform: ViewTransform | null = null) => {
   objectContainer.sortableChildren = true
 
   worldContainer.addChild(groupContainer)
-  worldContainer.addChild(lineGraphics)
+  worldContainer.addChild(staticLineGraphics)
+  worldContainer.addChild(dynamicLineGraphics)
   worldContainer.addChild(groupHeaderContainer)
   worldContainer.addChild(tableContainer)
   worldContainer.addChild(objectContainer)
@@ -2828,7 +3008,16 @@ const initPixi = async (initialTransform: ViewTransform | null = null) => {
 const destroyPixi = () => {
   destroyed = true
   resetTouchInteraction()
-  transientNodePositionOverrides.clear()
+  liveDragPreview = null
+  liveConnectionDragPreview = null
+  dragPreviewRenderScheduled = false
+  connectionBucketCacheVersion = 0
+  cachedConnectionBucketVersion = -1
+  cachedConnectionBucketPreviewNodeId = null
+  cachedVisibleConnectionBuckets = {
+    dynamicLines: [],
+    staticLines: []
+  }
   if (deferredFullRenderTimeout !== null) {
     clearTimeout(deferredFullRenderTimeout)
     deferredFullRenderTimeout = null
@@ -2849,7 +3038,9 @@ const destroyPixi = () => {
   backgroundGraphics = null
   worldContainer = null
   groupContainer = null
-  lineGraphics = null
+  staticLineGraphics = null
+  dynamicLineGraphics = null
+  activeDynamicConnectionPreviewNodeId = null
   groupHeaderContainer = null
   tableContainer = null
   objectContainer = null
@@ -2995,11 +3186,15 @@ defineExpose<{
   focusBounds: (bounds: FocusBounds, padding?: number) => void
   getScale: () => number
   resetView: () => void
+  setConnectionDragPreview: (preview: DiagramConnectionPreviewDragState | null) => void
+  setDragPreview: (preview: DiagramNodeDragPreview | null) => void
   zoomBy: (direction: 1 | -1) => void
 }>({
   focusBounds,
   getScale: () => worldScale,
   resetView,
+  setConnectionDragPreview,
+  setDragPreview,
   zoomBy
 })
 </script>

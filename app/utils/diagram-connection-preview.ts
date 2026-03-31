@@ -4,6 +4,15 @@ export type DiagramConnectionPreviewDragState = {
   deltaY: number
 }
 
+export type DiagramNodeDragPreview = DiagramConnectionPreviewDragState & {
+  id: string
+  kind: 'group' | 'object' | 'table'
+  originX: number
+  originY: number
+  x: number
+  y: number
+}
+
 export type DiagramConnectionPreviewPoint = {
   x: number
   y: number
@@ -123,7 +132,7 @@ const buildDraggedEndpointBridgePoint = (
       }
 }
 
-export const buildDiagramConnectionDragPreviewPath = (
+export const buildDiagramConnectionDragPreviewPoints = (
   points: DiagramConnectionPreviewPoint[],
   deltaX: number,
   deltaY: number,
@@ -132,14 +141,14 @@ export const buildDiagramConnectionDragPreviewPath = (
   const firstPoint = points[0]
 
   if (!firstPoint || (deltaX === 0 && deltaY === 0)) {
-    return buildPathFromPoints(points)
+    return points
   }
 
   if (points.length === 1) {
-    return buildPathFromPoints([{
+    return [{
       x: firstPoint.x + deltaX,
       y: firstPoint.y + deltaY
-    }])
+    }]
   }
 
   const previewPoints: DiagramConnectionPreviewPoint[] = []
@@ -148,10 +157,10 @@ export const buildDiagramConnectionDragPreviewPath = (
     const secondPoint = points[1]
 
     if (!secondPoint) {
-      return buildPathFromPoints([{
+      return [{
         x: firstPoint.x + deltaX,
         y: firstPoint.y + deltaY
-      }])
+      }]
     }
 
     const movedPoint = {
@@ -166,7 +175,7 @@ export const buildDiagramConnectionDragPreviewPath = (
       appendRoutePoint(previewPoints, point)
     })
 
-    return buildPathFromPoints(previewPoints)
+    return previewPoints
   }
 
   const movedPoint = {
@@ -181,6 +190,17 @@ export const buildDiagramConnectionDragPreviewPath = (
   })
   appendRoutePoint(previewPoints, bridgePoint)
   appendRoutePoint(previewPoints, movedPoint)
+
+  return previewPoints
+}
+
+export const buildDiagramConnectionDragPreviewPath = (
+  points: DiagramConnectionPreviewPoint[],
+  deltaX: number,
+  deltaY: number,
+  movedEnd: 'from' | 'to'
+) => {
+  const previewPoints = buildDiagramConnectionDragPreviewPoints(points, deltaX, deltaY, movedEnd)
 
   return buildPathFromPoints(previewPoints)
 }

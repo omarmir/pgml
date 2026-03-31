@@ -1,6 +1,6 @@
 import { readFile } from 'node:fs/promises'
 import { resolve } from 'node:path'
-import { chromium, type Page } from 'playwright'
+import { chromium, type Browser, type BrowserContext, type Page } from 'playwright'
 
 import { convertPgDumpToPgml } from '../app/utils/pg-dump-import'
 
@@ -28,7 +28,10 @@ type BenchmarkDragTargetPoint = {
 }
 
 type BenchmarkSummary = {
-  drag: FrameProbeResult
+  drag: {
+    dom: FrameProbeResult
+    gpu: FrameProbeResult
+  }
   fixture: {
     pgmlCharacters: number
     schemaName: string
@@ -40,6 +43,8 @@ type BenchmarkSummary = {
   scene: DiagramSceneSummary
   zoom: FrameProbeResult
 }
+
+type BenchmarkMode = 'dom' | 'gpu'
 
 type StyleProbeTarget = {
   kind: 'rect' | 'viewport-transform-writes'
@@ -57,6 +62,38 @@ type ProbeWindow = Window & typeof globalThis & {
     start: (target: StyleProbeTarget) => void
     stop: () => FrameProbeResult
   }
+  __PGML_FORCE_GPU_SCENE__?: boolean
+  __pgmlSceneRendererDebug?: {
+    dragPreview: {
+      id: string
+      x: number
+      y: number
+    } | null
+    panX: number
+    panY: number
+    renderedGroupCards: Array<{
+      height: number
+      id: string
+      width: number
+      x: number
+      y: number
+    }>
+    renderedObjectCards: Array<{
+      height: number
+      id: string
+      width: number
+      x: number
+      y: number
+    }>
+    renderedTableCards: Array<{
+      height: number
+      id: string
+      width: number
+      x: number
+      y: number
+    }>
+    scale: number
+  }
 }
 
 const studioLaunchAccessStorageKey = 'pgml-studio-launch-access-v1'
@@ -73,6 +110,50 @@ const baseUrl = process.env.PGML_BENCHMARK_BASE_URL || 'http://127.0.0.1:3001'
 
 const roundMetric = (value: number) => {
   return Math.round(value * 100) / 100
+}
+
+const createBenchmarkContext = async (
+  browser: Browser,
+  input: {
+    schemaId: string
+    schemaName: string
+    schemaText: string
+  },
+  options: {
+    forceGpuScene: boolean
+  }
+) => {
+  const context = await browser.newContext({
+    viewport: {
+      height: 900,
+      width: 1600
+    }
+  })
+
+  await context.addInitScript((payload) => {
+    sessionStorage.setItem(payload.studioLaunchAccessStorageKey, 'granted')
+    localStorage.setItem(payload.savedSchemaStorageKey, JSON.stringify([
+      {
+        id: payload.schemaId,
+        name: payload.schemaName,
+        text: payload.schemaText,
+        updatedAt: new Date().toISOString()
+      }
+    ]))
+
+    if (payload.forceGpuScene) {
+      ;(window as ProbeWindow).__PGML_FORCE_GPU_SCENE__ = true
+    }
+  }, {
+    forceGpuScene: options.forceGpuScene,
+    savedSchemaStorageKey,
+    schemaId: input.schemaId,
+    schemaName: input.schemaName,
+    schemaText: input.schemaText,
+    studioLaunchAccessStorageKey
+  })
+
+  return context
 }
 
 const installStyleProbe = async (page: Page) => {
@@ -251,13 +332,23 @@ const hideChromeAroundDiagram = async (page: Page) => {
   }
 }
 
-const waitForDiagramReady = async (page: Page) => {
+const waitForDiagramReady = async (page: Page, mode: BenchmarkMode = 'dom') => {
   await page.waitForSelector('[data-diagram-viewport="true"]', {
     state: 'visible'
   })
-  await page.waitForFunction(() => {
-    return document.querySelectorAll('[data-node-anchor]').length >= 25
-  })
+
+  if (mode === 'gpu') {
+    await page.waitForFunction(() => {
+      const typedWindow = window as ProbeWindow
+
+      return (typedWindow.__pgmlSceneRendererDebug?.renderedObjectCards.length || 0) >= 1
+    })
+  } else {
+    await page.waitForFunction(() => {
+      return document.querySelectorAll('[data-node-anchor]').length >= 25
+    })
+  }
+
   await page.waitForTimeout(1200)
   await hideChromeAroundDiagram(page)
   await page.waitForTimeout(500)
@@ -393,10 +484,87 @@ const getDragTargetPoint = async (page: Page) => {
   })
 }
 
+const getGpuDragTargetPoint = async (page: Page) => {
+  return await page.evaluate(() => {
+    const typedWindow = window as ProbeWindow
+    const debugState = typedWindow.__pgmlSceneRendererDebug
+    const viewport = document.querySelector('[data-diagram-viewport="true"]')
+    const viewportBounds = viewport?.getBoundingClientRect()
+
+    if (!debugState || !viewportBounds) {
+      return null
+    }
+
+    const findVisibleCard = (cards: Array<{ height: number, id: string, width: number, x: number, y: number }>) => {
+      return cards.find((card) => {
+        const left = card.x * debugState.scale + debugState.panX
+        const top = card.y * debugState.scale + debugState.panY
+        const width = card.width * debugState.scale
+        const height = card.height * debugState.scale
+
+        return (
+          width > 32
+          && height > 20
+          && left + Math.min(width, 48) >= 24
+          && left <= viewportBounds.width - 24
+          && top + Math.min(height, 32) >= 24
+          && top <= viewportBounds.height - 24
+        )
+      })
+    }
+
+    const candidate = findVisibleCard(debugState.renderedObjectCards)
+      || findVisibleCard(debugState.renderedGroupCards)
+      || findVisibleCard(debugState.renderedTableCards)
+
+    if (!candidate) {
+      return null
+    }
+
+    const left = candidate.x * debugState.scale + debugState.panX
+    const top = candidate.y * debugState.scale + debugState.panY
+    const width = candidate.width * debugState.scale
+    const height = candidate.height * debugState.scale
+    const targetX = Math.min(Math.max(left + Math.min(36, width / 2), 24), viewportBounds.width - 24)
+    const targetY = Math.min(Math.max(top + Math.min(24, height * 0.25), 24), viewportBounds.height - 24)
+
+    return {
+      nodeId: candidate.id,
+      x: viewportBounds.left + targetX,
+      y: viewportBounds.top + targetY
+    } satisfies BenchmarkDragTargetPoint
+  })
+}
+
 const readInlineStyle = async (page: Page, selector: string) => {
   return await page.evaluate((targetSelector) => {
     return document.querySelector(targetSelector)?.getAttribute('style') || ''
   }, selector)
+}
+
+const readGpuDragSignature = async (page: Page, nodeId: string) => {
+  return await page.evaluate((targetNodeId) => {
+    const typedWindow = window as ProbeWindow
+    const debugState = typedWindow.__pgmlSceneRendererDebug
+
+    if (!debugState) {
+      return 'missing-debug'
+    }
+
+    if (debugState.dragPreview) {
+      return `${debugState.dragPreview.id}:${debugState.dragPreview.x.toFixed(2)}:${debugState.dragPreview.y.toFixed(2)}`
+    }
+
+    const card = debugState.renderedObjectCards.find(entry => entry.id === targetNodeId)
+      || debugState.renderedGroupCards.find(entry => entry.id === targetNodeId)
+      || debugState.renderedTableCards.find(entry => entry.id === targetNodeId)
+
+    if (!card) {
+      return 'missing-card'
+    }
+
+    return `${card.x.toFixed(2)}:${card.y.toFixed(2)}`
+  }, nodeId)
 }
 
 const summarizeFrameTimes = (frameTimes: number[]) => {
@@ -464,14 +632,28 @@ const measureStepwiseMotion = async (
   runStep: (step: number) => Promise<void>,
   stepCount: number
 ) => {
-  let previousSignature = await readBoundingBoxSignature(page, selector)
+  return await measureStepwiseSignature(
+    page,
+    () => readBoundingBoxSignature(page, selector),
+    runStep,
+    stepCount
+  )
+}
+
+const measureStepwiseSignature = async (
+  page: Page,
+  readSignature: () => Promise<string>,
+  runStep: (step: number) => Promise<void>,
+  stepCount: number
+) => {
+  let previousSignature = await readSignature()
   const frameTimes: number[] = []
 
   for (let step = 0; step < stepCount; step += 1) {
     await runStep(step)
     await page.waitForTimeout(benchmarkStepDelayMs)
 
-    const nextSignature = await readBoundingBoxSignature(page, selector)
+    const nextSignature = await readSignature()
 
     if (nextSignature !== previousSignature) {
       frameTimes.push(performance.now())
@@ -592,38 +774,58 @@ const measureZoomFps = async (page: Page) => {
   return result
 }
 
-const measureDragFps = async (page: Page) => {
-  const targetPoint = await getDragTargetPoint(page)
+const measureDragFps = async (page: Page, mode: BenchmarkMode) => {
+  const targetPoint = mode === 'gpu'
+    ? await getGpuDragTargetPoint(page)
+    : await getDragTargetPoint(page)
 
   if (!targetPoint) {
-    throw new Error('Unable to find a visible node header for the drag benchmark.')
+    throw new Error(`Unable to find a visible node header for the ${mode} drag benchmark.`)
   }
 
   const selector = `[data-node-anchor="${targetPoint.nodeId}"]`
-  const styleBeforeDrag = await readInlineStyle(page, selector)
+  const styleBeforeDrag = mode === 'gpu'
+    ? await readGpuDragSignature(page, targetPoint.nodeId)
+    : await readInlineStyle(page, selector)
 
   await page.mouse.move(targetPoint.x, targetPoint.y)
   await page.mouse.down()
 
-  const result = await measureStepwiseMotion(
-    page,
-    selector,
-    async (step) => {
-      const progress = (step + 1) / benchmarkStepCount
+  const result = mode === 'gpu'
+    ? await measureStepwiseSignature(
+        page,
+        () => readGpuDragSignature(page, targetPoint.nodeId),
+        async (step) => {
+          const progress = (step + 1) / benchmarkStepCount
 
-      await page.mouse.move(
-        targetPoint.x + benchmarkDragDistance * progress,
-        targetPoint.y
+          await page.mouse.move(
+            targetPoint.x + benchmarkDragDistance * progress,
+            targetPoint.y
+          )
+        },
+        benchmarkStepCount
       )
-    },
-    benchmarkStepCount
-  )
+    : await measureStepwiseMotion(
+        page,
+        selector,
+        async (step) => {
+          const progress = (step + 1) / benchmarkStepCount
+
+          await page.mouse.move(
+            targetPoint.x + benchmarkDragDistance * progress,
+            targetPoint.y
+          )
+        },
+        benchmarkStepCount
+      )
 
   await page.mouse.up()
-  const styleAfterDrag = await readInlineStyle(page, selector)
+  const styleAfterDrag = mode === 'gpu'
+    ? await readGpuDragSignature(page, targetPoint.nodeId)
+    : await readInlineStyle(page, selector)
 
   if (styleBeforeDrag === styleAfterDrag && result.frameCount < 1) {
-    throw new Error(`Drag benchmark did not move node ${targetPoint.nodeId}.`)
+    throw new Error(`Drag benchmark did not move node ${targetPoint.nodeId} in ${mode} mode.`)
   }
 
   return result
@@ -635,13 +837,13 @@ const benchmarkDiagram = async (page: Page) => {
   const loadStartedAt = performance.now()
 
   await page.goto(`${baseUrl}/diagram?launch=saved&schema=${benchmarkSchemaId}&source=browser`)
-  await waitForDiagramReady(page)
+  await waitForDiagramReady(page, 'dom')
 
   const loadMs = roundMetric(performance.now() - loadStartedAt)
   const scene = await readSceneSummary(page)
   const pan = await measurePanFps(page)
   const zoom = await measureZoomFps(page)
-  const drag = await measureDragFps(page)
+  const drag = await measureDragFps(page, 'dom')
 
   return {
     drag,
@@ -650,6 +852,13 @@ const benchmarkDiagram = async (page: Page) => {
     scene,
     zoom
   }
+}
+
+const benchmarkGpuDrag = async (page: Page) => {
+  await page.goto(`${baseUrl}/diagram?launch=saved&schema=${benchmarkSchemaId}&source=browser`)
+  await waitForDiagramReady(page, 'gpu')
+
+  return await measureDragFps(page, 'gpu')
 }
 
 const main = async () => {
@@ -666,38 +875,36 @@ const main = async () => {
     ],
     headless: true
   })
-  const context = await browser.newContext({
-    viewport: {
-      height: 900,
-      width: 1600
-    }
-  })
-
-  await context.addInitScript((input) => {
-    sessionStorage.setItem(input.studioLaunchAccessStorageKey, 'granted')
-    localStorage.setItem(input.savedSchemaStorageKey, JSON.stringify([
-      {
-        id: input.schemaId,
-        name: input.schemaName,
-        text: input.schemaText,
-        updatedAt: new Date().toISOString()
-      }
-    ]))
-  }, {
-    savedSchemaStorageKey,
+  const benchmarkInput = {
     schemaId: benchmarkSchemaId,
     schemaName: benchmarkSchemaName,
-    schemaText: importResult.pgml,
-    studioLaunchAccessStorageKey
-  })
-
-  const page = await context.newPage()
+    schemaText: importResult.pgml
+  }
+  let domContext: BrowserContext | null = null
+  let gpuContext: BrowserContext | null = null
+  let domPage: Page | null = null
+  let gpuPage: Page | null = null
 
   try {
-    await page.bringToFront()
-    const metrics = await benchmarkDiagram(page)
+    domContext = await createBenchmarkContext(browser, benchmarkInput, {
+      forceGpuScene: false
+    })
+    domPage = await domContext.newPage()
+    await domPage.bringToFront()
+    const metrics = await benchmarkDiagram(domPage)
+
+    gpuContext = await createBenchmarkContext(browser, benchmarkInput, {
+      forceGpuScene: true
+    })
+    gpuPage = await gpuContext.newPage()
+    await gpuPage.bringToFront()
+    const gpuDrag = await benchmarkGpuDrag(gpuPage)
+
     const output: BenchmarkSummary = {
-      drag: metrics.drag,
+      drag: {
+        dom: metrics.drag,
+        gpu: gpuDrag
+      },
       fixture: {
         pgmlCharacters: importResult.pgml.length,
         schemaName: importResult.schemaName,
@@ -712,8 +919,10 @@ const main = async () => {
 
     console.log(JSON.stringify(output, null, 2))
   } finally {
-    await page.close()
-    await context.close()
+    await gpuPage?.close()
+    await gpuContext?.close()
+    await domPage?.close()
+    await domContext?.close()
     await browser.close()
   }
 }
