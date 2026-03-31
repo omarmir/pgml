@@ -86,6 +86,7 @@ export type PgmlDiagramViewItem = {
 }
 
 export type PgmlDiagramViewSettings = {
+  snapToGrid: boolean
   showExecutableObjects: boolean
   showRelationshipLines: boolean
   showTableFields: boolean
@@ -409,6 +410,26 @@ const buildNextDiagramViewName = (
   return `View ${index}`
 }
 
+const normalizeDiagramViewName = (value: string | null | undefined) => {
+  return value?.trim() || ''
+}
+
+const hasDiagramViewName = (
+  views: PgmlDocumentDiagramView[],
+  name: string,
+  options?: {
+    excludeViewId?: string | null
+  }
+) => {
+  return views.some((view) => {
+    if (options?.excludeViewId && view.id === options.excludeViewId) {
+      return false
+    }
+
+    return view.name === name
+  })
+}
+
 export const usePgmlStudioVersionHistory = (
   input: {
     documentName: ComputedRef<string>
@@ -571,6 +592,12 @@ export const usePgmlStudioVersionHistory = (
     return previewBlock ? getPgmlDocumentView(previewBlock, previewBlock.activeViewId) : null
   })
   const activeDiagramViewId = computed(() => activeDiagramView.value?.id || null)
+  const activeDiagramViewName = computed(() => activeDiagramView.value?.name || '')
+  const nextDiagramViewName = computed(() => {
+    const previewBlock = currentPreviewBlock.value
+
+    return buildNextDiagramViewName(previewBlock?.views || [])
+  })
   const diagramViewItems = computed<PgmlDiagramViewItem[]>(() => {
     const previewBlock = currentPreviewBlock.value
 
@@ -578,6 +605,7 @@ export const usePgmlStudioVersionHistory = (
   })
   const diagramViewSettings = computed<PgmlDiagramViewSettings>(() => {
     return {
+      snapToGrid: activeDiagramView.value?.snapToGrid ?? true,
       showExecutableObjects: activeDiagramView.value?.showExecutableObjects ?? true,
       showRelationshipLines: activeDiagramView.value?.showRelationshipLines ?? true,
       showTableFields: activeDiagramView.value?.showTableFields ?? true
@@ -671,6 +699,7 @@ export const usePgmlStudioVersionHistory = (
       const nextView = createPgmlDocumentView({
         name: buildNextDiagramViewName(block.views),
         nodeProperties: currentView?.nodeProperties || {},
+        snapToGrid: currentView?.snapToGrid ?? true,
         showExecutableObjects: currentView?.showExecutableObjects ?? true,
         showRelationshipLines: currentView?.showRelationshipLines ?? true,
         showTableFields: currentView?.showTableFields ?? true
@@ -679,6 +708,38 @@ export const usePgmlStudioVersionHistory = (
       block.views = [...block.views.map(clonePgmlDocumentView), nextView]
       block.activeViewId = nextView.id
     })
+  }
+
+  const createNamedDiagramView = (name: string) => {
+    const normalizedName = normalizeDiagramViewName(name)
+
+    if (normalizedName.length === 0) {
+      return false
+    }
+
+    let didCreate = false
+
+    const didUpdate = updatePreviewBlockViews((block) => {
+      if (hasDiagramViewName(block.views, normalizedName)) {
+        return
+      }
+
+      const currentView = getPgmlDocumentView(block, block.activeViewId)
+      const nextView = createPgmlDocumentView({
+        name: normalizedName,
+        nodeProperties: currentView?.nodeProperties || {},
+        snapToGrid: currentView?.snapToGrid ?? true,
+        showExecutableObjects: currentView?.showExecutableObjects ?? true,
+        showRelationshipLines: currentView?.showRelationshipLines ?? true,
+        showTableFields: currentView?.showTableFields ?? true
+      })
+
+      block.views = [...block.views.map(clonePgmlDocumentView), nextView]
+      block.activeViewId = nextView.id
+      didCreate = true
+    })
+
+    return didUpdate && didCreate
   }
 
   const deleteActiveDiagramView = () => {
@@ -710,12 +771,47 @@ export const usePgmlStudioVersionHistory = (
 
         return createPgmlDocumentView({
           ...view,
+          snapToGrid: settings.snapToGrid ?? view.snapToGrid,
           showExecutableObjects: settings.showExecutableObjects ?? view.showExecutableObjects,
           showRelationshipLines: settings.showRelationshipLines ?? view.showRelationshipLines,
           showTableFields: settings.showTableFields ?? view.showTableFields
         })
       })
     })
+  }
+
+  const renameActiveDiagramView = (name: string) => {
+    const normalizedName = normalizeDiagramViewName(name)
+    const currentActiveViewId = activeDiagramViewId.value
+
+    if (normalizedName.length === 0 || !currentActiveViewId) {
+      return false
+    }
+
+    let didRename = false
+
+    const didUpdate = updatePreviewBlockViews((block) => {
+      if (hasDiagramViewName(block.views, normalizedName, {
+        excludeViewId: currentActiveViewId
+      })) {
+        return
+      }
+
+      block.views = block.views.map((view) => {
+        if (view.id !== currentActiveViewId) {
+          return clonePgmlDocumentView(view)
+        }
+
+        didRename = true
+
+        return createPgmlDocumentView({
+          ...view,
+          name: normalizedName
+        })
+      })
+    })
+
+    return didUpdate && didRename
   }
 
   const updateCurrentDiagramViewNodeProperties = (
@@ -884,6 +980,7 @@ export const usePgmlStudioVersionHistory = (
 
   return {
     activeDiagramViewId,
+    activeDiagramViewName,
     compareBaseId,
     compareBaseSource,
     compareBaseVersion,
@@ -895,6 +992,7 @@ export const usePgmlStudioVersionHistory = (
     canDeleteDiagramView,
     createCheckpoint,
     createDiagramView,
+    createNamedDiagramView,
     document,
     diagramViewItems,
     diagramViewSettings,
@@ -911,6 +1009,7 @@ export const usePgmlStudioVersionHistory = (
     previewTargetId,
     replaceWorkspaceFromImportedSnapshot,
     replaceWorkspaceFromVersion,
+    renameActiveDiagramView,
     resetDocument,
     rootVersions,
     selectDiagramView,
@@ -924,6 +1023,7 @@ export const usePgmlStudioVersionHistory = (
     latestLeafImplementationVersion,
     latestLeafVersion,
     latestImplementationVersion,
+    nextDiagramViewName,
     updateCurrentDiagramViewNodeProperties,
     updateCurrentDiagramViewSettings,
     versionItems,

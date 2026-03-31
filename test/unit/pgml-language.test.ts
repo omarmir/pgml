@@ -524,6 +524,7 @@ Ref: public.users.id > public.u`
     View "Default" {
       id: version_default
       show_l
+      snap
     }
   }
 }`
@@ -532,6 +533,7 @@ Ref: public.users.id > public.u`
     const workspaceViewItems = getPgmlCompletionItems(source, source.indexOf('\n\n    Vi') + '\n\n    Vi'.length)
     const viewPropertiesItems = getPgmlCompletionItems(source, source.indexOf('Prop') + 'Prop'.length)
     const viewBooleanItems = getPgmlCompletionItems(source, source.indexOf('show_l') + 'show_l'.length)
+    const viewSnapItems = getPgmlCompletionItems(source, source.indexOf('snap') + 'snap'.length)
 
     expect(workspaceMetadataItems).toEqual(expect.arrayContaining([
       expect.objectContaining({
@@ -554,6 +556,12 @@ Ref: public.users.id > public.u`
     expect(viewBooleanItems).toEqual(expect.arrayContaining([
       expect.objectContaining({
         label: 'show_lines',
+        kind: 'property'
+      })
+    ]))
+    expect(viewSnapItems).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        label: 'snap_to_grid',
         kind: 'property'
       })
     ]))

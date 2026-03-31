@@ -25,6 +25,7 @@ export type PgmlDocumentDiagramView = {
   id: string
   name: string
   nodeProperties: Record<string, PgmlNodeProperties>
+  snapToGrid: boolean
   showExecutableObjects: boolean
   showRelationshipLines: boolean
   showTableFields: boolean
@@ -105,6 +106,7 @@ export const createPgmlDocumentView = (input?: {
   id?: string | null
   name?: string | null
   nodeProperties?: Record<string, PgmlNodeProperties>
+  snapToGrid?: boolean
   showExecutableObjects?: boolean
   showRelationshipLines?: boolean
   showTableFields?: boolean
@@ -113,6 +115,7 @@ export const createPgmlDocumentView = (input?: {
     id: input?.id && input.id.trim().length > 0 ? input.id.trim() : createPgmlDocumentViewId(),
     name: input?.name && input.name.trim().length > 0 ? input.name.trim() : defaultPgmlDocumentViewName,
     nodeProperties: clonePgmlNodePropertiesRecord(input?.nodeProperties || {}),
+    snapToGrid: input?.snapToGrid ?? true,
     showExecutableObjects: input?.showExecutableObjects ?? true,
     showRelationshipLines: input?.showRelationshipLines ?? true,
     showTableFields: input?.showTableFields ?? true
@@ -312,6 +315,7 @@ const normalizePgmlDocumentViewForComparison = (view: PgmlDocumentDiagramView) =
   return {
     name: view.name,
     nodePropertiesSource: buildPgmlWithNodeProperties('', view.nodeProperties),
+    snapToGrid: view.snapToGrid,
     showExecutableObjects: view.showExecutableObjects,
     showRelationshipLines: view.showRelationshipLines,
     showTableFields: view.showTableFields
@@ -341,7 +345,12 @@ const hasMeaningfulPgmlDocumentViewState = (owner: PgmlViewOwnerBlock) => {
     return true
   }
 
-  if (!firstView.showRelationshipLines || !firstView.showExecutableObjects || !firstView.showTableFields) {
+  if (
+    !firstView.showRelationshipLines
+    || !firstView.showExecutableObjects
+    || !firstView.showTableFields
+    || !firstView.snapToGrid
+  ) {
     return true
   }
 
@@ -909,6 +918,10 @@ const parseViewBlock = (block: PgmlNamedBlock, context: string): PgmlDocumentDia
     id: metadata.id || null,
     name: viewName,
     nodeProperties: viewSource.length > 0 ? parsePgml(viewSource).nodeProperties : {},
+    snapToGrid: parseViewBooleanMetadata(
+      metadata.snap_to_grid || metadata.snap,
+      true
+    ),
     showExecutableObjects: parseViewBooleanMetadata(
       metadata.show_execs || metadata.execs,
       true
@@ -1221,6 +1234,10 @@ const buildViewBlock = (
 
   if (!view.showRelationshipLines) {
     lines.push(buildMetadataLine('show_lines', 'false', level + 1))
+  }
+
+  if (!view.snapToGrid) {
+    lines.push(buildMetadataLine('snap_to_grid', 'false', level + 1))
   }
 
   if (!view.showExecutableObjects) {

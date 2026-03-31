@@ -235,6 +235,7 @@ const viewKeywordTemplates = [
 const viewMetadataKeywordTemplates = [
   { label: 'id', detail: 'Persist the stable id for this view.', apply: 'id: ' },
   { label: 'show_lines', detail: 'Hide or show relationship lines in this view.', apply: 'show_lines: false' },
+  { label: 'snap_to_grid', detail: 'Persist whether node drops snap to the grid in this view.', apply: 'snap_to_grid: false' },
   { label: 'show_execs', detail: 'Hide or show executable objects in this view.', apply: 'show_execs: false' },
   { label: 'show_fields', detail: 'Hide or show table fields in this view.', apply: 'show_fields: false' }
 ] as const
@@ -246,7 +247,7 @@ const versionRoleValueTemplates = [
 
 const workspaceMetadataKeys = new Set(['based_on', 'updated_at', 'active_view'])
 const versionMetadataKeys = new Set(['name', 'role', 'parent', 'created_at', 'active_view', 'default_view'])
-const viewMetadataKeys = new Set(['id', 'show_lines', 'lines', 'show_execs', 'execs', 'show_fields', 'fields'])
+const viewMetadataKeys = new Set(['id', 'show_lines', 'lines', 'snap_to_grid', 'snap', 'show_execs', 'execs', 'show_fields', 'fields'])
 
 const tableBodyKeywordTemplates = [
   { label: 'Note:', detail: 'Add a table note.', apply: 'Note: ' },
@@ -2223,7 +2224,7 @@ const analyzeViewBlock = (
     entryCode: 'pgml/view-entry',
     entryMessage: 'View blocks only allow metadata entries and nested Properties blocks.',
     keyCode: 'pgml/view-key',
-    keyMessage: 'View blocks only support `id`, `show_lines`, `show_execs`, and `show_fields` metadata.'
+    keyMessage: 'View blocks only support `id`, `show_lines`, `snap_to_grid`, `show_execs`, and `show_fields` metadata.'
   })
 
   metadataLines.forEach(({ entry, line }) => {
@@ -2232,6 +2233,8 @@ const analyzeViewBlock = (
     if (!entry || !normalizedKey || (
       normalizedKey !== 'show_lines'
       && normalizedKey !== 'lines'
+      && normalizedKey !== 'snap_to_grid'
+      && normalizedKey !== 'snap'
       && normalizedKey !== 'show_execs'
       && normalizedKey !== 'execs'
       && normalizedKey !== 'show_fields'

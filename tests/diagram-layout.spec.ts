@@ -251,28 +251,47 @@ test('diagram toolbar can hide fields and executable attachments', async ({ goto
 test('diagram views persist toolbar visibility settings independently', async ({ goto, page }) => {
   await goto('/diagram')
 
+  const editor = getPgmlEditor(page)
   const viewSelect = page.locator('[data-diagram-view-select="desktop"]')
   const createViewButton = page.locator('[data-diagram-view-create="desktop"]')
+  const renameViewButton = page.locator('[data-diagram-view-rename="desktop"]')
+  const viewDialog = page.locator('[data-studio-modal-surface="diagram-view"]')
+  const viewNameInput = page.locator('[data-diagram-view-name-input="true"]')
+  const saveViewButton = page.locator('[data-diagram-view-save="true"]')
   const linesToggle = page.locator('[data-relationship-lines-toggle="true"]')
   const fieldsToggle = page.locator('[data-table-fields-toggle="true"]')
+  const snapToggle = page.locator('[data-grid-snap-toggle="true"]')
   const columnRows = page.locator('[data-table-row-kind="column"]')
 
   await expect(viewSelect).toBeVisible()
   await expect(createViewButton).toBeVisible()
+  await expect(renameViewButton).toBeVisible()
   await expect(viewSelect).toContainText('Default')
   await expect(linesToggle).toHaveAttribute('aria-pressed', 'true')
   await expect(fieldsToggle).toHaveAttribute('aria-pressed', 'true')
+  await expect(snapToggle).toHaveAttribute('aria-pressed', 'true')
 
   await createViewButton.click()
+  await expect(viewNameInput).toBeVisible()
+  await viewNameInput.fill('Review')
+  await saveViewButton.click()
+  await expect(viewDialog).toHaveCount(0)
 
-  await expect(viewSelect).toContainText('View 2')
+  await expect(viewSelect).toContainText('Review')
+  await expect.poll(async () => readPgmlEditorValue(editor)).toContain('Workspace {')
+  await expect.poll(async () => readPgmlEditorValue(editor)).toContain('View "Review"')
 
   await linesToggle.click()
   await fieldsToggle.click()
+  await snapToggle.click()
 
   await expect(linesToggle).toHaveAttribute('aria-pressed', 'false')
   await expect(fieldsToggle).toHaveAttribute('aria-pressed', 'false')
+  await expect(snapToggle).toHaveAttribute('aria-pressed', 'false')
   await expect(columnRows).toHaveCount(0)
+  await expect.poll(async () => readPgmlEditorValue(editor)).toContain('show_lines: false')
+  await expect.poll(async () => readPgmlEditorValue(editor)).toContain('show_fields: false')
+  await expect.poll(async () => readPgmlEditorValue(editor)).toContain('snap_to_grid: false')
 
   await viewSelect.click()
   await page.locator('[role="option"]').filter({ hasText: 'Default' }).click()
@@ -280,15 +299,26 @@ test('diagram views persist toolbar visibility settings independently', async ({
   await expect(viewSelect).toContainText('Default')
   await expect(linesToggle).toHaveAttribute('aria-pressed', 'true')
   await expect(fieldsToggle).toHaveAttribute('aria-pressed', 'true')
+  await expect(snapToggle).toHaveAttribute('aria-pressed', 'true')
   await expect(columnRows.first()).toBeVisible()
 
   await viewSelect.click()
-  await page.locator('[role="option"]').filter({ hasText: 'View 2' }).click()
+  await page.locator('[role="option"]').filter({ hasText: 'Review' }).click()
 
-  await expect(viewSelect).toContainText('View 2')
+  await expect(viewSelect).toContainText('Review')
   await expect(linesToggle).toHaveAttribute('aria-pressed', 'false')
   await expect(fieldsToggle).toHaveAttribute('aria-pressed', 'false')
+  await expect(snapToggle).toHaveAttribute('aria-pressed', 'false')
   await expect(columnRows).toHaveCount(0)
+
+  await renameViewButton.click()
+  await expect(viewNameInput).toHaveValue('Review')
+  await viewNameInput.fill('Implementation review')
+  await saveViewButton.click()
+  await expect(viewDialog).toHaveCount(0)
+
+  await expect(viewSelect).toContainText('Implementation review')
+  await expect.poll(async () => readPgmlEditorValue(editor)).toContain('View "Implementation review"')
 })
 
 test('studio canvas stays viewport-bound and starts centered on the diagram', async ({ goto, page }) => {

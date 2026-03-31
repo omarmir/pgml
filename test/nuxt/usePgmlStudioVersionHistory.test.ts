@@ -21,6 +21,14 @@ const importedWorkspaceSource = `Table public.users {
   status text
 }`
 
+const groupedWorkspaceSource = `TableGroup Core {
+  public.users
+}
+
+Table public.users in Core {
+  id uuid [pk]
+}`
+
 const mountVersionHistoryComposable = async (input?: {
   documentName?: string
   source?: string
@@ -214,6 +222,7 @@ describe('usePgmlStudioVersionHistory', () => {
       }
     })
     api.updateCurrentDiagramViewSettings({
+      snapToGrid: false,
       showExecutableObjects: false,
       showRelationshipLines: false,
       showTableFields: false
@@ -222,17 +231,18 @@ describe('usePgmlStudioVersionHistory', () => {
     expect(source.value).toContain('Properties "public.users"')
     expect(source.value).toContain('x: 120')
     expect(api.diagramViewSettings.value).toEqual({
+      snapToGrid: false,
       showExecutableObjects: false,
       showRelationshipLines: false,
       showTableFields: false
     })
 
-    api.createDiagramView()
+    expect(api.createNamedDiagramView('Schema focus')).toBe(true)
 
     const secondViewId = api.activeDiagramViewId.value
 
     expect(api.canDeleteDiagramView.value).toBe(true)
-    expect(api.diagramViewItems.value.map(item => item.label)).toEqual(['Default', 'View 2'])
+    expect(api.diagramViewItems.value.map(item => item.label)).toEqual(['Default', 'Schema focus'])
     expect(secondViewId).not.toBe(defaultViewId)
 
     api.updateCurrentDiagramViewNodeProperties({
@@ -242,6 +252,7 @@ describe('usePgmlStudioVersionHistory', () => {
       }
     })
     api.updateCurrentDiagramViewSettings({
+      snapToGrid: true,
       showExecutableObjects: true,
       showRelationshipLines: true,
       showTableFields: true
@@ -257,6 +268,7 @@ describe('usePgmlStudioVersionHistory', () => {
 
     expect(api.activeDiagramViewId.value).toBe(defaultViewId)
     expect(api.diagramViewSettings.value).toEqual({
+      snapToGrid: false,
       showExecutableObjects: false,
       showRelationshipLines: false,
       showTableFields: false
@@ -271,17 +283,25 @@ describe('usePgmlStudioVersionHistory', () => {
     api.setPreviewTarget(checkpoint.id)
 
     expect(api.previewSource.value).toContain('x: 420')
-    expect(api.diagramViewItems.value.map(item => item.label)).toEqual(['Default', 'View 2'])
+    expect(api.diagramViewItems.value.map(item => item.label)).toEqual(['Default', 'Schema focus'])
     expect(api.diagramViewSettings.value).toEqual({
+      snapToGrid: true,
       showExecutableObjects: true,
       showRelationshipLines: true,
       showTableFields: true
     })
 
+    expect(api.renameActiveDiagramView('Implementation review')).toBe(true)
+    expect(api.activeDiagramViewName.value).toBe('Implementation review')
+    expect(api.diagramViewItems.value.map(item => item.label)).toEqual(['Default', 'Implementation review'])
+    expect(api.renameActiveDiagramView('Default')).toBe(false)
+    expect(api.createNamedDiagramView('Default')).toBe(false)
+
     api.selectDiagramView(defaultViewId)
 
     expect(api.previewSource.value).toContain('x: 120')
     expect(api.diagramViewSettings.value).toEqual({
+      snapToGrid: false,
       showExecutableObjects: false,
       showRelationshipLines: false,
       showTableFields: false
@@ -294,6 +314,63 @@ describe('usePgmlStudioVersionHistory', () => {
     expect(api.diagramViewItems.value).toHaveLength(1)
     expect(api.activeDiagramViewId.value).toBe(defaultViewId)
     expect(source.value).toContain('x: 120')
+  })
+
+  it('keeps snap and group layout properties scoped to the active diagram view', async () => {
+    const { api, source } = await mountVersionHistoryComposable({
+      source: groupedWorkspaceSource
+    })
+    const defaultViewId = api.activeDiagramViewId.value
+
+    api.updateCurrentDiagramViewNodeProperties({
+      'group:Core': {
+        masonry: true,
+        tableWidthScale: 1.5,
+        x: 216,
+        y: 234
+      }
+    })
+    api.updateCurrentDiagramViewSettings({
+      snapToGrid: false
+    })
+
+    expect(source.value).toContain('Properties "group:Core"')
+    expect(source.value).toContain('masonry: true')
+    expect(source.value).toContain('table_width_scale: 1.5')
+    expect(api.diagramViewSettings.value.snapToGrid).toBe(false)
+
+    expect(api.createNamedDiagramView('Compact')).toBe(true)
+
+    const compactViewId = api.activeDiagramViewId.value
+
+    api.updateCurrentDiagramViewNodeProperties({
+      'group:Core': {
+        x: 432,
+        y: 468
+      }
+    })
+    api.updateCurrentDiagramViewSettings({
+      snapToGrid: true
+    })
+
+    if (!defaultViewId || !compactViewId) {
+      throw new Error('Expected both diagram views to have ids.')
+    }
+
+    api.selectDiagramView(defaultViewId)
+
+    expect(source.value).toContain('masonry: true')
+    expect(source.value).toContain('table_width_scale: 1.5')
+    expect(source.value).toContain('x: 216')
+    expect(api.diagramViewSettings.value.snapToGrid).toBe(false)
+    expect(api.versionedDocumentSource.value).toContain('snap_to_grid: false')
+
+    api.selectDiagramView(compactViewId)
+
+    expect(source.value).not.toContain('masonry: true')
+    expect(source.value).not.toContain('table_width_scale: 1.5')
+    expect(source.value).toContain('x: 432')
+    expect(api.diagramViewSettings.value.snapToGrid).toBe(true)
   })
 
   it('exposes document scope options and serializes the selected document slice', async () => {

@@ -34,6 +34,7 @@ describe('studio ui modules', () => {
   it('exposes the shared modal and field primitives used across the studio', () => {
     expect(studioModalUi.overlay).toContain('bg-black/60')
     expect(studioModalUi.overlay).toContain('pointer-events-none')
+    expect(studioModalUi.overlay).toContain('data-[state=closed]:pointer-events-none')
     expect(studioModalUi.overlay).toContain('data-[state=open]:pointer-events-auto')
     expect(studioModalUi.content).toContain('z-[60]')
     expect(studioModalSurfaceClass).toContain('w-[calc(100vw-1rem)]')

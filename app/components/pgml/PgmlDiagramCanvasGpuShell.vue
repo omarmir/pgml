@@ -251,6 +251,7 @@ type DiagramViewItem = {
 }
 
 type DiagramViewSettings = {
+  snapToGrid: boolean
   showExecutableObjects: boolean
   showRelationshipLines: boolean
   showTableFields: boolean
@@ -444,6 +445,7 @@ const emit = defineEmits<{
   createDiagramView: []
   deleteDiagramView: []
   editGroup: [groupName: string]
+  renameDiagramView: []
   editTable: [tableId: string]
   focusSource: [sourceRange: PgmlSourceRange]
   mobileCanvasViewChange: [view: StudioMobileCanvasView]
@@ -5009,6 +5011,7 @@ const isBrowserItemHiddenByAncestor = (item: EntityBrowserItem) => {
 }
 
 const syncDiagramViewSettings = (settings: DiagramViewSettings | null | undefined) => {
+  snapToGrid.value = settings?.snapToGrid ?? true
   showRelationshipLines.value = settings?.showRelationshipLines ?? true
   showExecutableObjects.value = settings?.showExecutableObjects ?? true
   showTableFields.value = settings?.showTableFields ?? true
@@ -5042,6 +5045,15 @@ const toggleTableFields = () => {
   showTableFields.value = nextValue
   updatePersistedDiagramViewSettings({
     showTableFields: nextValue
+  })
+}
+
+const toggleSnapToGrid = () => {
+  const nextValue = !snapToGrid.value
+
+  snapToGrid.value = nextValue
+  updatePersistedDiagramViewSettings({
+    snapToGrid: nextValue
   })
 }
 
@@ -6929,6 +6941,19 @@ defineExpose<{
         </button>
         <button
           type="button"
+          data-diagram-view-rename="desktop"
+          aria-label="Rename active view"
+          :class="diagramViewToolbarButtonClass"
+          :disabled="!activeDiagramViewId"
+          @click="emit('renameDiagramView')"
+        >
+          <UIcon
+            name="i-lucide-pencil"
+            class="h-3.5 w-3.5"
+          />
+        </button>
+        <button
+          type="button"
           data-diagram-view-delete="desktop"
           aria-label="Delete active view"
           :class="diagramViewToolbarButtonClass"
@@ -6996,7 +7021,7 @@ defineExpose<{
             emphasized: snapToGrid,
             extraClass: 'inline-flex items-center gap-1.5 text-[0.62rem]'
           })"
-          @click="snapToGrid = !snapToGrid"
+          @click="toggleSnapToGrid"
         >
           <UIcon
             :name="snapToGrid ? 'i-lucide-lock' : 'i-lucide-unlock'"
@@ -7181,6 +7206,16 @@ defineExpose<{
                   variant="outline"
                   size="sm"
                   @click="emit('createDiagramView')"
+                />
+                <UButton
+                  data-diagram-view-rename="mobile"
+                  aria-label="Rename active view"
+                  icon="i-lucide-pencil"
+                  color="neutral"
+                  variant="outline"
+                  size="sm"
+                  :disabled="!activeDiagramViewId"
+                  @click="emit('renameDiagramView')"
                 />
                 <UButton
                   data-diagram-view-delete="mobile"

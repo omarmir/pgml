@@ -25,6 +25,7 @@ type DiagramViewItem = {
 }
 
 type DiagramViewSettings = {
+  snapToGrid: boolean
   showExecutableObjects: boolean
   showRelationshipLines: boolean
   showTableFields: boolean
@@ -134,6 +135,7 @@ const emit = defineEmits<{
   createDiagramView: []
   deleteDiagramView: []
   editGroup: [groupName: string]
+  renameDiagramView: []
   editTable: [tableId: string]
   focusSource: [sourceRange: PgmlSourceRange]
   mobileCanvasViewChange: [view: StudioMobileCanvasView]
@@ -213,6 +215,7 @@ defineExpose<CanvasHandle>({
     @create-diagram-view="emit('createDiagramView')"
     @delete-diagram-view="emit('deleteDiagramView')"
     @edit-group="emit('editGroup', $event)"
+    @rename-diagram-view="emit('renameDiagramView')"
     @edit-table="emit('editTable', $event)"
     @focus-source="emit('focusSource', $event)"
     @mobile-canvas-view-change="emit('mobileCanvasViewChange', $event)"

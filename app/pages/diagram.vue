@@ -66,7 +66,8 @@ import {
 import {
   buildPgmlCheckpointName,
   getPgmlVersionDisplayLabel,
-  getLatestPgmlVersion
+  getLatestPgmlVersion,
+  serializePgmlDocumentScope
 } from '~/utils/pgml-document'
 import {
   buildPgmlVersionMigrationBundle,
@@ -192,6 +193,8 @@ type ImportExecutableAttachmentResolution = {
   tableOptions: PgmlImportExecutableAttachmentTableOption[]
 }
 
+type DiagramViewDialogMode = 'create' | 'rename'
+
 const defaultReferenceActionSelectValue = '__pgml_default_reference_action__'
 
 const beginnerFriendlyColumnTypePresets: Record<string, Omit<ReferenceTargetItem, 'value'>> = {
@@ -289,6 +292,9 @@ const checkpointName: Ref<string> = ref('')
 const checkpointSuggestedCreatedAt: Ref<string | null> = ref(null)
 const checkpointNameIsSuggested: Ref<boolean> = ref(false)
 const checkpointRole: Ref<'design' | 'implementation'> = ref('design')
+const diagramViewDialogOpen: Ref<boolean> = ref(false)
+const diagramViewDialogMode: Ref<DiagramViewDialogMode> = ref('create')
+const diagramViewDraftName: Ref<string> = ref('')
 const importDbmlDialogOpen: Ref<boolean> = ref(false)
 const importDbmlBaseVersionId: Ref<string | null> = ref(null)
 const importDbmlError: Ref<string | null> = ref(null)
@@ -335,6 +341,7 @@ const {
 } = storeToRefs(studioSessionStore)
 currentPersistenceSource.value = studioLaunchRequest.value?.source === 'file' ? 'file' : 'browser'
 const {
+  activeDiagramViewName,
   activeDiagramViewId,
   compareBaseId: versionCompareBaseId,
   compareBaseSource,
@@ -344,7 +351,7 @@ const {
   canDeleteDiagramView,
   compareRelationshipSummary,
   createCheckpoint: createVersionCheckpoint,
-  createDiagramView,
+  createNamedDiagramView,
   document: versionDocument,
   diagramViewItems,
   diagramViewSettings,
@@ -358,12 +365,14 @@ const {
   previewTargetId,
   replaceWorkspaceFromImportedSnapshot,
   replaceWorkspaceFromVersion,
+  renameActiveDiagramView,
   selectDiagramView,
   serializeCurrentDocument,
   setCompareTargets,
   setDocumentEditorScope,
   setPreviewTarget,
   setSchemaMetadata,
+  nextDiagramViewName,
   updateCurrentDiagramViewNodeProperties,
   updateCurrentDiagramViewSettings,
   versionItems: versionHistoryItems,
@@ -637,10 +646,20 @@ const editorModeDescription = computed(() => {
 
   return buildPgmlWorkspaceEditorDescription()
 })
+const getPreviewTargetDocumentScope = (): Parameters<typeof setDocumentEditorScope>[0] => {
+  return previewTargetId.value === 'workspace'
+    ? 'workspace-block'
+    : `version:${previewTargetId.value}`
+}
+const previewTargetDocumentSource = computed(() => {
+  return serializePgmlDocumentScope(versionDocument.value, getPreviewTargetDocumentScope())
+})
 const displayedEditorSource = computed(() => {
-  return versionedEditorMode.value === 'document'
-    ? versionedDocumentScopeSource.value
-    : previewSource.value
+  if (versionedEditorMode.value === 'document') {
+    return versionedDocumentScopeSource.value
+  }
+
+  return isWorkspacePreview.value ? previewSource.value : previewTargetDocumentSource.value
 })
 const importDumpSelectedFileName = computed(() => importDumpSelectedFile.value?.name || '')
 const importDbmlSelectedFileName = computed(() => importDbmlSelectedFile.value?.name || '')
@@ -780,27 +799,49 @@ const syncSourceWithNodeProperties = (nodeProperties: Record<string, PgmlNodePro
 }
 
 const updateDiagramViewSettings = (settings: {
+  snapToGrid?: boolean
   showExecutableObjects?: boolean
   showRelationshipLines?: boolean
   showTableFields?: boolean
 }) => {
   markBrowserSchemaStatusEligible()
-  updateCurrentDiagramViewSettings(settings)
+  const didUpdate = updateCurrentDiagramViewSettings(settings)
+
+  if (!didUpdate) {
+    return
+  }
+
+  revealPreviewTargetDocumentSource()
 }
 
 const selectActiveDiagramView = (viewId: string) => {
   markBrowserSchemaStatusEligible()
-  selectDiagramView(viewId)
+  const didSelect = selectDiagramView(viewId)
+
+  if (!didSelect) {
+    return
+  }
+
+  revealPreviewTargetDocumentSource()
 }
 
 const createActiveDiagramView = () => {
-  markBrowserSchemaStatusEligible()
-  createDiagramView()
+  openCreateDiagramViewDialog()
+}
+
+const renameSelectedDiagramView = () => {
+  openRenameDiagramViewDialog()
 }
 
 const deleteSelectedDiagramView = () => {
   markBrowserSchemaStatusEligible()
-  deleteActiveDiagramView()
+  const didDelete = deleteActiveDiagramView()
+
+  if (!didDelete) {
+    return
+  }
+
+  revealPreviewTargetDocumentSource()
 }
 
 watch(displayedEditorSource, (nextSource) => {
@@ -1465,6 +1506,77 @@ watch(checkpointRole, (nextRole) => {
     role: nextRole
   })
 })
+const normalizedDiagramViewDraftName = computed(() => {
+  return diagramViewDraftName.value.trim()
+})
+const diagramViewDialogTitle = computed(() => {
+  return diagramViewDialogMode.value === 'rename' ? 'Rename diagram view' : 'Create diagram view'
+})
+const diagramViewDialogDescription = computed(() => {
+  return diagramViewDialogMode.value === 'rename'
+    ? 'Update the name of the active view for this workspace or locked version.'
+    : 'Create a named view for this workspace or locked version before adding it to the document.'
+})
+const diagramViewNameError = computed(() => {
+  if (normalizedDiagramViewDraftName.value.length === 0) {
+    return 'View name is required.'
+  }
+
+  const hasDuplicateName = diagramViewItems.value.some((item) => {
+    if (diagramViewDialogMode.value === 'rename' && item.value === activeDiagramViewId.value) {
+      return false
+    }
+
+    return item.label === normalizedDiagramViewDraftName.value
+  })
+
+  if (hasDuplicateName) {
+    return 'A view with this name already exists here.'
+  }
+
+  return null
+})
+const openCreateDiagramViewDialog = () => {
+  diagramViewDialogMode.value = 'create'
+  diagramViewDraftName.value = nextDiagramViewName.value
+  diagramViewDialogOpen.value = true
+}
+const openRenameDiagramViewDialog = () => {
+  if (!activeDiagramViewId.value) {
+    return
+  }
+
+  diagramViewDialogMode.value = 'rename'
+  diagramViewDraftName.value = activeDiagramViewName.value
+  diagramViewDialogOpen.value = true
+}
+const closeDiagramViewDialog = () => {
+  diagramViewDialogOpen.value = false
+  diagramViewDialogMode.value = 'create'
+  diagramViewDraftName.value = ''
+}
+const revealPreviewTargetDocumentSource = () => {
+  setDocumentEditorScope(getPreviewTargetDocumentScope())
+  versionedEditorMode.value = 'document'
+}
+const saveDiagramViewDialog = () => {
+  if (diagramViewNameError.value !== null) {
+    return
+  }
+
+  markBrowserSchemaStatusEligible()
+
+  const didSave = diagramViewDialogMode.value === 'rename'
+    ? renameActiveDiagramView(normalizedDiagramViewDraftName.value)
+    : createNamedDiagramView(normalizedDiagramViewDraftName.value)
+
+  if (!didSave) {
+    return
+  }
+
+  revealPreviewTargetDocumentSource()
+  closeDiagramViewDialog()
+}
 const syncImportDumpConflictError = () => {
   const hasFile = importDumpSelectedFile.value !== null
   const hasText = importDumpText.value.trim().length > 0
@@ -2752,6 +2864,7 @@ onBeforeUnmount(() => {
           @edit-group="openGroupEditor"
           @edit-table="openTableEditor"
           @node-properties-change="syncSourceWithNodeProperties"
+          @rename-diagram-view="renameSelectedDiagramView"
           @restore-version="restoreVersionToWorkspace"
           @select-diagram-view="selectActiveDiagramView"
           @update-diagram-view-settings="updateDiagramViewSettings"
@@ -2867,6 +2980,7 @@ onBeforeUnmount(() => {
           @edit-group="openGroupEditor"
           @edit-table="openTableEditor"
           @node-properties-change="syncSourceWithNodeProperties"
+          @rename-diagram-view="renameSelectedDiagramView"
           @restore-version="restoreVersionToWorkspace"
           @select-diagram-view="selectActiveDiagramView"
           @update-diagram-view-settings="updateDiagramViewSettings"
@@ -2992,6 +3106,64 @@ onBeforeUnmount(() => {
             variant="soft"
             :class="primaryModalButtonClass"
             @click="confirmRestoreVersionToWorkspace"
+          />
+        </template>
+      </StudioModalFrame>
+
+      <StudioModalFrame
+        v-model:open="diagramViewDialogOpen"
+        :title="diagramViewDialogTitle"
+        :description="diagramViewDialogDescription"
+        surface-id="diagram-view"
+        body-class="grid gap-4 px-4 py-3"
+        @close="closeDiagramViewDialog"
+      >
+        <div class="grid gap-3">
+          <label class="grid gap-1">
+            <span :class="studioFieldKickerClass">
+              View name
+            </span>
+            <UInput
+              v-model="diagramViewDraftName"
+              data-diagram-view-name-input="true"
+              placeholder="View name"
+              color="neutral"
+              variant="outline"
+              size="sm"
+              :ui="studioFieldUi"
+            />
+          </label>
+
+          <div
+            v-if="diagramViewNameError"
+            data-diagram-view-name-error="true"
+            class="grid gap-1 border border-[color:var(--studio-shell-error)]/40 bg-[color:var(--studio-shell-error)]/8 px-3 py-3 text-[0.74rem] text-[color:var(--studio-shell-error)]"
+          >
+            <div class="font-mono text-[0.58rem] uppercase tracking-[0.08em]">
+              View name
+            </div>
+            <div>
+              {{ diagramViewNameError }}
+            </div>
+          </div>
+        </div>
+
+        <template #footer>
+          <UButton
+            label="Cancel"
+            color="neutral"
+            variant="outline"
+            :class="secondaryModalButtonClass"
+            @click="closeDiagramViewDialog"
+          />
+          <UButton
+            :label="diagramViewDialogMode === 'rename' ? 'Rename view' : 'Create view'"
+            data-diagram-view-save="true"
+            color="neutral"
+            variant="soft"
+            :class="primaryModalButtonClass"
+            :disabled="diagramViewNameError !== null"
+            @click="saveDiagramViewDialog"
           />
         </template>
       </StudioModalFrame>

@@ -208,6 +208,7 @@ Table public.orders {
     View "Focus" {
       id: workspace_focus
       show_lines: false
+      snap_to_grid: false
       show_execs: false
       show_fields: false
 
@@ -246,6 +247,7 @@ Table public.orders {
     expect(parsed.workspace.views).toHaveLength(2)
     expect(parsed.workspace.snapshot.source).not.toContain('Properties "public.users"')
     expect(parsed.workspace.views[1]?.showRelationshipLines).toBe(false)
+    expect(parsed.workspace.views[1]?.snapToGrid).toBe(false)
     expect(parsed.workspace.views[1]?.showExecutableObjects).toBe(false)
     expect(parsed.workspace.views[1]?.showTableFields).toBe(false)
     expect(getPgmlDocumentBlockPreviewSource(parsed.workspace)).toContain('Properties "public.users"')
@@ -253,6 +255,7 @@ Table public.orders {
     expect(parsed.versions[0]?.views).toHaveLength(2)
     expect(serialized).toContain('active_view: workspace_focus')
     expect(serialized).toContain('View "Focus" {')
+    expect(serialized).toContain('snap_to_grid: false')
     expect(serialized).toContain('show_execs: false')
     expect(serialized).toContain('active_view: version_compact')
   })
