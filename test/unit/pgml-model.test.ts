@@ -18,7 +18,7 @@ import {
   replacePgmlRoutineBodyInExecutableSource,
   replacePgmlSourceRange
 } from '../../app/utils/pgml'
-import { parsePgmlDocument } from '../../app/utils/pgml-document'
+import { getPgmlDocumentBlockPreviewSource, parsePgmlDocument } from '../../app/utils/pgml-document'
 
 describe('PGML model parsing', () => {
   it('parses the bundled example into grouped tables, refs, and custom types', () => {
@@ -82,10 +82,11 @@ describe('PGML model parsing', () => {
       'implementation',
       'design'
     ])
+    expect(document.workspace.snapshot.source).not.toContain('Properties "group:Analytics"')
     expect(document.workspace.snapshot.source).toContain('TableGroup Analytics')
     expect(document.workspace.snapshot.source).toContain('Composite address_record')
     expect(document.workspace.snapshot.source).toContain('Procedure archive_orders(retention_days integer) [replace]')
-    expect(document.workspace.snapshot.source).toContain('Properties "group:Analytics"')
+    expect(getPgmlDocumentBlockPreviewSource(document.workspace)).toContain('Properties "group:Analytics"')
   })
 
   it('derives sequence ownership and routine metadata from source blocks', () => {

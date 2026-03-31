@@ -19,6 +19,17 @@ type VersionCompareOption = {
   value: string
 }
 
+type DiagramViewItem = {
+  label: string
+  value: string
+}
+
+type DiagramViewSettings = {
+  showExecutableObjects: boolean
+  showRelationshipLines: boolean
+  showTableFields: boolean
+}
+
 type VersionMigrationArtifactsProps = {
   // The GPU shell and versions panel consume the same migration artifact set.
   // Keeping the pass-through shape named here makes prop drift easier to spot.
@@ -88,13 +99,17 @@ const {
   workspaceStatus = 'Draft is ready to checkpoint.',
   viewportResetKey = 0
 } = defineProps<VersionMigrationArtifactsProps & {
+  activeDiagramViewId?: string | null
   canCreateCheckpoint?: boolean
+  canDeleteDiagramView?: boolean
   canEditDetailSource?: boolean
   compareBaseLabel?: string
   compareBaseModel?: PgmlSchemaModel | null
   compareEntries?: PgmlDiagramCompareEntry[]
   compareRelationshipSummary?: string
   compareTargetLabel?: string
+  diagramViewItems?: DiagramViewItem[]
+  diagramViewSettings?: DiagramViewSettings
   exportBaseName?: string
   exportPreferenceKey?: string
   hasBlockingSourceErrors?: boolean
@@ -116,6 +131,8 @@ const {
 const emit = defineEmits<{
   createGroup: []
   createTable: [groupName: string | null]
+  createDiagramView: []
+  deleteDiagramView: []
   editGroup: [groupName: string]
   editTable: [tableId: string]
   focusSource: [sourceRange: PgmlSourceRange]
@@ -126,6 +143,8 @@ const emit = defineEmits<{
   toolPanelVisibilityChange: [payload: { open: boolean, tab: DiagramToolPanelTab }]
   replaceSourceRange: [payload: { nextText: string, sourceRange: PgmlSourceRange }]
   restoreVersion: [versionId: string]
+  selectDiagramView: [viewId: string]
+  updateDiagramViewSettings: [settings: Partial<DiagramViewSettings>]
   updateVersionCompareBaseId: [value: string | null]
   updateVersionCompareTargetId: [value: string]
   versionCheckpoint: []
@@ -155,13 +174,17 @@ defineExpose<CanvasHandle>({
 <template>
   <PgmlDiagramCanvasGpuShell
     ref="shellRef"
+    :active-diagram-view-id="activeDiagramViewId"
     :can-create-checkpoint="canCreateCheckpoint"
+    :can-delete-diagram-view="canDeleteDiagramView"
     :can-edit-detail-source="canEditDetailSource"
     :compare-base-label="compareBaseLabel"
     :compare-base-model="compareBaseModel"
     :compare-entries="compareEntries"
     :compare-relationship-summary="compareRelationshipSummary"
     :compare-target-label="compareTargetLabel"
+    :diagram-view-items="diagramViewItems"
+    :diagram-view-settings="diagramViewSettings"
     :export-base-name="exportBaseName"
     :export-preference-key="exportPreferenceKey"
     :has-blocking-source-errors="hasBlockingSourceErrors"
@@ -187,6 +210,8 @@ defineExpose<CanvasHandle>({
     :viewport-reset-key="viewportResetKey"
     @create-group="emit('createGroup')"
     @create-table="emit('createTable', $event)"
+    @create-diagram-view="emit('createDiagramView')"
+    @delete-diagram-view="emit('deleteDiagramView')"
     @edit-group="emit('editGroup', $event)"
     @edit-table="emit('editTable', $event)"
     @focus-source="emit('focusSource', $event)"
@@ -197,6 +222,8 @@ defineExpose<CanvasHandle>({
     @tool-panel-visibility-change="emit('toolPanelVisibilityChange', $event)"
     @replace-source-range="emit('replaceSourceRange', $event)"
     @restore-version="emit('restoreVersion', $event)"
+    @select-diagram-view="emit('selectDiagramView', $event)"
+    @update-diagram-view-settings="emit('updateDiagramViewSettings', $event)"
     @update-version-compare-base-id="emit('updateVersionCompareBaseId', $event)"
     @update-version-compare-target-id="emit('updateVersionCompareTargetId', $event)"
     @version-checkpoint="emit('versionCheckpoint')"

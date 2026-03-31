@@ -5,8 +5,10 @@ import {
   buildPgmlCheckpointName,
   canCreatePgmlCheckpoint,
   clonePgmlVersionSetDocument,
+  createPgmlDocumentView,
   createInitialPgmlDocument,
   createPgmlVersionFromWorkspace,
+  getPgmlDocumentBlockPreviewSource,
   getPgmlDocumentVersionStats,
   getPgmlChildVersions,
   hasPgmlChildVersions,
@@ -182,6 +184,106 @@ Table public.orders {
 }`)
   })
 
+  it('serializes and parses named diagram views for workspace and versions', () => {
+    const parsed = parsePgmlDocument(`VersionSet "Billing" {
+  Workspace {
+    based_on: v1
+    active_view: workspace_focus
+
+    Snapshot {
+      Table public.users {
+        id uuid [pk]
+      }
+    }
+
+    View "Default" {
+      id: workspace_default
+
+      Properties "public.users" {
+        x: 100
+        y: 200
+      }
+    }
+
+    View "Focus" {
+      id: workspace_focus
+      show_lines: false
+      show_execs: false
+      show_fields: false
+
+      Properties "public.users" {
+        x: 320
+        y: 480
+      }
+    }
+  }
+
+  Version v1 {
+    role: design
+    created_at: "2026-03-29T12:00:00.000Z"
+    active_view: version_compact
+
+    Snapshot {
+      Table public.users {
+        id uuid [pk]
+      }
+    }
+
+    View "Default" {
+      id: version_default
+    }
+
+    View "Compact" {
+      id: version_compact
+      show_lines: false
+    }
+  }
+}`)
+
+    const serialized = serializePgmlDocument(parsed)
+
+    expect(parsed.workspace.activeViewId).toBe('workspace_focus')
+    expect(parsed.workspace.views).toHaveLength(2)
+    expect(parsed.workspace.snapshot.source).not.toContain('Properties "public.users"')
+    expect(parsed.workspace.views[1]?.showRelationshipLines).toBe(false)
+    expect(parsed.workspace.views[1]?.showExecutableObjects).toBe(false)
+    expect(parsed.workspace.views[1]?.showTableFields).toBe(false)
+    expect(getPgmlDocumentBlockPreviewSource(parsed.workspace)).toContain('Properties "public.users"')
+    expect(parsed.versions[0]?.activeViewId).toBe('version_compact')
+    expect(parsed.versions[0]?.views).toHaveLength(2)
+    expect(serialized).toContain('active_view: workspace_focus')
+    expect(serialized).toContain('View "Focus" {')
+    expect(serialized).toContain('show_execs: false')
+    expect(serialized).toContain('active_view: version_compact')
+  })
+
+  it('migrates legacy snapshot Properties blocks into the default workspace view', () => {
+    const parsed = parsePgmlDocument(`VersionSet "Billing" {
+  Workspace {
+    Snapshot {
+      Table public.users {
+        id uuid [pk]
+      }
+
+      Properties "public.users" {
+        x: 120
+        y: 260
+      }
+    }
+  }
+}`)
+
+    expect(parsed.workspace.snapshot.source).toBe(baseSnapshotSource)
+    expect(parsed.workspace.views).toHaveLength(1)
+    expect(parsed.workspace.views[0]?.name).toBe('Default')
+    expect(parsed.workspace.views[0]?.nodeProperties['public.users']).toEqual(expect.objectContaining({
+      x: 120,
+      y: 260
+    }))
+    expect(getPgmlDocumentBlockPreviewSource(parsed.workspace)).toContain('Properties "public.users"')
+    expect(getPgmlDocumentBlockPreviewSource(parsed.workspace)).toContain('x: 120')
+  })
+
   it('serializes document editor scopes for the full VersionSet, workspace block, and selected version block', () => {
     const document = createInitialImplementationDocument(`${baseSnapshotSource}
 
@@ -229,6 +331,39 @@ Table public.memberships {
     expect(withSecondVersion.versions[1]?.parentVersionId).toBe(withFirstVersion.versions[0]?.id)
     expect(withSecondVersion.versions[1]?.id.startsWith('v_')).toBe(true)
     expect(withSecondVersion.workspace.basedOnVersionId).toBe(withSecondVersion.versions[1]?.id)
+  })
+
+  it('treats view-only changes as layout dirtiness and ignores them when layout is excluded', () => {
+    const document = createInitialPgmlDocument({
+      initialVersion: {
+        createdAt: '2026-03-29T12:00:00.000Z',
+        name: 'Initial implementation',
+        parentVersionId: null,
+        role: 'implementation',
+        snapshot: {
+          source: baseSnapshotSource
+        }
+      },
+      name: 'Billing',
+      workspaceSource: baseSnapshotSource
+    })
+    const viewId = document.workspace.views[0]?.id || null
+
+    document.workspace = {
+      ...document.workspace,
+      activeViewId: viewId,
+      views: [
+        createPgmlDocumentView({
+          ...document.workspace.views[0],
+          id: viewId,
+          name: 'Default',
+          showRelationshipLines: false
+        })
+      ]
+    }
+
+    expect(isPgmlWorkspaceDirty(document, true)).toBe(true)
+    expect(isPgmlWorkspaceDirty(document, false)).toBe(false)
   })
 
   it('exposes version lookup helpers for ids and the current workspace base', () => {

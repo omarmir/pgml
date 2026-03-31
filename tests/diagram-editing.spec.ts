@@ -558,6 +558,32 @@ test('code editor shows PGML diagnostics and autocomplete suggestions', async ({
   await expect(page.locator('.cm-tooltip-autocomplete')).toContainText('Table')
 })
 
+test('raw PGML editor keeps autocomplete active while typing in large drafts', async ({ goto, page }) => {
+  await goto('/diagram')
+
+  const editor = getPgmlEditor(page)
+  const largeDraftSource = `${Array.from({
+    length: 320
+  }, (_, index) => {
+    return `Table public.autocomplete_${index} {
+  id uuid [pk]
+  label text
+  created_at timestamptz
+}`
+  }).join('\n\n')}\n\n`
+
+  expect(largeDraftSource.split('\n').length).toBeGreaterThan(1500)
+
+  await setPgmlEditorValue(editor, largeDraftSource)
+  await page.waitForTimeout(300)
+  await page.locator('[data-pgml-editor-content="true"]').click()
+  await setPgmlEditorSelection(editor, largeDraftSource.length, largeDraftSource.length)
+  await page.keyboard.type('Ta')
+
+  await expect(page.locator('.cm-tooltip-autocomplete')).toBeVisible()
+  await expect(page.locator('.cm-tooltip-autocomplete')).toContainText('Table')
+})
+
 test('diagnostics panel groups repeated issues into collapsible line buckets', async ({ goto, page }) => {
   await goto('/diagram')
 

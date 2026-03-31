@@ -54,6 +54,7 @@ type PgmlBlockKind = 'Table'
   | 'Workspace'
   | 'Version'
   | 'Snapshot'
+  | 'View'
   | 'Unknown'
 
 type PgmlRawBlock = {
@@ -74,6 +75,7 @@ type PgmlContextKind = 'top-level'
   | 'workspace'
   | 'version'
   | 'snapshot'
+  | 'view'
   | 'table'
   | 'group'
   | 'custom-type'
@@ -210,6 +212,7 @@ const schemaMetadataKeywordTemplates = [
 
 const workspaceMetadataKeywordTemplates = [
   { label: 'based_on', detail: 'Choose the locked version the workspace increments from.', apply: 'based_on: ' },
+  { label: 'active_view', detail: 'Choose the active workspace diagram view id.', apply: 'active_view: ' },
   { label: 'updated_at', detail: 'Record the last workspace update timestamp.', apply: 'updated_at: "' }
 ] as const
 
@@ -217,6 +220,7 @@ const versionMetadataKeywordTemplates = [
   { label: 'name', detail: 'Set a user-facing checkpoint label.', apply: 'name: "' },
   { label: 'role', detail: 'Mark the checkpoint as design or implementation.', apply: 'role: ' },
   { label: 'parent', detail: 'Set the predecessor version id.', apply: 'parent: ' },
+  { label: 'active_view', detail: 'Choose the active version diagram view id.', apply: 'active_view: ' },
   { label: 'created_at', detail: 'Record the checkpoint timestamp.', apply: 'created_at: "' }
 ] as const
 
@@ -224,13 +228,25 @@ const snapshotKeywordTemplates = [
   { label: 'Snapshot', detail: 'Open a nested schema snapshot block.', apply: 'Snapshot {' }
 ] as const
 
+const viewKeywordTemplates = [
+  { label: 'View', detail: 'Store a named diagram view for this workspace or version.', apply: 'View "' }
+] as const
+
+const viewMetadataKeywordTemplates = [
+  { label: 'id', detail: 'Persist the stable id for this view.', apply: 'id: ' },
+  { label: 'show_lines', detail: 'Hide or show relationship lines in this view.', apply: 'show_lines: false' },
+  { label: 'show_execs', detail: 'Hide or show executable objects in this view.', apply: 'show_execs: false' },
+  { label: 'show_fields', detail: 'Hide or show table fields in this view.', apply: 'show_fields: false' }
+] as const
+
 const versionRoleValueTemplates = [
   { label: 'design', detail: 'A design-side checkpoint.', apply: 'design' },
   { label: 'implementation', detail: 'An implementation-side checkpoint.', apply: 'implementation' }
 ] as const
 
-const workspaceMetadataKeys = new Set(['based_on', 'updated_at'])
-const versionMetadataKeys = new Set(['name', 'role', 'parent', 'created_at'])
+const workspaceMetadataKeys = new Set(['based_on', 'updated_at', 'active_view'])
+const versionMetadataKeys = new Set(['name', 'role', 'parent', 'created_at', 'active_view', 'default_view'])
+const viewMetadataKeys = new Set(['id', 'show_lines', 'lines', 'show_execs', 'execs', 'show_fields', 'fields'])
 
 const tableBodyKeywordTemplates = [
   { label: 'Note:', detail: 'Add a table note.', apply: 'Note: ' },
@@ -492,6 +508,10 @@ const parseBlockKind = (header: string): { kind: PgmlBlockKind, keyword: string 
 
   if (keyword === 'Snapshot') {
     return { kind: 'Snapshot', keyword }
+  }
+
+  if (keyword === 'View') {
+    return { kind: 'View', keyword }
   }
 
   if (keyword === 'Column') {
@@ -772,6 +792,16 @@ const getVersionIdFromHeader = (header: string) => {
 
 const getVersionSetNameFromHeader = (header: string) => {
   const match = header.match(/^VersionSet\s+(.+)$/)
+
+  if (!match) {
+    return null
+  }
+
+  return cleanText(match[1] || '')
+}
+
+const getViewNameFromHeader = (header: string) => {
+  const match = header.match(/^View\s+(.+)$/)
 
   if (!match) {
     return null
@@ -1764,6 +1794,18 @@ const buildContexts = (blocks: PgmlRawBlock[], contexts: PgmlContextRange[]) => 
       return
     }
 
+    if (block.kind === 'View') {
+      contexts.push({
+        kind: 'view',
+        blockKind: block.kind,
+        from: block.from,
+        to: block.to,
+        startLine: block.startLine,
+        endLine: block.endLine
+      })
+      return
+    }
+
     if (block.kind === 'Table') {
       contexts.push({
         kind: 'table',
@@ -1895,6 +1937,7 @@ const analyzeSnapshotBlocks = (
       || block.kind === 'Workspace'
       || block.kind === 'Version'
       || block.kind === 'Snapshot'
+      || block.kind === 'View'
     ) {
       createDiagnostic(
         diagnostics,
@@ -2144,10 +2187,85 @@ const analyzeSchemaMetadataBlock = (
   })
 }
 
+const analyzeViewBlock = (
+  block: PgmlRawBlock,
+  diagnostics: PgmlLanguageDiagnostic[],
+  contexts: PgmlContextRange[],
+  analysisState: PgmlAnalysisState,
+  containerLabel: string
+) => {
+  const viewName = getViewNameFromHeader(block.header)
+
+  if (!viewName || viewName.trim().length === 0) {
+    createDiagnostic(
+      diagnostics,
+      'pgml/view-header',
+      'error',
+      `${containerLabel} view headers must use \`View "Name" {\`.`,
+      block.headerLine
+    )
+    return
+  }
+
+  const nested = collectRawBlocks(block.body, diagnostics, contexts, {
+    topLevelContextKind: null
+  })
+  const metadataLines = collectParsedMetadataLines(nested.topLevelLines)
+
+  validateMetadataOnlyLines(metadataLines, diagnostics, {
+    allowedKeys: viewMetadataKeys,
+    entryCode: 'pgml/view-entry',
+    entryMessage: 'View blocks only allow metadata entries and nested Properties blocks.',
+    keyCode: 'pgml/view-key',
+    keyMessage: 'View blocks only support `id`, `show_lines`, `show_execs`, and `show_fields` metadata.'
+  })
+
+  metadataLines.forEach(({ entry, line }) => {
+    const normalizedKey = entry ? normalizeMetadataKey(entry.key) : null
+
+    if (!entry || !normalizedKey || (
+      normalizedKey !== 'show_lines'
+      && normalizedKey !== 'lines'
+      && normalizedKey !== 'show_execs'
+      && normalizedKey !== 'execs'
+      && normalizedKey !== 'show_fields'
+      && normalizedKey !== 'fields'
+    )) {
+      return
+    }
+
+    if (entry.value !== 'true' && entry.value !== 'false') {
+      createDiagnostic(
+        diagnostics,
+        'pgml/view-boolean',
+        'error',
+        'View toggle metadata must use `true` or `false`.',
+        line
+      )
+    }
+  })
+
+  nested.blocks.forEach((nestedBlock) => {
+    if (nestedBlock.kind !== 'Properties') {
+      createDiagnostic(
+        diagnostics,
+        'pgml/view-block-kind',
+        'error',
+        'View blocks only allow nested Properties blocks.',
+        nestedBlock.headerLine
+      )
+      return
+    }
+
+    collectPropertiesBody(nestedBlock, diagnostics, analysisState.propertyTargets)
+  })
+}
+
 const validateSnapshotOnlyChildren = (
   nestedBlocks: PgmlRawBlock[],
   diagnostics: PgmlLanguageDiagnostic[],
   options: {
+    allowedSiblingKinds?: PgmlBlockKind[]
     fallbackLine: PgmlLineInfo
     missingCode: string
     missingMessage: string
@@ -2158,6 +2276,7 @@ const validateSnapshotOnlyChildren = (
   }
 ) => {
   const snapshotBlocks = nestedBlocks.filter(nestedBlock => nestedBlock.kind === 'Snapshot')
+  const allowedSiblingKinds = new Set(options.allowedSiblingKinds || [])
 
   if (snapshotBlocks.length === 0) {
     const firstBlock = nestedBlocks[0]
@@ -2185,7 +2304,7 @@ const validateSnapshotOnlyChildren = (
   }
 
   nestedBlocks.forEach((nestedBlock) => {
-    if (nestedBlock.kind !== 'Snapshot') {
+    if (nestedBlock.kind !== 'Snapshot' && !allowedSiblingKinds.has(nestedBlock.kind)) {
       createDiagnostic(
         diagnostics,
         options.invalidBlockCode,
@@ -2288,24 +2407,29 @@ const analyzeWorkspaceBlock = (
   validateMetadataOnlyLines(metadataLines, diagnostics, {
     allowedKeys: workspaceMetadataKeys,
     entryCode: 'pgml/workspace-entry',
-    entryMessage: 'Workspace only allows metadata entries and a nested Snapshot block.',
+    entryMessage: 'Workspace only allows metadata entries plus nested Snapshot and View blocks.',
     keyCode: 'pgml/workspace-key',
-    keyMessage: 'Workspace only supports `based_on` and `updated_at` metadata.'
+    keyMessage: 'Workspace only supports `based_on`, `active_view`, and `updated_at` metadata.'
   })
 
   const snapshotBlocks = validateSnapshotOnlyChildren(nested.blocks, diagnostics, {
+    allowedSiblingKinds: ['View'],
     fallbackLine: block.headerLine,
     missingCode: 'pgml/workspace-snapshot-missing',
     missingMessage: 'Workspace requires a Snapshot block.',
     duplicateCode: 'pgml/workspace-snapshot-duplicate',
     duplicateMessage: 'Workspace only allows one Snapshot block.',
     invalidBlockCode: 'pgml/workspace-block-kind',
-    invalidBlockMessage: 'Workspace only allows a nested Snapshot block.'
+    invalidBlockMessage: 'Workspace only allows nested Snapshot and View blocks.'
   })
 
   if (snapshotBlocks[0]) {
     analyzeNestedSnapshotBlock(snapshotBlocks[0], diagnostics, contexts, analysisState, 'Workspace')
   }
+
+  nested.blocks
+    .filter(nestedBlock => nestedBlock.kind === 'View')
+    .forEach(nestedBlock => analyzeViewBlock(nestedBlock, diagnostics, contexts, analysisState, 'Workspace'))
 }
 
 const analyzeVersionBlock = (
@@ -2335,9 +2459,9 @@ const analyzeVersionBlock = (
   validateMetadataOnlyLines(metadataLines, diagnostics, {
     allowedKeys: versionMetadataKeys,
     entryCode: 'pgml/version-entry',
-    entryMessage: 'Version only allows metadata entries and a nested Snapshot block.',
+    entryMessage: 'Version only allows metadata entries plus nested Snapshot and View blocks.',
     keyCode: 'pgml/version-key',
-    keyMessage: 'Version only supports `name`, `role`, `parent`, and `created_at` metadata.'
+    keyMessage: 'Version only supports `name`, `role`, `parent`, `active_view`, and `created_at` metadata.'
   })
 
   metadataLines.forEach(({ entry, line }) => {
@@ -2357,18 +2481,23 @@ const analyzeVersionBlock = (
   })
 
   const snapshotBlocks = validateSnapshotOnlyChildren(nested.blocks, diagnostics, {
+    allowedSiblingKinds: ['View'],
     fallbackLine: block.headerLine,
     missingCode: 'pgml/version-snapshot-missing',
     missingMessage: `Version ${versionId} requires a Snapshot block.`,
     duplicateCode: 'pgml/version-snapshot-duplicate',
     duplicateMessage: `Version ${versionId} only allows one Snapshot block.`,
     invalidBlockCode: 'pgml/version-block-kind',
-    invalidBlockMessage: 'Version only allows a nested Snapshot block.'
+    invalidBlockMessage: 'Version only allows nested Snapshot and View blocks.'
   })
 
   if (snapshotBlocks[0]) {
     analyzeNestedSnapshotBlock(snapshotBlocks[0], diagnostics, contexts, analysisState, `Version ${versionId}`)
   }
+
+  nested.blocks
+    .filter(nestedBlock => nestedBlock.kind === 'View')
+    .forEach(nestedBlock => analyzeViewBlock(nestedBlock, diagnostics, contexts, analysisState, `Version ${versionId}`))
 }
 
 const analyzeVersionSetBlock = (
@@ -2935,7 +3064,8 @@ const getWorkspaceCompletionItems = (
 
   return [
     ...filterCompletionTemplates(workspaceMetadataKeywordTemplates, 'property', fragment, from, to),
-    ...filterCompletionTemplates(snapshotKeywordTemplates, 'keyword', fragment, from, to)
+    ...filterCompletionTemplates(snapshotKeywordTemplates, 'keyword', fragment, from, to),
+    ...filterCompletionTemplates(viewKeywordTemplates, 'keyword', fragment, from, to)
   ]
 }
 
@@ -2960,7 +3090,35 @@ const getVersionCompletionItems = (
 
   return [
     ...filterCompletionTemplates(versionMetadataKeywordTemplates, 'property', fragment, from, to),
-    ...filterCompletionTemplates(snapshotKeywordTemplates, 'keyword', fragment, from, to)
+    ...filterCompletionTemplates(snapshotKeywordTemplates, 'keyword', fragment, from, to),
+    ...filterCompletionTemplates(viewKeywordTemplates, 'keyword', fragment, from, to)
+  ]
+}
+
+const getViewCompletionItems = (
+  analysis: PgmlDocumentAnalysis,
+  beforeCursor: string,
+  fragment: string,
+  from: number,
+  to: number
+) => {
+  if (/^\s*View\s+/.test(beforeCursor)) {
+    return [] as PgmlLanguageCompletionItem[]
+  }
+
+  if (/^\s*Properties\s+/.test(beforeCursor)) {
+    return getPropertyTargetCompletions(analysis, fragment, from, to)
+  }
+
+  if (/^\s*(show_lines|lines|show_execs|execs|show_fields|fields):\s*[A-Za-z]*$/i.test(beforeCursor)) {
+    return buildSymbolCompletionItems(['true', 'false'], 'Boolean value', 'value', fragment, from, to)
+  }
+
+  return [
+    ...filterCompletionTemplates(viewMetadataKeywordTemplates, 'property', fragment, from, to),
+    ...filterCompletionTemplates([
+      { label: 'Properties', detail: 'Attach persisted layout properties for this view.', apply: 'Properties "' }
+    ], 'keyword', fragment, from, to)
   ]
 }
 
@@ -3015,6 +3173,10 @@ const getCompletionItemsForLine = (analysis: PgmlDocumentAnalysis, offset: numbe
 
   if (context.kind === 'snapshot') {
     return getSnapshotCompletionItems(analysis, beforeCursor, fragment, from, to)
+  }
+
+  if (context.kind === 'view') {
+    return getViewCompletionItems(analysis, beforeCursor, fragment, from, to)
   }
 
   if (context.kind === 'properties') {

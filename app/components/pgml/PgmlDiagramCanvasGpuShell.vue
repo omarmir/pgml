@@ -245,6 +245,17 @@ type VersionCompareOption = {
   value: string
 }
 
+type DiagramViewItem = {
+  label: string
+  value: string
+}
+
+type DiagramViewSettings = {
+  showExecutableObjects: boolean
+  showRelationshipLines: boolean
+  showTableFields: boolean
+}
+
 type DiagramRendererOption = {
   label: string
   value: DiagramRendererBackend
@@ -363,13 +374,17 @@ type VersionMigrationArtifactsProps = {
 }
 
 const {
+  activeDiagramViewId = null,
   canCreateCheckpoint = true,
+  canDeleteDiagramView = false,
   canEditDetailSource = false,
   compareBaseLabel = 'Base',
   compareBaseModel = null,
   compareEntries = [],
   compareRelationshipSummary = '',
   compareTargetLabel = 'Target',
+  diagramViewItems = [],
+  diagramViewSettings = null,
   exportBaseName = 'pgml-schema',
   exportPreferenceKey = 'name:pgml-schema',
   hasBlockingSourceErrors = false,
@@ -394,13 +409,17 @@ const {
   workspaceStatus = 'Draft is ready to checkpoint.',
   viewportResetKey = 0
 } = defineProps<VersionMigrationArtifactsProps & {
+  activeDiagramViewId?: string | null
   canCreateCheckpoint?: boolean
+  canDeleteDiagramView?: boolean
   canEditDetailSource?: boolean
   compareBaseLabel?: string
   compareBaseModel?: PgmlSchemaModel | null
   compareEntries?: PgmlDiagramCompareEntry[]
   compareRelationshipSummary?: string
   compareTargetLabel?: string
+  diagramViewItems?: DiagramViewItem[]
+  diagramViewSettings?: DiagramViewSettings | null
   exportBaseName?: string
   exportPreferenceKey?: string
   hasBlockingSourceErrors?: boolean
@@ -422,6 +441,8 @@ const {
 const emit = defineEmits<{
   createGroup: []
   createTable: [groupName: string | null]
+  createDiagramView: []
+  deleteDiagramView: []
   editGroup: [groupName: string]
   editTable: [tableId: string]
   focusSource: [sourceRange: PgmlSourceRange]
@@ -432,6 +453,8 @@ const emit = defineEmits<{
   toolPanelVisibilityChange: [payload: { open: boolean, tab: DiagramToolPanelTab }]
   replaceSourceRange: [payload: { nextText: string, sourceRange: PgmlSourceRange }]
   restoreVersion: [versionId: string]
+  selectDiagramView: [viewId: string]
+  updateDiagramViewSettings: [settings: Partial<DiagramViewSettings>]
   updateVersionCompareBaseId: [value: string | null]
   updateVersionCompareTargetId: [value: string]
   versionCheckpoint: []
@@ -455,6 +478,8 @@ const activeToolPanelTab: Ref<DiagramToolPanelTab> = ref('versions')
 const isDesktopSidePanelOpen: Ref<boolean> = ref(true)
 const isToolPanelOpen: Ref<boolean> = ref(false)
 const showRelationshipLines: Ref<boolean> = ref(true)
+const showExecutableObjects: Ref<boolean> = ref(true)
+const showTableFields: Ref<boolean> = ref(true)
 const snapToGrid: Ref<boolean> = ref(true)
 const rendererBackend: Ref<DiagramRendererBackend> = ref(getInitialRendererBackendPreference())
 const rendererCapability: Ref<DiagramRendererCapability> = ref(getDiagramRendererCapability({
@@ -565,6 +590,10 @@ const browserItemActionRailClass = 'grid w-[3.5rem] shrink-0 content-start justi
 const browserItemCompactActionRailClass = 'flex w-[6.25rem] shrink-0 flex-wrap items-start justify-end gap-1'
 const browserItemRowGridClass = 'grid grid-cols-[minmax(0,1fr)_3.5rem] items-start gap-2'
 const browserItemCompactRowGridClass = 'grid grid-cols-[minmax(0,1fr)_6.25rem] items-start gap-2'
+const diagramViewToolbarSelectClass = 'w-[10.75rem]'
+const diagramViewToolbarButtonClass = getStudioStateButtonClass({
+  extraClass: 'inline-flex h-7 w-7 items-center justify-center px-0'
+})
 const selectedCanvasStackZIndex = 2147483644
 const tableWidthScaleItems = pgmlTableWidthScaleValues.map((value) => {
   return {
@@ -1027,28 +1056,22 @@ const tableGroupById = computed(() => {
   }, {})
 })
 
+const executableAttachmentKinds = new Set<TableAttachmentKind>(['Function', 'Procedure', 'Sequence', 'Trigger'])
+
 const isEntityDirectlyVisible = (id: string) => model.nodeProperties[id]?.visible !== false
+const isExecutableObjectId = (id: string) => {
+  return id.startsWith('function:')
+    || id.startsWith('procedure:')
+    || id.startsWith('sequence:')
+    || id.startsWith('trigger:')
+}
+const isAttachmentGloballyVisible = (attachment: TableAttachment) => {
+  return showExecutableObjects.value || !executableAttachmentKinds.has(attachment.kind)
+}
+const isColumnGloballyVisible = () => showTableFields.value
 
 const resolveTableIds = (values: string[]) => {
-  const nextIds: string[] = []
-
-  values.forEach((value) => {
-    const normalizedValue = normalizeReferenceValue(value)
-
-    model.tables.forEach((table) => {
-      const aliases = uniqueValues([
-        normalizeReferenceValue(table.fullName),
-        normalizeReferenceValue(table.name),
-        normalizeReferenceValue(`${table.schema}.${table.name}`)
-      ])
-
-      if (aliases.includes(normalizedValue) || aliases.some(alias => normalizedValue.endsWith(alias))) {
-        nextIds.push(table.fullName)
-      }
-    })
-  })
-
-  return uniqueValues(nextIds)
+  return uniqueValues(values.flatMap(value => resolveTableIdsFromValue(value)))
 }
 
 const getRoutineTableIds = (routine: PgmlRoutine) => {
@@ -1306,33 +1329,37 @@ const getColumnRowBadges = (column: PgmlColumn) => {
 
 const tableRowsByTableId = computed(() => {
   return model.tables.reduce<Record<string, DiagramGpuRow[]>>((entries, table) => {
-    const columnRows = table.columns.map((column) => {
-      const rowKey = getColumnAnchorKey(table.fullName, column.name)
-      const relationalHighlightColor = selectedTableRelationalRowKeys.value.has(rowKey)
-        ? (tableColorById.value[selectedTableId.value || ''] || '#79e3ea')
-        : null
-      const objectImpactHighlightColor = selectedObjectImpactRowKeys.value.has(rowKey)
-        ? (selectedSelection.value?.kind === 'object'
-            ? (objectLayoutStates.value[selectedSelection.value.id]?.color || '#14b8a6')
-            : '#14b8a6')
-        : null
-      const compareHighlightColor = isCompareDiagramActive.value
-        ? (compareRowHighlightByKey.value[rowKey]?.color || null)
-        : null
+    const columnRows = isColumnGloballyVisible()
+      ? table.columns.map((column) => {
+          const rowKey = getColumnAnchorKey(table.fullName, column.name)
+          const relationalHighlightColor = selectedTableRelationalRowKeys.value.has(rowKey)
+            ? (tableColorById.value[selectedTableId.value || ''] || '#79e3ea')
+            : null
+          const objectImpactHighlightColor = selectedObjectImpactRowKeys.value.has(rowKey)
+            ? (selectedSelection.value?.kind === 'object'
+                ? (objectLayoutStates.value[selectedSelection.value.id]?.color || '#14b8a6')
+                : '#14b8a6')
+            : null
+          const compareHighlightColor = isCompareDiagramActive.value
+            ? (compareRowHighlightByKey.value[rowKey]?.color || null)
+            : null
 
-      return {
-        badges: getColumnRowBadges(column),
-        columnName: column.name,
-        highlightColor: compareHighlightColor || relationalHighlightColor || objectImpactHighlightColor,
-        key: `${table.fullName}.${column.name}`,
-        kind: 'column' as const,
-        subtitle: column.type,
-        tableId: table.fullName,
-        title: column.name
-      }
-    })
+          return {
+            badges: getColumnRowBadges(column),
+            columnName: column.name,
+            highlightColor: compareHighlightColor || relationalHighlightColor || objectImpactHighlightColor,
+            key: `${table.fullName}.${column.name}`,
+            kind: 'column' as const,
+            subtitle: column.type,
+            tableId: table.fullName,
+            title: column.name
+          }
+        })
+      : []
     const attachmentRows = (tableAttachmentState.value.attachmentsByTableId[table.fullName] || [])
-      .filter(attachment => isEntityDirectlyVisible(attachment.id))
+      .filter((attachment) => {
+        return isAttachmentGloballyVisible(attachment) && isEntityDirectlyVisible(attachment.id)
+      })
       .map((attachment) => {
         return {
           accentColor: attachment.color,
@@ -1357,22 +1384,26 @@ const getTableRows = (tableId: string) => tableRowsByTableId.value[tableId] || [
 
 const automationTableRowsById = computed<Record<string, TableRow[]>>(() => {
   return model.tables.reduce<Record<string, TableRow[]>>((entries, table) => {
-    const columnRows = table.columns.map((column) => {
-      return {
-        column,
-        key: `${table.fullName}.${column.name}`,
-        kind: 'column' as const,
-        tableId: table.fullName
-      }
-    })
-    const attachmentRows = (tableAttachmentState.value.attachmentsByTableId[table.fullName] || []).map((attachment) => {
-      return {
-        attachment,
-        key: attachment.id,
-        kind: 'attachment' as const,
-        tableId: table.fullName
-      }
-    })
+    const columnRows = isColumnGloballyVisible()
+      ? table.columns.map((column) => {
+          return {
+            column,
+            key: `${table.fullName}.${column.name}`,
+            kind: 'column' as const,
+            tableId: table.fullName
+          }
+        })
+      : []
+    const attachmentRows = (tableAttachmentState.value.attachmentsByTableId[table.fullName] || [])
+      .filter(attachment => isAttachmentGloballyVisible(attachment))
+      .map((attachment) => {
+        return {
+          attachment,
+          key: attachment.id,
+          kind: 'attachment' as const,
+          tableId: table.fullName
+        }
+      })
 
     entries[table.fullName] = [...columnRows, ...attachmentRows]
     return entries
@@ -1385,40 +1416,44 @@ const getColumnLabelAnchorKey = (tableId: string, columnName: string) => `${tabl
 const getImpactAnchorKey = (nodeId: string, tableId: string) => `${nodeId}:${tableId}`.toLowerCase()
 
 const buildBrowserTableItem = (table: PgmlSchemaModel['tables'][number]): EntityBrowserItem => {
-  const columns = table.columns.map<EntityBrowserItem>((column) => {
-    return {
-      children: [],
-      id: `${table.fullName}.${column.name}`,
-      kind: 'column',
-      kindLabel: 'Field',
-      label: column.name,
-      searchText: cleanForSearch(`field ${column.name} ${column.type} ${table.fullName}`),
-      selection: {
-        columnName: column.name,
-        kind: 'column',
-        tableId: table.fullName
-      },
-      sourceRange: table.sourceRange,
-      subtitle: ''
-    }
-  })
-  const attachments = (tableAttachmentState.value.attachmentsByTableId[table.fullName] || []).map<EntityBrowserItem>((attachment) => {
-    return {
-      children: [],
-      id: attachment.id,
-      kind: 'attachment',
-      kindLabel: attachment.kind,
-      label: attachment.title,
-      searchText: cleanForSearch(`${attachment.kind} ${attachment.title} ${attachment.subtitle} ${attachment.details.join(' ')}`),
-      selection: {
-        attachmentId: attachment.id,
+  const columns = isColumnGloballyVisible()
+    ? table.columns.map<EntityBrowserItem>((column) => {
+        return {
+          children: [],
+          id: `${table.fullName}.${column.name}`,
+          kind: 'column',
+          kindLabel: 'Field',
+          label: column.name,
+          searchText: cleanForSearch(`field ${column.name} ${column.type} ${table.fullName}`),
+          selection: {
+            columnName: column.name,
+            kind: 'column',
+            tableId: table.fullName
+          },
+          sourceRange: table.sourceRange,
+          subtitle: ''
+        }
+      })
+    : []
+  const attachments = (tableAttachmentState.value.attachmentsByTableId[table.fullName] || [])
+    .filter(attachment => isAttachmentGloballyVisible(attachment))
+    .map<EntityBrowserItem>((attachment) => {
+      return {
+        children: [],
+        id: attachment.id,
         kind: 'attachment',
-        tableId: table.fullName
-      },
-      sourceRange: attachment.sourceRange,
-      subtitle: ''
-    }
-  })
+        kindLabel: attachment.kind,
+        label: attachment.title,
+        searchText: cleanForSearch(`${attachment.kind} ${attachment.title} ${attachment.subtitle} ${attachment.details.join(' ')}`),
+        selection: {
+          attachmentId: attachment.id,
+          kind: 'attachment',
+          tableId: table.fullName
+        },
+        sourceRange: attachment.sourceRange,
+        subtitle: ''
+      }
+    })
 
   return {
     children: [...columns, ...attachments],
@@ -1492,7 +1527,7 @@ const filteredStandaloneBrowserItemsSource = computed<EntityBrowserItem[]>(() =>
   model.functions.forEach((routine) => {
     const id = `function:${routine.name}`
 
-    if (!attachedObjectIds.has(id)) {
+    if (showExecutableObjects.value && !attachedObjectIds.has(id)) {
       pushNodeItem(id, routine.name, 'Function', routine.signature, routine.sourceRange)
     }
   })
@@ -1500,7 +1535,7 @@ const filteredStandaloneBrowserItemsSource = computed<EntityBrowserItem[]>(() =>
   model.procedures.forEach((routine) => {
     const id = `procedure:${routine.name}`
 
-    if (!attachedObjectIds.has(id)) {
+    if (showExecutableObjects.value && !attachedObjectIds.has(id)) {
       pushNodeItem(id, routine.name, 'Procedure', routine.signature, routine.sourceRange)
     }
   })
@@ -1508,7 +1543,7 @@ const filteredStandaloneBrowserItemsSource = computed<EntityBrowserItem[]>(() =>
   model.triggers.forEach((trigger) => {
     const id = `trigger:${trigger.name}`
 
-    if (!attachedObjectIds.has(id)) {
+    if (showExecutableObjects.value && !attachedObjectIds.has(id)) {
       pushNodeItem(id, trigger.name, 'Trigger', buildTriggerSubtitle(trigger), trigger.sourceRange)
     }
   })
@@ -1516,7 +1551,7 @@ const filteredStandaloneBrowserItemsSource = computed<EntityBrowserItem[]>(() =>
   model.sequences.forEach((sequence) => {
     const id = `sequence:${sequence.name}`
 
-    if (!attachedObjectIds.has(id)) {
+    if (showExecutableObjects.value && !attachedObjectIds.has(id)) {
       pushNodeItem(id, sequence.name, 'Sequence', buildSequenceSubtitle(sequence), sequence.sourceRange)
     }
   })
@@ -1802,7 +1837,11 @@ const syncLayoutStates = () => {
     width: number
   }> = [
     ...model.functions
-      .filter(entry => isEntityDirectlyVisible(`function:${entry.name}`) && !tableAttachmentState.value.attachedObjectIds.has(`function:${entry.name}`))
+      .filter((entry) => {
+        return showExecutableObjects.value
+          && isEntityDirectlyVisible(`function:${entry.name}`)
+          && !tableAttachmentState.value.attachedObjectIds.has(`function:${entry.name}`)
+      })
       .map((entry) => {
         const impactTargets = inferRoutineTargets(entry)
 
@@ -1821,7 +1860,11 @@ const syncLayoutStates = () => {
         }
       }),
     ...model.procedures
-      .filter(entry => isEntityDirectlyVisible(`procedure:${entry.name}`) && !tableAttachmentState.value.attachedObjectIds.has(`procedure:${entry.name}`))
+      .filter((entry) => {
+        return showExecutableObjects.value
+          && isEntityDirectlyVisible(`procedure:${entry.name}`)
+          && !tableAttachmentState.value.attachedObjectIds.has(`procedure:${entry.name}`)
+      })
       .map((entry) => {
         const impactTargets = inferRoutineTargets(entry)
 
@@ -1840,7 +1883,11 @@ const syncLayoutStates = () => {
         }
       }),
     ...model.triggers
-      .filter(entry => isEntityDirectlyVisible(`trigger:${entry.name}`) && !tableAttachmentState.value.attachedObjectIds.has(`trigger:${entry.name}`))
+      .filter((entry) => {
+        return showExecutableObjects.value
+          && isEntityDirectlyVisible(`trigger:${entry.name}`)
+          && !tableAttachmentState.value.attachedObjectIds.has(`trigger:${entry.name}`)
+      })
       .map((entry) => {
         const tableId = resolveTableIdentifier(entry.tableName)
         const impactTargets = tableId ? inferTriggerTargets(tableId, entry) : []
@@ -1860,7 +1907,11 @@ const syncLayoutStates = () => {
         }
       }),
     ...model.sequences
-      .filter(entry => isEntityDirectlyVisible(`sequence:${entry.name}`) && !tableAttachmentState.value.attachedObjectIds.has(`sequence:${entry.name}`))
+      .filter((entry) => {
+        return showExecutableObjects.value
+          && isEntityDirectlyVisible(`sequence:${entry.name}`)
+          && !tableAttachmentState.value.attachedObjectIds.has(`sequence:${entry.name}`)
+      })
       .map((entry) => {
         const impactTargets = inferSequenceTargets(entry)
 
@@ -4876,8 +4927,12 @@ const browserItemSupportsVisibility = (item: EntityBrowserItem) => item.kind !==
 
 const isAttachmentEffectivelyVisible = (tableId: string, attachmentId: string) => {
   const table = model.tables.find(entry => entry.fullName === tableId)
+  const attachment = (tableAttachmentState.value.attachmentsByTableId[tableId] || [])
+    .find(entry => entry.id === attachmentId) || null
 
-  return table ? isTableVisible(table) && isEntityDirectlyVisible(attachmentId) : false
+  return table
+    ? isTableVisible(table) && isEntityDirectlyVisible(attachmentId) && (!!attachment && isAttachmentGloballyVisible(attachment))
+    : false
 }
 
 const isBrowserItemDirectlyVisible = (item: EntityBrowserItem) => {
@@ -4886,14 +4941,18 @@ const isBrowserItemDirectlyVisible = (item: EntityBrowserItem) => {
   }
 
   if (item.selection.kind === 'column') {
-    return isEntityDirectlyVisible(item.selection.tableId)
+    return isColumnGloballyVisible() && isEntityDirectlyVisible(item.selection.tableId)
   }
 
   if (item.selection.kind === 'attachment') {
-    return isEntityDirectlyVisible(item.selection.attachmentId)
+    const selection = item.selection
+    const attachment = (tableAttachmentState.value.attachmentsByTableId[selection.tableId] || [])
+      .find(entry => entry.id === selection.attachmentId) || null
+
+    return !!attachment && isAttachmentGloballyVisible(attachment) && isEntityDirectlyVisible(selection.attachmentId)
   }
 
-  return isEntityDirectlyVisible(item.selection.id)
+  return (!isExecutableObjectId(item.selection.id) || showExecutableObjects.value) && isEntityDirectlyVisible(item.selection.id)
 }
 
 const isBrowserItemEffectivelyVisible = (item: EntityBrowserItem) => {
@@ -4908,7 +4967,7 @@ const isBrowserItemEffectivelyVisible = (item: EntityBrowserItem) => {
   if (selection.kind === 'column') {
     const table = model.tables.find(entry => entry.fullName === selection.tableId)
 
-    return table ? isTableVisible(table) : false
+    return isColumnGloballyVisible() && (table ? isTableVisible(table) : false)
   }
 
   if (selection.kind === 'attachment') {
@@ -4922,9 +4981,96 @@ const isBrowserItemEffectivelyVisible = (item: EntityBrowserItem) => {
   return isEntityDirectlyVisible(selection.id)
 }
 
+const isSelectionVisibleUnderGlobalToggles = (selection: DiagramGpuSelection | null) => {
+  if (!selection) {
+    return true
+  }
+
+  if (selection.kind === 'column') {
+    return isColumnGloballyVisible()
+  }
+
+  if (selection.kind === 'attachment') {
+    const attachment = (tableAttachmentState.value.attachmentsByTableId[selection.tableId] || [])
+      .find(entry => entry.id === selection.attachmentId) || null
+
+    return !!attachment && isAttachmentGloballyVisible(attachment)
+  }
+
+  if (selection.kind === 'object') {
+    return !isExecutableObjectId(selection.id) || showExecutableObjects.value
+  }
+
+  return true
+}
+
 const isBrowserItemHiddenByAncestor = (item: EntityBrowserItem) => {
   return !isBrowserItemEffectivelyVisible(item) && isBrowserItemDirectlyVisible(item)
 }
+
+const syncDiagramViewSettings = (settings: DiagramViewSettings | null | undefined) => {
+  showRelationshipLines.value = settings?.showRelationshipLines ?? true
+  showExecutableObjects.value = settings?.showExecutableObjects ?? true
+  showTableFields.value = settings?.showTableFields ?? true
+}
+
+const updatePersistedDiagramViewSettings = (settings: Partial<DiagramViewSettings>) => {
+  emit('updateDiagramViewSettings', settings)
+}
+
+const toggleRelationshipLines = () => {
+  const nextValue = !showRelationshipLines.value
+
+  showRelationshipLines.value = nextValue
+  updatePersistedDiagramViewSettings({
+    showRelationshipLines: nextValue
+  })
+}
+
+const toggleExecutableObjects = () => {
+  const nextValue = !showExecutableObjects.value
+
+  showExecutableObjects.value = nextValue
+  updatePersistedDiagramViewSettings({
+    showExecutableObjects: nextValue
+  })
+}
+
+const toggleTableFields = () => {
+  const nextValue = !showTableFields.value
+
+  showTableFields.value = nextValue
+  updatePersistedDiagramViewSettings({
+    showTableFields: nextValue
+  })
+}
+
+const handleDiagramViewModelUpdate = (value: string | number | null) => {
+  if (typeof value !== 'string' || value.trim().length === 0 || value === activeDiagramViewId) {
+    return
+  }
+
+  emit('selectDiagramView', value)
+}
+
+watch(
+  () => diagramViewSettings,
+  (nextSettings) => {
+    syncDiagramViewSettings(nextSettings)
+  },
+  {
+    deep: true,
+    immediate: true
+  }
+)
+
+watch([showExecutableObjects, showTableFields], () => {
+  syncLayoutStates()
+
+  if (!isSelectionVisibleUnderGlobalToggles(selectedSelection.value)) {
+    selectedSelection.value = null
+  }
+})
 
 const getBrowserItemVisibilityButtonClass = (item: EntityBrowserItem, compact = false) => {
   return getStudioStateButtonClass({
@@ -6750,6 +6896,50 @@ defineExpose<{
           class="rounded-none text-[color:var(--studio-shell-muted)] hover:bg-[color:var(--studio-surface-hover)] hover:text-[color:var(--studio-shell-text)]"
           @click="sceneRef?.resetView()"
         />
+        <div class="mx-1 h-5 w-px bg-[color:var(--studio-divider)]" />
+        <label class="flex items-center gap-2">
+          <span class="font-mono text-[0.54rem] uppercase tracking-[0.08em] text-[color:var(--studio-shell-label)]">
+            View
+          </span>
+          <USelect
+            data-diagram-view-select="desktop"
+            :items="diagramViewItems"
+            :model-value="activeDiagramViewId || undefined"
+            value-key="value"
+            label-key="label"
+            color="neutral"
+            variant="outline"
+            size="xs"
+            :class="diagramViewToolbarSelectClass"
+            :ui="studioSelectUi"
+            @update:model-value="handleDiagramViewModelUpdate"
+          />
+        </label>
+        <button
+          type="button"
+          data-diagram-view-create="desktop"
+          aria-label="Create view"
+          :class="diagramViewToolbarButtonClass"
+          @click="emit('createDiagramView')"
+        >
+          <UIcon
+            name="i-lucide-plus"
+            class="h-3.5 w-3.5"
+          />
+        </button>
+        <button
+          type="button"
+          data-diagram-view-delete="desktop"
+          aria-label="Delete active view"
+          :class="diagramViewToolbarButtonClass"
+          :disabled="!canDeleteDiagramView"
+          @click="emit('deleteDiagramView')"
+        >
+          <UIcon
+            name="i-lucide-trash-2"
+            class="h-3.5 w-3.5"
+          />
+        </button>
         <button
           type="button"
           data-relationship-lines-toggle="true"
@@ -6758,13 +6948,45 @@ defineExpose<{
             emphasized: showRelationshipLines,
             extraClass: 'inline-flex items-center gap-1.5 text-[0.62rem]'
           })"
-          @click="showRelationshipLines = !showRelationshipLines"
+          @click="toggleRelationshipLines"
         >
           <UIcon
             :name="showRelationshipLines ? 'i-lucide-eye' : 'i-lucide-eye-off'"
             class="h-3.5 w-3.5"
           />
           Lines
+        </button>
+        <button
+          type="button"
+          data-executable-objects-toggle="true"
+          :aria-pressed="showExecutableObjects"
+          :class="getStudioStateButtonClass({
+            emphasized: showExecutableObjects,
+            extraClass: 'inline-flex items-center gap-1.5 text-[0.62rem]'
+          })"
+          @click="toggleExecutableObjects"
+        >
+          <UIcon
+            :name="showExecutableObjects ? 'i-lucide-eye' : 'i-lucide-eye-off'"
+            class="h-3.5 w-3.5"
+          />
+          Execs
+        </button>
+        <button
+          type="button"
+          data-table-fields-toggle="true"
+          :aria-pressed="showTableFields"
+          :class="getStudioStateButtonClass({
+            emphasized: showTableFields,
+            extraClass: 'inline-flex items-center gap-1.5 text-[0.62rem]'
+          })"
+          @click="toggleTableFields"
+        >
+          <UIcon
+            :name="showTableFields ? 'i-lucide-eye' : 'i-lucide-eye-off'"
+            class="h-3.5 w-3.5"
+          />
+          Fields
         </button>
         <button
           type="button"
@@ -6933,6 +7155,45 @@ defineExpose<{
           </div>
 
           <div class="mt-3 grid gap-1.5">
+            <label class="grid gap-1">
+              <span class="font-mono text-[0.58rem] uppercase tracking-[0.08em] text-[color:var(--studio-shell-label)]">
+                View
+              </span>
+              <div class="flex items-center gap-2">
+                <USelect
+                  data-diagram-view-select="mobile"
+                  :items="diagramViewItems"
+                  :model-value="activeDiagramViewId || undefined"
+                  value-key="value"
+                  label-key="label"
+                  color="neutral"
+                  variant="outline"
+                  size="sm"
+                  class="min-w-0 flex-1"
+                  :ui="studioSelectUi"
+                  @update:model-value="handleDiagramViewModelUpdate"
+                />
+                <UButton
+                  data-diagram-view-create="mobile"
+                  aria-label="Create view"
+                  icon="i-lucide-plus"
+                  color="neutral"
+                  variant="outline"
+                  size="sm"
+                  @click="emit('createDiagramView')"
+                />
+                <UButton
+                  data-diagram-view-delete="mobile"
+                  aria-label="Delete active view"
+                  icon="i-lucide-trash-2"
+                  color="neutral"
+                  variant="outline"
+                  size="sm"
+                  :disabled="!canDeleteDiagramView"
+                  @click="emit('deleteDiagramView')"
+                />
+              </div>
+            </label>
             <label class="grid gap-1">
               <span class="font-mono text-[0.58rem] uppercase tracking-[0.08em] text-[color:var(--studio-shell-label)]">
                 Renderer

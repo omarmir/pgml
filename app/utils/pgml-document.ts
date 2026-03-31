@@ -1,8 +1,11 @@
 import { nanoid } from 'nanoid'
 import {
+  buildPgmlWithNodeProperties,
   dedentPgmlSourceForEditor,
   normalizePgmlSourceIndentation,
-  stripPgmlPropertiesBlocks
+  parsePgml,
+  stripPgmlPropertiesBlocks,
+  type PgmlNodeProperties
 } from './pgml'
 import {
   clonePgmlDocumentSchemaMetadata,
@@ -18,19 +21,32 @@ export type PgmlDocumentSnapshot = {
   source: string
 }
 
+export type PgmlDocumentDiagramView = {
+  id: string
+  name: string
+  nodeProperties: Record<string, PgmlNodeProperties>
+  showExecutableObjects: boolean
+  showRelationshipLines: boolean
+  showTableFields: boolean
+}
+
 export type PgmlWorkspaceDocumentBlock = {
+  activeViewId: string | null
   basedOnVersionId: string | null
   snapshot: PgmlDocumentSnapshot
   updatedAt: string | null
+  views: PgmlDocumentDiagramView[]
 }
 
 export type PgmlVersionDocumentBlock = {
+  activeViewId: string | null
   createdAt: string
   id: string
   name: string | null
   parentVersionId: string | null
   role: PgmlVersionRole
   snapshot: PgmlDocumentSnapshot
+  views: PgmlDocumentDiagramView[]
 }
 
 export type PgmlVersionSetDocument = {
@@ -51,16 +67,166 @@ type PgmlNamedBlock = {
   header: string
 }
 
+type PgmlViewOwnerBlock = {
+  activeViewId: string | null
+  snapshot: PgmlDocumentSnapshot
+  views: PgmlDocumentDiagramView[]
+}
+
 const workspaceKeyword = 'Workspace'
 const snapshotKeyword = 'Snapshot'
 const schemaMetadataKeyword = 'SchemaMetadata'
+const viewKeyword = 'View'
+const defaultPgmlDocumentViewName = 'Default'
 
 const createPgmlVersionId = () => {
   return `v_${nanoid()}`
 }
 
+const createPgmlDocumentViewId = () => {
+  return `view_${nanoid()}`
+}
+
 const normalizeLineEndings = (value: string) => {
   return value.replaceAll('\r\n', '\n')
+}
+
+const clonePgmlNodePropertiesRecord = (nodeProperties: Record<string, PgmlNodeProperties>) => {
+  return Object.entries(nodeProperties).reduce<Record<string, PgmlNodeProperties>>((entries, [id, properties]) => {
+    entries[id] = {
+      ...properties
+    }
+
+    return entries
+  }, {})
+}
+
+export const createPgmlDocumentView = (input?: {
+  id?: string | null
+  name?: string | null
+  nodeProperties?: Record<string, PgmlNodeProperties>
+  showExecutableObjects?: boolean
+  showRelationshipLines?: boolean
+  showTableFields?: boolean
+}) => {
+  return {
+    id: input?.id && input.id.trim().length > 0 ? input.id.trim() : createPgmlDocumentViewId(),
+    name: input?.name && input.name.trim().length > 0 ? input.name.trim() : defaultPgmlDocumentViewName,
+    nodeProperties: clonePgmlNodePropertiesRecord(input?.nodeProperties || {}),
+    showExecutableObjects: input?.showExecutableObjects ?? true,
+    showRelationshipLines: input?.showRelationshipLines ?? true,
+    showTableFields: input?.showTableFields ?? true
+  } satisfies PgmlDocumentDiagramView
+}
+
+export const clonePgmlDocumentView = (view: PgmlDocumentDiagramView) => {
+  return createPgmlDocumentView(view)
+}
+
+const getPgmlDocumentViewById = (
+  views: PgmlDocumentDiagramView[],
+  viewId: string | null | undefined
+) => {
+  if (!viewId) {
+    return null
+  }
+
+  return views.find(view => view.id === viewId) || null
+}
+
+const resolvePgmlDocumentViewId = (
+  views: PgmlDocumentDiagramView[],
+  preferredViewId: string | null | undefined
+) => {
+  const preferredView = getPgmlDocumentViewById(views, preferredViewId)
+
+  if (preferredView) {
+    return preferredView.id
+  }
+
+  return views[0]?.id || null
+}
+
+const normalizePgmlDocumentViews = (input: {
+  activeViewId?: string | null
+  ensureView?: boolean
+  views?: PgmlDocumentDiagramView[]
+}) => {
+  const nextViews = (input.views || []).map((view, index) => {
+    return createPgmlDocumentView({
+      ...view,
+      name: view.name && view.name.trim().length > 0 ? view.name : (index === 0 ? defaultPgmlDocumentViewName : `View ${index + 1}`)
+    })
+  })
+
+  if (nextViews.length === 0 && input.ensureView !== false) {
+    nextViews.push(createPgmlDocumentView())
+  }
+
+  return {
+    activeViewId: resolvePgmlDocumentViewId(nextViews, input.activeViewId),
+    views: nextViews
+  }
+}
+
+const mergePgmlNodeProperties = (
+  baseProperties: Record<string, PgmlNodeProperties>,
+  overrideProperties: Record<string, PgmlNodeProperties>
+) => {
+  const mergedProperties = clonePgmlNodePropertiesRecord(baseProperties)
+
+  Object.entries(overrideProperties).forEach(([id, properties]) => {
+    mergedProperties[id] = {
+      ...(mergedProperties[id] || {}),
+      ...properties
+    }
+  })
+
+  return mergedProperties
+}
+
+const splitSnapshotSourceFromLegacyProperties = (source: string) => {
+  const normalizedSource = normalizePgmlSnapshotSource(source)
+
+  return {
+    nodeProperties: parsePgml(normalizedSource).nodeProperties,
+    snapshotSource: normalizePgmlSnapshotSource(stripPgmlPropertiesBlocks(normalizedSource))
+  }
+}
+
+const normalizeViewOwnerBlock = (
+  input: PgmlViewOwnerBlock
+) => {
+  const {
+    nodeProperties: legacyNodeProperties,
+    snapshotSource
+  } = splitSnapshotSourceFromLegacyProperties(input.snapshot.source)
+  const normalizedViews = normalizePgmlDocumentViews({
+    activeViewId: input.activeViewId,
+    views: input.views
+  })
+
+  if (Object.keys(legacyNodeProperties).length > 0) {
+    const targetViewId = normalizedViews.activeViewId || normalizedViews.views[0]?.id || null
+    const targetViewIndex = normalizedViews.views.findIndex(view => view.id === targetViewId)
+
+    if (targetViewIndex >= 0) {
+      const targetView = normalizedViews.views[targetViewIndex]!
+
+      normalizedViews.views[targetViewIndex] = createPgmlDocumentView({
+        ...targetView,
+        nodeProperties: mergePgmlNodeProperties(legacyNodeProperties, targetView.nodeProperties)
+      })
+    }
+  }
+
+  return {
+    activeViewId: normalizedViews.activeViewId,
+    snapshot: {
+      source: snapshotSource
+    },
+    views: normalizedViews.views
+  }
 }
 
 export const normalizePgmlSnapshotSource = (value: string) => {
@@ -142,6 +308,62 @@ export const arePgmlSnapshotsEquivalent = (
   return normalizedLeftSource === normalizedRightSource
 }
 
+const normalizePgmlDocumentViewForComparison = (view: PgmlDocumentDiagramView) => {
+  return {
+    name: view.name,
+    nodePropertiesSource: buildPgmlWithNodeProperties('', view.nodeProperties),
+    showExecutableObjects: view.showExecutableObjects,
+    showRelationshipLines: view.showRelationshipLines,
+    showTableFields: view.showTableFields
+  }
+}
+
+const hasMeaningfulPgmlDocumentViewState = (owner: PgmlViewOwnerBlock) => {
+  if (owner.views.length === 0) {
+    return false
+  }
+
+  if (owner.views.length > 1) {
+    return true
+  }
+
+  const firstView = owner.views[0]
+
+  if (!firstView) {
+    return false
+  }
+
+  if (firstView.name !== defaultPgmlDocumentViewName) {
+    return true
+  }
+
+  if (owner.activeViewId !== firstView.id) {
+    return true
+  }
+
+  if (!firstView.showRelationshipLines || !firstView.showExecutableObjects || !firstView.showTableFields) {
+    return true
+  }
+
+  return Object.keys(firstView.nodeProperties).length > 0
+}
+
+const arePgmlViewOwnersEquivalent = (
+  leftOwner: PgmlViewOwnerBlock,
+  rightOwner: PgmlViewOwnerBlock
+) => {
+  const leftActiveView = getPgmlDocumentView(leftOwner, leftOwner.activeViewId)
+  const rightActiveView = getPgmlDocumentView(rightOwner, rightOwner.activeViewId)
+
+  return JSON.stringify({
+    activeViewName: leftActiveView?.name || null,
+    views: leftOwner.views.map(normalizePgmlDocumentViewForComparison)
+  }) === JSON.stringify({
+    activeViewName: rightActiveView?.name || null,
+    views: rightOwner.views.map(normalizePgmlDocumentViewForComparison)
+  })
+}
+
 export const isPgmlWorkspaceDirty = (
   document: PgmlVersionSetDocument,
   includeLayout = true
@@ -152,13 +374,20 @@ export const isPgmlWorkspaceDirty = (
     // A document without checkpoints treats any non-empty workspace snapshot
     // as meaningful draft state that still needs its first locked version.
     return normalizePgmlSnapshotSource(document.workspace.snapshot.source).length > 0
+      || (includeLayout && hasMeaningfulPgmlDocumentViewState(document.workspace))
   }
 
-  return !arePgmlSnapshotsEquivalent(
+  const snapshotsDiffer = !arePgmlSnapshotsEquivalent(
     document.workspace.snapshot.source,
     baseVersion.snapshot.source,
     includeLayout
   )
+
+  if (snapshotsDiffer) {
+    return true
+  }
+
+  return includeLayout && !arePgmlViewOwnersEquivalent(document.workspace, baseVersion)
 }
 
 export const canCreatePgmlCheckpoint = (
@@ -506,6 +735,16 @@ const getVersionId = (header: string) => {
   return match[1] || null
 }
 
+const getViewName = (header: string) => {
+  const match = header.match(/^View\s+(.+)$/u)
+
+  if (!match) {
+    return null
+  }
+
+  return trimQuotedValue(match[1] || '')
+}
+
 const getSchemaMetadataTarget = (
   header: string,
   keyword: 'Table' | 'Column'
@@ -632,6 +871,59 @@ const parseSnapshotBlock = (block: PgmlNamedBlock, context: string) => {
   } satisfies PgmlDocumentSnapshot
 }
 
+const parseViewBooleanMetadata = (value: string | undefined, fallback: boolean) => {
+  if (!value) {
+    return fallback
+  }
+
+  if (value === 'true') {
+    return true
+  }
+
+  if (value === 'false') {
+    return false
+  }
+
+  return fallback
+}
+
+const parseViewBlock = (block: PgmlNamedBlock, context: string): PgmlDocumentDiagramView => {
+  const viewName = getViewName(block.header)
+
+  if (!viewName || viewName.trim().length === 0) {
+    throw new Error(`${context} View blocks require a quoted name.`)
+  }
+
+  const nested = collectBlocks(block.body.join('\n'))
+  const metadata = collectBlockMetadata(nested.topLevel, `${context} View ${viewName}`)
+
+  if (nested.blocks.some(nestedBlock => !nestedBlock.header.startsWith('Properties '))) {
+    throw new Error(`${context} View ${viewName} only allows nested Properties blocks.`)
+  }
+
+  const viewSource = nested.blocks.map((nestedBlock) => {
+    return `${nestedBlock.header} {\n${nestedBlock.body.join('\n')}\n}`
+  }).join('\n\n')
+
+  return createPgmlDocumentView({
+    id: metadata.id || null,
+    name: viewName,
+    nodeProperties: viewSource.length > 0 ? parsePgml(viewSource).nodeProperties : {},
+    showExecutableObjects: parseViewBooleanMetadata(
+      metadata.show_execs || metadata.execs,
+      true
+    ),
+    showRelationshipLines: parseViewBooleanMetadata(
+      metadata.show_lines || metadata.lines,
+      true
+    ),
+    showTableFields: parseViewBooleanMetadata(
+      metadata.show_fields || metadata.fields,
+      true
+    )
+  })
+}
+
 const parseWorkspaceBlock = (block: PgmlNamedBlock): PgmlWorkspaceDocumentBlock => {
   if (block.header !== workspaceKeyword) {
     throw new Error('VersionSet requires a Workspace block.')
@@ -640,14 +932,29 @@ const parseWorkspaceBlock = (block: PgmlNamedBlock): PgmlWorkspaceDocumentBlock 
   const nested = collectBlocks(block.body.join('\n'))
   const metadata = collectBlockMetadata(nested.topLevel, 'Workspace')
 
-  if (nested.blocks.length !== 1) {
+  const snapshotBlocks = nested.blocks.filter(nestedBlock => nestedBlock.header === snapshotKeyword)
+  const viewBlocks = nested.blocks.filter(nestedBlock => getViewName(nestedBlock.header) !== null)
+
+  if (snapshotBlocks.length !== 1) {
     throw new Error('Workspace requires exactly one Snapshot block.')
   }
 
+  if (snapshotBlocks.length + viewBlocks.length !== nested.blocks.length) {
+    throw new Error('Workspace only allows Snapshot and View blocks.')
+  }
+
+  const normalizedWorkspace = normalizeViewOwnerBlock({
+    activeViewId: metadata.active_view || null,
+    snapshot: parseSnapshotBlock(snapshotBlocks[0]!, 'Workspace'),
+    views: viewBlocks.map(viewBlock => parseViewBlock(viewBlock, 'Workspace'))
+  })
+
   return {
+    activeViewId: normalizedWorkspace.activeViewId,
     basedOnVersionId: metadata.based_on || null,
-    snapshot: parseSnapshotBlock(nested.blocks[0]!, 'Workspace'),
-    updatedAt: metadata.updated_at ? normalizePgmlTimestamp(metadata.updated_at, 'Workspace updated_at') : null
+    snapshot: normalizedWorkspace.snapshot,
+    updatedAt: metadata.updated_at ? normalizePgmlTimestamp(metadata.updated_at, 'Workspace updated_at') : null,
+    views: normalizedWorkspace.views
   }
 }
 
@@ -660,10 +967,8 @@ const parseVersionBlock = (block: PgmlNamedBlock): PgmlVersionDocumentBlock => {
 
   const nested = collectBlocks(block.body.join('\n'))
   const metadata = collectBlockMetadata(nested.topLevel, `Version ${versionId}`)
-
-  if (nested.blocks.length !== 1) {
-    throw new Error(`Version ${versionId} requires exactly one Snapshot block.`)
-  }
+  const snapshotBlocks = nested.blocks.filter(nestedBlock => nestedBlock.header === snapshotKeyword)
+  const viewBlocks = nested.blocks.filter(nestedBlock => getViewName(nestedBlock.header) !== null)
 
   const role = metadata.role
 
@@ -671,7 +976,22 @@ const parseVersionBlock = (block: PgmlNamedBlock): PgmlVersionDocumentBlock => {
     throw new Error(`Version ${versionId} requires role to be design or implementation.`)
   }
 
+  if (snapshotBlocks.length !== 1) {
+    throw new Error(`Version ${versionId} requires exactly one Snapshot block.`)
+  }
+
+  if (snapshotBlocks.length + viewBlocks.length !== nested.blocks.length) {
+    throw new Error(`Version ${versionId} only allows Snapshot and View blocks.`)
+  }
+
+  const normalizedVersion = normalizeViewOwnerBlock({
+    activeViewId: metadata.active_view || metadata.default_view || null,
+    snapshot: parseSnapshotBlock(snapshotBlocks[0]!, `Version ${versionId}`),
+    views: viewBlocks.map(viewBlock => parseViewBlock(viewBlock, `Version ${versionId}`))
+  })
+
   return {
+    activeViewId: normalizedVersion.activeViewId,
     createdAt: normalizePgmlTimestamp(
       getRequiredMetadataValue(metadata, 'created_at', `Version ${versionId}`),
       `Version ${versionId} created_at`
@@ -680,7 +1000,8 @@ const parseVersionBlock = (block: PgmlNamedBlock): PgmlVersionDocumentBlock => {
     name: metadata.name || null,
     parentVersionId: metadata.parent || null,
     role,
-    snapshot: parseSnapshotBlock(nested.blocks[0]!, `Version ${versionId}`)
+    snapshot: normalizedVersion.snapshot,
+    views: normalizedVersion.views
   }
 }
 
@@ -702,6 +1023,30 @@ const validateVersionSetDocument = (document: PgmlVersionSetDocument) => {
   const schemaMetadataColumnIds = new Set<string>()
   const versionsById = new Map(document.versions.map(version => [version.id, version] as const))
   let rootVersionCount = 0
+  const validateViewOwner = (
+    owner: PgmlViewOwnerBlock,
+    context: string
+  ) => {
+    const viewIds = new Set<string>()
+    const viewNames = new Set<string>()
+
+    owner.views.forEach((view) => {
+      if (viewIds.has(view.id)) {
+        throw new Error(`${context} duplicates view id ${view.id}.`)
+      }
+
+      if (viewNames.has(view.name)) {
+        throw new Error(`${context} duplicates view name ${view.name}.`)
+      }
+
+      viewIds.add(view.id)
+      viewNames.add(view.name)
+    })
+
+    if (owner.activeViewId && !viewIds.has(owner.activeViewId)) {
+      throw new Error(`${context} active_view references missing view ${owner.activeViewId}.`)
+    }
+  }
 
   document.schemaMetadata.tables.forEach((entry) => {
     if (schemaMetadataTableIds.has(entry.tableId)) {
@@ -721,7 +1066,11 @@ const validateVersionSetDocument = (document: PgmlVersionSetDocument) => {
     schemaMetadataColumnIds.add(columnId)
   })
 
+  validateViewOwner(document.workspace, 'Workspace')
+
   document.versions.forEach((version) => {
+    validateViewOwner(version, `Version ${version.id}`)
+
     if (versionIds.has(version.id)) {
       throw new Error(`Version ${version.id} is duplicated.`)
     }
@@ -861,6 +1210,37 @@ const pushMetadataSpacer = (lines: string[]) => {
   }
 }
 
+const buildViewBlock = (
+  view: PgmlDocumentDiagramView,
+  level: number
+) => {
+  const lines = [`${'  '.repeat(level)}${viewKeyword} ${quoteMetadataValue(view.name)} {`]
+  const propertiesSource = buildPgmlWithNodeProperties('', view.nodeProperties)
+
+  lines.push(buildMetadataLine('id', view.id, level + 1))
+
+  if (!view.showRelationshipLines) {
+    lines.push(buildMetadataLine('show_lines', 'false', level + 1))
+  }
+
+  if (!view.showExecutableObjects) {
+    lines.push(buildMetadataLine('show_execs', 'false', level + 1))
+  }
+
+  if (!view.showTableFields) {
+    lines.push(buildMetadataLine('show_fields', 'false', level + 1))
+  }
+
+  if (propertiesSource.length > 0) {
+    lines.push('')
+    lines.push(indentLines(propertiesSource, level + 1))
+  }
+
+  lines.push(`${'  '.repeat(level)}}`)
+
+  return lines.join('\n')
+}
+
 const buildWorkspaceBlock = (
   workspace: PgmlWorkspaceDocumentBlock,
   level = 1
@@ -875,8 +1255,18 @@ const buildWorkspaceBlock = (
     lines.push(buildMetadataLine('updated_at', workspace.updatedAt, level + 1, true))
   }
 
+  if (workspace.activeViewId) {
+    lines.push(buildMetadataLine('active_view', workspace.activeViewId, level + 1))
+  }
+
   pushMetadataSpacer(lines)
   lines.push(buildSnapshotBlock(workspace.snapshot, level + 1))
+
+  if (workspace.views.length > 0) {
+    lines.push('')
+    lines.push(workspace.views.map(view => buildViewBlock(view, level + 1)).join('\n\n'))
+  }
+
   lines.push(`${'  '.repeat(level)}}`)
 
   return lines.join('\n')
@@ -899,8 +1289,19 @@ const buildVersionBlock = (
   }
 
   lines.push(buildMetadataLine('created_at', version.createdAt, level + 1, true))
+
+  if (version.activeViewId) {
+    lines.push(buildMetadataLine('active_view', version.activeViewId, level + 1))
+  }
+
   lines.push('')
   lines.push(buildSnapshotBlock(version.snapshot, level + 1))
+
+  if (version.views.length > 0) {
+    lines.push('')
+    lines.push(version.views.map(view => buildViewBlock(view, level + 1)).join('\n\n'))
+  }
+
   lines.push(`${'  '.repeat(level)}}`)
 
   return lines.join('\n')
@@ -971,6 +1372,37 @@ export const getPgmlVersionMap = (document: PgmlVersionSetDocument) => {
   return new Map(document.versions.map(version => [version.id, version] as const))
 }
 
+export const getPgmlDocumentView = (
+  block: PgmlViewOwnerBlock,
+  preferredViewId: string | null = null
+) => {
+  return getPgmlDocumentViewById(
+    block.views,
+    resolvePgmlDocumentViewId(block.views, preferredViewId || block.activeViewId)
+  )
+}
+
+export const buildPgmlDocumentViewSource = (
+  snapshotSource: string,
+  view: PgmlDocumentDiagramView | null
+) => {
+  const normalizedSnapshotSource = normalizePgmlSnapshotSource(stripPgmlPropertiesBlocks(snapshotSource))
+
+  return view
+    ? buildPgmlWithNodeProperties(normalizedSnapshotSource, view.nodeProperties)
+    : normalizedSnapshotSource
+}
+
+export const getPgmlDocumentBlockPreviewSource = (
+  block: PgmlViewOwnerBlock,
+  preferredViewId: string | null = null
+) => {
+  return buildPgmlDocumentViewSource(
+    block.snapshot.source,
+    getPgmlDocumentView(block, preferredViewId)
+  )
+}
+
 const cloneDocumentSnapshot = (snapshot: PgmlDocumentSnapshot) => {
   return {
     source: normalizePgmlSnapshotSource(snapshot.source)
@@ -1003,12 +1435,14 @@ export const clonePgmlVersionSetDocument = (document: PgmlVersionSetDocument) =>
     versions: document.versions.map((version) => {
       return {
         ...version,
-        snapshot: cloneDocumentSnapshot(version.snapshot)
+        snapshot: cloneDocumentSnapshot(version.snapshot),
+        views: version.views.map(clonePgmlDocumentView)
       }
     }),
     workspace: {
       ...document.workspace,
-      snapshot: cloneDocumentSnapshot(document.workspace.snapshot)
+      snapshot: cloneDocumentSnapshot(document.workspace.snapshot),
+      views: document.workspace.views.map(clonePgmlDocumentView)
     }
   } satisfies PgmlVersionSetDocument
 }
@@ -1351,21 +1785,43 @@ export const serializePgmlDocumentScope = (
 
 export const createInitialPgmlDocument = (input?: {
   basedOnVersionId?: string | null
-  initialVersion?: Omit<PgmlVersionDocumentBlock, 'id'>
+  initialVersion?: Omit<PgmlVersionDocumentBlock, 'id' | 'views' | 'activeViewId'> & {
+    activeViewId?: string | null
+    views?: PgmlDocumentDiagramView[]
+  }
   name?: string
   workspaceSource?: string
 }) => {
   const initialVersion = input?.initialVersion
   const versions: PgmlVersionDocumentBlock[] = []
+  let normalizedInitialVersion: ReturnType<typeof normalizeViewOwnerBlock> | null = null
 
   if (initialVersion) {
+    normalizedInitialVersion = normalizeViewOwnerBlock({
+      activeViewId: initialVersion.activeViewId || null,
+      snapshot: cloneDocumentSnapshot(initialVersion.snapshot),
+      views: initialVersion.views || []
+    })
+
     versions.push({
       ...initialVersion,
+      activeViewId: normalizedInitialVersion.activeViewId,
       createdAt: normalizePgmlTimestamp(initialVersion.createdAt, 'Initial version created_at'),
       id: createPgmlVersionId(),
-      snapshot: cloneDocumentSnapshot(initialVersion.snapshot)
+      snapshot: normalizedInitialVersion.snapshot,
+      views: normalizedInitialVersion.views
     })
   }
+
+  const normalizedWorkspace = normalizeViewOwnerBlock({
+    activeViewId: input?.workspaceSource === undefined ? normalizedInitialVersion?.activeViewId || null : null,
+    snapshot: {
+      source: input?.workspaceSource ?? initialVersion?.snapshot.source ?? ''
+    },
+    views: input?.workspaceSource === undefined
+      ? normalizedInitialVersion?.views.map(clonePgmlDocumentView) || []
+      : []
+  })
 
   return {
     kind: 'versioned',
@@ -1373,11 +1829,11 @@ export const createInitialPgmlDocument = (input?: {
     schemaMetadata: createEmptyPgmlDocumentSchemaMetadata(),
     versions,
     workspace: {
+      activeViewId: normalizedWorkspace.activeViewId,
       basedOnVersionId: initialVersion ? versions[0]!.id : input?.basedOnVersionId || null,
-      snapshot: {
-        source: normalizePgmlSnapshotSource(input?.workspaceSource ?? initialVersion?.snapshot.source ?? '')
-      },
-      updatedAt: null
+      snapshot: normalizedWorkspace.snapshot,
+      updatedAt: null,
+      views: normalizedWorkspace.views
     }
   } satisfies PgmlVersionSetDocument
 }
@@ -1394,12 +1850,14 @@ export const createPgmlVersionFromWorkspace = (
   // always copy the current snapshot so future draft edits cannot mutate
   // already-recorded history by reference.
   const nextVersion: PgmlVersionDocumentBlock = {
+    activeViewId: document.workspace.activeViewId,
     createdAt: normalizePgmlTimestamp(input.createdAt, 'Version created_at'),
     id: createPgmlVersionId(),
     name: input.name,
     parentVersionId: document.workspace.basedOnVersionId,
     role: input.role,
-    snapshot: cloneDocumentSnapshot(document.workspace.snapshot)
+    snapshot: cloneDocumentSnapshot(document.workspace.snapshot),
+    views: document.workspace.views.map(clonePgmlDocumentView)
   }
 
   return {
@@ -1415,21 +1873,35 @@ export const createPgmlVersionFromWorkspace = (
 export const replacePgmlWorkspaceFromSnapshot = (
   document: PgmlVersionSetDocument,
   input: {
+    activeViewId?: string | null
     basedOnVersionId: string | null
     source: string
     updatedAt?: string | null
+    views?: PgmlDocumentDiagramView[]
   }
 ) => {
+  const normalizedWorkspace = normalizeViewOwnerBlock({
+    activeViewId: input.activeViewId === undefined
+      ? document.workspace.activeViewId
+      : input.activeViewId,
+    snapshot: {
+      source: input.source
+    },
+    views: input.views === undefined
+      ? document.workspace.views.map(clonePgmlDocumentView)
+      : input.views
+  })
+
   return {
     ...document,
     workspace: {
+      activeViewId: normalizedWorkspace.activeViewId,
       basedOnVersionId: input.basedOnVersionId,
-      snapshot: {
-        source: normalizePgmlSnapshotSource(input.source)
-      },
+      snapshot: normalizedWorkspace.snapshot,
       updatedAt: input.updatedAt === undefined || input.updatedAt === null
         ? document.workspace.updatedAt
-        : normalizePgmlTimestamp(input.updatedAt, 'Workspace updated_at')
+        : normalizePgmlTimestamp(input.updatedAt, 'Workspace updated_at'),
+      views: normalizedWorkspace.views
     }
   } satisfies PgmlVersionSetDocument
 }
@@ -1446,11 +1918,15 @@ export const replacePgmlDocumentSchemaMetadata = (
 
 export const getPgmlDocumentPreviewSource = (
   document: PgmlVersionSetDocument,
-  previewTarget: 'workspace' | { versionId: string }
+  previewTarget: 'workspace' | { versionId: string, viewId?: string | null }
 ) => {
   if (previewTarget === 'workspace') {
-    return document.workspace.snapshot.source
+    return getPgmlDocumentBlockPreviewSource(document.workspace)
   }
 
-  return document.versions.find(version => version.id === previewTarget.versionId)?.snapshot.source || ''
+  const version = document.versions.find(entry => entry.id === previewTarget.versionId) || null
+
+  return version
+    ? getPgmlDocumentBlockPreviewSource(version, previewTarget.viewId || null)
+    : ''
 }

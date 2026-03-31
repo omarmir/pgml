@@ -44,6 +44,12 @@ import {
 } from '~/utils/pgml-diagram-compare'
 import { convertDbmlToPgml } from '~/utils/dbml-import'
 import { convertPgDumpToPgml } from '~/utils/pg-dump-import'
+import {
+  applyImportedExecutableAttachmentSelections,
+  prepareImportedExecutableAttachments,
+  type PgmlImportExecutableAttachmentCandidate,
+  type PgmlImportExecutableAttachmentTableOption
+} from '~/utils/pgml-import-attachments'
 import { analyzePgmlDocument } from '~/utils/pgml-language'
 import {
   hasBlockingPgmlDiagnostics,
@@ -95,12 +101,10 @@ import {
   buildPgmlVersionCompareOptions
 } from '~/utils/pgml-version-options'
 import {
-  buildPgmlWithNodeProperties,
   parsePgml,
   pgmlExample,
   pgmlVersionedExample,
   replacePgmlSourceRange,
-  stripPgmlPropertiesBlocks,
   type PgmlNodeProperties,
   type PgmlMetadataEntry,
   type PgmlSchemaModel,
@@ -177,6 +181,16 @@ type ReferenceTargetItem = {
 }
 
 type ReferenceActionField = 'referenceDeleteAction' | 'referenceUpdateAction'
+
+type ImportExecutableAttachmentResolutionKind = 'dbml' | 'pg_dump'
+
+type ImportExecutableAttachmentResolution = {
+  basedOnVersionId: string
+  candidates: PgmlImportExecutableAttachmentCandidate[]
+  kind: ImportExecutableAttachmentResolutionKind
+  pgml: string
+  tableOptions: PgmlImportExecutableAttachmentTableOption[]
+}
 
 const defaultReferenceActionSelectValue = '__pgml_default_reference_action__'
 
@@ -288,6 +302,9 @@ const importDumpError: Ref<string | null> = ref(null)
 const importDumpSelectedFile: Ref<File | null> = ref(null)
 const importDumpText: Ref<string> = ref('')
 const isSubmittingImportDump: Ref<boolean> = ref(false)
+const importExecutableAttachmentResolution: Ref<ImportExecutableAttachmentResolution | null> = ref(null)
+const importExecutableAttachmentError: Ref<string | null> = ref(null)
+const isSubmittingImportExecutableAttachmentResolution: Ref<boolean> = ref(false)
 const restoreVersionDialogOpen: Ref<boolean> = ref(false)
 const restoreVersionId: Ref<string | null> = ref(null)
 const tableEditorDraft: Ref<PgmlEditableTableDraft | null> = ref(null)
@@ -318,14 +335,20 @@ const {
 } = storeToRefs(studioSessionStore)
 currentPersistenceSource.value = studioLaunchRequest.value?.source === 'file' ? 'file' : 'browser'
 const {
+  activeDiagramViewId,
   compareBaseId: versionCompareBaseId,
   compareBaseSource,
   compareTargetId: versionCompareTargetId,
   compareTargetSource,
   canCheckpoint,
+  canDeleteDiagramView,
   compareRelationshipSummary,
   createCheckpoint: createVersionCheckpoint,
+  createDiagramView,
   document: versionDocument,
+  diagramViewItems,
+  diagramViewSettings,
+  deleteActiveDiagramView,
   documentEditorScope,
   editorMode: versionedEditorMode,
   isWorkspacePreview,
@@ -335,11 +358,14 @@ const {
   previewTargetId,
   replaceWorkspaceFromImportedSnapshot,
   replaceWorkspaceFromVersion,
+  selectDiagramView,
   serializeCurrentDocument,
   setCompareTargets,
   setDocumentEditorScope,
   setPreviewTarget,
   setSchemaMetadata,
+  updateCurrentDiagramViewNodeProperties,
+  updateCurrentDiagramViewSettings,
   versionItems: versionHistoryItems,
   versionedDocumentScopeItems,
   versionedDocumentScopeSource,
@@ -506,9 +532,10 @@ const editorDiagnosticsDelayMs = computed(() => {
 
   return isLargeDocumentMode.value ? 500 : 150
 })
-const editorActivateCompletionOnTyping = computed(() => {
-  return !isEditableWorkspaceDraft.value || !isLargeDocumentMode.value
-})
+// Keep raw PGML completions available even on large drafts. Commit and lint
+// throttling already absorb the heavy document cost without making the editor
+// feel inert while typing.
+const editorActivateCompletionOnTyping = true
 const previewSourceDiagnostics = computed(() => {
   if (isWorkspacePreview.value) {
     return workspaceAnalysisDiagnostics.value
@@ -617,6 +644,63 @@ const displayedEditorSource = computed(() => {
 })
 const importDumpSelectedFileName = computed(() => importDumpSelectedFile.value?.name || '')
 const importDbmlSelectedFileName = computed(() => importDbmlSelectedFile.value?.name || '')
+const isImportBusy = computed(() => {
+  return isSubmittingImportDbml.value
+    || isSubmittingImportDump.value
+    || isSubmittingImportExecutableAttachmentResolution.value
+})
+const importBusyTitle = computed(() => {
+  if (isSubmittingImportExecutableAttachmentResolution.value) {
+    return 'Applying import selections'
+  }
+
+  if (isSubmittingImportDbml.value) {
+    return 'Importing DBML'
+  }
+
+  if (isSubmittingImportDump.value) {
+    return 'Importing pg_dump'
+  }
+
+  return ''
+})
+const importBusyDescription = computed(() => {
+  if (isSubmittingImportExecutableAttachmentResolution.value) {
+    return 'Updating executable attachment metadata and replacing the active workspace.'
+  }
+
+  if (isSubmittingImportDbml.value) {
+    return 'Parsing DBML, extracting executable objects, and preparing the imported workspace.'
+  }
+
+  if (isSubmittingImportDump.value) {
+    return 'Parsing the dump, converting schema objects into PGML, and preparing the imported workspace.'
+  }
+
+  return ''
+})
+const importExecutableAttachmentResolutionTitle = computed(() => {
+  const resolution = importExecutableAttachmentResolution.value
+
+  if (!resolution) {
+    return ''
+  }
+
+  return resolution.kind === 'dbml'
+    ? 'Place imported DBML executables'
+    : 'Place imported pg_dump executables'
+})
+const importExecutableAttachmentResolutionDescription = computed(() => {
+  const resolution = importExecutableAttachmentResolution.value
+
+  if (!resolution) {
+    return ''
+  }
+
+  return resolution.kind === 'dbml'
+    ? 'Some imported executable objects do not have a certain table attachment. Select one or more tables for each item, or leave it empty to keep that object standalone.'
+    : 'Some imported executable objects do not have a certain table attachment. Select one or more tables for each item, or leave it empty to keep that object standalone.'
+})
 const mobileCanvasView = computed<StudioMobileCanvasView>(() => {
   if (mobileWorkspaceView.value === 'panel' || mobileWorkspaceView.value === 'tool-panel') {
     return mobileWorkspaceView.value
@@ -687,21 +771,36 @@ const resetBrowserSchemaStatusEligibility = () => {
 }
 
 const syncSourceWithNodeProperties = (nodeProperties: Record<string, PgmlNodeProperties>) => {
-  if (!isWorkspacePreview.value || workspaceHasBlockingSourceErrors.value) {
-    return
-  }
-
-  const nextSource = buildPgmlWithNodeProperties(
-    stripPgmlPropertiesBlocks(getLiveWorkspaceSource()),
-    nodeProperties
-  )
-
-  if (nextSource === source.value) {
+  if (isWorkspacePreview.value && workspaceHasBlockingSourceErrors.value) {
     return
   }
 
   markBrowserSchemaStatusEligible()
-  source.value = nextSource
+  updateCurrentDiagramViewNodeProperties(nodeProperties)
+}
+
+const updateDiagramViewSettings = (settings: {
+  showExecutableObjects?: boolean
+  showRelationshipLines?: boolean
+  showTableFields?: boolean
+}) => {
+  markBrowserSchemaStatusEligible()
+  updateCurrentDiagramViewSettings(settings)
+}
+
+const selectActiveDiagramView = (viewId: string) => {
+  markBrowserSchemaStatusEligible()
+  selectDiagramView(viewId)
+}
+
+const createActiveDiagramView = () => {
+  markBrowserSchemaStatusEligible()
+  createDiagramView()
+}
+
+const deleteSelectedDiagramView = () => {
+  markBrowserSchemaStatusEligible()
+  deleteActiveDiagramView()
 }
 
 watch(displayedEditorSource, (nextSource) => {
@@ -950,6 +1049,7 @@ const getVersionLabel = (input: {
   name: string | null
 }) => {
   return getPgmlVersionDisplayLabel({
+    activeViewId: null,
     createdAt: '',
     id: input.id,
     name: input.name,
@@ -957,7 +1057,8 @@ const getVersionLabel = (input: {
     role: 'design',
     snapshot: {
       source: ''
-    }
+    },
+    views: []
   })
 }
 const versionPanelItems = computed(() => {
@@ -1409,6 +1510,151 @@ const resetImportDbmlDialog = () => {
   importDbmlText.value = ''
   importDbmlBaseVersionId.value = null
 }
+const resetImportExecutableAttachmentResolution = () => {
+  importExecutableAttachmentResolution.value = null
+  importExecutableAttachmentError.value = null
+}
+const commitImportedSchema = (input: {
+  basedOnVersionId: string
+  kind: ImportExecutableAttachmentResolutionKind
+  pgml: string
+}) => {
+  const didReplaceWorkspace = replaceWorkspaceFromImportedSnapshot({
+    basedOnVersionId: input.basedOnVersionId,
+    includeLayout: true,
+    source: input.pgml
+  })
+
+  if (!didReplaceWorkspace) {
+    throw new Error('The selected base version no longer exists.')
+  }
+
+  markBrowserSchemaStatusEligible()
+  requestCanvasViewportReset()
+  resetImportExecutableAttachmentResolution()
+
+  if (input.kind === 'dbml') {
+    resetImportDbmlDialog()
+  } else {
+    resetImportDumpDialog()
+  }
+
+  toast.add({
+    title: 'Workspace replaced',
+    description: buildPgmlImportSuccessDescription(),
+    color: 'success',
+    icon: 'i-lucide-check'
+  })
+}
+const openImportExecutableAttachmentResolution = (input: ImportExecutableAttachmentResolution) => {
+  importExecutableAttachmentResolution.value = input
+  importExecutableAttachmentError.value = null
+
+  if (input.kind === 'dbml') {
+    importDbmlDialogOpen.value = false
+  } else {
+    importDumpDialogOpen.value = false
+  }
+}
+const closeImportExecutableAttachmentResolution = () => {
+  if (isSubmittingImportExecutableAttachmentResolution.value) {
+    return
+  }
+
+  const resolution = importExecutableAttachmentResolution.value
+
+  if (!resolution) {
+    return
+  }
+
+  resetImportExecutableAttachmentResolution()
+
+  if (resolution.kind === 'dbml') {
+    importDbmlDialogOpen.value = true
+  } else {
+    importDumpDialogOpen.value = true
+  }
+}
+const handleImportExecutableAttachmentResolutionOpenChange = (nextOpen: boolean) => {
+  if (nextOpen || !importExecutableAttachmentResolution.value) {
+    return
+  }
+
+  closeImportExecutableAttachmentResolution()
+}
+const toggleImportExecutableAttachmentCandidateTable = (candidateId: string, tableId: string) => {
+  const resolution = importExecutableAttachmentResolution.value
+
+  if (!resolution) {
+    return
+  }
+
+  importExecutableAttachmentResolution.value = {
+    ...resolution,
+    candidates: resolution.candidates.map((candidate) => {
+      if (candidate.id !== candidateId) {
+        return candidate
+      }
+
+      const selectedTableIds = candidate.selectedTableIds.includes(tableId)
+        ? candidate.selectedTableIds.filter(value => value !== tableId)
+        : [...candidate.selectedTableIds, tableId]
+
+      return {
+        ...candidate,
+        selectedTableIds
+      }
+    })
+  }
+}
+const clearImportExecutableAttachmentCandidateTables = (candidateId: string) => {
+  const resolution = importExecutableAttachmentResolution.value
+
+  if (!resolution) {
+    return
+  }
+
+  importExecutableAttachmentResolution.value = {
+    ...resolution,
+    candidates: resolution.candidates.map((candidate) => {
+      return candidate.id === candidateId
+        ? {
+            ...candidate,
+            selectedTableIds: []
+          }
+        : candidate
+    })
+  }
+}
+const confirmImportExecutableAttachmentResolution = () => {
+  const resolution = importExecutableAttachmentResolution.value
+
+  if (!resolution) {
+    return
+  }
+
+  isSubmittingImportExecutableAttachmentResolution.value = true
+
+  try {
+    const nextPgml = applyImportedExecutableAttachmentSelections(resolution.pgml, resolution.candidates)
+
+    commitImportedSchema({
+      basedOnVersionId: resolution.basedOnVersionId,
+      kind: resolution.kind,
+      pgml: nextPgml
+    })
+  } catch (error) {
+    if (error instanceof Error && error.message.trim().length > 0) {
+      importExecutableAttachmentError.value = error.message
+    } else if (typeof error === 'string' && error.trim().length > 0) {
+      importExecutableAttachmentError.value = error
+    } else {
+      importExecutableAttachmentError.value = buildPgmlImportFailureMessage()
+    }
+  } finally {
+    isSubmittingImportExecutableAttachmentResolution.value = false
+  }
+}
 const getPreferredImportBaseVersionId = () => {
   return versionHistoryItems.value.find(version => version.isWorkspaceBase)?.id
     || latestImplementationVersion.value?.id
@@ -1449,14 +1695,14 @@ const openImportDbmlDialog = () => {
   importDbmlBaseVersionId.value = getPreferredImportBaseVersionId()
 }
 const closeImportDumpDialog = () => {
-  if (isSubmittingImportDump.value) {
+  if (isSubmittingImportDump.value || isSubmittingImportExecutableAttachmentResolution.value) {
     return
   }
 
   resetImportDumpDialog()
 }
 const closeImportDbmlDialog = () => {
-  if (isSubmittingImportDbml.value) {
+  if (isSubmittingImportDbml.value || isSubmittingImportExecutableAttachmentResolution.value) {
     return
   }
 
@@ -1528,25 +1774,23 @@ const submitImportDump = async () => {
       preferredName: selectedFile?.name,
       sql: importedSql
     })
+    const preparedImport = prepareImportedExecutableAttachments(importedSchema.pgml)
 
-    const didReplaceWorkspace = replaceWorkspaceFromImportedSnapshot({
-      basedOnVersionId: importDumpBaseVersionId.value,
-      includeLayout: true,
-      source: importedSchema.pgml
-    })
-
-    if (!didReplaceWorkspace) {
-      throw new Error('The selected base version no longer exists.')
+    if (preparedImport.candidates.length > 0) {
+      openImportExecutableAttachmentResolution({
+        basedOnVersionId: importDumpBaseVersionId.value,
+        candidates: preparedImport.candidates,
+        kind: 'pg_dump',
+        pgml: preparedImport.pgml,
+        tableOptions: preparedImport.tableOptions
+      })
+      return
     }
 
-    markBrowserSchemaStatusEligible()
-    requestCanvasViewportReset()
-    resetImportDumpDialog()
-    toast.add({
-      title: 'Workspace replaced',
-      description: buildPgmlImportSuccessDescription(),
-      color: 'success',
-      icon: 'i-lucide-check'
+    commitImportedSchema({
+      basedOnVersionId: importDumpBaseVersionId.value,
+      kind: 'pg_dump',
+      pgml: preparedImport.pgml
     })
   } catch (error) {
     if (error instanceof Error && error.message.trim().length > 0) {
@@ -1587,25 +1831,23 @@ const submitImportDbml = async () => {
       parseExecutableComments: importDbmlParseExecutableComments.value,
       preferredName: selectedFile?.name
     })
+    const preparedImport = prepareImportedExecutableAttachments(importedSchema.pgml)
 
-    const didReplaceWorkspace = replaceWorkspaceFromImportedSnapshot({
-      basedOnVersionId: importDbmlBaseVersionId.value,
-      includeLayout: true,
-      source: importedSchema.pgml
-    })
-
-    if (!didReplaceWorkspace) {
-      throw new Error('The selected base version no longer exists.')
+    if (preparedImport.candidates.length > 0) {
+      openImportExecutableAttachmentResolution({
+        basedOnVersionId: importDbmlBaseVersionId.value,
+        candidates: preparedImport.candidates,
+        kind: 'dbml',
+        pgml: preparedImport.pgml,
+        tableOptions: preparedImport.tableOptions
+      })
+      return
     }
 
-    markBrowserSchemaStatusEligible()
-    requestCanvasViewportReset()
-    resetImportDbmlDialog()
-    toast.add({
-      title: 'Workspace replaced',
-      description: buildPgmlImportSuccessDescription(),
-      color: 'success',
-      icon: 'i-lucide-check'
+    commitImportedSchema({
+      basedOnVersionId: importDbmlBaseVersionId.value,
+      kind: 'dbml',
+      pgml: preparedImport.pgml
     })
   } catch (error) {
     if (error instanceof Error && error.message.trim().length > 0) {
@@ -2463,13 +2705,17 @@ onBeforeUnmount(() => {
       <template #canvas>
         <PgmlDiagramCanvas
           ref="canvasRef"
+          :active-diagram-view-id="activeDiagramViewId"
           :can-create-checkpoint="canCheckpoint"
+          :can-delete-diagram-view="canDeleteDiagramView"
           :can-edit-detail-source="isWorkspacePreview"
           :compare-base-label="compareBaseLabel"
           :compare-base-model="compareBaseModel"
           :compare-entries="compareEntries"
           :compare-relationship-summary="compareRelationshipSummary"
           :compare-target-label="compareTargetLabel"
+          :diagram-view-items="diagramViewItems"
+          :diagram-view-settings="diagramViewSettings"
           :model="parsedModel"
           :export-base-name="exportBaseName"
           :export-preference-key="exportPreferenceKey"
@@ -2494,6 +2740,7 @@ onBeforeUnmount(() => {
           :workspace-status="workspaceStatus"
           :viewport-reset-key="canvasViewportResetKey"
           @create-group="openGroupCreator"
+          @create-diagram-view="createActiveDiagramView"
           @focus-source="handleCanvasFocusSource"
           @mobile-canvas-view-change="handleMobileCanvasViewChange"
           @panel-tab-change="handleCanvasPanelTabChange"
@@ -2501,10 +2748,13 @@ onBeforeUnmount(() => {
           @tool-panel-tab-change="handleCanvasToolPanelTabChange"
           @tool-panel-visibility-change="handleCanvasToolPanelVisibilityChange"
           @create-table="openTableCreator"
+          @delete-diagram-view="deleteSelectedDiagramView"
           @edit-group="openGroupEditor"
           @edit-table="openTableEditor"
           @node-properties-change="syncSourceWithNodeProperties"
           @restore-version="restoreVersionToWorkspace"
+          @select-diagram-view="selectActiveDiagramView"
+          @update-diagram-view-settings="updateDiagramViewSettings"
           @update-version-compare-base-id="updateVersionCompareBaseId"
           @update-version-compare-target-id="updateVersionCompareTargetId"
           @version-checkpoint="openCheckpointDialog"
@@ -2573,13 +2823,17 @@ onBeforeUnmount(() => {
       <template #canvas>
         <PgmlDiagramCanvas
           ref="canvasRef"
+          :active-diagram-view-id="activeDiagramViewId"
           :can-create-checkpoint="canCheckpoint"
+          :can-delete-diagram-view="canDeleteDiagramView"
           :can-edit-detail-source="isWorkspacePreview"
           :compare-base-label="compareBaseLabel"
           :compare-base-model="compareBaseModel"
           :compare-entries="compareEntries"
           :compare-relationship-summary="compareRelationshipSummary"
           :compare-target-label="compareTargetLabel"
+          :diagram-view-items="diagramViewItems"
+          :diagram-view-settings="diagramViewSettings"
           :model="parsedModel"
           :export-base-name="exportBaseName"
           :export-preference-key="exportPreferenceKey"
@@ -2601,6 +2855,7 @@ onBeforeUnmount(() => {
           :workspace-status="workspaceStatus"
           :viewport-reset-key="canvasViewportResetKey"
           @create-group="openGroupCreator"
+          @create-diagram-view="createActiveDiagramView"
           @focus-source="handleCanvasFocusSource"
           @mobile-canvas-view-change="handleMobileCanvasViewChange"
           @panel-tab-change="handleCanvasPanelTabChange"
@@ -2608,10 +2863,13 @@ onBeforeUnmount(() => {
           @tool-panel-tab-change="handleCanvasToolPanelTabChange"
           @tool-panel-visibility-change="handleCanvasToolPanelVisibilityChange"
           @create-table="openTableCreator"
+          @delete-diagram-view="deleteSelectedDiagramView"
           @edit-group="openGroupEditor"
           @edit-table="openTableEditor"
           @node-properties-change="syncSourceWithNodeProperties"
           @restore-version="restoreVersionToWorkspace"
+          @select-diagram-view="selectActiveDiagramView"
+          @update-diagram-view-settings="updateDiagramViewSettings"
           @update-version-compare-base-id="updateVersionCompareBaseId"
           @update-version-compare-target-id="updateVersionCompareTargetId"
           @version-checkpoint="openCheckpointDialog"
@@ -2856,6 +3114,127 @@ onBeforeUnmount(() => {
           </div>
         </template>
       </AppPgDumpImportModal>
+
+      <StudioModalFrame
+        :open="importExecutableAttachmentResolution !== null"
+        :title="importExecutableAttachmentResolutionTitle"
+        :description="importExecutableAttachmentResolutionDescription"
+        surface-id="import-executable-attachments"
+        body-class="grid min-h-0 gap-4 px-4 py-3"
+        width-class="max-w-4xl"
+        @update:open="handleImportExecutableAttachmentResolutionOpenChange"
+      >
+        <div
+          v-if="importExecutableAttachmentResolution"
+          data-import-executable-attachment-dialog="true"
+          class="grid gap-4"
+        >
+          <div class="border border-[color:var(--studio-shell-border)] bg-[color:var(--studio-control-bg)] px-3 py-3">
+            <div :class="studioFieldKickerClass">
+              Attachment review
+            </div>
+            <p :class="joinStudioClasses(studioCompactBodyCopyClass, 'mt-2')">
+              {{ importExecutableAttachmentResolution.candidates.length }} executable object{{ importExecutableAttachmentResolution.candidates.length === 1 ? '' : 's' }} need table placement before import continues.
+            </p>
+          </div>
+
+          <div
+            v-if="importExecutableAttachmentResolution.candidates.length > 0"
+            class="grid max-h-[60vh] gap-3 overflow-y-auto pr-1"
+          >
+            <section
+              v-for="candidate in importExecutableAttachmentResolution.candidates"
+              :key="candidate.id"
+              :data-import-executable-candidate="candidate.id"
+              class="grid gap-3 border border-[color:var(--studio-shell-border)] bg-[color:var(--studio-control-bg)] px-3 py-3"
+            >
+              <div class="flex items-start justify-between gap-3">
+                <div class="min-w-0">
+                  <span class="inline-flex items-center border border-[color:var(--studio-divider)] px-1.5 py-0.5 font-mono text-[0.52rem] uppercase tracking-[0.08em] text-[color:var(--studio-shell-muted)]">
+                    {{ candidate.kind }}
+                  </span>
+                  <div class="mt-2 break-words text-[0.84rem] font-semibold text-[color:var(--studio-shell-text)]">
+                    {{ candidate.name }}
+                  </div>
+                  <p class="mt-1 break-words text-[0.72rem] leading-6 text-[color:var(--studio-shell-muted)]">
+                    {{ candidate.subtitle }}
+                  </p>
+                </div>
+
+                <button
+                  type="button"
+                  :class="secondaryModalButtonClass"
+                  :disabled="candidate.selectedTableIds.length === 0 || isSubmittingImportExecutableAttachmentResolution"
+                  @click="clearImportExecutableAttachmentCandidateTables(candidate.id)"
+                >
+                  Keep standalone
+                </button>
+              </div>
+
+              <div class="grid gap-2">
+                <div :class="studioFieldKickerClass">
+                  Nest under tables
+                </div>
+                <div class="flex flex-wrap gap-2">
+                  <button
+                    v-for="tableOption in importExecutableAttachmentResolution.tableOptions"
+                    :key="`${candidate.id}:${tableOption.value}`"
+                    type="button"
+                    :data-import-executable-table-toggle="`${candidate.id}:${tableOption.value}`"
+                    :class="getStudioToggleChipClass({
+                      active: candidate.selectedTableIds.includes(tableOption.value),
+                      extraClass: 'px-2 py-1 font-mono text-[0.58rem] uppercase tracking-[0.08em]'
+                    })"
+                    :disabled="isSubmittingImportExecutableAttachmentResolution"
+                    @click="toggleImportExecutableAttachmentCandidateTable(candidate.id, tableOption.value)"
+                  >
+                    {{ tableOption.label }}
+                  </button>
+                </div>
+              </div>
+            </section>
+          </div>
+
+          <div
+            v-else
+            :class="studioEmptyStateClass"
+          >
+            No unresolved executable attachments remain.
+          </div>
+
+          <div
+            v-if="importExecutableAttachmentError"
+            class="grid gap-1 border border-[color:var(--studio-shell-error)]/40 bg-[color:var(--studio-shell-error)]/8 px-3 py-3 text-[0.74rem] text-[color:var(--studio-shell-error)]"
+          >
+            <div class="flex items-start gap-2">
+              <UIcon
+                name="i-lucide-circle-alert"
+                class="mt-0.5 h-4 w-4 shrink-0"
+              />
+              <p>{{ importExecutableAttachmentError }}</p>
+            </div>
+          </div>
+        </div>
+
+        <template #footer>
+          <UButton
+            label="Back"
+            color="neutral"
+            variant="outline"
+            :class="secondaryModalButtonClass"
+            :disabled="isSubmittingImportExecutableAttachmentResolution"
+            @click="closeImportExecutableAttachmentResolution"
+          />
+          <UButton
+            label="Continue import"
+            color="neutral"
+            variant="soft"
+            :class="primaryModalButtonClass"
+            :loading="isSubmittingImportExecutableAttachmentResolution"
+            @click="confirmImportExecutableAttachmentResolution"
+          />
+        </template>
+      </StudioModalFrame>
 
       <StudioModalFrame
         v-model:open="schemaDialogOpen"
@@ -3803,6 +4182,27 @@ onBeforeUnmount(() => {
           />
         </template>
       </StudioModalFrame>
+
+      <div
+        v-if="isImportBusy"
+        data-import-loading="true"
+        class="fixed inset-0 z-[70] grid place-items-center bg-black/45 px-4 backdrop-blur-sm"
+      >
+        <div class="grid max-w-sm gap-2 border border-[color:var(--studio-shell-border)] bg-[color:var(--studio-control-bg)] px-4 py-4 text-left shadow-2xl">
+          <div class="flex items-center gap-2">
+            <UIcon
+              name="i-lucide-loader-circle"
+              class="h-5 w-5 animate-spin text-[color:var(--studio-shell-text)]"
+            />
+            <div class="text-[0.84rem] font-semibold text-[color:var(--studio-shell-text)]">
+              {{ importBusyTitle }}
+            </div>
+          </div>
+          <p class="text-[0.72rem] leading-6 text-[color:var(--studio-shell-muted)]">
+            {{ importBusyDescription }}
+          </p>
+        </div>
+      </div>
     </ClientOnly>
   </div>
 </template>

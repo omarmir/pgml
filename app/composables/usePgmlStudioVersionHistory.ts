@@ -14,10 +14,14 @@ import {
 import {
   buildPgmlCheckpointName,
   canCreatePgmlCheckpoint,
+  clonePgmlDocumentView,
   clonePgmlVersionSetDocument,
+  createPgmlDocumentView,
   createInitialPgmlDocument,
   createPgmlVersionFromWorkspace,
   buildPgmlVersionLineageLabel,
+  getPgmlDocumentBlockPreviewSource,
+  getPgmlDocumentView,
   getPgmlChildVersions,
   getPgmlBranchRootLabel,
   getPgmlBranchRootId,
@@ -52,12 +56,14 @@ import {
   getPgmlVersionDisplayLabel,
   getPgmlVersionRoleDisplayLabel,
   normalizePgmlSnapshotSource,
+  type PgmlDocumentDiagramView,
   type PgmlVersionDocumentBlock,
   type PgmlDocumentEditorScope,
   type PgmlVersionRole,
   type PgmlVersionSetDocument
 } from '~/utils/pgml-document'
 import { stripPgmlPropertiesBlocks } from '~/utils/pgml'
+import type { PgmlNodeProperties } from '~/utils/pgml'
 import {
   clonePgmlDocumentSchemaMetadata,
   type PgmlDocumentSchemaMetadata
@@ -72,6 +78,17 @@ export type PgmlVersionedDocumentEditorMode = typeof versionedDocumentEditorMode
 export type PgmlVersionedDocumentScopeItem = {
   label: string
   value: PgmlDocumentEditorScope
+}
+
+export type PgmlDiagramViewItem = {
+  label: string
+  value: string
+}
+
+export type PgmlDiagramViewSettings = {
+  showExecutableObjects: boolean
+  showRelationshipLines: boolean
+  showTableFields: boolean
 }
 
 const normalizeSnapshotSource = (value: string, includeLayout: boolean) => {
@@ -121,13 +138,35 @@ const buildWorkspaceSyncedDocument = (
 ) => {
   // The source editor always owns the live workspace text, so any serialized or
   // checkpointed document must first be rebuilt from that head snapshot.
-  return replacePgmlWorkspaceFromSnapshot(document, {
+  const syncedDocument = replacePgmlWorkspaceFromSnapshot(document, {
+    activeViewId: document.workspace.activeViewId,
     basedOnVersionId: document.workspace.basedOnVersionId,
-    source: normalizeSnapshotSource(source, options?.includeLayout ?? true),
+    source: source,
     updatedAt: options?.updatedAt === undefined
       ? document.workspace.updatedAt
-      : options.updatedAt
+      : options.updatedAt,
+    views: document.workspace.views
   })
+
+  if (options?.includeLayout === false) {
+    return {
+      ...syncedDocument,
+      versions: syncedDocument.versions.map((version) => {
+        return {
+          ...version,
+          activeViewId: null,
+          views: []
+        }
+      }),
+      workspace: {
+        ...syncedDocument.workspace,
+        activeViewId: null,
+        views: []
+      }
+    }
+  }
+
+  return syncedDocument
 }
 
 const normalizePreviewTargetId = (
@@ -347,6 +386,29 @@ const buildVersionedDocumentScopeItems = (
   ]
 }
 
+const getBlockViewItems = (
+  views: PgmlDocumentDiagramView[]
+) => {
+  return views.map((view) => {
+    return {
+      label: view.name,
+      value: view.id
+    } satisfies PgmlDiagramViewItem
+  })
+}
+
+const buildNextDiagramViewName = (
+  views: PgmlDocumentDiagramView[]
+) => {
+  let index = views.length + 1
+
+  while (views.some(view => view.name === `View ${index}`)) {
+    index += 1
+  }
+
+  return `View ${index}`
+}
+
 export const usePgmlStudioVersionHistory = (
   input: {
     documentName: ComputedRef<string>
@@ -398,18 +460,20 @@ export const usePgmlStudioVersionHistory = (
           ...version,
           snapshot: {
             source: normalizeSnapshotSource(version.snapshot.source, true)
-          }
+          },
+          views: version.views.map(clonePgmlDocumentView)
         }
       }),
       workspace: {
         ...nextDocument.workspace,
         snapshot: {
           source: normalizeSnapshotSource(nextDocument.workspace.snapshot.source, true)
-        }
+        },
+        views: nextDocument.workspace.views.map(clonePgmlDocumentView)
       }
     }
     document.value = normalizedDocument
-    input.source.value = normalizedDocument.workspace.snapshot.source
+    input.source.value = getPgmlDocumentBlockPreviewSource(normalizedDocument.workspace)
     previewTargetId.value = 'workspace'
     documentEditorScope.value = normalizePgmlDocumentEditorScope(normalizedDocument, documentEditorScope.value)
     compareBaseId.value = buildDefaultCompareBaseId(normalizedDocument)
@@ -495,6 +559,34 @@ export const usePgmlStudioVersionHistory = (
     return serializePgmlDocumentScope(buildNamedWorkingDocument(), documentEditorScope.value)
   })
   const isWorkspacePreview = computed(() => previewTargetId.value === 'workspace')
+  const currentPreviewBlock = computed(() => {
+    if (previewTargetId.value === 'workspace') {
+      return document.value.workspace
+    }
+
+    return getPgmlVersionById(document.value, previewTargetId.value)
+  })
+  const activeDiagramView = computed(() => {
+    const previewBlock = currentPreviewBlock.value
+
+    return previewBlock ? getPgmlDocumentView(previewBlock, previewBlock.activeViewId) : null
+  })
+  const activeDiagramViewId = computed(() => activeDiagramView.value?.id || null)
+  const diagramViewItems = computed<PgmlDiagramViewItem[]>(() => {
+    const previewBlock = currentPreviewBlock.value
+
+    return previewBlock ? getBlockViewItems(previewBlock.views) : []
+  })
+  const diagramViewSettings = computed<PgmlDiagramViewSettings>(() => {
+    return {
+      showExecutableObjects: activeDiagramView.value?.showExecutableObjects ?? true,
+      showRelationshipLines: activeDiagramView.value?.showRelationshipLines ?? true,
+      showTableFields: activeDiagramView.value?.showTableFields ?? true
+    }
+  })
+  const canDeleteDiagramView = computed(() => {
+    return (currentPreviewBlock.value?.views.length || 0) > 1
+  })
   const compareBaseVersion = computed(() => {
     if (compareBaseId.value === 'workspace') {
       return null
@@ -535,6 +627,116 @@ export const usePgmlStudioVersionHistory = (
       workspaceBaseVersion: workspaceBaseVersion.value
     })
   })
+
+  const updatePreviewBlockViews = (
+    updater: (block: PgmlVersionSetDocument['workspace'] | PgmlVersionDocumentBlock) => void
+  ) => {
+    if (previewTargetId.value === 'workspace') {
+      const nextDocument = clonePgmlVersionSetDocument(buildWorkspaceSyncedDocument(document.value, input.source.value))
+
+      updater(nextDocument.workspace)
+
+      document.value = nextDocument
+      input.source.value = getPgmlDocumentBlockPreviewSource(nextDocument.workspace)
+      normalizeSelectionState()
+      return true
+    }
+
+    const nextDocument = clonePgmlVersionSetDocument(document.value)
+    const targetVersion = nextDocument.versions.find(version => version.id === previewTargetId.value)
+
+    if (!targetVersion) {
+      return false
+    }
+
+    updater(targetVersion)
+    document.value = nextDocument
+    normalizeSelectionState()
+
+    return true
+  }
+
+  const selectDiagramView = (viewId: string) => {
+    return updatePreviewBlockViews((block) => {
+      if (!block.views.some(view => view.id === viewId)) {
+        return
+      }
+
+      block.activeViewId = viewId
+    })
+  }
+
+  const createDiagramView = () => {
+    return updatePreviewBlockViews((block) => {
+      const currentView = getPgmlDocumentView(block, block.activeViewId)
+      const nextView = createPgmlDocumentView({
+        name: buildNextDiagramViewName(block.views),
+        nodeProperties: currentView?.nodeProperties || {},
+        showExecutableObjects: currentView?.showExecutableObjects ?? true,
+        showRelationshipLines: currentView?.showRelationshipLines ?? true,
+        showTableFields: currentView?.showTableFields ?? true
+      })
+
+      block.views = [...block.views.map(clonePgmlDocumentView), nextView]
+      block.activeViewId = nextView.id
+    })
+  }
+
+  const deleteActiveDiagramView = () => {
+    return updatePreviewBlockViews((block) => {
+      if (block.views.length <= 1) {
+        return
+      }
+
+      const activeViewId = block.activeViewId || block.views[0]?.id || null
+      const activeViewIndex = block.views.findIndex(view => view.id === activeViewId)
+      const remainingViews = block.views.filter(view => view.id !== activeViewId)
+      const fallbackView = remainingViews[Math.max(0, activeViewIndex - 1)] || remainingViews[0] || null
+
+      block.views = remainingViews.map(clonePgmlDocumentView)
+      block.activeViewId = fallbackView?.id || null
+    })
+  }
+
+  const updateCurrentDiagramViewSettings = (
+    settings: Partial<PgmlDiagramViewSettings>
+  ) => {
+    return updatePreviewBlockViews((block) => {
+      const activeViewId = block.activeViewId || block.views[0]?.id || null
+
+      block.views = block.views.map((view) => {
+        if (view.id !== activeViewId) {
+          return clonePgmlDocumentView(view)
+        }
+
+        return createPgmlDocumentView({
+          ...view,
+          showExecutableObjects: settings.showExecutableObjects ?? view.showExecutableObjects,
+          showRelationshipLines: settings.showRelationshipLines ?? view.showRelationshipLines,
+          showTableFields: settings.showTableFields ?? view.showTableFields
+        })
+      })
+    })
+  }
+
+  const updateCurrentDiagramViewNodeProperties = (
+    nodeProperties: Record<string, PgmlNodeProperties>
+  ) => {
+    return updatePreviewBlockViews((block) => {
+      const activeViewId = block.activeViewId || block.views[0]?.id || null
+
+      block.views = block.views.map((view) => {
+        if (view.id !== activeViewId) {
+          return clonePgmlDocumentView(view)
+        }
+
+        return createPgmlDocumentView({
+          ...view,
+          nodeProperties
+        })
+      })
+    })
+  }
 
   watch(() => input.documentName.value, (nextName) => {
     document.value = {
@@ -600,19 +802,23 @@ export const usePgmlStudioVersionHistory = (
     compareTargetId.value = 'workspace'
   }
   const replaceWorkspaceSnapshotAndResetSelection = (inputOptions: {
+    activeViewId?: string | null
     basedOnVersionId: string | null
     selectionBaseId: string | null
     source: string
     updatedAt: string
+    views?: PgmlDocumentDiagramView[]
   }) => {
     // Restore/import flows both replace the live draft snapshot and then need
     // every preview/compare selector to point back at that new workspace state.
     document.value = replacePgmlWorkspaceFromSnapshot(document.value, {
+      activeViewId: inputOptions.activeViewId,
       basedOnVersionId: inputOptions.basedOnVersionId,
       source: inputOptions.source,
-      updatedAt: inputOptions.updatedAt
+      updatedAt: inputOptions.updatedAt,
+      views: inputOptions.views
     })
-    input.source.value = document.value.workspace.snapshot.source
+    input.source.value = getPgmlDocumentBlockPreviewSource(document.value.workspace)
     resetWorkspaceSelectionState(inputOptions.selectionBaseId)
   }
 
@@ -624,10 +830,12 @@ export const usePgmlStudioVersionHistory = (
     }
 
     replaceWorkspaceSnapshotAndResetSelection({
+      activeViewId: targetVersion.activeViewId,
       basedOnVersionId: targetVersion.id,
       selectionBaseId: targetVersion.parentVersionId,
       source: targetVersion.snapshot.source,
-      updatedAt: new Date().toISOString()
+      updatedAt: new Date().toISOString(),
+      views: targetVersion.views.map(clonePgmlDocumentView)
     })
 
     return true
@@ -646,10 +854,12 @@ export const usePgmlStudioVersionHistory = (
     }
 
     replaceWorkspaceSnapshotAndResetSelection({
+      activeViewId: null,
       basedOnVersionId: inputOptions.basedOnVersionId,
       selectionBaseId: inputOptions.basedOnVersionId,
       source: normalizeSnapshotSource(inputOptions.source, inputOptions.includeLayout),
-      updatedAt: new Date().toISOString()
+      updatedAt: new Date().toISOString(),
+      views: []
     })
 
     return true
@@ -678,6 +888,7 @@ export const usePgmlStudioVersionHistory = (
   }
 
   return {
+    activeDiagramViewId,
     compareBaseId,
     compareBaseSource,
     compareBaseVersion,
@@ -686,8 +897,13 @@ export const usePgmlStudioVersionHistory = (
     compareTargetSource,
     compareTargetVersion,
     canCheckpoint,
+    canDeleteDiagramView,
     createCheckpoint,
+    createDiagramView,
     document,
+    diagramViewItems,
+    diagramViewSettings,
+    deleteActiveDiagramView,
     documentEditorScope,
     editorMode,
     hasDesignVersions,
@@ -702,6 +918,7 @@ export const usePgmlStudioVersionHistory = (
     replaceWorkspaceFromVersion,
     resetDocument,
     rootVersions,
+    selectDiagramView,
     serializeCurrentDocument,
     setSchemaMetadata,
     setCompareTargets,
@@ -712,6 +929,8 @@ export const usePgmlStudioVersionHistory = (
     latestLeafImplementationVersion,
     latestLeafVersion,
     latestImplementationVersion,
+    updateCurrentDiagramViewNodeProperties,
+    updateCurrentDiagramViewSettings,
     versionItems,
     versionedDocumentSource,
     versionedDocumentScopeItems,

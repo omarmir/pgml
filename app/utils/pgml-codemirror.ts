@@ -44,9 +44,9 @@ export type PgmlCodeMirrorOptions = {
   placeholder?: string
 }
 
-const pgmlBlockKeywordPattern = /\b(?:VersionSet|SchemaMetadata|Workspace|Version|Snapshot|TableGroup|Table|Column|Enum|Domain|Composite|Function|Procedure|Trigger|Sequence|Properties|Ref)\b/
+const pgmlBlockKeywordPattern = /\b(?:VersionSet|SchemaMetadata|Workspace|Version|Snapshot|View|TableGroup|Table|Column|Enum|Domain|Composite|Function|Procedure|Trigger|Sequence|Properties|Ref)\b/
 const pgmlNestedKeywordPattern = /\b(?:docs|affects|source|definition|Note|Index|Indexes|Constraint|checks)\b(?=\s|:|\(|\{)/
-const pgmlPropertyKeywordPattern = /\b(?:pk|unique|not|null|default|note|ref|language|volatility|security|timing|events|level|function|arguments|as|base|start|increment|min|max|cache|cycle|owned_by|summary|writes|sets|depends_on|reads|calls|uses|visible|collapsed|masonry|table_columns|table_width_scale|width|height|color|x|y|name|role|parent|created_at|based_on|updated_at)\b(?=\s|:|\])/
+const pgmlPropertyKeywordPattern = /\b(?:pk|unique|not|null|default|note|ref|language|volatility|security|timing|events|level|function|arguments|as|base|start|increment|min|max|cache|cycle|owned_by|summary|writes|sets|depends_on|reads|calls|uses|visible|collapsed|masonry|table_columns|table_width_scale|width|height|color|x|y|name|role|parent|created_at|based_on|updated_at|active_view|default_view|show_lines|show_execs|show_fields)\b(?=\s|:|\])/
 const pgmlAtomPattern = /\b(?:true|false|design|implementation)\b/
 
 const pgmlHighlightStyle = HighlightStyle.define([

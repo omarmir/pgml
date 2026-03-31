@@ -469,4 +469,73 @@ Ref: public.users.id > public.u`
       })
     ]))
   })
+
+  it('offers View block completions inside workspace and version scopes', () => {
+    const source = `VersionSet "Billing" {
+  Workspace {
+    act
+
+    Snapshot {
+      Table public.users {
+        id uuid [pk]
+      }
+    }
+
+    Vi
+
+    View "Default" {
+      id: workspace_default
+
+      Prop
+    }
+  }
+
+  Version v1 {
+    role: design
+    created_at: "2026-03-24T10:30:00.000Z"
+    active_view: version_default
+
+    Snapshot {
+      Table public.users {
+        id uuid [pk]
+      }
+    }
+
+    View "Default" {
+      id: version_default
+      show_l
+    }
+  }
+}`
+
+    const workspaceMetadataItems = getPgmlCompletionItems(source, source.indexOf('act') + 'act'.length)
+    const workspaceViewItems = getPgmlCompletionItems(source, source.indexOf('\n\n    Vi') + '\n\n    Vi'.length)
+    const viewPropertiesItems = getPgmlCompletionItems(source, source.indexOf('Prop') + 'Prop'.length)
+    const viewBooleanItems = getPgmlCompletionItems(source, source.indexOf('show_l') + 'show_l'.length)
+
+    expect(workspaceMetadataItems).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        label: 'active_view',
+        kind: 'property'
+      })
+    ]))
+    expect(workspaceViewItems).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        label: 'View',
+        kind: 'keyword'
+      })
+    ]))
+    expect(viewPropertiesItems).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        label: 'Properties',
+        kind: 'keyword'
+      })
+    ]))
+    expect(viewBooleanItems).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        label: 'show_lines',
+        kind: 'property'
+      })
+    ]))
+  })
 })

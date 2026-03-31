@@ -200,6 +200,102 @@ describe('usePgmlStudioVersionHistory', () => {
     expect(api.compareTargetId.value).toBe('workspace')
   })
 
+  it('persists multiple diagram views per workspace and version preview target', async () => {
+    const { api, source } = await mountVersionHistoryComposable()
+    const defaultViewId = api.activeDiagramViewId.value
+
+    expect(api.diagramViewItems.value).toHaveLength(1)
+    expect(api.diagramViewItems.value[0]?.label).toBe('Default')
+
+    api.updateCurrentDiagramViewNodeProperties({
+      'public.users': {
+        x: 120,
+        y: 240
+      }
+    })
+    api.updateCurrentDiagramViewSettings({
+      showExecutableObjects: false,
+      showRelationshipLines: false,
+      showTableFields: false
+    })
+
+    expect(source.value).toContain('Properties "public.users"')
+    expect(source.value).toContain('x: 120')
+    expect(api.diagramViewSettings.value).toEqual({
+      showExecutableObjects: false,
+      showRelationshipLines: false,
+      showTableFields: false
+    })
+
+    api.createDiagramView()
+
+    const secondViewId = api.activeDiagramViewId.value
+
+    expect(api.canDeleteDiagramView.value).toBe(true)
+    expect(api.diagramViewItems.value.map(item => item.label)).toEqual(['Default', 'View 2'])
+    expect(secondViewId).not.toBe(defaultViewId)
+
+    api.updateCurrentDiagramViewNodeProperties({
+      'public.users': {
+        x: 420,
+        y: 560
+      }
+    })
+    api.updateCurrentDiagramViewSettings({
+      showExecutableObjects: true,
+      showRelationshipLines: true,
+      showTableFields: true
+    })
+
+    expect(source.value).toContain('x: 420')
+
+    if (!defaultViewId || !secondViewId) {
+      throw new Error('Expected both workspace diagram views to have ids.')
+    }
+
+    api.selectDiagramView(defaultViewId)
+
+    expect(api.activeDiagramViewId.value).toBe(defaultViewId)
+    expect(api.diagramViewSettings.value).toEqual({
+      showExecutableObjects: false,
+      showRelationshipLines: false,
+      showTableFields: false
+    })
+    expect(source.value).toContain('x: 120')
+    expect(source.value).not.toContain('x: 420')
+
+    api.selectDiagramView(secondViewId)
+
+    const checkpoint = createDesignCheckpoint(api, 'Initial design')
+
+    api.setPreviewTarget(checkpoint.id)
+
+    expect(api.previewSource.value).toContain('x: 420')
+    expect(api.diagramViewItems.value.map(item => item.label)).toEqual(['Default', 'View 2'])
+    expect(api.diagramViewSettings.value).toEqual({
+      showExecutableObjects: true,
+      showRelationshipLines: true,
+      showTableFields: true
+    })
+
+    api.selectDiagramView(defaultViewId)
+
+    expect(api.previewSource.value).toContain('x: 120')
+    expect(api.diagramViewSettings.value).toEqual({
+      showExecutableObjects: false,
+      showRelationshipLines: false,
+      showTableFields: false
+    })
+
+    api.setPreviewTarget('workspace')
+    api.selectDiagramView(secondViewId)
+    api.deleteActiveDiagramView()
+
+    expect(api.diagramViewItems.value).toHaveLength(1)
+    expect(api.activeDiagramViewId.value).toBe(defaultViewId)
+    expect(source.value).toContain('x: 120')
+  })
+
   it('exposes document scope options and serializes the selected document slice', async () => {
     const { api } = await mountVersionHistoryComposable()
     const initialVersion = createDesignCheckpoint(api)

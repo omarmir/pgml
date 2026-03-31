@@ -194,6 +194,103 @@ test('diagram panel reuses the PGML editor scrollbar styling', async ({ goto, pa
   expect(scrollbarStyles?.panelScrollbarColor).toBe(scrollbarStyles?.editorScrollbarColor)
 })
 
+test('diagram toolbar can hide fields and executable attachments', async ({ goto, page }) => {
+  await goto('/diagram')
+
+  const fieldsToggle = page.locator('[data-table-fields-toggle="true"]')
+  const executableObjectsToggle = page.locator('[data-executable-objects-toggle="true"]')
+  const columnRows = page.locator('[data-table-row-kind="column"]')
+  const commerceGroup = page.locator('[data-node-anchor="group:Commerce"]')
+  const executableAttachmentRow = commerceGroup.locator('[data-attachment-row="sequence:order_number_seq"]')
+  const measureHeight = async () => {
+    const box = await commerceGroup.boundingBox()
+
+    if (!box) {
+      throw new Error('Commerce group is not measurable.')
+    }
+
+    return Math.round(box.height)
+  }
+
+  await expect(fieldsToggle).toHaveAttribute('aria-pressed', 'true')
+  await expect(executableObjectsToggle).toHaveAttribute('aria-pressed', 'true')
+  await expect(commerceGroup).toBeVisible()
+  await expect(columnRows.first()).toBeVisible()
+  await expect(executableAttachmentRow).toHaveCount(1)
+
+  const baselineGroupHeight = await measureHeight()
+
+  await fieldsToggle.click()
+
+  await expect(fieldsToggle).toHaveAttribute('aria-pressed', 'false')
+  await expect(columnRows).toHaveCount(0)
+  await expect.poll(measureHeight).toBeLessThan(baselineGroupHeight)
+
+  const fieldsHiddenGroupHeight = await measureHeight()
+
+  await fieldsToggle.click()
+
+  await expect(fieldsToggle).toHaveAttribute('aria-pressed', 'true')
+  await expect(columnRows.first()).toBeVisible()
+  await expect.poll(measureHeight).toBeGreaterThan(fieldsHiddenGroupHeight)
+
+  const restoredGroupHeight = await measureHeight()
+
+  await executableObjectsToggle.click()
+
+  await expect(executableObjectsToggle).toHaveAttribute('aria-pressed', 'false')
+  await expect(executableAttachmentRow).toHaveCount(0)
+  await expect.poll(measureHeight).toBeLessThan(restoredGroupHeight)
+
+  await executableObjectsToggle.click()
+
+  await expect(executableObjectsToggle).toHaveAttribute('aria-pressed', 'true')
+  await expect(executableAttachmentRow).toHaveCount(1)
+})
+
+test('diagram views persist toolbar visibility settings independently', async ({ goto, page }) => {
+  await goto('/diagram')
+
+  const viewSelect = page.locator('[data-diagram-view-select="desktop"]')
+  const createViewButton = page.locator('[data-diagram-view-create="desktop"]')
+  const linesToggle = page.locator('[data-relationship-lines-toggle="true"]')
+  const fieldsToggle = page.locator('[data-table-fields-toggle="true"]')
+  const columnRows = page.locator('[data-table-row-kind="column"]')
+
+  await expect(viewSelect).toBeVisible()
+  await expect(createViewButton).toBeVisible()
+  await expect(viewSelect).toContainText('Default')
+  await expect(linesToggle).toHaveAttribute('aria-pressed', 'true')
+  await expect(fieldsToggle).toHaveAttribute('aria-pressed', 'true')
+
+  await createViewButton.click()
+
+  await expect(viewSelect).toContainText('View 2')
+
+  await linesToggle.click()
+  await fieldsToggle.click()
+
+  await expect(linesToggle).toHaveAttribute('aria-pressed', 'false')
+  await expect(fieldsToggle).toHaveAttribute('aria-pressed', 'false')
+  await expect(columnRows).toHaveCount(0)
+
+  await viewSelect.click()
+  await page.locator('[role="option"]').filter({ hasText: 'Default' }).click()
+
+  await expect(viewSelect).toContainText('Default')
+  await expect(linesToggle).toHaveAttribute('aria-pressed', 'true')
+  await expect(fieldsToggle).toHaveAttribute('aria-pressed', 'true')
+  await expect(columnRows.first()).toBeVisible()
+
+  await viewSelect.click()
+  await page.locator('[role="option"]').filter({ hasText: 'View 2' }).click()
+
+  await expect(viewSelect).toContainText('View 2')
+  await expect(linesToggle).toHaveAttribute('aria-pressed', 'false')
+  await expect(fieldsToggle).toHaveAttribute('aria-pressed', 'false')
+  await expect(columnRows).toHaveCount(0)
+})
+
 test('studio canvas stays viewport-bound and starts centered on the diagram', async ({ goto, page }) => {
   await goto('/diagram')
 
