@@ -903,6 +903,33 @@ const destroyTextureEntries = (entries: Map<string, TextureCacheEntry>) => {
   entries.clear()
 }
 
+const destroyTextureEntry = (
+  entries: Map<string, TextureCacheEntry>,
+  key: string
+) => {
+  const entry = entries.get(key)
+
+  if (!entry) {
+    return
+  }
+
+  entry.sprite.parent?.removeChild(entry.sprite)
+  entry.sprite.destroy()
+  entry.texture.destroy(true)
+  entries.delete(key)
+}
+
+const pruneTextureEntries = (
+  entries: Map<string, TextureCacheEntry>,
+  activeIds: Set<string>
+) => {
+  Array.from(entries.keys()).forEach((key) => {
+    if (!activeIds.has(key)) {
+      destroyTextureEntry(entries, key)
+    }
+  })
+}
+
 const destroyAllTextures = () => {
   destroyTextureEntries(tableSpriteEntries)
   destroyTextureEntries(groupSpriteEntries)
@@ -1711,7 +1738,10 @@ const publishRendererDebug = () => {
       connectionDragPreview: DiagramConnectionPreviewDragState | null
       dragPreview: DiagramNodeDragPreview | null
       fallbackReason: DiagramRendererCapability['fallbackReason']
+      groupHeaderSpriteCount: number
+      groupSpriteCount: number
       isSecureContext: boolean
+      objectSpriteCount: number
       rendererBackend: SceneRendererPreference
       requestedRendererBackend: DiagramRendererBackend
       panX: number
@@ -1721,6 +1751,7 @@ const publishRendererDebug = () => {
       renderedTableCards: Array<{ height: number, id: string, width: number, x: number, y: number }>
       resolvedRendererBackend: DiagramRendererCapability['resolved']
       scale: number
+      tableSpriteCount: number
     }
   }
 
@@ -1737,7 +1768,10 @@ const publishRendererDebug = () => {
     connectionDragPreview: liveConnectionDragPreview,
     dragPreview: liveDragPreview,
     fallbackReason: rendererCapability.value.fallbackReason,
+    groupHeaderSpriteCount: groupHeaderSpriteEntries.size,
+    groupSpriteCount: groupSpriteEntries.size,
     isSecureContext: rendererCapability.value.isSecureContext,
+    objectSpriteCount: objectSpriteEntries.size,
     rendererBackend: activeRendererPreference,
     requestedRendererBackend: rendererCapability.value.requested,
     panX: worldPanX,
@@ -1746,7 +1780,8 @@ const publishRendererDebug = () => {
     renderedObjectCards: renderedDebugObjectCards,
     renderedTableCards: renderedDebugTableCards,
     resolvedRendererBackend: rendererCapability.value.resolved,
-    scale: worldScale
+    scale: worldScale,
+    tableSpriteCount: tableSpriteEntries.size
   }
 }
 
@@ -1819,6 +1854,10 @@ const parseDashPattern = (value: string) => {
     .filter(part => Number.isFinite(part) && part > 0.5)
 
   return segments.length > 0 ? segments : [14, 10]
+}
+
+const getConnectionStrokeScale = () => {
+  return clamp(1 / Math.max(worldScale, 0.001), 0.6, 4)
 }
 
 const drawSolidPolyline = (
@@ -2015,6 +2054,8 @@ const drawConnectionLines = (
     return
   }
 
+  const strokeScale = getConnectionStrokeScale()
+
   lines.forEach((line) => {
     const linePoints = getConnectionPreviewPoints(line, preview)
     const color = hexToNumber(line.color, 0x79e3ea)
@@ -2023,7 +2064,7 @@ const drawConnectionLines = (
       cap: line.animated ? 'square' : 'round',
       color,
       join: 'miter',
-      width: line.dashed ? 1.02 : 1.08
+      width: (line.dashed ? 1.02 : 1.08) * strokeScale
     } as const
 
     if (!line.dashed) {
@@ -2035,22 +2076,24 @@ const drawConnectionLines = (
       drawSolidPolyline(graphics, linePoints, {
         ...solidStyle,
         alpha: 0.18,
-        width: 0.94
+        width: 0.94 * strokeScale
       })
     }
 
-    const dashPattern = parseDashPattern(line.dashPattern)
+    const dashPattern = parseDashPattern(line.dashPattern).map((part) => {
+      return part * strokeScale
+    })
     drawDashedPolyline(
       graphics,
       linePoints,
       dashPattern,
-      line.animated ? lineAnimationOffset : 0,
+      (line.animated ? lineAnimationOffset : 0) * strokeScale,
       {
         alpha: line.animated ? 0.9 : 0.7,
         cap: 'square',
         color,
         join: 'miter',
-        width: line.animated ? 1.34 : 1.02
+        width: (line.animated ? 1.34 : 1.02) * strokeScale
       }
     )
   })
@@ -2138,6 +2181,14 @@ const renderScene = () => {
   activeVisibleObjectIds = visibleObjectIds
   activeVisibleConnectionIds = visibleConnectionIds
   connectionBucketCacheVersion += 1
+  const groupIds = new Set(groups.map(group => group.id))
+  const tableIds = new Set(tables.map(table => table.id))
+  const objectIds = new Set(objects.map(objectNode => objectNode.id))
+
+  pruneTextureEntries(groupSpriteEntries, groupIds)
+  pruneTextureEntries(groupHeaderSpriteEntries, groupIds)
+  pruneTextureEntries(tableSpriteEntries, tableIds)
+  pruneTextureEntries(objectSpriteEntries, objectIds)
 
   const groupBasePositionById = groups.reduce<Record<string, { x: number, y: number }>>((entries, group) => {
     entries[group.id] = {

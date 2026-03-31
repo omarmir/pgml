@@ -3731,10 +3731,22 @@ const buildConnectionRoutingDescriptors = (
   ownerNodeId: string | null = null
 ) => {
   const descriptors: RoutingWorkerDescriptorInput[] = []
+  const getReferenceTargetGeometry = (
+    tableId: string,
+    columnName: string | null
+  ) => {
+    if (!columnName) {
+      return routingGeometry.tableGeometry.get(tableId) || null
+    }
+
+    return routingGeometry.columnGeometry.get(getColumnAnchorKey(tableId, columnName))
+      || routingGeometry.tableGeometry.get(tableId)
+      || null
+  }
 
   model.references.forEach((reference) => {
-    const fromGeometry = routingGeometry.columnGeometry.get(getColumnAnchorKey(reference.fromTable, reference.fromColumn))
-    const toGeometry = routingGeometry.columnGeometry.get(getColumnAnchorKey(reference.toTable, reference.toColumn))
+    const fromGeometry = getReferenceTargetGeometry(reference.fromTable, reference.fromColumn)
+    const toGeometry = getReferenceTargetGeometry(reference.toTable, reference.toColumn)
 
     if (!fromGeometry || !toGeometry) {
       return
@@ -3776,9 +3788,7 @@ const buildConnectionRoutingDescriptors = (
     }
 
     impactTargets.forEach((impactTarget) => {
-      const toGeometry = impactTarget.columnName
-        ? routingGeometry.columnGeometry.get(getColumnAnchorKey(impactTarget.tableId, impactTarget.columnName))
-        : routingGeometry.tableGeometry.get(impactTarget.tableId)
+      const toGeometry = getReferenceTargetGeometry(impactTarget.tableId, impactTarget.columnName)
 
       if (!toGeometry) {
         return

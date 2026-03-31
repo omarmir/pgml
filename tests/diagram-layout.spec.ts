@@ -248,6 +248,94 @@ test('diagram toolbar can hide fields and executable attachments', async ({ goto
   await expect(executableAttachmentRow).toHaveCount(1)
 })
 
+test('relationship lines stay visible when fields are hidden', async ({ goto, page }) => {
+  await goto('/diagram')
+
+  const editor = getPgmlEditor(page)
+  const fieldsToggle = page.locator('[data-table-fields-toggle="true"]')
+  const linesToggle = page.locator('[data-relationship-lines-toggle="true"]')
+  const source = `Table public.accounts {
+  id uuid [pk]
+}
+
+Table public.invoices {
+  id uuid [pk]
+  account_id uuid [ref: > public.accounts.id]
+}`
+
+  await setPgmlEditorValue(editor, source)
+  await page.waitForFunction(() => {
+    const debugWindow = window as Window & {
+      __pgmlSceneDebug?: {
+        connectionCount: number
+      }
+    }
+
+    return debugWindow.__pgmlSceneDebug?.connectionCount === 1
+  })
+
+  await expect(linesToggle).toHaveAttribute('aria-pressed', 'true')
+  await expect(fieldsToggle).toHaveAttribute('aria-pressed', 'true')
+
+  await fieldsToggle.click()
+
+  await expect(linesToggle).toHaveAttribute('aria-pressed', 'true')
+  await expect(fieldsToggle).toHaveAttribute('aria-pressed', 'false')
+  await page.waitForFunction(() => {
+    const debugWindow = window as Window & {
+      __pgmlSceneDebug?: {
+        connectionCount: number
+      }
+    }
+
+    return debugWindow.__pgmlSceneDebug?.connectionCount === 1
+  })
+})
+
+test('gpu scene prunes stale sprites when the schema changes so current lines stay visible', async ({ goto, page }) => {
+  await page.addInitScript(() => {
+    ;(window as Window & {
+      __PGML_ENABLE_SCENE_DEBUG__?: boolean
+      __PGML_FORCE_GPU_SCENE__?: boolean
+    }).__PGML_FORCE_GPU_SCENE__ = true
+    ;(window as Window & {
+      __PGML_ENABLE_SCENE_DEBUG__?: boolean
+      __PGML_FORCE_GPU_SCENE__?: boolean
+    }).__PGML_ENABLE_SCENE_DEBUG__ = true
+  })
+
+  await goto('/diagram')
+
+  const editor = getPgmlEditor(page)
+
+  await setPgmlEditorValue(editor, `Table public.accounts {
+  id uuid [pk]
+}
+
+Table public.invoices {
+  id uuid [pk]
+  account_id uuid [ref: > public.accounts.id]
+}`)
+
+  await page.waitForFunction(() => {
+    const debugWindow = window as Window & {
+      __pgmlSceneDebug?: {
+        connectionCount: number
+      }
+      __pgmlSceneRendererDebug?: {
+        renderedTableCards: Array<{ id: string }>
+        resolvedRendererBackend: string
+        tableSpriteCount: number
+      }
+    }
+
+    return debugWindow.__pgmlSceneDebug?.connectionCount === 1
+      && debugWindow.__pgmlSceneRendererDebug?.resolvedRendererBackend !== 'dom'
+      && debugWindow.__pgmlSceneRendererDebug?.renderedTableCards.length === 2
+      && debugWindow.__pgmlSceneRendererDebug?.tableSpriteCount === 2
+  })
+})
+
 test('diagram views persist toolbar visibility settings independently', async ({ goto, page }) => {
   await goto('/diagram')
 
