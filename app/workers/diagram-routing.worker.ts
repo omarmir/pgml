@@ -823,7 +823,7 @@ const buildPathPointsFromLegs = (
   return offsetOverlappingVerticalSegments(points, verticalUsage, headerBands)
 }
 
-const buildConnectionLines = (input: WorkerRouteRequest) => {
+export const routeDiagramConnectionsWithCpu = (input: WorkerRouteRequest) => {
   const geometryMaps = input.descriptors.reduce<{
     groupById: Map<string, WorkerConnectionGeometry>
     nodeById: Map<string, WorkerConnectionGeometry>
@@ -1242,12 +1242,14 @@ const buildConnectionLines = (input: WorkerRouteRequest) => {
   })
 }
 
-self.onmessage = (event: MessageEvent<WorkerRouteRequest>) => {
-  const input = event.data
-  const response: WorkerRouteResponse = {
-    requestId: input.requestId,
-    lines: buildConnectionLines(input)
-  }
+if (typeof WorkerGlobalScope !== 'undefined' && self instanceof WorkerGlobalScope) {
+  self.onmessage = (event: MessageEvent<WorkerRouteRequest>) => {
+    const input = event.data
+    const response: WorkerRouteResponse = {
+      requestId: input.requestId,
+      lines: routeDiagramConnectionsWithCpu(input)
+    }
 
-  self.postMessage(response)
+    self.postMessage(response)
+  }
 }

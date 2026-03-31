@@ -229,6 +229,7 @@ let lineAnimationOffset = 0
 let hasViewportInteraction = false
 let themeObserver: MutationObserver | null = null
 let activeRendererPreference: SceneRendererPreference = 'webgl'
+let shouldDisableConnectionCulling = false
 const diagramFallbackMaxTextureDimension = 4096
 const diagramTextureDimensionPadding = 64
 const diagramTextureAreaSafetyRatio = 0.82
@@ -1856,10 +1857,6 @@ const parseDashPattern = (value: string) => {
   return segments.length > 0 ? segments : [14, 10]
 }
 
-const getConnectionStrokeScale = () => {
-  return clamp(1 / Math.max(worldScale, 0.001), 0.6, 4)
-}
-
 const drawSolidPolyline = (
   graphics: PixiGraphics,
   points: DiagramGpuConnectionLine['points'],
@@ -2054,8 +2051,6 @@ const drawConnectionLines = (
     return
   }
 
-  const strokeScale = getConnectionStrokeScale()
-
   lines.forEach((line) => {
     const linePoints = getConnectionPreviewPoints(line, preview)
     const color = hexToNumber(line.color, 0x79e3ea)
@@ -2064,7 +2059,7 @@ const drawConnectionLines = (
       cap: line.animated ? 'square' : 'round',
       color,
       join: 'miter',
-      width: (line.dashed ? 1.02 : 1.08) * strokeScale
+      width: line.dashed ? 1.02 : 1.08
     } as const
 
     if (!line.dashed) {
@@ -2076,24 +2071,22 @@ const drawConnectionLines = (
       drawSolidPolyline(graphics, linePoints, {
         ...solidStyle,
         alpha: 0.18,
-        width: 0.94 * strokeScale
+        width: 0.94
       })
     }
 
-    const dashPattern = parseDashPattern(line.dashPattern).map((part) => {
-      return part * strokeScale
-    })
+    const dashPattern = parseDashPattern(line.dashPattern)
     drawDashedPolyline(
       graphics,
       linePoints,
       dashPattern,
-      (line.animated ? lineAnimationOffset : 0) * strokeScale,
+      line.animated ? lineAnimationOffset : 0,
       {
         alpha: line.animated ? 0.9 : 0.7,
         cap: 'square',
         color,
         join: 'miter',
-        width: (line.animated ? 1.34 : 1.02) * strokeScale
+        width: line.animated ? 1.34 : 1.02
       }
     )
   })
@@ -2174,7 +2167,9 @@ const renderScene = () => {
   const visibleGroupIds = getVisibleIds(groupSpatialIndex, diagramNodeViewportOverscan)
   const visibleTableIds = getVisibleIds(tableSpatialIndex, diagramNodeViewportOverscan)
   const visibleObjectIds = getVisibleIds(objectSpatialIndex, diagramNodeViewportOverscan)
-  const visibleConnectionIds = getVisibleIds(connectionSpatialIndex, diagramLineViewportOverscan)
+  const visibleConnectionIds = shouldDisableConnectionCulling
+    ? new Set(connections.map(line => line.key))
+    : getVisibleIds(connectionSpatialIndex, diagramLineViewportOverscan)
 
   activeVisibleGroupIds = visibleGroupIds
   activeVisibleTableIds = visibleTableIds
@@ -3213,6 +3208,10 @@ watch(
 useResizeObserver(hostRef, syncViewportLayout)
 
 onMounted(async () => {
+  if (import.meta.client) {
+    shouldDisableConnectionCulling = /Android/i.test(navigator.userAgent) || window.matchMedia('(pointer: coarse)').matches
+  }
+
   await initPixi()
   watchSceneTheme()
   window.addEventListener('resize', syncViewportLayout)

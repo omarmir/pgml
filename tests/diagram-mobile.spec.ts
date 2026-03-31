@@ -248,6 +248,33 @@ test('mobile studio diagram supports pinch zoom on the GPU viewport', async ({ b
   }).toBeGreaterThan(initialScale + 0.05)
 })
 
+test('mobile diagram keeps a DOM connection overlay available while the GPU scene is active', async ({ goto, page }) => {
+  await page.setViewportSize({
+    width: 390,
+    height: 844
+  })
+  await goto('/diagram')
+
+  await page.waitForFunction(() => {
+    const debugWindow = window as Window & {
+      __pgmlSceneDebug?: {
+        connectionCount: number
+      }
+      __pgmlSceneRendererDebug?: {
+        resolvedRendererBackend: string
+      }
+    }
+
+    return (debugWindow.__pgmlSceneDebug?.connectionCount || 0) > 0
+      && typeof debugWindow.__pgmlSceneRendererDebug?.resolvedRendererBackend === 'string'
+  })
+
+  await expect(page.locator('[data-connection-layer="true"]')).toBeVisible()
+  await expect.poll(async () => {
+    return await page.locator('[data-connection-key]').count()
+  }).toBeGreaterThan(0)
+})
+
 test('mobile GPU group drags keep both node and line state stable after drop', async ({ browserName, goto, page }) => {
   test.skip(browserName !== 'chromium', 'CDP touch drag dispatch is Chromium-only.')
 

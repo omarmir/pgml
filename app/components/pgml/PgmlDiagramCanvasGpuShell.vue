@@ -35,7 +35,9 @@ import type {
   DiagramRoutingMeasuredBounds,
   DiagramRoutingRequest
 } from '~/utils/diagram-routing-contract'
+import { buildOrthogonalMiddlePoints } from '~/utils/diagram-routing'
 import { routeDiagramConnectionsWithWebgpu } from '~/utils/diagram-routing-webgpu'
+import { routeDiagramConnectionsWithCpu } from '~/workers/diagram-routing.worker'
 import {
   buildTableGroupMasonryLayout,
   type TableAttachment,
@@ -482,6 +484,8 @@ const isToolPanelOpen: Ref<boolean> = ref(false)
 const showRelationshipLines: Ref<boolean> = ref(true)
 const showExecutableObjects: Ref<boolean> = ref(true)
 const showTableFields: Ref<boolean> = ref(true)
+const shouldRenderSvgConnectionOverlay: Ref<boolean> = ref(false)
+const shouldPreferMainThreadConnectionRouting: Ref<boolean> = ref(false)
 const snapToGrid: Ref<boolean> = ref(true)
 const rendererBackend: Ref<DiagramRendererBackend> = ref(getInitialRendererBackendPreference())
 const rendererCapability: Ref<DiagramRendererCapability> = ref(getDiagramRendererCapability({
@@ -2982,6 +2986,12 @@ const automationConnectionCanvasLayers = computed(() => {
   )
 })
 
+const svgConnectionOverlayTransform = computed(() => {
+  const transform = sceneTransform.value
+
+  return `translate(${transform.panX} ${transform.panY}) scale(${transform.scale})`
+})
+
 const nodeOrderById = computed(() => {
   const entries: Record<string, number> = {}
   let order = 1
@@ -3855,6 +3865,131 @@ const buildConnectionRoutingRequest = (
   }
 }
 
+const getRoutingBoundsCenterX = (bounds: DiagramRoutingMeasuredBounds) => {
+  return bounds.left + bounds.width / 2
+}
+
+const getRoutingBoundsCenterY = (bounds: DiagramRoutingMeasuredBounds) => {
+  return bounds.top + bounds.height / 2
+}
+
+const clampRoutingCoordinate = (value: number, min: number, max: number) => {
+  return Math.min(max, Math.max(min, value))
+}
+
+const getFallbackAnchorSide = (
+  fromGeometry: RoutingWorkerGeometryInput,
+  toGeometry: RoutingWorkerGeometryInput
+) => {
+  const deltaX = getRoutingBoundsCenterX(toGeometry.bounds) - getRoutingBoundsCenterX(fromGeometry.bounds)
+  const deltaY = getRoutingBoundsCenterY(toGeometry.bounds) - getRoutingBoundsCenterY(fromGeometry.bounds)
+
+  if (Math.abs(deltaX) >= Math.abs(deltaY) * 0.75) {
+    return deltaX >= 0 ? 'right' : 'left'
+  }
+
+  return deltaY >= 0 ? 'bottom' : 'top'
+}
+
+const buildFallbackAnchorPoint = (
+  geometry: RoutingWorkerGeometryInput,
+  side: 'bottom' | 'left' | 'right' | 'top',
+  targetGeometry: RoutingWorkerGeometryInput
+) => {
+  const hostBounds = geometry.tableBounds || geometry.bounds
+  const geometryCenterX = getRoutingBoundsCenterX(geometry.bounds)
+  const geometryCenterY = getRoutingBoundsCenterY(geometry.bounds)
+  const targetCenterX = getRoutingBoundsCenterX(targetGeometry.bounds)
+  const targetCenterY = getRoutingBoundsCenterY(targetGeometry.bounds)
+  const safeLeft = hostBounds.left + 6
+  const safeRight = hostBounds.right - 6
+  const safeTop = hostBounds.top + 6
+  const safeBottom = hostBounds.bottom - 6
+
+  if (side === 'left') {
+    return {
+      x: hostBounds.left,
+      y: clampRoutingCoordinate(
+        geometry.isColumnLabelAnchor ? geometryCenterY : targetCenterY,
+        safeTop,
+        safeBottom
+      )
+    }
+  }
+
+  if (side === 'right') {
+    return {
+      x: hostBounds.right,
+      y: clampRoutingCoordinate(
+        geometry.isColumnLabelAnchor ? geometryCenterY : targetCenterY,
+        safeTop,
+        safeBottom
+      )
+    }
+  }
+
+  if (side === 'top') {
+    return {
+      x: clampRoutingCoordinate(
+        geometry.isColumnLabelAnchor ? geometryCenterX : targetCenterX,
+        safeLeft,
+        safeRight
+      ),
+      y: hostBounds.top
+    }
+  }
+
+  return {
+    x: clampRoutingCoordinate(
+      geometry.isColumnLabelAnchor ? geometryCenterX : targetCenterX,
+      safeLeft,
+      safeRight
+    ),
+    y: hostBounds.bottom
+  }
+}
+
+const buildFallbackConnectionLineBounds = (points: Array<{ x: number, y: number }>) => {
+  return {
+    maxX: Math.max(...points.map(point => point.x)),
+    maxY: Math.max(...points.map(point => point.y)),
+    minX: Math.min(...points.map(point => point.x)),
+    minY: Math.min(...points.map(point => point.y))
+  }
+}
+
+const buildMainThreadFallbackConnectionLines = (
+  request: DiagramRoutingRequest
+) => {
+  return request.descriptors.map((descriptor) => {
+    const fromSide = getFallbackAnchorSide(descriptor.fromGeometry, descriptor.toGeometry)
+    const toSide = getFallbackAnchorSide(descriptor.toGeometry, descriptor.fromGeometry)
+    const fromPoint = buildFallbackAnchorPoint(descriptor.fromGeometry, fromSide, descriptor.toGeometry)
+    const toPoint = buildFallbackAnchorPoint(descriptor.toGeometry, toSide, descriptor.fromGeometry)
+    const middlePoints = buildOrthogonalMiddlePoints(fromPoint, fromSide, toPoint, toSide)
+    const points = [fromPoint, ...middlePoints, toPoint]
+    const fromOwnerNodeId = descriptor.fromGeometry.ownerNodeId
+    const toOwnerNodeId = descriptor.toGeometry.ownerNodeId
+
+    return {
+      animated: descriptor.animated,
+      bounds: buildFallbackConnectionLineBounds(points),
+      color: descriptor.color,
+      dashPattern: descriptor.dashPattern,
+      dashed: descriptor.dashed,
+      fromOwnerNodeId,
+      key: descriptor.key,
+      points,
+      toOwnerNodeId,
+      zIndex: getDiagramConnectionZIndex(
+        request.nodeOrders[fromOwnerNodeId || ''] || 1,
+        request.nodeOrders[toOwnerNodeId || ''] || 1,
+        descriptor.selectedForeground
+      )
+    } satisfies DiagramGpuConnectionLine
+  })
+}
+
 const tryComputeConnectionLinesWithWebgpu = async (
   request: DiagramRoutingRequest,
   _requestId: number
@@ -3895,16 +4030,25 @@ const computeLiveConnectionPreviewLines = async (
   latestPreviewRoutingRequestId += 1
   const requestId = 1_000_000_000 + latestPreviewRoutingRequestId
   const routingRequest = buildConnectionRoutingRequest(descriptors, requestId, preview, routingGeometry)
+
+  if (shouldPreferMainThreadConnectionRouting.value) {
+    const lines = routeDiagramConnectionsWithCpu(routingRequest)
+
+    return lines.length > 0 ? lines : buildMainThreadFallbackConnectionLines(routingRequest)
+  }
+
   const webgpuLines = await tryComputeConnectionLinesWithWebgpu(routingRequest, requestId)
 
-  if (webgpuLines) {
+  if (webgpuLines && webgpuLines.length > 0) {
     return webgpuLines
   }
 
   try {
-    return await routeConnectionLinesWithWorker(routingRequest)
+    const lines = await routeConnectionLinesWithWorker(routingRequest)
+
+    return lines.length > 0 ? lines : buildMainThreadFallbackConnectionLines(routingRequest)
   } catch {
-    return []
+    return buildMainThreadFallbackConnectionLines(routingRequest)
   }
 }
 
@@ -3994,23 +4138,34 @@ const computeConnectionLines = async (options: {
   }
 
   const routingRequest = buildConnectionRoutingRequest(descriptors, requestId)
+
+  if (shouldPreferMainThreadConnectionRouting.value) {
+    const lines = routeDiagramConnectionsWithCpu(routingRequest)
+
+    commitSettledLines(lines.length > 0 ? lines : buildMainThreadFallbackConnectionLines(routingRequest), 'cpu')
+    return
+  }
+
   const webgpuLines = await tryComputeConnectionLinesWithWebgpu(routingRequest, requestId)
 
-  if (webgpuLines && !options.preserveDragPreviewUntilSettled && requestId === latestConnectionRequestId) {
+  if (webgpuLines && webgpuLines.length > 0 && !options.preserveDragPreviewUntilSettled && requestId === latestConnectionRequestId) {
     activeRoutingBackend.value = 'webgpu'
     routedConnectionLines.value = webgpuLines
   }
 
-  if (!webgpuLines) {
+  if (!webgpuLines || webgpuLines.length === 0) {
     activeRoutingBackend.value = 'cpu'
   }
 
   try {
     const lines = await routeConnectionLinesWithWorker(routingRequest)
 
-    commitSettledLines(lines, 'cpu')
+    commitSettledLines(
+      lines.length > 0 ? lines : buildMainThreadFallbackConnectionLines(routingRequest),
+      'cpu'
+    )
   } catch {
-    commitSettledLines([], 'cpu')
+    commitSettledLines(buildMainThreadFallbackConnectionLines(routingRequest), 'cpu')
   }
 }
 
@@ -6317,6 +6472,7 @@ onMounted(() => {
     __PGML_ENABLE_DOM_PLANE__?: boolean
     __PGML_FORCE_GPU_SCENE__?: boolean
   }
+  const isAndroidBrowser = /Android/i.test(navigator.userAgent)
   const prefersCoarsePointer = window.matchMedia('(pointer: coarse)').matches
   const forceGpuScene = windowWithDebugFlag.__PGML_FORCE_GPU_SCENE__ === true
 
@@ -6324,6 +6480,8 @@ onMounted(() => {
     windowWithDebugFlag.__PGML_ENABLE_DOM_PLANE__ === true
     || (navigator.webdriver && !prefersCoarsePointer)
   )
+  shouldRenderSvgConnectionOverlay.value = !isAndroidBrowser && !shouldRenderAutomationPlane.value && prefersCoarsePointer
+  shouldPreferMainThreadConnectionRouting.value = prefersCoarsePointer || isAndroidBrowser
 })
 
 onBeforeUnmount(() => {
@@ -6691,6 +6849,22 @@ defineExpose<{
           :width="automationPlaneWidth"
         />
       </div>
+    </div>
+
+    <div
+      v-else-if="shouldRenderSvgConnectionOverlay"
+      class="pointer-events-none absolute inset-0 z-[2] overflow-hidden"
+    >
+      <PgmlDiagramConnectionCanvas
+        :active-drag="activeConnectionDragPreview"
+        :content-transform="svgConnectionOverlayTransform"
+        :height="automationPlaneHeight"
+        :layers="automationConnectionCanvasLayers"
+        :preview-paths="{}"
+        :render-height="viewportSize.height"
+        :render-width="viewportSize.width"
+        :width="automationPlaneWidth"
+      />
     </div>
 
     <div
