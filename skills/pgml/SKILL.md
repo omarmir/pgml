@@ -1,16 +1,18 @@
 ---
 name: PGML
 description: This skill should be used when the user asks to parse or understand versioned PGML, explain checkpoints or SchemaMetadata, translate PGML to PostgreSQL SQL, write PostgreSQL queries from PGML, review a PGML schema, diff PGML versions, or generate ordered SQL or Kysely migrations from PGML.
-version: 0.2.0
+version: 0.3.0
 ---
 
 # PGML
 
 Use this skill to interpret PGML documents in this repository and turn them into accurate PostgreSQL understanding, DDL, migration plans, or query SQL.
 
-Treat PGML as a Postgres-first extension of DBML with grammar-native versioning. Persisted documents in this repo are rooted in `VersionSet`, keep the mutable draft in `Workspace`, store immutable checkpoints in `Version`, and place schema objects inside nested `Snapshot` blocks. Root-level `SchemaMetadata` stores arbitrary table and column metadata outside the version graph, so those annotations persist while versions evolve.
+Treat PGML as a Postgres-first extension of DBML with grammar-native versioning. Persisted documents in this repo are rooted in `VersionSet`, keep the mutable draft in `Workspace`, store immutable checkpoints in `Version`, place schema objects inside nested `Snapshot` blocks, and keep diagram state in named `View` blocks under each workspace or version. Root-level `SchemaMetadata` stores arbitrary table and column metadata outside the version graph, so those annotations persist while versions evolve.
 
 Keep the language close to DBML for table structure, then extend the mental model for Postgres-native objects such as functions, procedures, triggers, sequences, constraints, custom types, compare, and migrations. Favor the current parser and document-model behavior over speculative syntax. In this repo, the canonical runtime behavior lives in `app/utils/pgml.ts`, `app/utils/pgml-document.ts`, and `app/utils/pgml-version-migration.ts`; the public language narrative lives in `README.md` and `app/pages/spec.vue`.
+
+When the task touches import behavior in this app, also account for `app/utils/pgml-import-attachments.ts`: DBML and `pg_dump` imports can infer obvious executable-to-table attachments from parsed metadata and pause for explicit table placement when the attachment is ambiguous.
 
 Treat `TableGroup` as a source-organization and studio-layout concept, not as a PostgreSQL schema namespace. PostgreSQL schema is carried by the table name itself, for example `public.orders` or `billing.invoices`. A group like `TableGroup Commerce { ... }` does not create, rename, or imply a PostgreSQL schema. When authoring or editing PGML, keep `TableGroup` members schema-qualified, for example `public.orders`, so same-named tables in different schemas cannot collapse into one group entry.
 
@@ -20,7 +22,7 @@ Load this skill when the task involves any of the following:
 
 - Parse or explain a `.pgml` file.
 - Parse or explain a `VersionSet` document, one locked `Version`, or the current `Workspace`.
-- Explain checkpoints, branches, compare pairs, or root-level `SchemaMetadata`.
+- Explain checkpoints, branches, compare pairs, per-version views, or root-level `SchemaMetadata`.
 - Extract schema structure from PGML.
 - Translate PGML into PostgreSQL DDL.
 - Write application SQL against a schema described in PGML.
@@ -63,7 +65,7 @@ Follow this sequence:
    - `Workspace.snapshot.source` for the active draft
    - one selected `Version.snapshot.source` for a locked checkpoint
    - two snapshots when the task is compare or migration planning
-4. Ignore `Properties` blocks unless layout persistence is part of the task.
+4. If layout or presentation matters, inspect the selected owner block's `active_view` and `View` blocks; otherwise ignore `View` blocks and legacy snapshot-level `Properties` blocks.
 5. Inventory the schema objects:
    - groups
    - tables
@@ -94,7 +96,7 @@ When the task is a diff or migration task, insert this extra step between invent
 1. If the request names a base and target version, use those exact snapshots.
 2. Otherwise, for a `VersionSet`, default to `Workspace.based_on` versus `Workspace`.
 3. Fall back to committed-versus-working-tree diffing only when the task is about repo changes rather than version history inside one PGML document.
-4. Strip `Properties` blocks before semantic diffing unless the user explicitly asks about layout changes.
+4. Strip `View` blocks, `active_view`, and legacy snapshot-level `Properties` blocks before semantic diffing unless the user explicitly asks about layout changes.
 5. Compare the old and new PGML object inventories by object kind.
 6. Separate documentation-only changes, schema-metadata-only changes, and layout-only changes from database changes.
 7. Generate migration SQL only from the database changes.
@@ -118,13 +120,14 @@ Keep these distinctions straight:
 - `Workspace` is the mutable draft and carries `based_on`.
 - `Version` is an immutable checkpoint with `role: design | implementation`.
 - `Snapshot` contains the familiar schema grammar.
+- `View` stores diagram state for one `Workspace` or `Version` and is selected by `active_view`.
 - `SchemaMetadata` stores arbitrary table and column metadata outside version history.
 - `Table`, `Enum`, `Domain`, `Composite`, `Sequence`, `Function`, `Procedure`, and `Trigger` describe schema assets.
 - `TableGroup` organizes tables in source and in the diagram studio; it does not map to a PostgreSQL schema.
 - `TableGroup` members should use `schema.table` names, not bare table names.
 - `docs {}` explains why an asset exists.
 - `affects {}` describes operational impact and dependency hints.
-- `Properties "..." {}` persists studio layout and presentation state; it is not database DDL.
+- `Properties "..." {}` persists studio node state inside a `View` block; it is not database DDL.
 - Unknown column modifiers are preserved as text by the parser; do not silently assign SQL meaning unless the modifier is explicitly known.
 
 Use `references/pgml-syntax.md` for the supported syntax surface and parser-derived caveats.
@@ -198,7 +201,7 @@ When the user asks what changed in PGML:
 - Diff the selected version pair when the PGML document already contains version history.
 - Diff the working `.pgml` file against `HEAD` only when the user is asking about repo changes rather than in-document version history.
 - Report semantic schema deltas rather than only line-level text diffs.
-- Ignore pure `Properties` changes unless layout changes are the point of the task.
+- Ignore pure `View`, `active_view`, visibility-toggle, and `Properties` changes unless layout changes are the point of the task.
 - Ignore pure `SchemaMetadata` changes unless the user is specifically asking about persistent metadata.
 - Call out destructive changes separately from additive changes.
 - Treat `docs` and `affects` changes as documentation or graph deltas unless the executable `source:` also changed.
@@ -218,7 +221,7 @@ When the user asks for a migration file from PGML changes:
 
 Do not do the following:
 
-- Do not treat `Properties` blocks as database structure.
+- Do not treat `View` blocks, `active_view`, or `Properties` blocks as database structure.
 - Do not infer columns, relationships, or schemas that are not present.
 - Do not rewrite executable `source:` into a simplified form and present it as authoritative.
 - Do not assume unknown modifiers have valid PostgreSQL semantics.

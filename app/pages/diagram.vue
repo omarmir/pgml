@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import type { DropdownMenuItem } from '@nuxt/ui'
-import type { Ref } from 'vue'
+import type { Ref, ShallowRef } from 'vue'
 import { nanoid } from 'nanoid'
 import { storeToRefs } from 'pinia'
 import type { StudioHeaderMenu } from '~/stores/studio-shell'
@@ -382,10 +382,10 @@ const largeDocumentCharThreshold = 50000
 const largeDocumentLineThreshold = 1500
 const workspaceAnalysisDiagnostics: Ref<PgmlAnalysisWorkerResponse['diagnostics']> = ref([])
 const workspaceAnalysisHasBlockingErrors: Ref<boolean> = ref(false)
-const workspaceAnalysisParsedModel: Ref<PgmlSchemaModel> = ref(parsePgml(source.value))
+const workspaceAnalysisParsedModel: ShallowRef<PgmlSchemaModel> = shallowRef(parsePgml(source.value))
 const workspaceAnalysisRevision: Ref<number> = ref(0)
 const workspaceAnalysisRequestRevision: Ref<number> = ref(0)
-const lastRenderableWorkspaceModel: Ref<PgmlSchemaModel> = ref(applyPgmlDocumentSchemaMetadataToModel(
+const lastRenderableWorkspaceModel: ShallowRef<PgmlSchemaModel> = shallowRef(applyPgmlDocumentSchemaMetadataToModel(
   parsePgml(source.value),
   versionDocument.value.schemaMetadata
 ))

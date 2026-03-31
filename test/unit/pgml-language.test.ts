@@ -1,6 +1,10 @@
 import { describe, expect, it } from 'vitest'
 
-import { analyzePgmlDocument, getPgmlCompletionItems } from '../../app/utils/pgml-language'
+import {
+  analyzePgmlDocument,
+  getPgmlCompletionItems,
+  getPgmlCompletionItemsFromAnalysis
+} from '../../app/utils/pgml-language'
 import { buildVersionedCompletionFixture, validVersionedEditorSource } from './pgml-editor-fixtures'
 
 describe('PGML language utility', () => {
@@ -165,6 +169,22 @@ Enum public.language_preference {
         kind: 'keyword'
       })
     ]))
+  })
+
+  it('reuses cached analysis for completion requests without changing the suggestions', () => {
+    const source = buildVersionedCompletionFixture(`  Workspace {
+    Snapshot {
+      Table public.users {
+        id uuid [pk]
+      }
+    }
+  }`)
+    const offset = source.indexOf('    Snapshot {') + '    Snapshot {'.length
+    const analysis = analyzePgmlDocument(source)
+
+    expect(getPgmlCompletionItemsFromAnalysis(analysis, offset)).toEqual(
+      getPgmlCompletionItems(source, offset)
+    )
   })
 
   it('collects no diagnostics for a structurally valid versioned document', () => {

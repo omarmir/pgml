@@ -1,4 +1,4 @@
-import type { ComputedRef, Ref } from 'vue'
+import type { ComputedRef, Ref, ShallowRef } from 'vue'
 import {
   buildPgmlDirectIncrementCompareRelationshipSummary,
   buildPgmlDivergedCompareRelationshipSummary,
@@ -421,7 +421,7 @@ export const usePgmlStudioVersionHistory = (
     input.source.value = initialWorkspaceSource
   }
 
-  const document: Ref<PgmlVersionSetDocument> = ref(createInitialPgmlDocument({
+  const documentState: ShallowRef<PgmlVersionSetDocument> = shallowRef(createInitialPgmlDocument({
     name: input.documentName.value,
     workspaceSource: initialWorkspaceSource
   }))
@@ -430,17 +430,16 @@ export const usePgmlStudioVersionHistory = (
   const documentEditorScope: Ref<PgmlDocumentEditorScope> = ref('all')
   const compareBaseId: Ref<string | null> = ref(null)
   const compareTargetId: Ref<string> = ref('workspace')
-
-  const syncWorkspaceSource = () => {
-    document.value = buildWorkspaceSyncedDocument(document.value, input.source.value)
-  }
+  const document: ComputedRef<PgmlVersionSetDocument> = computed(() => {
+    return buildWorkspaceSyncedDocument(documentState.value, input.source.value)
+  })
   const buildNamedWorkingDocument = (options?: {
     includeLayout?: boolean
     updatedAt?: string | null
   }) => {
     // The editor owns the mutable workspace text, so any serialized document
     // view needs to rebuild the current workspace snapshot before it is shown.
-    const workingDocument = buildWorkspaceSyncedDocument(document.value, input.source.value, options)
+    const workingDocument = buildWorkspaceSyncedDocument(documentState.value, input.source.value, options)
 
     workingDocument.name = input.documentName.value
 
@@ -472,7 +471,7 @@ export const usePgmlStudioVersionHistory = (
         views: nextDocument.workspace.views.map(clonePgmlDocumentView)
       }
     }
-    document.value = normalizedDocument
+    documentState.value = normalizedDocument
     input.source.value = getPgmlDocumentBlockPreviewSource(normalizedDocument.workspace)
     previewTargetId.value = 'workspace'
     documentEditorScope.value = normalizePgmlDocumentEditorScope(normalizedDocument, documentEditorScope.value)
@@ -483,10 +482,10 @@ export const usePgmlStudioVersionHistory = (
   const normalizeSelectionState = () => {
     // File loads, restores, and imports can invalidate UI selections; clamp
     // every derived id back onto the current document before the UI renders it.
-    previewTargetId.value = normalizePreviewTargetId(document.value, previewTargetId.value)
-    documentEditorScope.value = normalizePgmlDocumentEditorScope(document.value, documentEditorScope.value)
-    compareBaseId.value = normalizeCompareBaseSelection(document.value, compareBaseId.value)
-    compareTargetId.value = normalizeCompareTargetSelection(document.value, compareTargetId.value)
+    previewTargetId.value = normalizePreviewTargetId(documentState.value, previewTargetId.value)
+    documentEditorScope.value = normalizePgmlDocumentEditorScope(documentState.value, documentEditorScope.value)
+    compareBaseId.value = normalizeCompareBaseSelection(documentState.value, compareBaseId.value)
+    compareTargetId.value = normalizeCompareTargetSelection(documentState.value, compareTargetId.value)
   }
 
   const resetDocument = (workspaceSource = '') => {
@@ -518,24 +517,24 @@ export const usePgmlStudioVersionHistory = (
     })
   }
 
-  const versions = computed(() => document.value.versions)
-  const hasVersions = computed(() => hasPgmlVersions(document.value))
-  const hasDesignVersions = computed(() => hasPgmlVersionRole(document.value, 'design'))
-  const hasImplementationVersions = computed(() => hasPgmlVersionRole(document.value, 'implementation'))
-  const latestLeafVersion = computed(() => getLatestPgmlLeafVersion(document.value))
-  const latestLeafDesignVersion = computed(() => getLatestPgmlLeafVersionByRole(document.value, 'design'))
-  const latestLeafImplementationVersion = computed(() => getLatestPgmlLeafVersionByRole(document.value, 'implementation'))
-  const rootVersions = computed(() => getPgmlRootVersions(document.value))
-  const leafVersions = computed(() => getPgmlLeafVersions(document.value))
-  const workspaceBaseVersion = computed(() => getPgmlWorkspaceBaseVersion(document.value))
+  const versions = computed(() => documentState.value.versions)
+  const hasVersions = computed(() => hasPgmlVersions(documentState.value))
+  const hasDesignVersions = computed(() => hasPgmlVersionRole(documentState.value, 'design'))
+  const hasImplementationVersions = computed(() => hasPgmlVersionRole(documentState.value, 'implementation'))
+  const latestLeafVersion = computed(() => getLatestPgmlLeafVersion(documentState.value))
+  const latestLeafDesignVersion = computed(() => getLatestPgmlLeafVersionByRole(documentState.value, 'design'))
+  const latestLeafImplementationVersion = computed(() => getLatestPgmlLeafVersionByRole(documentState.value, 'implementation'))
+  const rootVersions = computed(() => getPgmlRootVersions(documentState.value))
+  const leafVersions = computed(() => getPgmlLeafVersions(documentState.value))
+  const workspaceBaseVersion = computed(() => getPgmlWorkspaceBaseVersion(documentState.value))
   const workspaceDirty = computed(() => isPgmlWorkspaceDirty(document.value))
   const canCheckpoint = computed(() => canCreatePgmlCheckpoint(document.value))
-  const latestDesignVersion = computed(() => getLatestPgmlVersionByRole(document.value, 'design'))
-  const latestImplementationVersion = computed(() => getLatestPgmlVersionByRole(document.value, 'implementation'))
-  const latestOverallVersion = computed(() => getLatestPgmlVersion(document.value))
+  const latestDesignVersion = computed(() => getLatestPgmlVersionByRole(documentState.value, 'design'))
+  const latestImplementationVersion = computed(() => getLatestPgmlVersionByRole(documentState.value, 'implementation'))
+  const latestOverallVersion = computed(() => getLatestPgmlVersion(documentState.value))
   const versionItems = computed(() => {
-    return document.value.versions.map((version) => {
-      return buildVersionHistoryItem(document.value, version, {
+    return documentState.value.versions.map((version) => {
+      return buildVersionHistoryItem(documentState.value, version, {
         latestDesignVersionId: latestDesignVersion.value?.id || null,
         latestImplementationVersionId: latestImplementationVersion.value?.id || null,
         latestOverallVersionId: latestOverallVersion.value?.id || null
@@ -544,7 +543,7 @@ export const usePgmlStudioVersionHistory = (
   })
   const previewSource = computed(() => {
     return resolveVersionTargetSource({
-      document: document.value,
+      document: documentState.value,
       targetId: previewTargetId.value,
       workspaceSource: input.source.value
     })
@@ -553,7 +552,7 @@ export const usePgmlStudioVersionHistory = (
     return serializePgmlDocument(buildNamedWorkingDocument())
   })
   const versionedDocumentScopeItems = computed<PgmlVersionedDocumentScopeItem[]>(() => {
-    return buildVersionedDocumentScopeItems(document.value)
+    return buildVersionedDocumentScopeItems(documentState.value)
   })
   const versionedDocumentScopeSource = computed(() => {
     return serializePgmlDocumentScope(buildNamedWorkingDocument(), documentEditorScope.value)
@@ -561,10 +560,10 @@ export const usePgmlStudioVersionHistory = (
   const isWorkspacePreview = computed(() => previewTargetId.value === 'workspace')
   const currentPreviewBlock = computed(() => {
     if (previewTargetId.value === 'workspace') {
-      return document.value.workspace
+      return documentState.value.workspace
     }
 
-    return getPgmlVersionById(document.value, previewTargetId.value)
+    return getPgmlVersionById(documentState.value, previewTargetId.value)
   })
   const activeDiagramView = computed(() => {
     const previewBlock = currentPreviewBlock.value
@@ -592,27 +591,27 @@ export const usePgmlStudioVersionHistory = (
       return null
     }
 
-    return getPgmlVersionById(document.value, compareBaseId.value)
+    return getPgmlVersionById(documentState.value, compareBaseId.value)
   })
   const compareTargetVersion = computed<PgmlVersionDocumentBlock | null>(() => {
     if (compareTargetId.value === 'workspace') {
       return null
     }
 
-    return getPgmlVersionById(document.value, compareTargetId.value)
+    return getPgmlVersionById(documentState.value, compareTargetId.value)
   })
   const compareBaseSource = computed(() => {
     return compareBaseId.value === null
       ? ''
       : resolveVersionTargetSource({
-          document: document.value,
+          document: documentState.value,
           targetId: compareBaseId.value,
           workspaceSource: input.source.value
         })
   })
   const compareTargetSource = computed(() => {
     return resolveVersionTargetSource({
-      document: document.value,
+      document: documentState.value,
       targetId: compareTargetId.value,
       workspaceSource: input.source.value
     })
@@ -623,7 +622,7 @@ export const usePgmlStudioVersionHistory = (
       compareBaseVersion: compareBaseVersion.value,
       compareTargetId: compareTargetId.value,
       compareTargetVersion: compareTargetVersion.value,
-      document: document.value,
+      document: documentState.value,
       workspaceBaseVersion: workspaceBaseVersion.value
     })
   })
@@ -632,17 +631,17 @@ export const usePgmlStudioVersionHistory = (
     updater: (block: PgmlVersionSetDocument['workspace'] | PgmlVersionDocumentBlock) => void
   ) => {
     if (previewTargetId.value === 'workspace') {
-      const nextDocument = clonePgmlVersionSetDocument(buildWorkspaceSyncedDocument(document.value, input.source.value))
+      const nextDocument = clonePgmlVersionSetDocument(buildWorkspaceSyncedDocument(documentState.value, input.source.value))
 
       updater(nextDocument.workspace)
 
-      document.value = nextDocument
+      documentState.value = nextDocument
       input.source.value = getPgmlDocumentBlockPreviewSource(nextDocument.workspace)
       normalizeSelectionState()
       return true
     }
 
-    const nextDocument = clonePgmlVersionSetDocument(document.value)
+    const nextDocument = clonePgmlVersionSetDocument(documentState.value)
     const targetVersion = nextDocument.versions.find(version => version.id === previewTargetId.value)
 
     if (!targetVersion) {
@@ -650,7 +649,7 @@ export const usePgmlStudioVersionHistory = (
     }
 
     updater(targetVersion)
-    document.value = nextDocument
+    documentState.value = nextDocument
     normalizeSelectionState()
 
     return true
@@ -739,15 +738,10 @@ export const usePgmlStudioVersionHistory = (
   }
 
   watch(() => input.documentName.value, (nextName) => {
-    document.value = {
-      ...document.value,
+    documentState.value = {
+      ...documentState.value,
       name: nextName
     }
-  })
-
-  watch(input.source, () => {
-    syncWorkspaceSource()
-    normalizeSelectionState()
   })
 
   const serializeCurrentDocument = (includeLayout: boolean) => {
@@ -775,7 +769,7 @@ export const usePgmlStudioVersionHistory = (
     role: PgmlVersionRole
   }) => {
     const createdAt = inputOptions.createdAt || new Date().toISOString()
-    const workingDocument = buildWorkspaceSyncedDocument(document.value, input.source.value, {
+    const workingDocument = buildWorkspaceSyncedDocument(documentState.value, input.source.value, {
       includeLayout: inputOptions.includeLayout,
       updatedAt: createdAt
     })
@@ -811,19 +805,20 @@ export const usePgmlStudioVersionHistory = (
   }) => {
     // Restore/import flows both replace the live draft snapshot and then need
     // every preview/compare selector to point back at that new workspace state.
-    document.value = replacePgmlWorkspaceFromSnapshot(document.value, {
+    const nextDocument = replacePgmlWorkspaceFromSnapshot(documentState.value, {
       activeViewId: inputOptions.activeViewId,
       basedOnVersionId: inputOptions.basedOnVersionId,
       source: inputOptions.source,
       updatedAt: inputOptions.updatedAt,
       views: inputOptions.views
     })
-    input.source.value = getPgmlDocumentBlockPreviewSource(document.value.workspace)
+    documentState.value = nextDocument
+    input.source.value = getPgmlDocumentBlockPreviewSource(nextDocument.workspace)
     resetWorkspaceSelectionState(inputOptions.selectionBaseId)
   }
 
   const replaceWorkspaceFromVersion = (versionId: string) => {
-    const targetVersion = document.value.versions.find(version => version.id === versionId)
+    const targetVersion = documentState.value.versions.find(version => version.id === versionId)
 
     if (!targetVersion) {
       return false
@@ -849,7 +844,7 @@ export const usePgmlStudioVersionHistory = (
     // Imported snapshots intentionally replace the draft and anchor it to the
     // chosen locked base version so compare and migrations start from the same
     // predecessor the user selected during the import flow.
-    if (!getPgmlVersionById(document.value, inputOptions.basedOnVersionId)) {
+    if (!getPgmlVersionById(documentState.value, inputOptions.basedOnVersionId)) {
       return false
     }
 
@@ -866,7 +861,7 @@ export const usePgmlStudioVersionHistory = (
   }
 
   const setPreviewTarget = (nextTargetId: PgmlVersionPreviewTarget) => {
-    previewTargetId.value = normalizePreviewTargetId(document.value, nextTargetId)
+    previewTargetId.value = normalizePreviewTargetId(documentState.value, nextTargetId)
   }
 
   const setCompareTargets = (inputOptions: {
@@ -875,16 +870,16 @@ export const usePgmlStudioVersionHistory = (
   }) => {
     compareBaseId.value = inputOptions.baseId === null
       ? null
-      : normalizeCompareBaseSelection(document.value, inputOptions.baseId)
-    compareTargetId.value = normalizeCompareTargetSelection(document.value, inputOptions.targetId)
+      : normalizeCompareBaseSelection(documentState.value, inputOptions.baseId)
+    compareTargetId.value = normalizeCompareTargetSelection(documentState.value, inputOptions.targetId)
   }
 
   const setDocumentEditorScope = (nextScope: PgmlDocumentEditorScope) => {
-    documentEditorScope.value = normalizePgmlDocumentEditorScope(document.value, nextScope)
+    documentEditorScope.value = normalizePgmlDocumentEditorScope(documentState.value, nextScope)
   }
 
   const setSchemaMetadata = (schemaMetadata: PgmlDocumentSchemaMetadata) => {
-    document.value = replacePgmlDocumentSchemaMetadata(document.value, schemaMetadata)
+    documentState.value = replacePgmlDocumentSchemaMetadata(documentState.value, schemaMetadata)
   }
 
   return {

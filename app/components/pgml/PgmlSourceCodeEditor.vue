@@ -1,12 +1,16 @@
 <script setup lang="ts">
-import type { Ref } from 'vue'
+import type { Ref, ShallowRef } from 'vue'
 import type { PgmlSourceRange } from '~/utils/pgml'
-import type { PgmlLanguageDiagnostic } from '~/utils/pgml-language'
+import type { PgmlDocumentAnalysis, PgmlLanguageDiagnostic } from '~/utils/pgml-language'
 import { Compartment, EditorSelection, EditorState } from '@codemirror/state'
 import { EditorView } from '@codemirror/view'
-import { createPgmlCodeMirrorExtensions } from '~/utils/pgml-codemirror'
+import {
+  createPgmlCodeMirrorDiagnosticsExtensions,
+  createPgmlCodeMirrorExtensions
+} from '~/utils/pgml-codemirror'
 import { createSqlCodeMirrorExtensions } from '~/utils/sql-codemirror'
 import { getPgmlSourceSelectionRange } from '~/utils/pgml'
+import { analyzePgmlDocument } from '~/utils/pgml-language'
 
 type SourceEditorLanguageMode = 'pgml' | 'pgml-snippet' | 'sql'
 
@@ -41,14 +45,30 @@ const emit = defineEmits<{
 const containerRef: Ref<PgmlEditorHostElement | null> = ref(null)
 const viewRef: Ref<EditorView | null> = ref(null)
 const isAutomationEnvironment: Ref<boolean> = ref(false)
+const completionAnalysis: ShallowRef<PgmlDocumentAnalysis | null> = shallowRef(null)
 const editableCompartment = new Compartment()
+const diagnosticsCompartment = new Compartment()
 const languageCompartment = new Compartment()
 const readOnlyCompartment = new Compartment()
 let isApplyingExternalUpdate = false
 let pendingCommitTimeout: ReturnType<typeof setTimeout> | null = null
-let pendingCommitValue: string | null = null
+let pendingCompletionAnalysisIdleHandle: number | null = null
+let pendingCompletionAnalysisTimeout: ReturnType<typeof setTimeout> | null = null
+let completionAnalysisRevision = 0
+let pendingCommitScheduled = false
 const effectiveCommitDebounceMs = computed(() => {
   return isAutomationEnvironment.value ? 0 : commitDebounceMs
+})
+const effectiveCompletionAnalysisDelayMs = computed(() => {
+  if (isAutomationEnvironment.value) {
+    return 0
+  }
+
+  if (effectiveCommitDebounceMs.value > 0) {
+    return Math.max(40, Math.min(120, effectiveCommitDebounceMs.value))
+  }
+
+  return 60
 })
 
 const clearPendingCommit = () => {
@@ -57,7 +77,19 @@ const clearPendingCommit = () => {
     pendingCommitTimeout = null
   }
 
-  pendingCommitValue = null
+  pendingCommitScheduled = false
+}
+
+const clearPendingCompletionAnalysis = () => {
+  if (pendingCompletionAnalysisTimeout) {
+    clearTimeout(pendingCompletionAnalysisTimeout)
+    pendingCompletionAnalysisTimeout = null
+  }
+
+  if (pendingCompletionAnalysisIdleHandle !== null && import.meta.client && 'cancelIdleCallback' in window) {
+    window.cancelIdleCallback(pendingCompletionAnalysisIdleHandle)
+    pendingCompletionAnalysisIdleHandle = null
+  }
 }
 
 const emitCommittedValue = (value: string) => {
@@ -71,10 +103,8 @@ const emitCommittedValue = (value: string) => {
 }
 
 const flushPendingChanges = async () => {
-  const pendingValue = pendingCommitValue
-
-  if (typeof pendingValue === 'string') {
-    emitCommittedValue(pendingValue)
+  if (pendingCommitScheduled) {
+    emitCommittedValue(getValue())
     await nextTick()
     return
   }
@@ -90,33 +120,93 @@ const flushPendingChanges = async () => {
 }
 
 const hasPendingChanges = () => {
-  return pendingCommitValue !== null && pendingCommitValue !== modelValue
+  return pendingCommitScheduled || getValue() !== modelValue
 }
 
-const queueValueCommit = (value: string) => {
+const runCompletionAnalysis = (revision: number) => {
+  pendingCompletionAnalysisIdleHandle = null
+  pendingCompletionAnalysisTimeout = null
+
+  if (revision !== completionAnalysisRevision || languageMode === 'sql') {
+    if (languageMode === 'sql') {
+      completionAnalysis.value = null
+    }
+
+    return
+  }
+
+  const view = viewRef.value
+
+  if (!view) {
+    return
+  }
+
+  completionAnalysis.value = analyzePgmlDocument(view.state.doc.toString())
+}
+
+const queueCompletionAnalysisExecution = (revision: number) => {
+  if (import.meta.client && 'requestIdleCallback' in window) {
+    pendingCompletionAnalysisIdleHandle = window.requestIdleCallback(() => {
+      runCompletionAnalysis(revision)
+    }, {
+      timeout: 180
+    })
+    return
+  }
+
+  pendingCompletionAnalysisTimeout = setTimeout(() => {
+    pendingCompletionAnalysisTimeout = null
+    runCompletionAnalysis(revision)
+  }, 0)
+}
+
+const scheduleCompletionAnalysis = (options: {
+  immediate?: boolean
+} = {}) => {
+  clearPendingCompletionAnalysis()
+
+  if (languageMode === 'sql') {
+    completionAnalysis.value = null
+    return
+  }
+
+  const nextRevision = completionAnalysisRevision + 1
+
+  completionAnalysisRevision = nextRevision
+
+  if (options.immediate || effectiveCompletionAnalysisDelayMs.value <= 0) {
+    queueCompletionAnalysisExecution(nextRevision)
+    return
+  }
+
+  pendingCompletionAnalysisTimeout = setTimeout(() => {
+    pendingCompletionAnalysisTimeout = null
+    queueCompletionAnalysisExecution(nextRevision)
+  }, effectiveCompletionAnalysisDelayMs.value)
+}
+
+const queueValueCommit = () => {
   if (readOnly) {
     return
   }
 
+  pendingCommitScheduled = true
+
   if (effectiveCommitDebounceMs.value <= 0) {
-    emitCommittedValue(value)
+    emitCommittedValue(getValue())
     return
   }
-
-  pendingCommitValue = value
 
   if (pendingCommitTimeout) {
     clearTimeout(pendingCommitTimeout)
   }
 
   pendingCommitTimeout = setTimeout(() => {
-    const nextValue = pendingCommitValue
-
-    if (typeof nextValue !== 'string') {
+    if (!pendingCommitScheduled) {
       return
     }
 
-    emitCommittedValue(nextValue)
+    emitCommittedValue(getValue())
   }, effectiveCommitDebounceMs.value)
 }
 
@@ -127,11 +217,21 @@ const buildLanguageExtensions = () => {
       })
     : createPgmlCodeMirrorExtensions({
         activateCompletionOnTyping,
-        enableDiagnostics: languageMode === 'pgml',
-        externalDiagnostics: languageMode === 'pgml' ? externalDiagnostics : null,
-        linterDelayMs: diagnosticsDelayMs,
+        enableDiagnostics: false,
+        getCompletionAnalysis: () => completionAnalysis.value,
         placeholder
       })
+}
+
+const buildDiagnosticsExtensions = () => {
+  if (languageMode !== 'pgml') {
+    return []
+  }
+
+  return createPgmlCodeMirrorDiagnosticsExtensions({
+    externalDiagnostics,
+    linterDelayMs: diagnosticsDelayMs
+  })
 }
 
 const focusOffset = (from: number, to?: number) => {
@@ -198,7 +298,7 @@ const setValue = (value: string) => {
   const currentValue = viewRef.value.state.doc.toString()
 
   if (currentValue === value) {
-    if (pendingCommitValue === value) {
+    if (pendingCommitScheduled && value === modelValue) {
       clearPendingCommit()
     }
 
@@ -215,6 +315,9 @@ const setValue = (value: string) => {
     }
   })
   isApplyingExternalUpdate = false
+  scheduleCompletionAnalysis({
+    immediate: true
+  })
 }
 
 onMounted(() => {
@@ -233,6 +336,7 @@ onMounted(() => {
       extensions: [
         editableCompartment.of(EditorView.editable.of(!readOnly)),
         languageCompartment.of(buildLanguageExtensions()),
+        diagnosticsCompartment.of(buildDiagnosticsExtensions()),
         readOnlyCompartment.of(EditorState.readOnly.of(readOnly)),
         EditorView.domEventHandlers({
           blur: () => {
@@ -245,7 +349,8 @@ onMounted(() => {
             return
           }
 
-          queueValueCommit(update.state.doc.toString())
+          scheduleCompletionAnalysis()
+          queueValueCommit()
         })
       ]
     })
@@ -255,6 +360,9 @@ onMounted(() => {
   view.dom.setAttribute('data-pgml-editor-surface', 'true')
   view.scrollDOM.setAttribute('data-pgml-editor-scroller', 'true')
   viewRef.value = view
+  scheduleCompletionAnalysis({
+    immediate: true
+  })
 })
 
 watch(() => modelValue, (nextValue) => {
@@ -280,8 +388,6 @@ watch(() => readOnly, (nextValue) => {
 
 watch(() => [
   activateCompletionOnTyping,
-  diagnosticsDelayMs,
-  externalDiagnostics,
   languageMode,
   placeholder
 ], () => {
@@ -292,10 +398,29 @@ watch(() => [
   viewRef.value.dispatch({
     effects: languageCompartment.reconfigure(buildLanguageExtensions())
   })
+
+  scheduleCompletionAnalysis({
+    immediate: true
+  })
+})
+
+watch(() => [
+  diagnosticsDelayMs,
+  externalDiagnostics,
+  languageMode
+], () => {
+  if (!viewRef.value) {
+    return
+  }
+
+  viewRef.value.dispatch({
+    effects: diagnosticsCompartment.reconfigure(buildDiagnosticsExtensions())
+  })
 })
 
 onBeforeUnmount(() => {
   clearPendingCommit()
+  clearPendingCompletionAnalysis()
 
   if (containerRef.value) {
     delete containerRef.value.__pgmlEditorView

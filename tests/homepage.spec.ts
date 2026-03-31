@@ -450,6 +450,8 @@ test('spec page keeps the hero preview focused and documents the current section
   await expect(heroQuickStart).toContainText('TableGroup Commerce')
   await expect(heroQuickStart).toContainText('Table public.orders')
   await expect(heroQuickStart).toContainText('Function register_entity(entity_kind text) returns trigger [replace]')
+  await expect(heroQuickStart).toContainText('active_view: view_schema')
+  await expect(heroQuickStart).toContainText('View "Schema focus"')
   await expect(heroQuickStart).not.toContainText('Properties "group:Commerce"')
 
   await expect(page.getByRole('heading', { name: 'Use PGML when the schema is part structure, part behavior, and part documentation.' })).toBeVisible()

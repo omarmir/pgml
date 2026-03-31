@@ -343,6 +343,12 @@ type CollectRawBlocksOptions = {
   topLevelBlockKind?: PgmlBlockKind
 }
 
+export type PgmlCompletionLineOverride = {
+  from: number
+  text: string
+  to: number
+}
+
 const normalizeLineEndings = (source: string) => source.replaceAll('\r\n', '\n')
 const cleanName = (value: string) => value.replaceAll('"', '').trim()
 const cleanText = (value: string) => value.trim().replace(/^"(.*)"$/, '$1').replace(/^'(.*)'$/, '$1')
@@ -3140,11 +3146,24 @@ const getSnapshotCompletionItems = (
   return filterCompletionTemplates(snapshotTopLevelKeywordTemplates, 'keyword', fragment, from, to)
 }
 
-const getCompletionItemsForLine = (analysis: PgmlDocumentAnalysis, offset: number) => {
-  const context = getInnermostContextAtOffset(analysis, offset)
-  const line = getLineAtOffset(analysis, offset)
-  const { fragment, from, to } = getCompletionSpan(line, offset)
-  const beforeCursor = line.text.slice(0, Math.max(0, offset - line.from))
+const getCompletionItemsForLine = (
+  analysis: PgmlDocumentAnalysis,
+  offset: number,
+  lineOverride?: PgmlCompletionLineOverride
+) => {
+  const clampedOffset = Math.max(0, Math.min(offset, analysis.source.length))
+  const context = getInnermostContextAtOffset(analysis, clampedOffset)
+  const line = lineOverride
+    ? {
+        number: getLineAtOffset(analysis, clampedOffset).number,
+        text: lineOverride.text,
+        trimmed: lineOverride.text.trim(),
+        from: lineOverride.from,
+        to: lineOverride.to
+      }
+    : getLineAtOffset(analysis, clampedOffset)
+  const { fragment, from, to } = getCompletionSpan(line, clampedOffset)
+  const beforeCursor = line.text.slice(0, Math.max(0, clampedOffset - line.from))
   const trimmedBeforeCursor = beforeCursor.trim()
 
   if (context?.kind === 'source') {
@@ -3244,6 +3263,14 @@ const getCompletionItemsForLine = (analysis: PgmlDocumentAnalysis, offset: numbe
 
 export const getPgmlCompletionItems = (source: string, offset: number) => {
   return getCompletionItemsForLine(analyzePgmlDocument(source), offset)
+}
+
+export const getPgmlCompletionItemsFromAnalysis = (
+  analysis: PgmlDocumentAnalysis,
+  offset: number,
+  lineOverride?: PgmlCompletionLineOverride
+) => {
+  return getCompletionItemsForLine(analysis, offset, lineOverride)
 }
 
 export const getPgmlDiagnostics = (source: string) => {

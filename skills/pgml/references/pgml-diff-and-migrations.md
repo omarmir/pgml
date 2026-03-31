@@ -50,7 +50,7 @@ Follow this sequence:
 1. Resolve the old and new snapshots.
    - For versioned PGML, use the selected base and target snapshots.
    - For repo diff tasks, use committed vs working-tree sources.
-2. Strip `Properties` blocks from both sources unless the user explicitly asks about layout or diagram changes.
+2. Strip `View` blocks, `active_view` metadata, and legacy snapshot-level `Properties` blocks from both sources unless the user explicitly asks about layout or diagram changes.
 3. Parse or inventory both PGML states by object kind.
 4. Compare the following categories:
    - custom types
@@ -76,12 +76,17 @@ Follow this sequence:
 
 Do not generate migration SQL for these changes unless the user explicitly asks for them:
 
+- `View` block additions, removals, renames, or reordering
+- `active_view` changes
+- `show_lines`, `show_execs`, or `show_fields` changes
 - `Properties` block changes
 - `docs {}` changes by themselves
 - `affects {}` changes by themselves
 - `SchemaMetadata` changes by themselves
 
 Those changes matter for understanding intent and graph shape, but they do not change PostgreSQL schema state on their own.
+
+Treat view-scoped layout changes such as node positions, hidden executable objects, hidden fields, hidden lines, and selected view changes as `layout-only` unless the user explicitly wants a diagram-state diff.
 
 ## Change Classification Rules
 

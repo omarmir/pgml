@@ -776,20 +776,20 @@ const dbmlImportDialogCopy = computed(() => {
   const copyByTarget: Record<PgDumpImportTarget, ImportDialogCopy> = {
     browser: {
       confirmLabel: 'Import into browser storage',
-      description: 'Paste DBML text or upload a DBML file. PGML will validate the schema surface, optionally extract recognized SQL entities from block comments, and open the result in browser local storage.',
-      inputDescription: 'Use one input method only. PGML imports the DBML-compatible table, enum, and ref surface it already understands. You can also opt into comment parsing for functions, triggers, procedures, sequences, and simple indexes when they are embedded in block comments.',
+      description: 'Paste DBML text or upload a DBML file. PGML will validate the schema surface, optionally extract recognized SQL entities from block comments, infer obvious table attachments for imported executables, show progress while the import is prepared, and open the result in browser local storage.',
+      inputDescription: 'Use one input method only. PGML imports the DBML-compatible table, enum, and ref surface it already understands. You can also opt into comment parsing for functions, triggers, procedures, sequences, and simple indexes when they are embedded in block comments. If an imported executable still has ambiguous placement, PGML pauses for a table-selection review before replacing the workspace.',
       title: 'Import DBML into browser storage'
     },
     file: {
       confirmLabel: 'Import into new file',
-      description: 'Paste DBML text or upload a DBML file. PGML will validate the schema surface, optionally extract recognized SQL entities from block comments, and then ask where the new `.pgml` file should be saved.',
-      inputDescription: 'Use one input method only. PGML imports the DBML-compatible table, enum, and ref surface it already understands. You can also opt into comment parsing for functions, triggers, procedures, sequences, and simple indexes when they are embedded in block comments.',
+      description: 'Paste DBML text or upload a DBML file. PGML will validate the schema surface, optionally extract recognized SQL entities from block comments, infer obvious table attachments for imported executables, show progress while the import is prepared, and then ask where the new `.pgml` file should be saved.',
+      inputDescription: 'Use one input method only. PGML imports the DBML-compatible table, enum, and ref surface it already understands. You can also opt into comment parsing for functions, triggers, procedures, sequences, and simple indexes when they are embedded in block comments. If an imported executable still has ambiguous placement, PGML pauses for a table-selection review before replacing the workspace.',
       title: 'Import DBML into a new computer file'
     },
     hosted: {
       confirmLabel: 'Import into browser storage',
-      description: 'Paste DBML text or upload a DBML file. Hosted persistence is still a placeholder, so this import opens as a browser-backed PGML schema for now after validating the schema surface and optionally extracting recognized SQL entities from block comments.',
-      inputDescription: 'Use one input method only. PGML imports the DBML-compatible table, enum, and ref surface it already understands. You can also opt into comment parsing for functions, triggers, procedures, sequences, and simple indexes when they are embedded in block comments.',
+      description: 'Paste DBML text or upload a DBML file. Hosted persistence is still a placeholder, so this import opens as a browser-backed PGML schema for now after validating the schema surface, optionally extracting recognized SQL entities from block comments, inferring obvious executable attachments, and showing progress while the import is prepared.',
+      inputDescription: 'Use one input method only. PGML imports the DBML-compatible table, enum, and ref surface it already understands. You can also opt into comment parsing for functions, triggers, procedures, sequences, and simple indexes when they are embedded in block comments. If an imported executable still has ambiguous placement, PGML pauses for a table-selection review before replacing the workspace.',
       title: 'Import DBML from the hosted lane'
     }
   }
@@ -803,20 +803,20 @@ const pgDumpImportDialogCopy = computed(() => {
   const copyByTarget: Record<PgDumpImportTarget, ImportDialogCopy> = {
     browser: {
       confirmLabel: 'Import into browser storage',
-      description: 'Paste a text pg_dump or upload a text dump file. PGML will convert the schema objects and open them in browser local storage.',
-      inputDescription: 'Use one input method only. PGML imports schema objects from SQL and skips table data from COPY sections.',
+      description: 'Paste a text pg_dump or upload a text dump file. PGML will convert the schema objects, infer obvious executable table attachments, show progress while the import is prepared, and open the result in browser local storage.',
+      inputDescription: 'Use one input method only. PGML imports schema objects from SQL and skips table data from COPY sections. If an imported executable still has ambiguous placement, PGML pauses for a table-selection review before replacing the workspace.',
       title: 'Import pg_dump into browser storage'
     },
     file: {
       confirmLabel: 'Import into new file',
-      description: 'Paste a text pg_dump or upload a text dump file. PGML will convert the schema objects first, then ask where the new `.pgml` file should be saved.',
-      inputDescription: 'Use one input method only. PGML imports schema objects from SQL and skips table data from COPY sections.',
+      description: 'Paste a text pg_dump or upload a text dump file. PGML will convert the schema objects, infer obvious executable table attachments, show progress while the import is prepared, and then ask where the new `.pgml` file should be saved.',
+      inputDescription: 'Use one input method only. PGML imports schema objects from SQL and skips table data from COPY sections. If an imported executable still has ambiguous placement, PGML pauses for a table-selection review before replacing the workspace.',
       title: 'Import pg_dump into a new computer file'
     },
     hosted: {
       confirmLabel: 'Import into browser storage',
-      description: 'Paste a text pg_dump or upload a text dump file. Hosted persistence is still a placeholder, so this import opens as a browser-backed PGML schema for now.',
-      inputDescription: 'Use one input method only. PGML imports schema objects from SQL and skips table data from COPY sections.',
+      description: 'Paste a text pg_dump or upload a text dump file. Hosted persistence is still a placeholder, so this import opens as a browser-backed PGML schema for now after converting the schema objects, inferring obvious executable attachments, and showing progress while the import is prepared.',
+      inputDescription: 'Use one input method only. PGML imports schema objects from SQL and skips table data from COPY sections. If an imported executable still has ambiguous placement, PGML pauses for a table-selection review before replacing the workspace.',
       title: 'Import pg_dump from the hosted lane'
     }
   }
@@ -933,14 +933,14 @@ const sourceCards = computed<SourceCardDefinition[]>(() => {
       ],
       importActions: [
         {
-          description: 'Convert a text pg_dump into a browser-backed versioned PGML document so you can checkpoint it, compare it, and generate migrations from it.',
+          description: 'Convert a text pg_dump into a browser-backed versioned PGML document, show progress while the import is prepared, and review executable placement only when a table attachment is ambiguous.',
           id: 'open-pg-dump-import',
           label: 'Import into browser storage',
           title: 'pg_dump',
           value: 'browser-local-storage'
         },
         {
-          description: 'Validate DBML-compatible schema blocks and open the result as a browser-backed versioned PGML document with compare and migration tooling ready.',
+          description: 'Validate DBML-compatible schema blocks, extract supported executable objects, and open the result as a browser-backed versioned PGML document with attachment review only when placement is ambiguous.',
           id: 'open-dbml-import',
           label: 'Import DBML into browser storage',
           title: 'DBML',
@@ -983,14 +983,14 @@ const sourceCards = computed<SourceCardDefinition[]>(() => {
       ],
       importActions: [
         {
-          description: 'Convert a text pg_dump into a new computer-backed versioned `.pgml` file, then keep autosave pointed at that file.',
+          description: 'Convert a text pg_dump into a new computer-backed versioned `.pgml` file, show progress while the import is prepared, and review executable placement only when a table attachment is ambiguous.',
           id: 'open-pg-dump-import',
           label: 'Import into a new file',
           title: 'pg_dump',
           value: 'computer-saved-file'
         },
         {
-          description: 'Validate a DBML file and save the resulting versioned PGML with checkpoints, compare, and migrations to a new computer-backed `.pgml` file.',
+          description: 'Validate a DBML file, extract supported executable objects, and save the resulting versioned PGML with attachment review only when placement is ambiguous.',
           id: 'open-dbml-import',
           label: 'Import DBML into a new file',
           title: 'DBML',
@@ -1030,14 +1030,14 @@ const sourceCards = computed<SourceCardDefinition[]>(() => {
       ],
       importActions: [
         {
-          description: 'Convert a text pg_dump from this lane now, then open it in browser storage as a versioned PGML document while hosted persistence stays in progress.',
+          description: 'Convert a text pg_dump from this lane now, show progress while it is prepared, and open it in browser storage as a versioned PGML document while hosted persistence stays in progress.',
           id: 'open-pg-dump-import',
           label: 'Import from hosted lane',
           title: 'pg_dump',
           value: 'hosted-database'
         },
         {
-          description: 'Import DBML from this lane now, then open it in browser storage as a versioned PGML document while hosted persistence stays in progress.',
+          description: 'Import DBML from this lane now, extract supported executable objects, and open it in browser storage as a versioned PGML document while hosted persistence stays in progress.',
           id: 'open-dbml-import',
           label: 'Import DBML from hosted lane',
           title: 'DBML',
@@ -1096,7 +1096,7 @@ onBeforeRouteLeave((to) => {
             Need the PGML spec before you open versioning, compare, and migrations?
           </h2>
           <p class="mt-2 max-w-3xl text-[0.9rem] leading-7 text-[color:var(--studio-shell-muted)]">
-            Jump straight to the PGML spec for `VersionSet`, checkpoints, `SchemaMetadata`, DBML and pg_dump imports, executable objects, and history-aware SQL or Kysely migrations.
+            Jump straight to the PGML spec for `VersionSet`, named `View` blocks, checkpoints, `SchemaMetadata`, DBML and pg_dump imports, executable placement, and history-aware SQL or Kysely migrations.
           </p>
         </div>
 

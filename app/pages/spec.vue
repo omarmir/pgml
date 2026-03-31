@@ -40,7 +40,7 @@ const reasons = [
   },
   {
     title: 'Preserve intent, not just DDL',
-    description: 'PGML can keep docs, affects metadata, and embedded Properties blocks so the saved source explains what matters beyond the CREATE statement.'
+    description: 'PGML can keep docs, affects metadata, named View blocks, and embedded Properties blocks so the saved source explains what matters beyond the CREATE statement.'
   },
   {
     title: 'Track schema evolution in the grammar',
@@ -64,7 +64,7 @@ const dbmlComparison = [
       'Adds first-class functions, procedures, triggers, sequences, and custom types.',
       'Supports source-first executable objects with embedded SQL or PL/pgSQL.',
       'Allows docs and affects blocks when you need explicit narrative or dependency hints.',
-      'Persists studio state back into PGML with Properties blocks.'
+      'Persists studio state back into PGML with named View blocks and nested Properties blocks.'
     ]
   }
 ]
@@ -72,11 +72,12 @@ const dbmlComparison = [
 const documentationExamples = [
   {
     title: 'Versioned documents',
-    description: 'PGML documents are rooted in VersionSet. Workspace is the mutable draft, Version blocks are immutable checkpoints, and Snapshot contains the existing schema grammar.',
+    description: 'PGML documents are rooted in VersionSet. Workspace is the mutable draft, Version blocks are immutable checkpoints, Snapshot contains the schema grammar, and each workspace or version can carry named View blocks for persisted diagram state.',
     code: `VersionSet "Billing schema" {
   Workspace {
     based_on: v_programs
     updated_at: "2026-03-29T14:12:00Z"
+    active_view: view_review
 
     Snapshot {
       TableGroup Commerce {
@@ -93,6 +94,16 @@ const documentationExamples = [
         id uuid [pk]
         customer_id uuid [ref: > public.users.id, delete: restrict]
         total_cents integer [not null]
+      }
+    }
+
+    View "Review" {
+      id: view_review
+      show_execs: false
+
+      Properties "group:Commerce" {
+        x: 540
+        y: 120
       }
     }
   }
@@ -115,6 +126,7 @@ const documentationExamples = [
     role: implementation
     parent: v_foundation
     created_at: "2026-03-28T15:00:00Z"
+    active_view: view_programs
 
     Snapshot {
       Table public.users {
@@ -122,6 +134,11 @@ const documentationExamples = [
         email text [not null]
         status text
       }
+    }
+
+    View "Implementation" {
+      id: view_programs
+      show_fields: false
     }
   }
 
@@ -203,21 +220,28 @@ Trigger trg_register_fundingopportunity on public.funding_opportunity_profile {
 }`
   },
   {
-    title: 'Layout properties',
-    description: 'The studio writes Properties blocks back into PGML so the document can reopen with the same layout and presentation state.',
-    code: `Properties "group:Commerce" {
-  x: 540
-  y: 120
-  color: #f59e0b
-  masonry: true
-  table_columns: 1
-}
+    title: 'Views and layout properties',
+    description: 'The studio writes named View blocks back into PGML so each workspace or version can persist node positions plus line, executable, and field visibility per view.',
+    code: `View "Operations" {
+  id: view_operations
+  show_lines: false
+  show_execs: false
+  show_fields: false
 
-Properties "custom-type:Domain:email_address" {
-  x: 1180
-  y: 460
-  color: #14b8a6
-  collapsed: false
+  Properties "group:Commerce" {
+    x: 540
+    y: 120
+    color: #f59e0b
+    masonry: true
+    table_columns: 1
+  }
+
+  Properties "custom-type:Domain:email_address" {
+    x: 1180
+    y: 460
+    color: #14b8a6
+    collapsed: false
+  }
 }`
   }
 ]
@@ -226,6 +250,7 @@ const heroQuickStartCode = `VersionSet "Commerce schema" {
   Workspace {
     based_on: v2
     updated_at: "2026-03-29T14:12:00Z"
+    active_view: view_schema
 
     Snapshot {
       TableGroup Commerce {
@@ -252,6 +277,11 @@ const heroQuickStartCode = `VersionSet "Commerce schema" {
         $sql$
       }
     }
+
+    View "Schema focus" {
+      id: view_schema
+      show_execs: false
+    }
   }
 
   Version v1 {
@@ -271,6 +301,7 @@ const heroQuickStartCode = `VersionSet "Commerce schema" {
     role: design
     parent: v1
     created_at: "2026-03-24T10:30:00Z"
+    active_view: view_design
 
     Snapshot {
       TableGroup Commerce {
@@ -285,6 +316,11 @@ const heroQuickStartCode = `VersionSet "Commerce schema" {
         customer_id uuid [ref: > public.users.id, delete: restrict]
         total_cents integer [not null]
       }
+    }
+
+    View "Design review" {
+      id: view_design
+      show_fields: false
     }
   }
 }`
@@ -311,7 +347,7 @@ const tableOfContentsLinkClass = 'border-l border-transparent pl-3 text-sm text-
           </h1>
           <p class="max-w-2xl text-sm leading-7 text-[color:var(--studio-shell-muted)] sm:text-[0.97rem]">
             PGML stays close to DBML for tables and references, then extends it for the Postgres objects that shape real systems:
-            functions, procedures, triggers, sequences, constraints, custom types, embedded layout state, and grammar-native
+            functions, procedures, triggers, sequences, constraints, custom types, named diagram views, and grammar-native
             checkpoint history. The goal is simple: one source file that is easy to read in a pull request and useful enough to drive
             the diagram studio directly. TableGroup helps organize related tables, but PostgreSQL schema still comes from table names
             like public.orders, so group members should stay fully qualified as schema.table.
@@ -343,7 +379,7 @@ const tableOfContentsLinkClass = 'border-l border-transparent pl-3 text-sm text-
               Example
             </div>
             <p class="mt-1 text-sm text-[color:var(--studio-shell-muted)]">
-              A compact PGML draft with groups, tables, and executable source.
+              A compact PGML draft with groups, tables, executable source, and a named view.
             </p>
           </div>
           <span class="border border-[color:var(--studio-shell-border)] px-2 py-1 font-mono text-[0.68rem] uppercase tracking-[0.14em] text-[color:var(--studio-shell-muted)]">
@@ -470,10 +506,11 @@ const tableOfContentsLinkClass = 'border-l border-transparent pl-3 text-sm text-
               </h2>
               <p class="mt-3 max-w-4xl text-sm leading-7 text-[color:var(--studio-shell-muted)]">
                 Every PGML document is a VersionSet. Workspace holds the active draft, each Version is an immutable checkpoint, and
-                Snapshot contains the familiar schema blocks. The studio compares one snapshot against another to show deltas, and it
-                generates forward SQL from those diffs instead of treating each saved state like a full wipe-and-recreate export.
-                Importing a pg_dump onto an existing document replaces the current Workspace and requires choosing the Version it
-                should increment from.
+                Snapshot contains the familiar schema blocks. Workspace and Version can also hold named View blocks so each checkpoint
+                keeps its own node positions and line, executable, and field visibility state. The studio compares one snapshot against
+                another to show deltas and generates forward SQL from those diffs instead of treating each saved state like a full
+                wipe-and-recreate export. DBML and pg_dump imports now show progress while they parse, infer obvious executable
+                attachments automatically, and pause for table placement only when an imported executable is ambiguous.
               </p>
             </div>
           </div>
@@ -493,8 +530,9 @@ const tableOfContentsLinkClass = 'border-l border-transparent pl-3 text-sm text-
               </h2>
               <p class="mt-3 max-w-3xl text-sm leading-7 text-[color:var(--studio-shell-muted)]">
                 Start with VersionSet and Workspace, add table structure and groups inside Snapshot, use source blocks for executable
-                objects, and let the studio persist layout back into the same document with Properties. The examples below cover the
-                current surface area used by this app.
+                objects, and let the studio persist named views back into the same document with View and Properties blocks. The raw
+                editor keeps autocomplete active while typing, even on large drafts, so the examples below stay discoverable while you
+                edit. The examples below cover the current surface area used by this app.
               </p>
             </div>
 

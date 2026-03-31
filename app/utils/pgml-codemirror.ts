@@ -2,7 +2,7 @@ import type { Completion, CompletionContext } from '@codemirror/autocomplete'
 import type { Extension } from '@codemirror/state'
 import type { Diagnostic as CodeMirrorDiagnostic } from '@codemirror/lint'
 import type { StringStream } from '@codemirror/language'
-import type { PgmlLanguageDiagnostic } from './pgml-language'
+import type { PgmlDocumentAnalysis, PgmlLanguageDiagnostic } from './pgml-language'
 import { autocompletion, completionKeymap } from '@codemirror/autocomplete'
 import { defaultKeymap, history, historyKeymap, indentWithTab } from '@codemirror/commands'
 import { EditorState } from '@codemirror/state'
@@ -16,7 +16,11 @@ import {
 import { lintGutter, linter } from '@codemirror/lint'
 import { EditorView, drawSelection, highlightActiveLine, highlightActiveLineGutter, keymap, lineNumbers, placeholder } from '@codemirror/view'
 import { tags } from '@lezer/highlight'
-import { getPgmlCompletionItems, getPgmlDiagnostics } from './pgml-language'
+import {
+  getPgmlCompletionItems,
+  getPgmlCompletionItemsFromAnalysis,
+  getPgmlDiagnostics
+} from './pgml-language'
 
 type PgmlStreamState = {
   // The current innermost block drives contextual styling such as column type
@@ -40,7 +44,9 @@ export type PgmlCodeMirrorOptions = {
   activateCompletionOnTyping?: boolean
   enableDiagnostics?: boolean
   externalDiagnostics?: PgmlLanguageDiagnostic[] | null
+  getCompletionAnalysis?: (() => PgmlDocumentAnalysis | null) | null
   linterDelayMs?: number
+  maxSynchronousCompletionDocLength?: number
   placeholder?: string
 }
 
@@ -481,40 +487,10 @@ const pgmlStreamParser = StreamLanguage.define<PgmlStreamState>({
   token: (stream, state) => readPgmlToken(stream, state)
 })
 
-const pgmlCompletionSource = (context: CompletionContext) => {
-  const source = context.state.doc.toString()
-  const items = getPgmlCompletionItems(source, context.pos)
-
-  if (items.length === 0) {
-    if (context.explicit) {
-      return {
-        from: context.pos,
-        options: [] satisfies Completion[]
-      }
-    }
-
-    return null
-  }
-
-  const from = items[0] ? items[0].from : context.pos
-  const to = items[0] ? items[0].to : context.pos
-
-  return {
-    from,
-    to,
-    options: items.map((item) => {
-      return {
-        label: item.label,
-        detail: item.detail,
-        type: item.kind,
-        apply: item.apply
-      } satisfies Completion
-    })
-  }
-}
-
-const createCodeMirrorDiagnostics = (source: string) => {
-  return getPgmlDiagnostics(source).map((diagnostic) => {
+const buildCodeMirrorDiagnostics = (
+  diagnostics: PgmlLanguageDiagnostic[]
+) => {
+  return diagnostics.map((diagnostic) => {
     return {
       from: diagnostic.from,
       to: diagnostic.to,
@@ -525,18 +501,95 @@ const createCodeMirrorDiagnostics = (source: string) => {
   })
 }
 
-export const createPgmlCodeMirrorExtensions = (options: PgmlCodeMirrorOptions = {}) => {
-  const activateCompletionOnTyping = options.activateCompletionOnTyping !== false
-  const placeholderText = typeof options.placeholder === 'string' && options.placeholder.length > 0
-    ? options.placeholder
-    : 'Paste PGML here...'
-  const enableDiagnostics = options.enableDiagnostics !== false
+const createPgmlCompletionSource = (options: {
+  getCompletionAnalysis?: (() => PgmlDocumentAnalysis | null) | null
+  maxSynchronousCompletionDocLength: number
+}) => {
+  return (context: CompletionContext) => {
+    const currentLine = context.state.doc.lineAt(context.pos)
+    const completionAnalysis = options.getCompletionAnalysis?.() || null
+    const canReuseCompletionAnalysis = completionAnalysis !== null
+      && Math.abs(completionAnalysis.source.length - context.state.doc.length) <= 64
+    const items = canReuseCompletionAnalysis
+      ? getPgmlCompletionItemsFromAnalysis(completionAnalysis, context.pos, {
+          from: currentLine.from,
+          text: currentLine.text,
+          to: currentLine.to
+        })
+      : context.explicit || context.state.doc.length <= options.maxSynchronousCompletionDocLength
+        ? getPgmlCompletionItems(context.state.doc.toString(), context.pos)
+        : []
+
+    if (items.length === 0) {
+      if (context.explicit) {
+        return {
+          from: context.pos,
+          options: [] satisfies Completion[]
+        }
+      }
+
+      return null
+    }
+
+    const from = items[0] ? items[0].from : context.pos
+    const to = items[0] ? items[0].to : context.pos
+
+    return {
+      from,
+      to,
+      options: items.map((item) => {
+        return {
+          label: item.label,
+          detail: item.detail,
+          type: item.kind,
+          apply: item.apply
+        } satisfies Completion
+      })
+    }
+  }
+}
+
+const createCodeMirrorDiagnostics = (source: string) => {
+  return buildCodeMirrorDiagnostics(getPgmlDiagnostics(source))
+}
+
+export const createPgmlCodeMirrorDiagnosticsExtensions = (
+  options: Pick<PgmlCodeMirrorOptions, 'externalDiagnostics' | 'linterDelayMs'> = {}
+) => {
   const linterDelayMs = typeof options.linterDelayMs === 'number' && options.linterDelayMs >= 0
     ? options.linterDelayMs
     : 150
   const externalDiagnostics = Array.isArray(options.externalDiagnostics)
     ? options.externalDiagnostics
     : null
+
+  return [
+    linter((view) => {
+      if (externalDiagnostics) {
+        return buildCodeMirrorDiagnostics(externalDiagnostics)
+      }
+
+      return createCodeMirrorDiagnostics(view.state.doc.toString())
+    }, {
+      delay: linterDelayMs
+    }),
+    lintGutter()
+  ] satisfies Extension[]
+}
+
+export const createPgmlCodeMirrorExtensions = (options: PgmlCodeMirrorOptions = {}) => {
+  const activateCompletionOnTyping = options.activateCompletionOnTyping !== false
+  const placeholderText = typeof options.placeholder === 'string' && options.placeholder.length > 0
+    ? options.placeholder
+    : 'Paste PGML here...'
+  const enableDiagnostics = options.enableDiagnostics !== false
+  const getCompletionAnalysis = typeof options.getCompletionAnalysis === 'function'
+    ? options.getCompletionAnalysis
+    : null
+  const maxSynchronousCompletionDocLength = typeof options.maxSynchronousCompletionDocLength === 'number'
+    && options.maxSynchronousCompletionDocLength > 0
+    ? options.maxSynchronousCompletionDocLength
+    : 35000
 
   const extensions: Extension[] = [
     history(),
@@ -558,7 +611,10 @@ export const createPgmlCodeMirrorExtensions = (options: PgmlCodeMirrorOptions = 
     autocompletion({
       activateOnTyping: activateCompletionOnTyping,
       defaultKeymap: true,
-      override: [pgmlCompletionSource]
+      override: [createPgmlCompletionSource({
+        getCompletionAnalysis,
+        maxSynchronousCompletionDocLength
+      })]
     }),
     placeholder(placeholderText),
     studioCodeMirrorTheme,
@@ -571,24 +627,10 @@ export const createPgmlCodeMirrorExtensions = (options: PgmlCodeMirrorOptions = 
 
   if (enableDiagnostics) {
     extensions.push(
-      linter((view) => {
-        if (externalDiagnostics) {
-          return externalDiagnostics.map((diagnostic) => {
-            return {
-              from: diagnostic.from,
-              to: diagnostic.to,
-              severity: diagnostic.severity,
-              message: diagnostic.message,
-              source: diagnostic.code
-            } satisfies CodeMirrorDiagnostic
-          })
-        }
-
-        return createCodeMirrorDiagnostics(view.state.doc.toString())
-      }, {
-        delay: linterDelayMs
-      }),
-      lintGutter()
+      ...createPgmlCodeMirrorDiagnosticsExtensions({
+        externalDiagnostics: options.externalDiagnostics,
+        linterDelayMs: options.linterDelayMs
+      })
     )
   }
 

@@ -28,6 +28,8 @@ Follow this order:
 
 This ordering fits the examples used in the repo and avoids most obvious dependency failures.
 
+Ignore `View` blocks, `active_view`, `show_lines`, `show_execs`, `show_fields`, and `Properties` when generating PostgreSQL SQL. Those entries are studio metadata, not database structure.
+
 ## Mapping Rules
 
 ### Enums
@@ -337,6 +339,7 @@ Do not turn `docs` or `affects` entries into DDL automatically. They are guidanc
 Watch for these errors:
 
 - treating `Properties` blocks as part of the schema
+- treating `View` blocks or `active_view` metadata as part of the schema
 - inventing columns not present in PGML
 - emitting duplicate foreign keys from repeated refs
 - ignoring schema qualification and accidentally joining the wrong table
