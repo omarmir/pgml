@@ -28,6 +28,7 @@ type ComputerFileOperations = {
 }
 
 type UsePgmlStudioComputerFilesOptions = {
+  applyLoadedFileText?: (value: string) => void
   buildSchemaText: (includeLayout: boolean) => string
   enabled?: ComputedRef<boolean>
   fileOperations?: Partial<ComputerFileOperations>
@@ -39,6 +40,7 @@ type PersistCurrentComputerFileOptions = {
 }
 
 export const usePgmlStudioComputerFiles = ({
+  applyLoadedFileText,
   buildSchemaText,
   enabled,
   fileOperations,
@@ -68,7 +70,7 @@ export const usePgmlStudioComputerFiles = ({
     })
   }
   const getCurrentSnapshot = () => {
-    return getSnapshot(source.value)
+    return getSnapshot(buildSchemaText(true))
   }
   const hasPendingComputerFileChanges = computed(() => {
     return currentComputerFileId.value !== null && lastPersistedSnapshot.value !== getCurrentSnapshot()
@@ -111,12 +113,17 @@ export const usePgmlStudioComputerFiles = ({
     entry: PgmlRecentComputerFile
     text: string
   }) => {
-    source.value = payload.text
+    if (applyLoadedFileText) {
+      applyLoadedFileText(payload.text)
+    } else {
+      source.value = payload.text
+    }
+
     currentComputerFileId.value = payload.entry.id
     currentComputerFileName.value = payload.entry.name
     currentComputerFileUpdatedAt.value = payload.entry.updatedAt
     hasSavedComputerFileInSession.value = false
-    lastPersistedSnapshot.value = getSnapshot(payload.text)
+    lastPersistedSnapshot.value = getSnapshot(buildSchemaText(true))
     computerFileSaveError.value = null
   }
 
@@ -223,7 +230,7 @@ export const usePgmlStudioComputerFiles = ({
     }
 
     isSavingToComputerFile.value = true
-    await persistCurrentComputerFile(source.value, {
+    await persistCurrentComputerFile(buildSchemaText(true), {
       interactive: false
     })
     await nextTick()

@@ -1,11 +1,13 @@
 <script setup lang="ts">
 import type { Ref } from 'vue'
 import { storeToRefs } from 'pinia'
+import AppDbmlImportModal from '~/components/app/AppDbmlImportModal.vue'
 import {
   exampleSchemaName,
   formatSavedPgmlSchemaTime,
   untitledSchemaName
 } from '~/utils/studio-browser-schemas'
+import { convertDbmlToPgml } from '~/utils/dbml-import'
 import { convertPgDumpToPgml } from '~/utils/pg-dump-import'
 import type { PgmlRecentComputerFile } from '~/utils/computer-files'
 import {
@@ -14,9 +16,13 @@ import {
   loadRecentComputerPgmlFile,
   openComputerPgmlFile
 } from '~/utils/computer-files'
+import {
+  createInitialPgmlDocument,
+  serializePgmlDocument
+} from '~/utils/pgml-document'
 import { useStudioSessionStore } from '~/stores/studio-session'
 import { useStudioSourcesStore } from '~/stores/studio-sources'
-import { pgmlExample } from '~/utils/pgml'
+import { pgmlVersionedExample } from '~/utils/pgml'
 import {
   joinStudioClasses,
   studioBodyCopyClass,
@@ -73,13 +79,15 @@ type SourceCardOperation = {
 type SourceCardDefinition = {
   cardId: SourceCardId
   description: string
+  importActions: Array<{
+    description: string
+    id: string
+    label: string
+    title: string
+    value: SourceCardId
+  }>
   inventory: string
   operations: SourceCardOperation[]
-  sqlDumpAction: {
-    id: string
-    value: SourceCardId
-  }
-  sqlDumpDescription: string
   statusLabel: string
   statusTone: 'live' | 'placeholder'
   title: string
@@ -95,8 +103,36 @@ type PendingComputerFileAction = { kind: 'create-example' }
   | { kind: 'open-picker' }
   | { kind: 'open-recent', recentFileId: string }
 
+type ImportedSchemaResult = {
+  pgml: string
+  schemaName: string
+}
+
+type ImportDialogState = {
+  dialogOpen: Ref<boolean>
+  error: Ref<string | null>
+  isSubmitting: Ref<boolean>
+  selectedFile: Ref<File | null>
+  target: Ref<PgDumpImportTarget | null>
+  text: Ref<string>
+}
+
+type ImportDialogCopy = {
+  confirmLabel: string
+  description: string
+  inputDescription: string
+  title: string
+}
+
 const computerFileAccessDialogOpen: Ref<boolean> = ref(false)
+const dbmlImportDialogOpen: Ref<boolean> = ref(false)
+const dbmlImportError: Ref<string | null> = ref(null)
+const dbmlImportParseExecutableComments: Ref<boolean> = ref(false)
+const dbmlImportSelectedFile: Ref<File | null> = ref(null)
+const dbmlImportTarget: Ref<PgDumpImportTarget | null> = ref(null)
+const dbmlImportText: Ref<string> = ref('')
 const isConfirmingComputerFileAction: Ref<boolean> = ref(false)
+const isSubmittingDbmlImport: Ref<boolean> = ref(false)
 const isSubmittingPgDumpImport: Ref<boolean> = ref(false)
 const pendingComputerFileAction: Ref<PendingComputerFileAction | null> = ref(null)
 const pgDumpImportDialogOpen: Ref<boolean> = ref(false)
@@ -123,12 +159,30 @@ const specBannerClass = joinStudioClasses(
   'border border-[color:var(--studio-shell-border)] bg-[color:var(--studio-control-bg)] px-5 py-5 sm:px-6 sm:py-6'
 )
 const specBannerButtonClass = studioButtonClasses.ghost
+const dbmlImportConflictErrorMessage = 'Choose either pasted DBML text or a DBML file upload, not both.'
+const dbmlImportMissingInputErrorMessage = 'Paste DBML text or choose a DBML file before importing.'
 const pgDumpImportConflictErrorMessage = 'Choose either pasted pg_dump text or a file upload, not both.'
 const pgDumpImportMissingInputErrorMessage = 'Paste pg_dump text or choose a text dump file before importing.'
-const pgDumpImportTargetByCardId: Record<SourceCardId, PgDumpImportTarget> = {
+const sourceImportTargetByCardId: Record<SourceCardId, PgDumpImportTarget> = {
   'browser-local-storage': 'browser',
   'computer-saved-file': 'file',
   'hosted-database': 'hosted'
+}
+const dbmlImportState: ImportDialogState = {
+  dialogOpen: dbmlImportDialogOpen,
+  error: dbmlImportError,
+  isSubmitting: isSubmittingDbmlImport,
+  selectedFile: dbmlImportSelectedFile,
+  target: dbmlImportTarget,
+  text: dbmlImportText
+}
+const pgDumpImportState: ImportDialogState = {
+  dialogOpen: pgDumpImportDialogOpen,
+  error: pgDumpImportError,
+  isSubmitting: isSubmittingPgDumpImport,
+  selectedFile: pgDumpImportSelectedFile,
+  target: pgDumpImportTarget,
+  text: pgDumpImportText
 }
 const getActionErrorMessage = (error: unknown, fallbackMessage: string) => {
   if (error instanceof Error && error.message.trim().length > 0) {
@@ -157,6 +211,164 @@ const pushComputerFileActionErrorToast = (description: string) => {
     icon: 'i-lucide-circle-alert'
   })
 }
+const resetImportDialogState = (state: ImportDialogState) => {
+  state.dialogOpen.value = false
+  state.error.value = null
+  state.selectedFile.value = null
+  state.target.value = null
+  state.text.value = ''
+}
+const syncImportConflictError = (input: {
+  conflictErrorMessage: string
+  state: ImportDialogState
+}) => {
+  const hasFile = input.state.selectedFile.value !== null
+  const hasText = input.state.text.value.trim().length > 0
+
+  if (hasFile && hasText) {
+    input.state.error.value = input.conflictErrorMessage
+    return false
+  }
+
+  if (input.state.error.value !== null) {
+    input.state.error.value = null
+  }
+
+  return true
+}
+const openImportDialogForCard = (state: ImportDialogState, cardId: SourceCardId) => {
+  resetImportDialogState(state)
+  state.dialogOpen.value = true
+  state.target.value = sourceImportTargetByCardId[cardId]
+}
+const closeImportDialog = (state: ImportDialogState) => {
+  if (state.isSubmitting.value) {
+    return
+  }
+
+  resetImportDialogState(state)
+}
+const handleImportDialogOpenChange = (state: ImportDialogState, nextOpen: boolean) => {
+  if (nextOpen) {
+    state.dialogOpen.value = true
+    return
+  }
+
+  closeImportDialog(state)
+}
+const setImportText = (
+  state: ImportDialogState,
+  value: string,
+  conflictErrorMessage: string
+) => {
+  state.text.value = value
+  syncImportConflictError({
+    conflictErrorMessage,
+    state
+  })
+}
+const setImportFile = (
+  state: ImportDialogState,
+  files: FileList | null,
+  conflictErrorMessage: string
+) => {
+  state.selectedFile.value = files?.[0] || null
+  syncImportConflictError({
+    conflictErrorMessage,
+    state
+  })
+}
+const clearImportFile = (state: ImportDialogState, conflictErrorMessage: string) => {
+  state.selectedFile.value = null
+  syncImportConflictError({
+    conflictErrorMessage,
+    state
+  })
+}
+const submitImportedSchema = async (input: {
+  conflictErrorMessage: string
+  convert: (input: {
+    preferredName?: string | null
+    sourceText: string
+  }) => ImportedSchemaResult
+  fallbackErrorMessage: string
+  missingInputErrorMessage: string
+  state: ImportDialogState
+}) => {
+  const importTarget = input.state.target.value
+
+  if (!importTarget) {
+    return
+  }
+
+  if (!syncImportConflictError({
+    conflictErrorMessage: input.conflictErrorMessage,
+    state: input.state
+  })) {
+    return
+  }
+
+  const selectedFile = input.state.selectedFile.value
+  const trimmedText = input.state.text.value.trim()
+
+  if (!selectedFile && trimmedText.length === 0) {
+    input.state.error.value = input.missingInputErrorMessage
+    return
+  }
+
+  input.state.isSubmitting.value = true
+
+  try {
+    const importedSource = selectedFile ? await selectedFile.text() : input.state.text.value
+    const importedSchema = input.convert({
+      preferredName: selectedFile?.name,
+      sourceText: importedSource
+    })
+
+    resetImportDialogState(input.state)
+    await finishImportedSchemaLaunch({
+      importTarget,
+      schemaName: importedSchema.schemaName,
+      snapshotSource: importedSchema.pgml
+    })
+  } catch (error) {
+    input.state.error.value = getActionErrorMessage(error, input.fallbackErrorMessage)
+  } finally {
+    input.state.isSubmitting.value = false
+  }
+}
+const buildVersionedPgmlText = (input: {
+  initialVersionName?: string
+  name: string
+  role?: 'design' | 'implementation'
+  snapshotSource: string
+}) => {
+  const normalizedSnapshotSource = input.snapshotSource.trim()
+
+  // Imports and new-document flows both create the grammar-native VersionSet
+  // format. Initial imports start with one locked implementation checkpoint;
+  // brand-new documents start with only a mutable workspace draft.
+  if (input.initialVersionName) {
+    return serializePgmlDocument(createInitialPgmlDocument({
+      initialVersion: {
+        createdAt: new Date().toISOString(),
+        name: input.initialVersionName,
+        parentVersionId: null,
+        role: input.role || 'design',
+        snapshot: {
+          source: normalizedSnapshotSource
+        }
+      },
+      name: input.name,
+      workspaceSource: normalizedSnapshotSource
+    }))
+  }
+
+  return serializePgmlDocument(createInitialPgmlDocument({
+    name: input.name,
+    workspaceSource: normalizedSnapshotSource
+  }))
+}
 
 const refreshSavedSchemas = () => {
   studioSourcesStore.refreshBrowserSchemas()
@@ -164,11 +376,46 @@ const refreshSavedSchemas = () => {
 const refreshRecentComputerFiles = async () => {
   await studioSourcesStore.refreshRecentComputerFiles()
 }
+const finishImportedSchemaLaunch = async (input: {
+  importTarget: PgDumpImportTarget
+  schemaName: string
+  snapshotSource: string
+}) => {
+  // Browser imports become saved browser documents immediately. File imports
+  // queue the file-system permission dialog first so the actual save target is
+  // still chosen by the user.
+  if (input.importTarget === 'file') {
+    queueComputerFileAccessAction({
+      kind: 'create-import',
+      schemaName: input.schemaName,
+      text: buildVersionedPgmlText({
+        initialVersionName: 'Initial implementation',
+        name: input.schemaName,
+        role: 'implementation',
+        snapshotSource: input.snapshotSource
+      })
+    })
+    return
+  }
+
+  await createBrowserSchemaFromImport({
+    name: input.schemaName,
+    snapshotSource: input.snapshotSource
+  })
+}
 const createBrowserSchemaFromImport = async (input: {
   name: string
-  text: string
+  snapshotSource: string
 }) => {
-  const createdSchema = studioSourcesStore.createBrowserSchema(input)
+  const createdSchema = studioSourcesStore.createBrowserSchema({
+    name: input.name,
+    text: buildVersionedPgmlText({
+      initialVersionName: 'Initial implementation',
+      name: input.name,
+      role: 'implementation',
+      snapshotSource: input.snapshotSource
+    })
+  })
 
   if (!createdSchema) {
     pushSaveErrorToast('Unable to save to local storage.')
@@ -256,7 +503,12 @@ const createComputerFile = async (input: {
 const createComputerFileFromLaunch = async (launchType: 'example' | 'new') => {
   await createComputerFile({
     name: launchType === 'example' ? exampleSchemaName : untitledSchemaName,
-    text: launchType === 'example' ? pgmlExample : ''
+    text: launchType === 'example'
+      ? pgmlVersionedExample
+      : buildVersionedPgmlText({
+          name: untitledSchemaName,
+          snapshotSource: ''
+        })
   })
 }
 const openRecentComputerFileFromLaunch = async (recentFileId: string) => {
@@ -294,110 +546,72 @@ const queueComputerFileAccessAction = (action: PendingComputerFileAction) => {
   pendingComputerFileAction.value = action
   computerFileAccessDialogOpen.value = true
 }
-const resetPgDumpImportDialog = () => {
-  pgDumpImportDialogOpen.value = false
-  pgDumpImportError.value = null
-  pgDumpImportSelectedFile.value = null
-  pgDumpImportTarget.value = null
-  pgDumpImportText.value = ''
-}
-const syncPgDumpImportConflictError = () => {
-  const hasFile = pgDumpImportSelectedFile.value !== null
-  const hasText = pgDumpImportText.value.trim().length > 0
-
-  if (hasFile && hasText) {
-    pgDumpImportError.value = pgDumpImportConflictErrorMessage
-    return false
-  }
-
-  if (pgDumpImportError.value !== null) {
-    pgDumpImportError.value = null
-  }
-
-  return true
+const openDbmlImportDialog = (cardId: SourceCardId) => {
+  dbmlImportParseExecutableComments.value = false
+  openImportDialogForCard(dbmlImportState, cardId)
 }
 const openPgDumpImportDialog = (cardId: SourceCardId) => {
-  pgDumpImportDialogOpen.value = true
-  pgDumpImportError.value = null
-  pgDumpImportSelectedFile.value = null
-  pgDumpImportTarget.value = pgDumpImportTargetByCardId[cardId]
-  pgDumpImportText.value = ''
-}
-const closePgDumpImportDialog = () => {
-  if (isSubmittingPgDumpImport.value) {
-    return
-  }
-
-  resetPgDumpImportDialog()
+  openImportDialogForCard(pgDumpImportState, cardId)
 }
 const handlePgDumpImportDialogOpenChange = (nextOpen: boolean) => {
+  handleImportDialogOpenChange(pgDumpImportState, nextOpen)
+}
+const handleDbmlImportDialogOpenChange = (nextOpen: boolean) => {
   if (nextOpen) {
-    pgDumpImportDialogOpen.value = true
+    dbmlImportParseExecutableComments.value = false
+    dbmlImportState.dialogOpen.value = true
     return
   }
 
-  closePgDumpImportDialog()
+  dbmlImportParseExecutableComments.value = false
+  closeImportDialog(dbmlImportState)
+}
+const setDbmlImportText = (value: string) => {
+  setImportText(dbmlImportState, value, dbmlImportConflictErrorMessage)
+}
+const setDbmlImportFile = (files: FileList | null) => {
+  setImportFile(dbmlImportState, files, dbmlImportConflictErrorMessage)
+}
+const clearDbmlImportFile = () => {
+  clearImportFile(dbmlImportState, dbmlImportConflictErrorMessage)
+}
+const submitDbmlImport = async () => {
+  await submitImportedSchema({
+    conflictErrorMessage: dbmlImportConflictErrorMessage,
+    convert: ({ preferredName, sourceText }) => {
+      return convertDbmlToPgml({
+        dbml: sourceText,
+        parseExecutableComments: dbmlImportParseExecutableComments.value,
+        preferredName
+      })
+    },
+    fallbackErrorMessage: 'Unable to import that DBML.',
+    missingInputErrorMessage: dbmlImportMissingInputErrorMessage,
+    state: dbmlImportState
+  })
 }
 const setPgDumpImportText = (value: string) => {
-  pgDumpImportText.value = value
-  syncPgDumpImportConflictError()
+  setImportText(pgDumpImportState, value, pgDumpImportConflictErrorMessage)
 }
 const setPgDumpImportFile = (files: FileList | null) => {
-  pgDumpImportSelectedFile.value = files?.[0] || null
-  syncPgDumpImportConflictError()
+  setImportFile(pgDumpImportState, files, pgDumpImportConflictErrorMessage)
 }
 const clearPgDumpImportFile = () => {
-  pgDumpImportSelectedFile.value = null
-  syncPgDumpImportConflictError()
+  clearImportFile(pgDumpImportState, pgDumpImportConflictErrorMessage)
 }
 const submitPgDumpImport = async () => {
-  const importTarget = pgDumpImportTarget.value
-
-  if (!importTarget) {
-    return
-  }
-
-  if (!syncPgDumpImportConflictError()) {
-    return
-  }
-
-  const selectedFile = pgDumpImportSelectedFile.value
-  const trimmedText = pgDumpImportText.value.trim()
-
-  if (!selectedFile && trimmedText.length === 0) {
-    pgDumpImportError.value = pgDumpImportMissingInputErrorMessage
-    return
-  }
-
-  isSubmittingPgDumpImport.value = true
-
-  try {
-    const importedSql = selectedFile ? await selectedFile.text() : pgDumpImportText.value
-    const importedSchema = convertPgDumpToPgml({
-      preferredName: selectedFile?.name,
-      sql: importedSql
-    })
-
-    resetPgDumpImportDialog()
-
-    if (importTarget === 'file') {
-      queueComputerFileAccessAction({
-        kind: 'create-import',
-        schemaName: importedSchema.schemaName,
-        text: importedSchema.pgml
+  await submitImportedSchema({
+    conflictErrorMessage: pgDumpImportConflictErrorMessage,
+    convert: ({ preferredName, sourceText }) => {
+      return convertPgDumpToPgml({
+        preferredName,
+        sql: sourceText
       })
-      return
-    }
-
-    await createBrowserSchemaFromImport({
-      name: importedSchema.schemaName,
-      text: importedSchema.pgml
-    })
-  } catch (error) {
-    pgDumpImportError.value = getActionErrorMessage(error, 'Unable to import that pg_dump.')
-  } finally {
-    isSubmittingPgDumpImport.value = false
-  }
+    },
+    fallbackErrorMessage: 'Unable to import that pg_dump.',
+    missingInputErrorMessage: pgDumpImportMissingInputErrorMessage,
+    state: pgDumpImportState
+  })
 }
 const closeComputerFileAccessDialog = () => {
   if (isConfirmingComputerFileAction.value) {
@@ -452,6 +666,11 @@ const handleSourceCardAction = async (payload: {
   cardId: string
   value: string
 }) => {
+  if (payload.actionId === 'open-dbml-import') {
+    openDbmlImportDialog(payload.value as SourceCardId)
+    return
+  }
+
   if (payload.actionId === 'open-pg-dump-import') {
     openPgDumpImportDialog(payload.value as SourceCardId)
     return
@@ -550,34 +769,59 @@ const computerFileAccessDialogCopy = computed(() => {
     title: 'Create an example file on your computer'
   }
 })
+const dbmlImportSelectedFileName = computed(() => {
+  return dbmlImportSelectedFile.value?.name || ''
+})
+const dbmlImportDialogCopy = computed(() => {
+  const copyByTarget: Record<PgDumpImportTarget, ImportDialogCopy> = {
+    browser: {
+      confirmLabel: 'Import into browser storage',
+      description: 'Paste DBML text or upload a DBML file. PGML will validate the schema surface, optionally extract recognized SQL entities from block comments, infer obvious table attachments for imported executables, show progress while the import is prepared, and open the result in browser local storage.',
+      inputDescription: 'Use one input method only. PGML imports the DBML-compatible table, enum, and ref surface it already understands. You can also opt into comment parsing for functions, triggers, procedures, sequences, and simple indexes when they are embedded in block comments. If an imported executable still has ambiguous placement, PGML pauses for a table-selection review before replacing the workspace.',
+      title: 'Import DBML into browser storage'
+    },
+    file: {
+      confirmLabel: 'Import into new file',
+      description: 'Paste DBML text or upload a DBML file. PGML will validate the schema surface, optionally extract recognized SQL entities from block comments, infer obvious table attachments for imported executables, show progress while the import is prepared, and then ask where the new `.pgml` file should be saved.',
+      inputDescription: 'Use one input method only. PGML imports the DBML-compatible table, enum, and ref surface it already understands. You can also opt into comment parsing for functions, triggers, procedures, sequences, and simple indexes when they are embedded in block comments. If an imported executable still has ambiguous placement, PGML pauses for a table-selection review before replacing the workspace.',
+      title: 'Import DBML into a new computer file'
+    },
+    hosted: {
+      confirmLabel: 'Import into browser storage',
+      description: 'Paste DBML text or upload a DBML file. Hosted persistence is still a placeholder, so this import opens as a browser-backed PGML schema for now after validating the schema surface, optionally extracting recognized SQL entities from block comments, inferring obvious executable attachments, and showing progress while the import is prepared.',
+      inputDescription: 'Use one input method only. PGML imports the DBML-compatible table, enum, and ref surface it already understands. You can also opt into comment parsing for functions, triggers, procedures, sequences, and simple indexes when they are embedded in block comments. If an imported executable still has ambiguous placement, PGML pauses for a table-selection review before replacing the workspace.',
+      title: 'Import DBML from the hosted lane'
+    }
+  }
+
+  return copyByTarget[dbmlImportTarget.value || 'browser']
+})
 const pgDumpImportSelectedFileName = computed(() => {
   return pgDumpImportSelectedFile.value?.name || ''
 })
 const pgDumpImportDialogCopy = computed(() => {
-  if (pgDumpImportTarget.value === 'file') {
-    return {
-      confirmLabel: 'Import into new file',
-      description: 'Paste a text pg_dump or upload a text dump file. PGML will convert the schema objects first, then ask where the new `.pgml` file should be saved.',
-      inputDescription: 'Use one input method only. PGML imports schema objects from SQL and skips table data from COPY sections.',
-      title: 'Import pg_dump into a new computer file'
-    }
-  }
-
-  if (pgDumpImportTarget.value === 'hosted') {
-    return {
+  const copyByTarget: Record<PgDumpImportTarget, ImportDialogCopy> = {
+    browser: {
       confirmLabel: 'Import into browser storage',
-      description: 'Paste a text pg_dump or upload a text dump file. Hosted persistence is still a placeholder, so this import opens as a browser-backed PGML schema for now.',
-      inputDescription: 'Use one input method only. PGML imports schema objects from SQL and skips table data from COPY sections.',
+      description: 'Paste a text pg_dump or upload a text dump file. PGML will convert the schema objects, infer obvious executable table attachments, show progress while the import is prepared, and open the result in browser local storage.',
+      inputDescription: 'Use one input method only. PGML imports schema objects from SQL and skips table data from COPY sections. If an imported executable still has ambiguous placement, PGML pauses for a table-selection review before replacing the workspace.',
+      title: 'Import pg_dump into browser storage'
+    },
+    file: {
+      confirmLabel: 'Import into new file',
+      description: 'Paste a text pg_dump or upload a text dump file. PGML will convert the schema objects, infer obvious executable table attachments, show progress while the import is prepared, and then ask where the new `.pgml` file should be saved.',
+      inputDescription: 'Use one input method only. PGML imports schema objects from SQL and skips table data from COPY sections. If an imported executable still has ambiguous placement, PGML pauses for a table-selection review before replacing the workspace.',
+      title: 'Import pg_dump into a new computer file'
+    },
+    hosted: {
+      confirmLabel: 'Import into browser storage',
+      description: 'Paste a text pg_dump or upload a text dump file. Hosted persistence is still a placeholder, so this import opens as a browser-backed PGML schema for now after converting the schema objects, inferring obvious executable attachments, and showing progress while the import is prepared.',
+      inputDescription: 'Use one input method only. PGML imports schema objects from SQL and skips table data from COPY sections. If an imported executable still has ambiguous placement, PGML pauses for a table-selection review before replacing the workspace.',
       title: 'Import pg_dump from the hosted lane'
     }
   }
 
-  return {
-    confirmLabel: 'Import into browser storage',
-    description: 'Paste a text pg_dump or upload a text dump file. PGML will convert the schema objects and open them in browser local storage.',
-    inputDescription: 'Use one input method only. PGML imports schema objects from SQL and skips table data from COPY sections.',
-    title: 'Import pg_dump into browser storage'
-  }
+  return copyByTarget[pgDumpImportTarget.value || 'browser']
 })
 
 const browserSchemaCountLabel = computed(() => {
@@ -659,7 +903,7 @@ const sourceCards = computed<SourceCardDefinition[]>(() => {
   return [
     {
       cardId: 'browser-local-storage',
-      description: 'Resume a schema saved in this browser, start a blank PGML document, or open the bundled example before entering the studio.',
+      description: 'Resume a versioned PGML document saved in this browser, start a blank workspace, or open the bundled multi-version example before entering the studio.',
       inventory: browserSchemaCountLabel.value,
       operations: [
         {
@@ -669,7 +913,7 @@ const sourceCards = computed<SourceCardDefinition[]>(() => {
           label: 'Open existing'
         },
         {
-          description: 'Open a blank PGML document and begin a schema directly in browser storage.',
+          description: 'Open a blank versioned PGML document and begin a schema directly in browser storage.',
           icon: 'i-lucide-square-pen',
           label: 'Start new',
           to: {
@@ -678,27 +922,38 @@ const sourceCards = computed<SourceCardDefinition[]>(() => {
           }
         },
         {
-          description: 'Load the bundled PGML example so you can explore the studio from a known starting point.',
+          description: 'Load the bundled PGML example so you can explore checkpoints, compare, migrations, and rich Postgres objects from a known starting point.',
           icon: 'i-lucide-flask-conical',
-          label: 'Start from example',
+          label: 'Open bundled example',
           to: {
             path: '/diagram',
             query: browserExampleQuery
           }
         }
       ],
-      sqlDumpAction: {
-        id: 'open-pg-dump-import',
-        value: 'browser-local-storage'
-      },
-      sqlDumpDescription: 'Convert a text pg_dump into a browser-backed PGML schema and open it directly in the studio.',
+      importActions: [
+        {
+          description: 'Convert a text pg_dump into a browser-backed versioned PGML document, show progress while the import is prepared, and review executable placement only when a table attachment is ambiguous.',
+          id: 'open-pg-dump-import',
+          label: 'Import into browser storage',
+          title: 'pg_dump',
+          value: 'browser-local-storage'
+        },
+        {
+          description: 'Validate DBML-compatible schema blocks, extract supported executable objects, and open the result as a browser-backed versioned PGML document with attachment review only when placement is ambiguous.',
+          id: 'open-dbml-import',
+          label: 'Import DBML into browser storage',
+          title: 'DBML',
+          value: 'browser-local-storage'
+        }
+      ],
       statusLabel: 'Available now',
       statusTone: 'live',
       title: 'Browser local storage'
     },
     {
       cardId: 'computer-saved-file',
-      description: 'Use this lane for local `.pgml` files, whether that means reopening a recent file, starting blank, or saving the bundled example.',
+      description: 'Use this lane for local versioned `.pgml` files, whether that means reopening a recent file, starting blank, or saving the bundled example.',
       inventory: computerFileCountLabel.value,
       operations: [
         {
@@ -708,7 +963,7 @@ const sourceCards = computed<SourceCardDefinition[]>(() => {
           label: 'Open existing'
         },
         {
-          description: 'Create a blank `.pgml` file first, then open it in the studio with that file as the active target.',
+          description: 'Create a blank versioned `.pgml` file first, then open it in the studio with that file as the active target.',
           icon: 'i-lucide-square-pen',
           label: 'Start new',
           triggerAction: {
@@ -717,27 +972,38 @@ const sourceCards = computed<SourceCardDefinition[]>(() => {
           }
         },
         {
-          description: 'Save the bundled PGML example to a new `.pgml` file first, then continue editing that file in the studio.',
+          description: 'Save the bundled multi-version PGML example to a new `.pgml` file first, then continue editing that file in the studio.',
           icon: 'i-lucide-flask-conical',
-          label: 'Start from example',
+          label: 'Save example to a new file',
           triggerAction: {
             id: 'create-computer-file:example',
             value: 'example'
           }
         }
       ],
-      sqlDumpAction: {
-        id: 'open-pg-dump-import',
-        value: 'computer-saved-file'
-      },
-      sqlDumpDescription: 'Convert a text pg_dump into a new computer-backed `.pgml` file, then keep autosave pointed at that file.',
+      importActions: [
+        {
+          description: 'Convert a text pg_dump into a new computer-backed versioned `.pgml` file, show progress while the import is prepared, and review executable placement only when a table attachment is ambiguous.',
+          id: 'open-pg-dump-import',
+          label: 'Import into a new file',
+          title: 'pg_dump',
+          value: 'computer-saved-file'
+        },
+        {
+          description: 'Validate a DBML file, extract supported executable objects, and save the resulting versioned PGML with attachment review only when placement is ambiguous.',
+          id: 'open-dbml-import',
+          label: 'Import DBML into a new file',
+          title: 'DBML',
+          value: 'computer-saved-file'
+        }
+      ],
       statusLabel: 'Available now',
       statusTone: 'live',
       title: 'Computer saved file'
     },
     {
       cardId: 'hosted-database',
-      description: 'Use this lane for hosted database sources, whether that means resuming an import, starting blank, or opening a hosted example.',
+      description: 'Use this lane for hosted database sources, whether that means resuming an import, starting blank, or opening a hosted example once the hosted workflow is wired in.',
       inventory: 'Placeholder',
       operations: [
         {
@@ -758,15 +1024,26 @@ const sourceCards = computed<SourceCardDefinition[]>(() => {
         {
           description: 'Load a bundled example for the hosted workflow once database connection support is wired in.',
           icon: 'i-lucide-flask-conical',
-          label: 'Start from example',
+          label: 'Preview hosted example',
           placeholder: true
         }
       ],
-      sqlDumpAction: {
-        id: 'open-pg-dump-import',
-        value: 'hosted-database'
-      },
-      sqlDumpDescription: 'Convert a text pg_dump from this lane now, then open it in browser storage while hosted persistence stays in progress.',
+      importActions: [
+        {
+          description: 'Convert a text pg_dump from this lane now, show progress while it is prepared, and open it in browser storage as a versioned PGML document while hosted persistence stays in progress.',
+          id: 'open-pg-dump-import',
+          label: 'Import from hosted lane',
+          title: 'pg_dump',
+          value: 'hosted-database'
+        },
+        {
+          description: 'Import DBML from this lane now, extract supported executable objects, and open it in browser storage as a versioned PGML document while hosted persistence stays in progress.',
+          id: 'open-dbml-import',
+          label: 'Import DBML from hosted lane',
+          title: 'DBML',
+          value: 'hosted-database'
+        }
+      ],
       statusLabel: 'Placeholder',
       statusTone: 'placeholder',
       title: 'Hosted database'
@@ -796,10 +1073,9 @@ onBeforeRouteLeave((to) => {
         :key="card.cardId"
         :card-id="card.cardId"
         :description="card.description"
+        :import-actions="card.importActions"
         :inventory="card.inventory"
         :operations="card.operations"
-        :sql-dump-action="card.sqlDumpAction"
-        :sql-dump-description="card.sqlDumpDescription"
         :status-label="card.statusLabel"
         :status-tone="card.statusTone"
         :title="card.title"
@@ -817,10 +1093,10 @@ onBeforeRouteLeave((to) => {
             Spec guide
           </div>
           <h2 class="mt-3 text-2xl font-semibold tracking-[-0.03em] text-[color:var(--studio-shell-text)]">
-            Need the language reference before you open the studio?
+            Need the PGML spec before you open versioning, compare, and migrations?
           </h2>
           <p class="mt-2 max-w-3xl text-[0.9rem] leading-7 text-[color:var(--studio-shell-muted)]">
-            Jump straight to the PGML spec for examples, syntax details, and the current language surface area.
+            Jump straight to the PGML spec for `VersionSet`, named `View` blocks, checkpoints, `SchemaMetadata`, DBML and pg_dump imports, executable placement, and history-aware SQL or Kysely migrations.
           </p>
         </div>
 
@@ -837,6 +1113,25 @@ onBeforeRouteLeave((to) => {
     </section>
 
     <ClientOnly>
+      <AppDbmlImportModal
+        :open="dbmlImportDialogOpen"
+        :title="dbmlImportDialogCopy.title"
+        :description="dbmlImportDialogCopy.description"
+        :confirm-label="dbmlImportDialogCopy.confirmLabel"
+        :input-description="dbmlImportDialogCopy.inputDescription"
+        :model-value="dbmlImportText"
+        :parse-executable-comments="dbmlImportParseExecutableComments"
+        :selected-file-name="dbmlImportSelectedFileName"
+        :error-message="dbmlImportError"
+        :is-submitting="isSubmittingDbmlImport"
+        @update:open="handleDbmlImportDialogOpenChange"
+        @update:model-value="setDbmlImportText"
+        @update:parse-executable-comments="dbmlImportParseExecutableComments = $event"
+        @select-file="setDbmlImportFile"
+        @clear-file="clearDbmlImportFile"
+        @submit="submitDbmlImport"
+      />
+
       <AppPgDumpImportModal
         :open="pgDumpImportDialogOpen"
         :title="pgDumpImportDialogCopy.title"

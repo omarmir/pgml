@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 
 import { tokenizePgmlSource } from '../../app/utils/pgml-codemirror'
+import { validVersionedEditorSource } from './pgml-editor-fixtures'
 
 describe('PGML CodeMirror tokenization', () => {
   it('assigns a dedicated token type to column types without recoloring the column name', () => {
@@ -151,6 +152,61 @@ Domain email_address {
       expect.objectContaining({
         value: '  $sql$',
         type: 'string'
+      })
+    ]))
+  })
+
+  it('highlights version grammar keywords, metadata, and role values', () => {
+    const tokens = tokenizePgmlSource(validVersionedEditorSource).filter(token => token.value.trim().length > 0)
+
+    expect(tokens).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        value: 'VersionSet',
+        type: 'keyword'
+      }),
+      expect.objectContaining({
+        value: 'SchemaMetadata',
+        type: 'keyword'
+      }),
+      expect.objectContaining({
+        value: 'Workspace',
+        type: 'keyword'
+      }),
+      expect.objectContaining({
+        value: 'Snapshot',
+        type: 'keyword'
+      }),
+      expect.objectContaining({
+        value: 'Version',
+        type: 'keyword'
+      }),
+      expect.objectContaining({
+        value: 'based_on',
+        type: 'propertyName'
+      }),
+      expect.objectContaining({
+        value: 'updated_at',
+        type: 'propertyName'
+      }),
+      expect.objectContaining({
+        value: 'role',
+        type: 'propertyName'
+      }),
+      expect.objectContaining({
+        value: 'implementation',
+        type: 'atom'
+      }),
+      expect.objectContaining({
+        value: 'parent',
+        type: 'propertyName'
+      }),
+      expect.objectContaining({
+        value: 'v1',
+        type: 'typeName'
+      }),
+      expect.objectContaining({
+        value: 'Column',
+        type: 'keyword'
       })
     ]))
   })

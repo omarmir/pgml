@@ -42,23 +42,27 @@ type SourceLaunchCardAction = {
   value: string
 }
 
+type SourceLaunchCardImportAction = SourceLaunchCardAction & {
+  description: string
+  label: string
+  title: string
+}
+
 const {
   cardId,
   description,
+  importActions = [],
   inventory,
   operations,
-  sqlDumpAction,
-  sqlDumpDescription,
   statusLabel,
   statusTone = 'placeholder',
   title
 } = defineProps<{
   cardId: string
   description: string
+  importActions?: SourceLaunchCardImportAction[]
   inventory: string
   operations: SourceLaunchCardOperation[]
-  sqlDumpAction?: SourceLaunchCardAction
-  sqlDumpDescription: string
   statusLabel: string
   statusTone?: 'live' | 'placeholder'
   title: string
@@ -141,6 +145,18 @@ const emitItemAction = (item: SourceLaunchCardItem) => {
           {{ inventory }}
         </p>
       </div>
+    </div>
+
+    <div
+      data-source-card-inventory="true"
+      class="mt-4 flex items-center justify-between border border-[color:var(--studio-shell-border)] bg-[color:var(--studio-input-bg)] px-3 py-2 sm:hidden"
+    >
+      <p class="font-mono text-[0.56rem] uppercase tracking-[0.16em] text-[color:var(--studio-shell-label)]">
+        Inventory
+      </p>
+      <p class="text-sm font-semibold text-[color:var(--studio-shell-text)]">
+        {{ inventory }}
+      </p>
     </div>
 
     <div class="mt-6 grid flex-1 content-start gap-3">
@@ -313,24 +329,25 @@ const emitItemAction = (item: SourceLaunchCardItem) => {
 
     <div class="mt-6 border-t border-[color:var(--studio-shell-border)] pt-4">
       <div :class="studioSectionKickerClass">
-        SQL dump
+        Imports
       </div>
-      <p class="mt-2 text-[0.82rem] leading-6 text-[color:var(--studio-shell-muted)]">
-        {{ sqlDumpDescription }}
-      </p>
 
       <button
-        v-if="sqlDumpAction"
+        v-for="importAction in importActions"
+        :key="importAction.id"
         type="button"
         :class="sqlDumpActionClass"
-        @click="emitLaunchAction(sqlDumpAction)"
+        @click="emitLaunchAction(importAction)"
       >
         <div class="min-w-0">
           <p class="text-sm font-semibold text-[color:var(--studio-shell-text)]">
-            Import a pg_dump
+            {{ importAction.label }}
           </p>
           <p :class="studioCompactBodyCopyClass">
-            Paste text or upload a dump file, then convert it into PGML from this lane.
+            {{ importAction.description }}
+          </p>
+          <p class="mt-2 font-mono text-[0.56rem] uppercase tracking-[0.12em] text-[color:var(--studio-shell-label)]">
+            {{ importAction.title }}
           </p>
         </div>
         <UIcon

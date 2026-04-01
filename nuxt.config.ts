@@ -1,4 +1,4 @@
-import { buildPrerenderRouteRules, resolveGitHubPagesBaseUrl, staticPrerenderRoutes } from './app/utils/site-build'
+import { buildPrerenderRouteRules, resolveGitHubPagesBaseUrl, resolveViteAllowedHosts, staticPrerenderRoutes } from './app/utils/site-build'
 
 // https://nuxt.com/docs/api/configuration/nuxt-config
 const nitroPreset = process.env.NITRO_PRESET
@@ -41,6 +41,14 @@ export default defineNuxtConfig({
   compatibilityDate: '2025-01-15',
 
   nitro: nitroPreset ? { preset: nitroPreset } : undefined,
+
+  vite: {
+    server: {
+      allowedHosts: resolveViteAllowedHosts({
+        extraAllowedHosts: process.env.NUXT_DEV_ALLOWED_HOSTS
+      })
+    }
+  },
 
   eslint: {
     config: {

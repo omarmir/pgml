@@ -1,6 +1,6 @@
 # PGML
 
-PGML is a Postgres-first markup language that extends DBML toward real schema documentation.
+PGML is a Postgres-first markup language that extends DBML toward real schema documentation and grammar-native schema versioning.
 
 This repository contains:
 
@@ -8,7 +8,7 @@ This repository contains:
 - a Nuxt-based documentation site at `/`
 - a diagram studio at `/diagram` that parses PGML and renders a schema canvas
 
-PGML is designed to read like architecture documentation instead of migration output. It stays close to DBML where possible, then adds Postgres-native objects such as functions, procedures, triggers, sequences, constraints, custom types, and layout metadata.
+PGML is designed to read like architecture documentation instead of migration output. It stays close to DBML where possible, then adds Postgres-native objects such as functions, procedures, triggers, sequences, constraints, custom types, view-scoped layout metadata, and versioned document roots.
 
 ## Why PGML
 
@@ -20,7 +20,7 @@ Use PGML when the schema is part structure, part behavior, and part documentatio
 - Drive the visual studio directly from the source PGML.
 - Generate migrations deterministically from a structured schema document.
 - Reduce AI ambiguity by giving tools a schema-aware representation of intent.
-- Preserve docs, affects metadata, and embedded layout state alongside the schema.
+- Preserve docs, affects metadata, and per-view layout state alongside the schema.
 
 ## DBML Compatibility
 
@@ -38,7 +38,8 @@ PGML is intentionally close to DBML, then opinionated where Postgres needs more 
 - Adds first-class functions, procedures, triggers, sequences, constraints, and custom types.
 - Supports source-first executable objects with embedded SQL or PL/pgSQL.
 - Allows `docs {}` and `affects {}` blocks when narrative or dependency hints matter.
-- Persists studio state back into PGML with `Properties` blocks.
+- Persists studio state back into PGML with named `View` blocks and nested `Properties` blocks.
+- Stores document history directly in the grammar with `VersionSet`, `Workspace`, `Version`, and `Snapshot`.
 
 ## Quick Start
 
@@ -71,6 +72,104 @@ Function register_entity(entity_kind text) returns trigger [replace] {
 ## Documentation
 
 The language is block-based, readable, and meant to be learned from examples.
+
+### Versioned documents
+
+PGML documents are rooted in `VersionSet`. The mutable draft lives in `Workspace`, locked checkpoints live in `Version`, schema objects remain inside `Snapshot`, and each workspace or version can keep one or more named diagram `View` blocks.
+
+```pgml
+VersionSet "Billing schema" {
+  Workspace {
+    based_on: v_programs
+    updated_at: "2026-03-29T14:12:00Z"
+    active_view: view_review
+
+    Snapshot {
+      TableGroup Commerce {
+        public.orders
+      }
+
+      Table public.users {
+        id uuid [pk]
+        email text [not null]
+        status text
+      }
+
+      Table public.orders {
+        id uuid [pk]
+        customer_id uuid [ref: > public.users.id, delete: restrict]
+        total_cents integer [not null]
+      }
+    }
+
+    View "Review" {
+      id: view_review
+      show_execs: false
+
+      Properties "group:Commerce" {
+        x: 540
+        y: 120
+      }
+    }
+  }
+
+  Version v_foundation {
+    name: "Foundation implementation"
+    role: implementation
+    created_at: "2026-03-20T15:00:00Z"
+
+    Snapshot {
+      Table public.users {
+        id uuid [pk]
+        email text [not null]
+      }
+    }
+  }
+
+  Version v_programs {
+    name: "Programs implementation sync"
+    role: implementation
+    parent: v_foundation
+    created_at: "2026-03-28T15:00:00Z"
+    active_view: view_programs
+
+    Snapshot {
+      Table public.users {
+        id uuid [pk]
+        email text [not null]
+        status text
+      }
+    }
+
+    View "Implementation" {
+      id: view_programs
+      show_fields: false
+    }
+  }
+
+  Version v_analytics {
+    name: "Analytics branch"
+    role: design
+    parent: v_foundation
+    created_at: "2026-03-29T09:15:00Z"
+
+    Snapshot {
+      Table public.users {
+        id uuid [pk]
+        email text [not null]
+      }
+
+      Table public.orders {
+        id uuid [pk]
+        customer_id uuid [ref: > public.users.id, delete: restrict]
+        total_cents integer [not null]
+      }
+    }
+  }
+}
+```
+
+The studio compares `Workspace` against a selected base `Version` to show deltas and generate forward migration SQL. Each workspace or version can keep multiple named views, with node positions plus line, executable, and field visibility persisted per view. Importing DBML or `pg_dump` can infer obvious executable-to-table attachments, pauses for table placement when an imported executable is ambiguous, and replaces `Workspace` only after the import is prepared.
 
 ### Tables and references
 
@@ -139,31 +238,51 @@ Trigger trg_register_fundingopportunity on public.funding_opportunity_profile {
 }
 ```
 
-### Layout properties
+### Diagram views and layout properties
 
-The studio writes `Properties` blocks back into PGML so the document can reopen with the same layout and presentation state.
+The studio writes named `View` blocks back into PGML so each workspace or version can reopen with the same layout and presentation state. `active_view` selects the current view, and each view persists its own node positions plus `show_lines`, `show_execs`, and `show_fields`.
 
 ```pgml
-Properties "group:Commerce" {
-  x: 540
-  y: 120
-  color: #f59e0b
-  masonry: true
-  table_columns: 1
-}
+View "Operations" {
+  id: view_operations
+  show_lines: false
+  show_execs: false
+  show_fields: false
 
-Properties "custom-type:Domain:email_address" {
-  x: 1180
-  y: 460
-  color: #14b8a6
-  collapsed: false
+  Properties "group:Commerce" {
+    x: 540
+    y: 120
+    color: #f59e0b
+    masonry: true
+    table_columns: 1
+  }
+
+  Properties "custom-type:Domain:email_address" {
+    x: 1180
+    y: 460
+    color: #14b8a6
+    collapsed: false
+  }
 }
 ```
+
+### Studio behavior
+
+The studio keeps the language features above wired into the editor and import flow:
+
+- DBML and `pg_dump` imports show a blocking loading state while PGML parses the source and prepares the replacement workspace.
+- Executable imports can attach obvious functions, triggers, procedures, or sequences to tables automatically and pause for table placement when the attachment is ambiguous.
+- The raw PGML editor keeps autocomplete active while typing, including large drafts, so `VersionSet`, `View`, `active_view`, and the rest of the grammar stay discoverable from the editor itself.
 
 ## Current PGML Surface Area
 
 The current parser and studio support:
 
+- `VersionSet`
+- `Workspace`
+- `Version`
+- `Snapshot`
+- `View`
 - `Table`
 - `TableGroup`
 - `Ref`
@@ -176,7 +295,8 @@ The current parser and studio support:
 - `Enum`
 - `Domain`
 - `Composite`
-- embedded layout via `Properties`
+- `SchemaMetadata`
+- view-scoped layout via `View` and `Properties`
 
 ## Development
 

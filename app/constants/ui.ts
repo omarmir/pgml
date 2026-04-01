@@ -66,7 +66,7 @@ export const studioModalSurfaceStyle: StudioModalSurfaceStyle = Object.freeze({
 })
 
 export const studioModalUi: UiClassMap = Object.freeze({
-  overlay: 'z-40 bg-black/60 backdrop-blur-[2px]',
+  overlay: 'z-40 bg-black/60 backdrop-blur-[2px] pointer-events-none data-[state=closed]:pointer-events-none data-[state=open]:pointer-events-auto',
   content: 'z-[60] overflow-visible border-none bg-transparent p-0 shadow-none ring-0'
 })
 

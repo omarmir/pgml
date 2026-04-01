@@ -2,8 +2,10 @@ import type { Completion, CompletionContext } from '@codemirror/autocomplete'
 import type { Extension } from '@codemirror/state'
 import type { Diagnostic as CodeMirrorDiagnostic } from '@codemirror/lint'
 import type { StringStream } from '@codemirror/language'
+import type { PgmlDocumentAnalysis, PgmlLanguageDiagnostic } from './pgml-language'
 import { autocompletion, completionKeymap } from '@codemirror/autocomplete'
 import { defaultKeymap, history, historyKeymap, indentWithTab } from '@codemirror/commands'
+import { EditorState } from '@codemirror/state'
 import {
   HighlightStyle,
   StreamLanguage,
@@ -14,22 +16,44 @@ import {
 import { lintGutter, linter } from '@codemirror/lint'
 import { EditorView, drawSelection, highlightActiveLine, highlightActiveLineGutter, keymap, lineNumbers, placeholder } from '@codemirror/view'
 import { tags } from '@lezer/highlight'
-import { getPgmlCompletionItems, getPgmlDiagnostics } from './pgml-language'
+import {
+  getPgmlCompletionItems,
+  getPgmlCompletionItemsFromAnalysis,
+  getPgmlDiagnostics
+} from './pgml-language'
 
 type PgmlStreamState = {
+  // The current innermost block drives contextual styling such as column type
+  // highlighting inside tables and composites.
   blockKind: string | null
+  // StreamLanguage only sees one token at a time, so block nesting is tracked
+  // manually to keep token decisions aligned with nested PGML blocks.
   blockStack: string[]
+  // Table-like rows need different styling for identifier vs type positions.
   lineIdentifierIndex: number
   lineAllowsColumnTypeHighlight: boolean
   lineIsBlockDeclaration: boolean
   lastNamedTokenType: string | null
+  // Property-aware tokens such as `base`, `based_on`, and `parent` influence
+  // how the next identifier should be colored.
   lastPropertyName: string | null
   sourceDelimiter: string | null
 }
 
 export type PgmlCodeMirrorOptions = {
+  activateCompletionOnTyping?: boolean
+  enableDiagnostics?: boolean
+  externalDiagnostics?: PgmlLanguageDiagnostic[] | null
+  getCompletionAnalysis?: (() => PgmlDocumentAnalysis | null) | null
+  linterDelayMs?: number
+  maxSynchronousCompletionDocLength?: number
   placeholder?: string
 }
+
+const pgmlBlockKeywordPattern = /\b(?:VersionSet|SchemaMetadata|Workspace|Version|Snapshot|View|TableGroup|Table|Column|Enum|Domain|Composite|Function|Procedure|Trigger|Sequence|Properties|Ref)\b/
+const pgmlNestedKeywordPattern = /\b(?:docs|affects|source|definition|Note|Index|Indexes|Constraint|checks)\b(?=\s|:|\(|\{)/
+const pgmlPropertyKeywordPattern = /\b(?:pk|unique|not|null|default|note|ref|language|volatility|security|timing|events|level|function|arguments|as|base|start|increment|min|max|cache|cycle|owned_by|summary|writes|sets|depends_on|reads|calls|uses|visible|collapsed|masonry|table_columns|table_width_scale|width|height|color|x|y|name|role|parent|created_at|based_on|updated_at|active_view|default_view|show_lines|show_execs|show_fields)\b(?=\s|:|\])/
+const pgmlAtomPattern = /\b(?:true|false|design|implementation)\b/
 
 const pgmlHighlightStyle = HighlightStyle.define([
   { tag: tags.keyword, color: 'var(--studio-shell-label)', fontWeight: '700' },
@@ -44,7 +68,7 @@ const pgmlHighlightStyle = HighlightStyle.define([
   { tag: [tags.punctuation, tags.separator], color: 'var(--studio-editor-punctuation)' }
 ])
 
-const pgmlEditorTheme = EditorView.theme({
+export const studioCodeMirrorTheme = EditorView.theme({
   '&': {
     height: '100%',
     backgroundColor: 'var(--studio-shell-bg)',
@@ -55,12 +79,16 @@ const pgmlEditorTheme = EditorView.theme({
   '.cm-scroller': {
     overflow: 'auto',
     lineHeight: '1.9',
-    fontFamily: 'inherit'
+    fontFamily: 'inherit',
+    // Imported PGML and SQL commonly contain hard tabs. Clamp them so large
+    // nested blocks remain readable in the embedded editor surfaces.
+    tabSize: '2'
   },
   '.cm-content': {
     minHeight: '100%',
     padding: '0.75rem 0.875rem 2rem',
-    caretColor: 'var(--studio-shell-label)'
+    caretColor: 'var(--studio-shell-label)',
+    tabSize: '2'
   },
   '.cm-line': {
     padding: '0 0.1rem'
@@ -203,6 +231,29 @@ const createTestStringStream = (lineText: string) => {
   return stream
 }
 
+const allowsColumnTypeHighlight = (blockKind: string | null) => {
+  return blockKind === 'Table' || blockKind === 'Composite'
+}
+
+const getContextualBlockKind = (
+  blockKeyword: string,
+  parentBlockKind: string | null
+) => {
+  if (parentBlockKind === 'SchemaMetadata' && blockKeyword === 'Table') {
+    return 'SchemaMetadataTable'
+  }
+
+  if (parentBlockKind === 'SchemaMetadata' && blockKeyword === 'Column') {
+    return 'SchemaMetadataColumn'
+  }
+
+  return blockKeyword
+}
+
+const isVersionReferenceProperty = (propertyName: string | null) => {
+  return propertyName === 'parent' || propertyName === 'based_on'
+}
+
 const getBlockKeyword = (lineText: string) => {
   const trimmedLine = lineText.trim()
 
@@ -219,6 +270,8 @@ const syncPgmlLineState = (lineText: string, state: PgmlStreamState) => {
   const trimmedLine = lineText.trimStart()
   let closingIndex = 0
 
+  // Closing braces on the current line end blocks before any new tokens on the
+  // same line are considered, which keeps `}` + sibling block headers aligned.
   while (trimmedLine[closingIndex] === '}') {
     state.blockStack.pop()
     closingIndex += 1
@@ -226,7 +279,7 @@ const syncPgmlLineState = (lineText: string, state: PgmlStreamState) => {
 
   state.blockKind = state.blockStack[state.blockStack.length - 1] || null
   state.lineIdentifierIndex = 0
-  state.lineAllowsColumnTypeHighlight = state.blockKind === 'Table' || state.blockKind === 'Composite'
+  state.lineAllowsColumnTypeHighlight = allowsColumnTypeHighlight(state.blockKind)
   state.lineIsBlockDeclaration = false
   state.lastNamedTokenType = null
   state.lastPropertyName = null
@@ -234,8 +287,13 @@ const syncPgmlLineState = (lineText: string, state: PgmlStreamState) => {
   const openingBlockKeyword = getBlockKeyword(lineText)
 
   if (openingBlockKeyword) {
-    state.blockStack.push(openingBlockKeyword)
-    state.blockKind = openingBlockKeyword
+    const contextualBlockKind = getContextualBlockKind(
+      openingBlockKeyword,
+      state.blockStack[state.blockStack.length - 1] || null
+    )
+
+    state.blockStack.push(contextualBlockKind)
+    state.blockKind = contextualBlockKind
     state.lineAllowsColumnTypeHighlight = false
     state.lineIsBlockDeclaration = true
   }
@@ -250,6 +308,9 @@ const readPgmlToken = (stream: StringStream, state: PgmlStreamState) => {
     if (delimiter !== null && delimiter.length > 0) {
       state.sourceDelimiter = delimiter
     }
+
+    // Source blocks are treated as opaque string content until their matching
+    // delimiter closes, so SQL bodies do not confuse the PGML tokenizer.
     if (state.sourceDelimiter && stream.string.includes(state.sourceDelimiter) && !stream.string.trim().startsWith('source:') && !stream.string.trim().startsWith('definition:')) {
       stream.skipToEnd()
       state.sourceDelimiter = null
@@ -282,27 +343,30 @@ const readPgmlToken = (stream: StringStream, state: PgmlStreamState) => {
     return 'string'
   }
 
-  if (stream.match(/\b(?:TableGroup|Table|Enum|Domain|Composite|Function|Procedure|Trigger|Sequence|Properties|Ref:)\b/)) {
+  if (stream.match(pgmlBlockKeywordPattern)) {
+    // VersionSet / Workspace / Version / Snapshot now share the same block
+    // keyword path as classic PGML blocks so scoped document views highlight
+    // exactly like the full raw editor.
     state.lineAllowsColumnTypeHighlight = false
     state.lastNamedTokenType = 'keyword'
     state.lastPropertyName = null
     return 'keyword'
   }
 
-  if (stream.match(/\b(?:docs|affects|source|definition|Note|Index|Constraint)\b(?=\s|:|\(|\{)/)) {
+  if (stream.match(pgmlNestedKeywordPattern)) {
     state.lineAllowsColumnTypeHighlight = false
     state.lastNamedTokenType = 'keyword'
     state.lastPropertyName = null
     return 'keyword'
   }
 
-  if (stream.match(/\b(?:pk|unique|not|null|default|note|ref|language|volatility|security|timing|events|level|function|arguments|as|base|start|increment|min|max|cache|cycle|owned_by|summary|writes|sets|depends_on|reads|calls|uses|visible|collapsed|masonry|table_columns|table_width_scale|width|height|color|x|y)\b(?=\s|:|\])/)) {
+  if (stream.match(pgmlPropertyKeywordPattern)) {
     state.lastNamedTokenType = 'propertyName'
     state.lastPropertyName = stream.current()
     return 'propertyName'
   }
 
-  if (stream.match(/\b(?:true|false)\b/)) {
+  if (stream.match(pgmlAtomPattern)) {
     return 'atom'
   }
 
@@ -346,6 +410,12 @@ const readPgmlToken = (stream: StringStream, state: PgmlStreamState) => {
       state.lastNamedTokenType = 'className'
       state.lastPropertyName = null
       return 'className'
+    }
+
+    if (isVersionReferenceProperty(state.lastPropertyName)) {
+      state.lastNamedTokenType = 'typeName'
+      state.lastPropertyName = null
+      return 'typeName'
     }
 
     state.lastNamedTokenType = 'variableName'
@@ -417,40 +487,10 @@ const pgmlStreamParser = StreamLanguage.define<PgmlStreamState>({
   token: (stream, state) => readPgmlToken(stream, state)
 })
 
-const pgmlCompletionSource = (context: CompletionContext) => {
-  const source = context.state.doc.toString()
-  const items = getPgmlCompletionItems(source, context.pos)
-
-  if (items.length === 0) {
-    if (context.explicit) {
-      return {
-        from: context.pos,
-        options: [] satisfies Completion[]
-      }
-    }
-
-    return null
-  }
-
-  const from = items[0] ? items[0].from : context.pos
-  const to = items[0] ? items[0].to : context.pos
-
-  return {
-    from,
-    to,
-    options: items.map((item) => {
-      return {
-        label: item.label,
-        detail: item.detail,
-        type: item.kind,
-        apply: item.apply
-      } satisfies Completion
-    })
-  }
-}
-
-const createCodeMirrorDiagnostics = (source: string) => {
-  return getPgmlDiagnostics(source).map((diagnostic) => {
+const buildCodeMirrorDiagnostics = (
+  diagnostics: PgmlLanguageDiagnostic[]
+) => {
+  return diagnostics.map((diagnostic) => {
     return {
       from: diagnostic.from,
       to: diagnostic.to,
@@ -461,10 +501,95 @@ const createCodeMirrorDiagnostics = (source: string) => {
   })
 }
 
+const createPgmlCompletionSource = (options: {
+  getCompletionAnalysis?: (() => PgmlDocumentAnalysis | null) | null
+  maxSynchronousCompletionDocLength: number
+}) => {
+  return (context: CompletionContext) => {
+    const currentLine = context.state.doc.lineAt(context.pos)
+    const completionAnalysis = options.getCompletionAnalysis?.() || null
+    const canReuseCompletionAnalysis = completionAnalysis !== null
+      && Math.abs(completionAnalysis.source.length - context.state.doc.length) <= 64
+    const items = canReuseCompletionAnalysis
+      ? getPgmlCompletionItemsFromAnalysis(completionAnalysis, context.pos, {
+          from: currentLine.from,
+          text: currentLine.text,
+          to: currentLine.to
+        })
+      : context.explicit || context.state.doc.length <= options.maxSynchronousCompletionDocLength
+        ? getPgmlCompletionItems(context.state.doc.toString(), context.pos)
+        : []
+
+    if (items.length === 0) {
+      if (context.explicit) {
+        return {
+          from: context.pos,
+          options: [] satisfies Completion[]
+        }
+      }
+
+      return null
+    }
+
+    const from = items[0] ? items[0].from : context.pos
+    const to = items[0] ? items[0].to : context.pos
+
+    return {
+      from,
+      to,
+      options: items.map((item) => {
+        return {
+          label: item.label,
+          detail: item.detail,
+          type: item.kind,
+          apply: item.apply
+        } satisfies Completion
+      })
+    }
+  }
+}
+
+const createCodeMirrorDiagnostics = (source: string) => {
+  return buildCodeMirrorDiagnostics(getPgmlDiagnostics(source))
+}
+
+export const createPgmlCodeMirrorDiagnosticsExtensions = (
+  options: Pick<PgmlCodeMirrorOptions, 'externalDiagnostics' | 'linterDelayMs'> = {}
+) => {
+  const linterDelayMs = typeof options.linterDelayMs === 'number' && options.linterDelayMs >= 0
+    ? options.linterDelayMs
+    : 150
+  const externalDiagnostics = Array.isArray(options.externalDiagnostics)
+    ? options.externalDiagnostics
+    : null
+
+  return [
+    linter((view) => {
+      if (externalDiagnostics) {
+        return buildCodeMirrorDiagnostics(externalDiagnostics)
+      }
+
+      return createCodeMirrorDiagnostics(view.state.doc.toString())
+    }, {
+      delay: linterDelayMs
+    }),
+    lintGutter()
+  ] satisfies Extension[]
+}
+
 export const createPgmlCodeMirrorExtensions = (options: PgmlCodeMirrorOptions = {}) => {
+  const activateCompletionOnTyping = options.activateCompletionOnTyping !== false
   const placeholderText = typeof options.placeholder === 'string' && options.placeholder.length > 0
     ? options.placeholder
     : 'Paste PGML here...'
+  const enableDiagnostics = options.enableDiagnostics !== false
+  const getCompletionAnalysis = typeof options.getCompletionAnalysis === 'function'
+    ? options.getCompletionAnalysis
+    : null
+  const maxSynchronousCompletionDocLength = typeof options.maxSynchronousCompletionDocLength === 'number'
+    && options.maxSynchronousCompletionDocLength > 0
+    ? options.maxSynchronousCompletionDocLength
+    : 35000
 
   const extensions: Extension[] = [
     history(),
@@ -473,6 +598,7 @@ export const createPgmlCodeMirrorExtensions = (options: PgmlCodeMirrorOptions = 
     highlightActiveLineGutter(),
     lineNumbers(),
     bracketMatching(),
+    EditorState.tabSize.of(2),
     indentUnit.of('  '),
     keymap.of([
       indentWithTab,
@@ -483,24 +609,30 @@ export const createPgmlCodeMirrorExtensions = (options: PgmlCodeMirrorOptions = 
     pgmlStreamParser,
     syntaxHighlighting(pgmlHighlightStyle),
     autocompletion({
-      activateOnTyping: true,
+      activateOnTyping: activateCompletionOnTyping,
       defaultKeymap: true,
-      override: [pgmlCompletionSource]
+      override: [createPgmlCompletionSource({
+        getCompletionAnalysis,
+        maxSynchronousCompletionDocLength
+      })]
     }),
-    linter((view) => {
-      return createCodeMirrorDiagnostics(view.state.doc.toString())
-    }, {
-      delay: 150
-    }),
-    lintGutter(),
     placeholder(placeholderText),
-    pgmlEditorTheme,
+    studioCodeMirrorTheme,
     EditorView.contentAttributes.of({
       'spellcheck': 'false',
       'aria-label': 'PGML editor',
       'data-pgml-editor-content': 'true'
     })
   ]
+
+  if (enableDiagnostics) {
+    extensions.push(
+      ...createPgmlCodeMirrorDiagnosticsExtensions({
+        externalDiagnostics: options.externalDiagnostics,
+        linterDelayMs: options.linterDelayMs
+      })
+    )
+  }
 
   return extensions
 }

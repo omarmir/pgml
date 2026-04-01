@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 
 import {
+  buildDiagramConnectionDragPreviewPoints,
   buildDiagramConnectionDragPreviewPath,
   buildDiagramConnectionPreviewLayers
 } from '../../app/utils/diagram-connection-preview'
@@ -100,6 +101,18 @@ describe('diagram connection preview utilities', () => {
   })
 
   it('rebuilds only the dragged source endpoint from cached points', () => {
+    expect(buildDiagramConnectionDragPreviewPoints([
+      { x: 0, y: 0 },
+      { x: 18, y: 0 },
+      { x: 18, y: 24 },
+      { x: 42, y: 24 }
+    ], 12, 6, 'from')).toEqual([
+      { x: 12, y: 6 },
+      { x: 18, y: 6 },
+      { x: 18, y: 24 },
+      { x: 42, y: 24 }
+    ])
+
     expect(buildDiagramConnectionDragPreviewPath([
       { x: 0, y: 0 },
       { x: 18, y: 0 },
@@ -109,6 +122,18 @@ describe('diagram connection preview utilities', () => {
   })
 
   it('rebuilds only the dragged target endpoint from cached points', () => {
+    expect(buildDiagramConnectionDragPreviewPoints([
+      { x: 0, y: 0 },
+      { x: 18, y: 0 },
+      { x: 18, y: 24 },
+      { x: 42, y: 24 }
+    ], -6, 12, 'to')).toEqual([
+      { x: 0, y: 0 },
+      { x: 18, y: 0 },
+      { x: 18, y: 36 },
+      { x: 36, y: 36 }
+    ])
+
     expect(buildDiagramConnectionDragPreviewPath([
       { x: 0, y: 0 },
       { x: 18, y: 0 },

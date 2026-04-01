@@ -23,6 +23,7 @@
   "dependencies": {
     "@codemirror/autocomplete": "^6.20.1",
     "@codemirror/commands": "^6.10.3",
+    "@codemirror/lang-sql": "^6.10.0",
     "@codemirror/language": "^6.12.2",
     "@codemirror/lint": "^6.9.5",
     "@codemirror/state": "^6.6.0",
@@ -37,8 +38,10 @@
     "@nuxtjs/i18n": "10.2.3",
     "@pinia/nuxt": "^0.11.3",
     "@vueuse/nuxt": "14.2.1",
+    "jszip": "^3.10.1",
     "nuxt": "^4.4.2",
     "pinia": "^3.0.4",
+    "pixi.js": "^8.17.1",
     "tailwindcss": "^4.2.1"
   },
   "devDependencies": {
@@ -53,5 +56,5 @@
     "vitest": "^4.1.0",
     "vue-tsc": "^3.2.5"
   },
-  "packageManager": "pnpm@10.32.1"
+  "packageManager": "bun@1.3.8"
 }

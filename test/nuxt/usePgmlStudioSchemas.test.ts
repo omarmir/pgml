@@ -188,7 +188,7 @@ describe('usePgmlStudioSchemas', () => {
   it('keeps the initial unsaved schema blank until the user edits it', async () => {
     vi.useFakeTimers()
 
-    const source = ref('Table public.users {\n  id uuid [pk]\n}')
+    const source = ref('')
     let api!: ReturnType<typeof usePgmlStudioSchemas>
 
     await mountSuspended(defineComponent({
@@ -205,6 +205,7 @@ describe('usePgmlStudioSchemas', () => {
     }))
 
     expect(api.hasPendingLocalChanges.value).toBe(false)
+    expect(api.currentSchemaName.value).toBe('Untitled schema')
     expect(api.isSavedToLocalStorage.value).toBe(false)
 
     await vi.advanceTimersByTimeAsync(5000)

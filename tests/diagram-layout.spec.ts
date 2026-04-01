@@ -1,4 +1,5 @@
 import { expect, test } from '@nuxt/test-utils/playwright'
+import { diagramMaxScale, diagramMinScale } from '../app/utils/diagram-gpu-scene'
 import { getPgmlEditor, readPgmlEditorValue, setPgmlEditorValue } from './helpers/pgml-editor'
 import { authorizeStudioLaunchAccess } from './helpers/studio-launch'
 
@@ -49,13 +50,13 @@ test('studio editor panel can be hidden and shown again', async ({ goto, page })
   const editorToggle = page.locator('[data-editor-visibility-toggle="true"]')
 
   await expect(editorPanel).toBeVisible()
-  await expect(editorToggle).toContainText('Hide PGML')
+  await expect(editorToggle).toContainText('Hide PGML editor')
 
   await editorToggle.click()
 
   await expect(page.locator('[data-editor-panel="true"]')).toHaveCount(0)
   await expect(page.locator('[data-editor-resize-handle="true"]')).toHaveCount(0)
-  await expect(editorToggle).toContainText('Show PGML')
+  await expect(editorToggle).toContainText('Show PGML editor')
 
   await editorToggle.click()
 
@@ -193,43 +194,418 @@ test('diagram panel reuses the PGML editor scrollbar styling', async ({ goto, pa
   expect(scrollbarStyles?.panelScrollbarColor).toBe(scrollbarStyles?.editorScrollbarColor)
 })
 
+test('diagram toolbar can hide fields and executable attachments', async ({ goto, page }) => {
+  await goto('/diagram')
+
+  const fieldsToggle = page.locator('[data-table-fields-toggle="true"]')
+  const executableObjectsToggle = page.locator('[data-executable-objects-toggle="true"]')
+  const columnRows = page.locator('[data-table-row-kind="column"]')
+  const commerceGroup = page.locator('[data-node-anchor="group:Commerce"]')
+  const executableAttachmentRow = commerceGroup.locator('[data-attachment-row="sequence:order_number_seq"]')
+  const measureHeight = async () => {
+    const box = await commerceGroup.boundingBox()
+
+    if (!box) {
+      throw new Error('Commerce group is not measurable.')
+    }
+
+    return Math.round(box.height)
+  }
+
+  await expect(fieldsToggle).toHaveAttribute('aria-pressed', 'true')
+  await expect(executableObjectsToggle).toHaveAttribute('aria-pressed', 'true')
+  await expect(commerceGroup).toBeVisible()
+  await expect(columnRows.first()).toBeVisible()
+  await expect(executableAttachmentRow).toHaveCount(1)
+
+  const baselineGroupHeight = await measureHeight()
+
+  await fieldsToggle.click()
+
+  await expect(fieldsToggle).toHaveAttribute('aria-pressed', 'false')
+  await expect(columnRows).toHaveCount(0)
+  await expect.poll(measureHeight).toBeLessThan(baselineGroupHeight)
+
+  const fieldsHiddenGroupHeight = await measureHeight()
+
+  await fieldsToggle.click()
+
+  await expect(fieldsToggle).toHaveAttribute('aria-pressed', 'true')
+  await expect(columnRows.first()).toBeVisible()
+  await expect.poll(measureHeight).toBeGreaterThan(fieldsHiddenGroupHeight)
+
+  const restoredGroupHeight = await measureHeight()
+
+  await executableObjectsToggle.click()
+
+  await expect(executableObjectsToggle).toHaveAttribute('aria-pressed', 'false')
+  await expect(executableAttachmentRow).toHaveCount(0)
+  await expect.poll(measureHeight).toBeLessThan(restoredGroupHeight)
+
+  await executableObjectsToggle.click()
+
+  await expect(executableObjectsToggle).toHaveAttribute('aria-pressed', 'true')
+  await expect(executableAttachmentRow).toHaveCount(1)
+})
+
+test('relationship lines stay visible when fields are hidden', async ({ goto, page }) => {
+  await goto('/diagram')
+
+  const editor = getPgmlEditor(page)
+  const fieldsToggle = page.locator('[data-table-fields-toggle="true"]')
+  const linesToggle = page.locator('[data-relationship-lines-toggle="true"]')
+  const source = `Table public.accounts {
+  id uuid [pk]
+}
+
+Table public.invoices {
+  id uuid [pk]
+  account_id uuid [ref: > public.accounts.id]
+}`
+
+  await setPgmlEditorValue(editor, source)
+  await page.waitForFunction(() => {
+    const debugWindow = window as Window & {
+      __pgmlSceneDebug?: {
+        connectionCount: number
+      }
+    }
+
+    return debugWindow.__pgmlSceneDebug?.connectionCount === 1
+  })
+
+  await expect(linesToggle).toHaveAttribute('aria-pressed', 'true')
+  await expect(fieldsToggle).toHaveAttribute('aria-pressed', 'true')
+
+  await fieldsToggle.click()
+
+  await expect(linesToggle).toHaveAttribute('aria-pressed', 'true')
+  await expect(fieldsToggle).toHaveAttribute('aria-pressed', 'false')
+  await page.waitForFunction(() => {
+    const debugWindow = window as Window & {
+      __pgmlSceneDebug?: {
+        connectionCount: number
+      }
+    }
+
+    return debugWindow.__pgmlSceneDebug?.connectionCount === 1
+  })
+})
+
+test('gpu scene prunes stale sprites when the schema changes so current lines stay visible', async ({ goto, page }) => {
+  await page.addInitScript(() => {
+    ;(window as Window & {
+      __PGML_ENABLE_SCENE_DEBUG__?: boolean
+      __PGML_FORCE_GPU_SCENE__?: boolean
+    }).__PGML_FORCE_GPU_SCENE__ = true
+    ;(window as Window & {
+      __PGML_ENABLE_SCENE_DEBUG__?: boolean
+      __PGML_FORCE_GPU_SCENE__?: boolean
+    }).__PGML_ENABLE_SCENE_DEBUG__ = true
+  })
+
+  await goto('/diagram')
+
+  const editor = getPgmlEditor(page)
+
+  await setPgmlEditorValue(editor, `Table public.accounts {
+  id uuid [pk]
+}
+
+Table public.invoices {
+  id uuid [pk]
+  account_id uuid [ref: > public.accounts.id]
+}`)
+
+  await page.waitForFunction(() => {
+    const debugWindow = window as Window & {
+      __pgmlSceneDebug?: {
+        connectionCount: number
+      }
+      __pgmlSceneRendererDebug?: {
+        renderedTableCards: Array<{ id: string }>
+        resolvedRendererBackend: string
+        tableSpriteCount: number
+      }
+    }
+
+    return debugWindow.__pgmlSceneDebug?.connectionCount === 1
+      && debugWindow.__pgmlSceneRendererDebug?.resolvedRendererBackend !== 'dom'
+      && debugWindow.__pgmlSceneRendererDebug?.renderedTableCards.length === 2
+      && debugWindow.__pgmlSceneRendererDebug?.tableSpriteCount === 2
+  })
+})
+
+test('diagram views persist toolbar visibility settings independently', async ({ goto, page }) => {
+  await goto('/diagram')
+
+  const editor = getPgmlEditor(page)
+  const viewSelect = page.locator('[data-diagram-view-select="desktop"]')
+  const createViewButton = page.locator('[data-diagram-view-create="desktop"]')
+  const renameViewButton = page.locator('[data-diagram-view-rename="desktop"]')
+  const viewDialog = page.locator('[data-studio-modal-surface="diagram-view"]')
+  const viewNameInput = page.locator('[data-diagram-view-name-input="true"]')
+  const saveViewButton = page.locator('[data-diagram-view-save="true"]')
+  const linesToggle = page.locator('[data-relationship-lines-toggle="true"]')
+  const fieldsToggle = page.locator('[data-table-fields-toggle="true"]')
+  const snapToggle = page.locator('[data-grid-snap-toggle="true"]')
+  const columnRows = page.locator('[data-table-row-kind="column"]')
+
+  await expect(viewSelect).toBeVisible()
+  await expect(createViewButton).toBeVisible()
+  await expect(renameViewButton).toBeVisible()
+  await expect(viewSelect).toContainText('Default')
+  await expect(linesToggle).toHaveAttribute('aria-pressed', 'true')
+  await expect(fieldsToggle).toHaveAttribute('aria-pressed', 'true')
+  await expect(snapToggle).toHaveAttribute('aria-pressed', 'true')
+
+  await createViewButton.click()
+  await expect(viewNameInput).toBeVisible()
+  await viewNameInput.fill('Review')
+  await saveViewButton.click()
+  await expect(viewDialog).toHaveCount(0)
+
+  await expect(viewSelect).toContainText('Review')
+  await expect.poll(async () => readPgmlEditorValue(editor)).toContain('Workspace {')
+  await expect.poll(async () => readPgmlEditorValue(editor)).toContain('View "Review"')
+
+  await linesToggle.click()
+  await fieldsToggle.click()
+  await snapToggle.click()
+
+  await expect(linesToggle).toHaveAttribute('aria-pressed', 'false')
+  await expect(fieldsToggle).toHaveAttribute('aria-pressed', 'false')
+  await expect(snapToggle).toHaveAttribute('aria-pressed', 'false')
+  await expect(columnRows).toHaveCount(0)
+  await expect.poll(async () => readPgmlEditorValue(editor)).toContain('show_lines: false')
+  await expect.poll(async () => readPgmlEditorValue(editor)).toContain('show_fields: false')
+  await expect.poll(async () => readPgmlEditorValue(editor)).toContain('snap_to_grid: false')
+
+  await viewSelect.click()
+  await page.locator('[role="option"]').filter({ hasText: 'Default' }).click()
+
+  await expect(viewSelect).toContainText('Default')
+  await expect(linesToggle).toHaveAttribute('aria-pressed', 'true')
+  await expect(fieldsToggle).toHaveAttribute('aria-pressed', 'true')
+  await expect(snapToggle).toHaveAttribute('aria-pressed', 'true')
+  await expect(columnRows.first()).toBeVisible()
+
+  await viewSelect.click()
+  await page.locator('[role="option"]').filter({ hasText: 'Review' }).click()
+
+  await expect(viewSelect).toContainText('Review')
+  await expect(linesToggle).toHaveAttribute('aria-pressed', 'false')
+  await expect(fieldsToggle).toHaveAttribute('aria-pressed', 'false')
+  await expect(snapToggle).toHaveAttribute('aria-pressed', 'false')
+  await expect(columnRows).toHaveCount(0)
+
+  await renameViewButton.click()
+  await expect(viewNameInput).toHaveValue('Review')
+  await viewNameInput.fill('Implementation review')
+  await saveViewButton.click()
+  await expect(viewDialog).toHaveCount(0)
+
+  await expect(viewSelect).toContainText('Implementation review')
+  await expect.poll(async () => readPgmlEditorValue(editor)).toContain('View "Implementation review"')
+})
+
 test('studio canvas stays viewport-bound and starts centered on the diagram', async ({ goto, page }) => {
   await goto('/diagram')
 
-  await expect(page.locator('[data-node-anchor="group:Core"]')).toBeVisible()
   await expect(page.locator('[data-grid-snap-toggle="true"]')).toHaveAttribute('aria-pressed', 'true')
+  await page.waitForFunction(() => {
+    return typeof (window as Window & {
+      __pgmlSceneDebug?: {
+        worldBounds: {
+          maxX: number
+          maxY: number
+          minX: number
+          minY: number
+        }
+      }
+      __pgmlSceneRendererDebug?: {
+        panX: number
+        panY: number
+        scale: number
+      }
+    }).__pgmlSceneRendererDebug?.scale === 'number'
+    && !!(window as Window & {
+      __pgmlSceneDebug?: {
+        worldBounds: {
+          maxX: number
+          maxY: number
+          minX: number
+          minY: number
+        }
+      }
+    }).__pgmlSceneDebug?.worldBounds
+  })
 
   const diagnostics = await page.evaluate(() => {
     const documentElement = document.documentElement
-    const nodeElements = Array.from(document.querySelectorAll('[data-node-anchor]')).filter((element): element is HTMLElement => {
-      return element instanceof HTMLElement
-    })
+    const viewport = document.querySelector('[data-diagram-viewport="true"]')
+    const debugWindow = window as Window & {
+      __pgmlSceneDebug?: {
+        worldBounds: {
+          maxX: number
+          maxY: number
+          minX: number
+          minY: number
+        }
+      }
+      __pgmlSceneRendererDebug?: {
+        panX: number
+        panY: number
+        scale: number
+      }
+    }
 
-    if (!nodeElements.length) {
+    if (!(viewport instanceof HTMLElement) || !debugWindow.__pgmlSceneDebug?.worldBounds || !debugWindow.__pgmlSceneRendererDebug) {
       return null
     }
 
-    const nodeRects = nodeElements.map((element) => {
-      return element.getBoundingClientRect()
-    })
-    const minX = Math.min(...nodeRects.map(rect => rect.left))
-    const maxX = Math.max(...nodeRects.map(rect => rect.right))
-    const minY = Math.min(...nodeRects.map(rect => rect.top))
-    const maxY = Math.max(...nodeRects.map(rect => rect.bottom))
+    const insetRight = 336
+    const viewportRect = viewport.getBoundingClientRect()
+    const worldBounds = debugWindow.__pgmlSceneDebug.worldBounds
+    const rendererDebug = debugWindow.__pgmlSceneRendererDebug
+    const minX = viewportRect.left + worldBounds.minX * rendererDebug.scale + rendererDebug.panX
+    const maxX = viewportRect.left + worldBounds.maxX * rendererDebug.scale + rendererDebug.panX
+    const minY = viewportRect.top + worldBounds.minY * rendererDebug.scale + rendererDebug.panY
+    const maxY = viewportRect.top + worldBounds.maxY * rendererDebug.scale + rendererDebug.panY
 
     return {
+      bottomOverflow: Math.round(maxY - viewportRect.bottom),
       hasHorizontalScroll: documentElement.scrollWidth > window.innerWidth + 1,
       hasVerticalScroll: documentElement.scrollHeight > window.innerHeight + 1,
-      centerOffsetX: Math.round(((minX + maxX) / 2) - (window.innerWidth / 2)),
-      centerOffsetY: Math.round(((minY + maxY) / 2) - (window.innerHeight / 2))
+      centerOffsetX: Math.round(((minX + maxX) / 2) - (viewportRect.left + ((viewportRect.width - insetRight) / 2))),
+      centerOffsetY: Math.round(((minY + maxY) / 2) - (viewportRect.top + (viewportRect.height / 2))),
+      leftOverflow: Math.round(viewportRect.left - minX),
+      rightOverflow: Math.round(maxX - (viewportRect.right - insetRight)),
+      topOverflow: Math.round(viewportRect.top - minY)
     }
   })
 
   expect(diagnostics).not.toBeNull()
   expect(diagnostics?.hasHorizontalScroll).toBe(false)
   expect(diagnostics?.hasVerticalScroll).toBe(false)
-  expect(Math.abs(diagnostics?.centerOffsetX || 0)).toBeLessThan(180)
-  expect(Math.abs(diagnostics?.centerOffsetY || 0)).toBeLessThan(120)
+  expect(Math.abs(diagnostics?.centerOffsetX || 0)).toBeLessThan(28)
+  expect(Math.abs(diagnostics?.centerOffsetY || 0)).toBeLessThan(28)
+  expect(diagnostics?.leftOverflow || 0).toBeLessThanOrEqual(8)
+  expect(diagnostics?.rightOverflow || 0).toBeLessThanOrEqual(8)
+  expect(diagnostics?.topOverflow || 0).toBeLessThanOrEqual(8)
+  expect(diagnostics?.bottomOverflow || 0).toBeLessThanOrEqual(8)
+})
+
+test('studio canvas refits when the workspace shrinks after the initial fit', async ({ goto, page }) => {
+  await page.setViewportSize({
+    width: 1440,
+    height: 960
+  })
+  await goto('/diagram')
+
+  await expect(page.locator('[data-grid-snap-toggle="true"]')).toHaveAttribute('aria-pressed', 'true')
+  await page.waitForFunction(() => {
+    return typeof (window as Window & {
+      __pgmlSceneDebug?: {
+        worldBounds: {
+          maxX: number
+          maxY: number
+          minX: number
+          minY: number
+        }
+      }
+      __pgmlSceneRendererDebug?: {
+        scale: number
+      }
+    }).__pgmlSceneRendererDebug?.scale === 'number'
+    && !!(window as Window & {
+      __pgmlSceneDebug?: {
+        worldBounds: {
+          maxX: number
+          maxY: number
+          minX: number
+          minY: number
+        }
+      }
+    }).__pgmlSceneDebug?.worldBounds
+  })
+
+  const initialScale = await page.evaluate(() => {
+    return (window as Window & {
+      __pgmlSceneRendererDebug?: {
+        scale: number
+      }
+    }).__pgmlSceneRendererDebug?.scale || 0
+  })
+
+  await page.setViewportSize({
+    width: 1180,
+    height: 760
+  })
+
+  await expect.poll(async () => {
+    return await page.evaluate(() => {
+      return (window as Window & {
+        __pgmlSceneRendererDebug?: {
+          scale: number
+        }
+      }).__pgmlSceneRendererDebug?.scale || 0
+    })
+  }).toBeLessThan(initialScale - 0.03)
+
+  const diagnostics = await page.evaluate(({ maxScale, minScale }) => {
+    const viewport = document.querySelector('[data-diagram-viewport="true"]')
+    const debugWindow = window as Window & {
+      __pgmlSceneDebug?: {
+        worldBounds: {
+          maxX: number
+          maxY: number
+          minX: number
+          minY: number
+        }
+      }
+      __pgmlSceneRendererDebug?: {
+        scale: number
+      }
+    }
+
+    if (!(viewport instanceof HTMLElement) || !debugWindow.__pgmlSceneDebug?.worldBounds || !debugWindow.__pgmlSceneRendererDebug) {
+      return null
+    }
+
+    const insetRight = 336
+    const padding = 40
+    const viewportRect = viewport.getBoundingClientRect()
+    const worldBounds = debugWindow.__pgmlSceneDebug.worldBounds
+    const rendererDebug = debugWindow.__pgmlSceneRendererDebug
+    const minX = viewportRect.left + worldBounds.minX * rendererDebug.scale + rendererDebug.panX
+    const maxX = viewportRect.left + worldBounds.maxX * rendererDebug.scale + rendererDebug.panX
+    const minY = viewportRect.top + worldBounds.minY * rendererDebug.scale + rendererDebug.panY
+    const maxY = viewportRect.top + worldBounds.maxY * rendererDebug.scale + rendererDebug.panY
+    const worldWidth = Math.max(1, worldBounds.maxX - worldBounds.minX)
+    const worldHeight = Math.max(1, worldBounds.maxY - worldBounds.minY)
+    const availableWidth = Math.max(1, viewport.clientWidth - insetRight - padding * 2)
+    const fittedScale = Math.min(
+      availableWidth / worldWidth,
+      (viewport.clientHeight - padding * 2) / worldHeight
+    )
+    const expectedScale = Math.min(maxScale, Math.max(minScale, fittedScale))
+
+    return {
+      actualScale: rendererDebug.scale,
+      centerOffsetX: Math.round(((minX + maxX) / 2) - (viewportRect.left + ((viewportRect.width - insetRight) / 2))),
+      centerOffsetY: Math.round(((minY + maxY) / 2) - (viewportRect.top + (viewportRect.height / 2))),
+      expectedScale
+    }
+  }, {
+    maxScale: diagramMaxScale,
+    minScale: diagramMinScale
+  })
+
+  expect(diagnostics).not.toBeNull()
+  expect(Math.abs((diagnostics?.actualScale || 0) - (diagnostics?.expectedScale || 0))).toBeLessThan(0.02)
+  expect(Math.abs(diagnostics?.centerOffsetX || 0)).toBeLessThan(28)
+  expect(Math.abs(diagnostics?.centerOffsetY || 0)).toBeLessThan(28)
 })
 
 test('studio header keeps named menus on the left and the current schema centered', async ({ goto, page }) => {
@@ -315,6 +691,195 @@ test('table groups keep their required width after changing the table column cou
       return Math.round(element.offsetWidth)
     })
   }).toBe(settledWidth)
+})
+
+test('table groups keep their final drop position after dragging from the header', async ({ goto, page }) => {
+  await goto('/diagram')
+
+  const commerceGroup = page.locator('[data-node-anchor="group:Commerce"]')
+  const commerceGroupHeader = page.locator('[data-node-header="group:Commerce"]')
+
+  await expect(commerceGroup).toBeVisible()
+  await expect(commerceGroupHeader).toBeVisible()
+
+  const initialPosition = await commerceGroup.evaluate((element) => {
+    const rect = element.getBoundingClientRect()
+
+    return {
+      x: Math.round(rect.x),
+      y: Math.round(rect.y)
+    }
+  })
+
+  const headerBox = await commerceGroupHeader.boundingBox()
+
+  if (!headerBox) {
+    throw new Error('Group header is not measurable.')
+  }
+
+  const startX = headerBox.x + headerBox.width / 2
+  const startY = headerBox.y + 18
+
+  await page.mouse.move(startX, startY)
+  await page.mouse.down()
+  await page.mouse.move(startX + 108, startY + 36)
+  await page.mouse.up()
+
+  await expect.poll(async () => {
+    return commerceGroup.evaluate((element) => {
+      const rect = element.getBoundingClientRect()
+
+      return {
+        x: Math.round(rect.x),
+        y: Math.round(rect.y)
+      }
+    })
+  }).not.toEqual(initialPosition)
+
+  const droppedPosition = await commerceGroup.evaluate((element) => {
+    const rect = element.getBoundingClientRect()
+
+    return {
+      x: Math.round(rect.x),
+      y: Math.round(rect.y)
+    }
+  })
+
+  const postDropPositions = await commerceGroup.evaluate(async (element) => {
+    const positions: Array<{ x: number, y: number }> = []
+
+    for (let index = 0; index < 12; index += 1) {
+      await new Promise<void>((resolve) => {
+        requestAnimationFrame(() => resolve())
+      })
+
+      const rect = element.getBoundingClientRect()
+
+      positions.push({
+        x: Math.round(rect.x),
+        y: Math.round(rect.y)
+      })
+    }
+
+    return positions
+  })
+
+  expect(postDropPositions.every((position) => {
+    return position.x === droppedPosition.x && position.y === droppedPosition.y
+  })).toBe(true)
+})
+
+test('table groups can be dragged from a grouped table surface without a post-drop nudge', async ({ goto, page }) => {
+  await goto('/diagram')
+
+  const coreGroup = page.locator('[data-node-anchor="group:Core"]')
+  const groupedTenantsTable = page.locator('[data-node-anchor="group:Core"] [data-table-anchor="public.tenants"]')
+
+  await expect(coreGroup).toBeVisible()
+  await expect(groupedTenantsTable).toBeVisible()
+
+  const initialPosition = await coreGroup.evaluate((element) => {
+    const rect = element.getBoundingClientRect()
+
+    return {
+      x: Math.round(rect.x),
+      y: Math.round(rect.y)
+    }
+  })
+
+  const tableBox = await groupedTenantsTable.boundingBox()
+
+  if (!tableBox) {
+    throw new Error('Grouped tenants table is not measurable.')
+  }
+
+  const startX = tableBox.x + tableBox.width / 2
+  const startY = tableBox.y + tableBox.height * 0.65
+
+  await page.mouse.move(startX, startY)
+  await page.mouse.down()
+  await page.mouse.move(startX + 104, startY + 42)
+  await page.mouse.up()
+
+  await expect.poll(async () => {
+    return coreGroup.evaluate((element) => {
+      const rect = element.getBoundingClientRect()
+
+      return {
+        x: Math.round(rect.x),
+        y: Math.round(rect.y)
+      }
+    })
+  }).not.toEqual(initialPosition)
+
+  const droppedPosition = await coreGroup.evaluate((element) => {
+    const rect = element.getBoundingClientRect()
+
+    return {
+      x: Math.round(rect.x),
+      y: Math.round(rect.y)
+    }
+  })
+
+  await page.waitForTimeout(200)
+
+  const settledPosition = await coreGroup.evaluate((element) => {
+    const rect = element.getBoundingClientRect()
+
+    return {
+      x: Math.round(rect.x),
+      y: Math.round(rect.y)
+    }
+  })
+
+  expect(settledPosition).toEqual(droppedPosition)
+})
+
+test('floating custom types can be dragged from their body', async ({ goto, page }) => {
+  await goto('/diagram')
+
+  const customTypeNode = page.locator('[data-node-anchor="custom-type:Domain:email_address"]')
+
+  await page.getByRole('button', { name: 'Expand email_address' }).click()
+
+  const customTypeBody = page.locator('[data-node-body="custom-type:Domain:email_address"]')
+
+  await expect(customTypeNode).toBeVisible()
+  await expect(customTypeBody).toBeVisible()
+
+  const initialPosition = await customTypeNode.evaluate((element) => {
+    const rect = element.getBoundingClientRect()
+
+    return {
+      x: Math.round(rect.x),
+      y: Math.round(rect.y)
+    }
+  })
+
+  const bodyBox = await customTypeBody.boundingBox()
+
+  if (!bodyBox) {
+    throw new Error('Custom type body is not measurable.')
+  }
+
+  const startX = bodyBox.x + bodyBox.width / 2
+  const startY = bodyBox.y + bodyBox.height / 2
+
+  await page.mouse.move(startX, startY)
+  await page.mouse.down()
+  await page.mouse.move(startX + 86, startY + 58)
+  await page.mouse.up()
+
+  await expect.poll(async () => {
+    return customTypeNode.evaluate((element) => {
+      const rect = element.getBoundingClientRect()
+
+      return {
+        x: Math.round(rect.x),
+        y: Math.round(rect.y)
+      }
+    })
+  }).not.toEqual(initialPosition)
 })
 
 test('group inspector allows as many columns as there are visible tables in the group', async ({ goto, page }) => {
@@ -802,6 +1367,284 @@ Table public.orders in Commerce {
   expect(diagnostics?.lineTouchesTenantsBorder).toBe(true)
   expect(diagnostics?.lineTouchesTenantsIdBorder).toBe(true)
   expect(diagnostics?.tableFitsWithinGroup).toBe(true)
+})
+
+test('same-group table references keep their vertical lane outside the table group shell', async ({ goto, page }) => {
+  await goto('/diagram')
+
+  const editor = getPgmlEditor(page)
+  const source = `TableGroup Core {
+  tenants
+  users
+}
+
+Table public.tenants in Core {
+  id uuid [pk]
+}
+
+Table public.users in Core {
+  id uuid [pk]
+  tenant_id uuid [ref: > public.tenants.id]
+}
+
+Properties "group:Core" {
+  x: 180
+  y: 120
+  table_columns: 1
+}`
+
+  await setPgmlEditorValue(editor, source)
+  await page.waitForFunction(() => {
+    const debugWindow = window as Window & {
+      __pgmlSceneDebug?: {
+        connectionCount: number
+        groupCards: Array<{ height: number, id: string, width: number, x: number, y: number }>
+        groupCount: number
+        firstConnection: {
+          points: Array<{ x: number, y: number }>
+        } | null
+      }
+    }
+    const sceneDebug = debugWindow.__pgmlSceneDebug
+
+    return sceneDebug?.groupCount === 1
+      && sceneDebug.groupCards.some(card => card.id === 'group:Core')
+      && sceneDebug.connectionCount === 1
+      && (sceneDebug.firstConnection?.points.length || 0) > 1
+  })
+
+  const diagnostics = await page.evaluate(() => {
+    const debugWindow = window as Window & {
+      __pgmlSceneDebug?: {
+        connectionCount: number
+        groupCards: Array<{ height: number, id: string, width: number, x: number, y: number }>
+        firstConnection: {
+          points: Array<{ x: number, y: number }>
+        } | null
+      }
+    }
+
+    const group = debugWindow.__pgmlSceneDebug?.groupCards.find(card => card.id === 'group:Core')
+
+    if (!group || !debugWindow.__pgmlSceneDebug?.firstConnection) {
+      return null
+    }
+    const groupBounds = {
+      bottom: group.y + group.height,
+      left: group.x,
+      right: group.x + group.width,
+      top: group.y
+    }
+    const borderTolerance = 1.5
+    const points = debugWindow.__pgmlSceneDebug.firstConnection.points
+    const sharedLaneSegments = points.slice(1).flatMap((point, index) => {
+      const previous = points[index]
+
+      if (
+        !previous
+        || Math.abs(previous.x - point.x) >= 0.5
+        || Math.abs(previous.y - point.y) <= 0.5
+      ) {
+        return []
+      }
+
+      const top = Math.min(previous.y, point.y)
+      const bottom = Math.max(previous.y, point.y)
+      const overlapsGroupY = bottom > groupBounds.top + borderTolerance && top < groupBounds.bottom - borderTolerance
+
+      return overlapsGroupY
+        ? [{
+            bottom,
+            outsideGroup: point.x <= groupBounds.left - borderTolerance || point.x >= groupBounds.right + borderTolerance,
+            top,
+            x: point.x
+          }]
+        : []
+    })
+
+    return {
+      connectionCount: debugWindow.__pgmlSceneDebug.connectionCount,
+      groupBounds,
+      points,
+      sharedLaneSegments
+    }
+  })
+
+  expect(diagnostics).not.toBeNull()
+  expect(diagnostics?.connectionCount).toBe(1)
+  expect(diagnostics?.sharedLaneSegments.length).toBeGreaterThan(0)
+  expect(diagnostics?.sharedLaneSegments.every(segment => segment.outsideGroup)).toBe(true)
+})
+
+test('selecting a grouped table keeps its animated same-group references on the same outside lane side', async ({ goto, page }) => {
+  await goto('/diagram')
+
+  const editor = getPgmlEditor(page)
+  const source = `TableGroup Core {
+  tenants
+  users
+}
+
+Table public.tenants in Core {
+  id uuid [pk]
+}
+
+Table public.users in Core {
+  id uuid [pk]
+  tenant_id uuid [ref: > public.tenants.id]
+}
+
+Properties "group:Core" {
+  x: 180
+  y: 120
+  table_columns: 1
+}`
+
+  await setPgmlEditorValue(editor, source)
+  await page.waitForFunction(() => {
+    const debugWindow = window as Window & {
+      __pgmlSceneDebug?: {
+        connectionCount: number
+        firstConnection: {
+          animated: boolean
+          points: Array<{ x: number, y: number }>
+        } | null
+        groupCards: Array<{ height: number, id: string, width: number, x: number, y: number }>
+        selectedSelection: {
+          id: string
+          kind: string
+        } | null
+      }
+    }
+    const sceneDebug = debugWindow.__pgmlSceneDebug
+
+    return sceneDebug?.connectionCount === 1
+      && sceneDebug.groupCards.some(card => card.id === 'group:Core')
+      && (sceneDebug.firstConnection?.points.length || 0) > 1
+  })
+
+  const readLaneDiagnostics = async () => {
+    return page.evaluate(() => {
+      const debugWindow = window as Window & {
+        __pgmlSceneDebug?: {
+          connectionCount: number
+          firstConnection: {
+            animated: boolean
+            points: Array<{ x: number, y: number }>
+          } | null
+          groupCards: Array<{ height: number, id: string, width: number, x: number, y: number }>
+          selectedSelection: {
+            id: string
+            kind: string
+          } | null
+        }
+      }
+
+      const sceneDebug = debugWindow.__pgmlSceneDebug
+      const group = sceneDebug?.groupCards.find(card => card.id === 'group:Core')
+      const points = sceneDebug?.firstConnection?.points || []
+
+      if (!group || points.length < 2) {
+        return null
+      }
+
+      const groupBounds = {
+        bottom: group.y + group.height,
+        left: group.x,
+        right: group.x + group.width,
+        top: group.y
+      }
+      const borderTolerance = 1.5
+      const verticalLaneSegment = points.slice(1).reduce<null | { side: 'left' | 'right', x: number }>((selectedSegment, point, index) => {
+        const previous = points[index]
+
+        if (
+          !previous
+          || Math.abs(previous.x - point.x) >= 0.5
+          || Math.abs(previous.y - point.y) <= 0.5
+        ) {
+          return selectedSegment
+        }
+
+        const top = Math.min(previous.y, point.y)
+        const bottom = Math.max(previous.y, point.y)
+        const overlapsGroupY = bottom > groupBounds.top + borderTolerance && top < groupBounds.bottom - borderTolerance
+
+        if (!overlapsGroupY) {
+          return selectedSegment
+        }
+
+        if (point.x <= groupBounds.left - borderTolerance) {
+          return {
+            side: 'left',
+            x: point.x
+          }
+        }
+
+        if (point.x >= groupBounds.right + borderTolerance) {
+          return {
+            side: 'right',
+            x: point.x
+          }
+        }
+
+        return {
+          side: point.x < (groupBounds.left + groupBounds.right) / 2 ? 'left' : 'right',
+          x: point.x
+        }
+      }, null)
+
+      return {
+        animated: sceneDebug?.firstConnection?.animated || false,
+        selectedSelection: sceneDebug?.selectedSelection || null,
+        verticalLaneSegment
+      }
+    })
+  }
+
+  const beforeSelection = await readLaneDiagnostics()
+
+  expect(beforeSelection).not.toBeNull()
+  expect(beforeSelection?.animated).toBe(false)
+  expect(beforeSelection?.verticalLaneSegment).not.toBeNull()
+
+  await page.locator('[data-diagram-panel-tab="entities"]').click()
+  await expect(page.locator('[data-browser-entity-row="public.users"]')).toBeVisible()
+  await page.locator('[data-browser-entity-row="public.users"] button').first().click()
+
+  await expect.poll(async () => {
+    return page.evaluate(() => {
+      const debugWindow = window as Window & {
+        __pgmlSceneDebug?: {
+          firstConnection: {
+            animated: boolean
+          } | null
+          selectedSelection:
+            | {
+              kind: 'table'
+              tableId: string
+            }
+            | {
+              id: string
+              kind: string
+            }
+            | null
+        }
+      }
+
+      return debugWindow.__pgmlSceneDebug?.selectedSelection?.kind === 'table'
+        && debugWindow.__pgmlSceneDebug?.selectedSelection?.tableId === 'public.users'
+        && debugWindow.__pgmlSceneDebug?.firstConnection?.animated === true
+    })
+  }).toBe(true)
+
+  const afterSelection = await readLaneDiagnostics()
+
+  expect(afterSelection).not.toBeNull()
+  expect(afterSelection?.animated).toBe(true)
+  expect(afterSelection?.verticalLaneSegment).not.toBeNull()
+  expect(afterSelection?.verticalLaneSegment?.side).toBe(beforeSelection?.verticalLaneSegment?.side)
+  expect(afterSelection?.verticalLaneSegment?.x).toBe(beforeSelection?.verticalLaneSegment?.x)
 })
 
 test('field rows expose multiple side anchors and prefer unused points on the same row', async ({ goto, page }) => {
@@ -1333,7 +2176,9 @@ Properties "group:Programs" {
 
 test('connection lines stay out of every table group header and do not run along group borders', async ({ goto, page }) => {
   await goto('/diagram')
-  await expect(page.locator('[data-node-anchor="group:Core"]')).toBeVisible()
+  await page.waitForFunction(() => {
+    return document.querySelector('[data-node-anchor="group:Core"]') instanceof HTMLElement
+  })
 
   let diagnostics: { headerHits: Array<{ groupId: string, pathIndex: number }>, borderHits: Array<{ groupId: string, pathIndex: number }> } | null = null
 

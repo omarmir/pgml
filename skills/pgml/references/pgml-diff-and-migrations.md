@@ -4,12 +4,14 @@ Use this file when the task is to explain what changed in a `.pgml` file or to c
 
 ## Default Diff Baseline
 
-Compare the current working-tree PGML against the committed copy at `HEAD` unless the user explicitly names another revision, branch, or merge base.
+Prefer in-document version history before falling back to git history.
 
 Use these rules:
 
-- working tree file = new state
-- `HEAD:path/to/file.pgml` = old state
+- explicit base and target chosen by the user = exact diff baseline
+- `VersionSet` with a workspace base = `Workspace.based_on` vs `Workspace`
+- two locked versions selected in the studio = compare those exact versions
+- repo diff request with no version pair = working tree vs `HEAD`
 - untracked `.pgml` file = all-added schema
 - deleted `.pgml` file = all-removed schema
 - renamed file with the same schema content = file move, not schema change
@@ -45,11 +47,12 @@ Use the raw diff as supporting evidence, not as the final schema analysis. A use
 
 Follow this sequence:
 
-1. Load the old PGML source from the committed revision.
-2. Load the new PGML source from the working tree.
-3. Strip `Properties` blocks from both sources unless the user explicitly asks about layout or diagram changes.
-4. Parse or inventory both PGML states by object kind.
-5. Compare the following categories:
+1. Resolve the old and new snapshots.
+   - For versioned PGML, use the selected base and target snapshots.
+   - For repo diff tasks, use committed vs working-tree sources.
+2. Strip `View` blocks, `active_view` metadata, and legacy snapshot-level `Properties` blocks from both sources unless the user explicitly asks about layout or diagram changes.
+3. Parse or inventory both PGML states by object kind.
+4. Compare the following categories:
    - custom types
    - sequences
    - tables
@@ -60,23 +63,30 @@ Follow this sequence:
    - functions
    - procedures
    - triggers
-6. Classify each change as one of:
+5. Classify each change as one of:
    - added
    - removed
    - modified
    - documentation-only
+   - schema-metadata-only
    - layout-only
-7. Call out destructive changes separately from additive or compatible changes.
+6. Call out destructive changes separately from additive or compatible changes.
 
 ## Ignore Non-Database Deltas By Default
 
 Do not generate migration SQL for these changes unless the user explicitly asks for them:
 
+- `View` block additions, removals, renames, or reordering
+- `active_view` changes
+- `show_lines`, `show_execs`, or `show_fields` changes
 - `Properties` block changes
 - `docs {}` changes by themselves
 - `affects {}` changes by themselves
+- `SchemaMetadata` changes by themselves
 
 Those changes matter for understanding intent and graph shape, but they do not change PostgreSQL schema state on their own.
+
+Treat view-scoped layout changes such as node positions, hidden executable objects, hidden fields, hidden lines, and selected view changes as `layout-only` unless the user explicitly wants a diagram-state diff.
 
 ## Change Classification Rules
 
@@ -152,8 +162,10 @@ When the user asks to create a migration file, follow this sequence:
 
 1. Compute the semantic PGML diff.
 2. Check the repo for an existing migration location and naming convention.
-3. Follow the repo convention if present.
-4. If no convention exists and the user explicitly asked for a file, create:
+3. If the compare pair is a forward version lineage, generate one file per version transition in order.
+4. Prefix each transition file with a sortable numeric sequence such as `001-`, `002-`, `003-`.
+5. Follow the repo convention if present.
+6. If no convention exists and the user explicitly asked for a file outside the studio workflow, create:
 
 ```text
 migrations/<timestamp>_pgml_delta.sql
@@ -165,6 +177,13 @@ Default to forward-only migration content unless:
 
 - the repo clearly uses up/down pairs
 - the user explicitly asks for a rollback migration
+
+When generating migrations from version history in this repo:
+
+- SQL and Kysely should both respect the same version order.
+- The replayable artifact is the ordered set of per-step files, not only a combined preview.
+- A combined history file can be useful for review, but it is secondary to the numbered step files.
+- If the selected compare pair is not a forward lineage, call out the fallback and generate an aggregate diff with a warning instead of pretending there is a valid step-by-step history.
 
 ## Repo Convention Discovery
 
@@ -204,6 +223,20 @@ COMMIT;
 
 If a change is destructive or ambiguous, add a short comment above it rather than hiding the risk.
 
+For version-history exports, prefer filenames like:
+
+```text
+001-commerce-schema-v-foundation-to-v-programs.migration.sql
+002-commerce-schema-v-programs-to-v-analytics.migration.sql
+```
+
+and the matching Kysely files:
+
+```text
+001-commerce-schema-v-foundation-to-v-programs.migration.ts
+002-commerce-schema-v-programs-to-v-analytics.migration.ts
+```
+
 ## Reporting What Changed
 
 When the user asks for a change summary rather than a migration file, report changes in semantic categories:
@@ -212,6 +245,7 @@ When the user asks for a change summary rather than a migration file, report cha
 - removed schema objects
 - modified schema objects
 - documentation-only changes
+- schema-metadata-only changes
 - layout-only changes
 - risky or destructive changes
 

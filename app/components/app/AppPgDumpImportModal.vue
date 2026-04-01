@@ -47,6 +47,23 @@ const modalPrimaryButtonClass = studioButtonClasses.primary
 const modalSecondaryButtonClass = studioButtonClasses.secondary
 const fileSelectionPanelClass = 'grid gap-2 border border-[color:var(--studio-shell-border)] bg-[color:var(--studio-control-bg)] px-3 py-3'
 const errorPanelClass = 'grid gap-1 border border-[color:var(--studio-shell-error)]/40 bg-[color:var(--studio-shell-error)]/8 px-3 py-3 text-[0.74rem] text-[color:var(--studio-shell-error)]'
+const hasPastedText = computed(() => modelValue.trim().length > 0)
+const hasSelectedFile = computed(() => selectedFileName.trim().length > 0)
+const activeInputSummary = computed(() => {
+  if (hasSelectedFile.value && hasPastedText.value) {
+    return 'Both inputs are filled. Clear one before importing.'
+  }
+
+  if (hasSelectedFile.value) {
+    return `Import will use the selected file: ${selectedFileName}.`
+  }
+
+  if (hasPastedText.value) {
+    return 'Import will use the pasted pg_dump text.'
+  }
+
+  return 'Choose a file or paste dump text to begin the import.'
+})
 
 const triggerFilePicker = () => {
   fileInputRef.value?.click()
@@ -90,12 +107,27 @@ const handleTextInput = (event: Event) => {
         <p :class="studioBodyCopyClass">
           {{ inputDescription }}
         </p>
+        <div class="border border-[color:var(--studio-shell-border)] bg-[color:var(--studio-input-bg)] px-3 py-2 text-[0.68rem] text-[color:var(--studio-shell-muted)]">
+          {{ activeInputSummary }}
+        </div>
       </div>
 
-      <label class="grid gap-1">
-        <span :class="studioFieldKickerClass">
-          Upload a text pg_dump file
-        </span>
+      <slot name="before-inputs" />
+
+      <label class="grid gap-2">
+        <div class="flex items-center justify-between gap-3">
+          <span :class="studioFieldKickerClass">
+            Option A · Upload a text pg_dump file
+          </span>
+          <span
+            class="border px-1.5 py-0.5 font-mono text-[0.52rem] uppercase tracking-[0.08em]"
+            :class="hasSelectedFile
+              ? 'border-[color:var(--studio-ring)] text-[color:var(--studio-shell-text)]'
+              : 'border-[color:var(--studio-shell-border)] text-[color:var(--studio-shell-muted)]'"
+          >
+            {{ hasSelectedFile ? 'Active' : 'Idle' }}
+          </span>
+        </div>
         <div class="grid gap-2 sm:grid-cols-[minmax(0,1fr)_auto_auto]">
           <UInput
             :model-value="selectedFileName"
@@ -135,10 +167,20 @@ const handleTextInput = (event: Event) => {
         >
       </label>
 
-      <label class="grid gap-1">
-        <span :class="studioFieldKickerClass">
-          Paste pg_dump text
-        </span>
+      <label class="grid gap-2">
+        <div class="flex items-center justify-between gap-3">
+          <span :class="studioFieldKickerClass">
+            Option B · Paste pg_dump text
+          </span>
+          <span
+            class="border px-1.5 py-0.5 font-mono text-[0.52rem] uppercase tracking-[0.08em]"
+            :class="hasPastedText
+              ? 'border-[color:var(--studio-ring)] text-[color:var(--studio-shell-text)]'
+              : 'border-[color:var(--studio-shell-border)] text-[color:var(--studio-shell-muted)]'"
+          >
+            {{ hasPastedText ? 'Active' : 'Idle' }}
+          </span>
+        </div>
         <textarea
           :value="modelValue"
           rows="12"

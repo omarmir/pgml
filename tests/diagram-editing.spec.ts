@@ -78,14 +78,56 @@ test('table editor uses searchable group selection and descriptive type presets'
 
   await firstColumn.getByLabel('Column name', { exact: true }).fill('id')
   await columnTypePreset.click()
-  await page.getByPlaceholder('Search column types').fill('auto-incrementing large number')
-  await page.getByRole('option', { name: /Auto-incrementing large number/i }).click()
-  await expect(columnTypeInput).toHaveValue('bigserial')
+  await page.getByPlaceholder('Search column types').fill('large whole number')
+  await page.getByRole('option', { name: /Large whole number/i }).click()
+  await expect(columnTypeInput).toHaveValue('bigint')
 
   await page.locator('[data-table-editor-save="true"]').dispatchEvent('click')
 
   await expect.poll(async () => readPgmlEditorValue(editor)).toContain('Table public.job_runs in Core {')
-  await expect.poll(async () => readPgmlEditorValue(editor)).toContain('id bigserial')
+  await expect.poll(async () => readPgmlEditorValue(editor)).toContain('id bigint')
+})
+
+test('table editor persists table and column metadata into the VersionSet SchemaMetadata block', async ({ goto, page }) => {
+  await page.setViewportSize({
+    height: 1200,
+    width: 1440
+  })
+  await goto('/diagram')
+
+  const editor = getPgmlEditor(page)
+  const tableEditor = page.locator('[data-studio-modal-surface="table-editor"]')
+
+  await page.locator('[data-diagram-panel-tab="inspector"]').click()
+  await page.locator('[data-diagram-create-table="true"]').click()
+  await expect(tableEditor.locator('[data-table-editor-metadata="true"]')).toBeVisible()
+  await tableEditor.locator('[data-table-editor-name="true"]').fill('metadata_demo')
+
+  const tableMetadataAddFieldButton = tableEditor
+    .locator('[data-table-editor-metadata="true"]')
+    .getByRole('button', { name: 'Add field' })
+
+  await tableMetadataAddFieldButton.scrollIntoViewIfNeeded()
+  await tableMetadataAddFieldButton.dispatchEvent('click')
+  await tableEditor.getByLabel('Table metadata field name', { exact: true }).fill('owner')
+  await tableEditor.getByLabel('Table metadata field value', { exact: true }).fill('identity')
+
+  const idColumn = tableEditor.locator('[data-table-editor-column]').filter({ hasText: 'id' })
+  const columnMetadataAddFieldButton = idColumn.getByRole('button', { name: 'Add field' })
+
+  await columnMetadataAddFieldButton.scrollIntoViewIfNeeded()
+  await columnMetadataAddFieldButton.dispatchEvent('click')
+  await idColumn.getByLabel('Column metadata field name', { exact: true }).fill('classification')
+  await idColumn.getByLabel('Column metadata field value', { exact: true }).fill('identifier')
+  await tableEditor.locator('[data-table-editor-save="true"]').click()
+
+  await page.getByRole('button', { name: 'Versioned document' }).click()
+
+  await expect.poll(async () => readPgmlEditorValue(editor)).toContain('SchemaMetadata {')
+  await expect.poll(async () => readPgmlEditorValue(editor)).toContain('Table "public.metadata_demo" {')
+  await expect.poll(async () => readPgmlEditorValue(editor)).toContain('owner: "identity"')
+  await expect.poll(async () => readPgmlEditorValue(editor)).toContain('Column "public.metadata_demo.id" {')
+  await expect.poll(async () => readPgmlEditorValue(editor)).toContain('classification: "identifier"')
 })
 
 test('group editor can create and rename table groups from the diagram canvas', async ({ goto, page }) => {
@@ -516,6 +558,52 @@ test('code editor shows PGML diagnostics and autocomplete suggestions', async ({
   await expect(page.locator('.cm-tooltip-autocomplete')).toContainText('Table')
 })
 
+test('raw PGML editor keeps autocomplete active while typing in large drafts', async ({ goto, page }) => {
+  await goto('/diagram')
+
+  const editor = getPgmlEditor(page)
+  const largeDraftSource = `${Array.from({
+    length: 320
+  }, (_, index) => {
+    return `Table public.autocomplete_${index} {
+  id uuid [pk]
+  label text
+  created_at timestamptz
+}`
+  }).join('\n\n')}\n\n`
+
+  expect(largeDraftSource.split('\n').length).toBeGreaterThan(1500)
+
+  await setPgmlEditorValue(editor, largeDraftSource)
+  await page.waitForTimeout(300)
+  await page.locator('[data-pgml-editor-content="true"]').click()
+  await setPgmlEditorSelection(editor, largeDraftSource.length, largeDraftSource.length)
+  await page.keyboard.type('Ta')
+
+  await expect(page.locator('.cm-tooltip-autocomplete')).toBeVisible()
+  await expect(page.locator('.cm-tooltip-autocomplete')).toContainText('Table')
+})
+
+test('diagnostics panel groups repeated issues into collapsible line buckets', async ({ goto, page }) => {
+  await goto('/diagram')
+
+  const editor = getPgmlEditor(page)
+  const duplicateColumns = Array.from({
+    length: 8
+  }, () => '  id uuid').join('\n')
+
+  await setPgmlEditorValue(editor, `Table public.users {
+  id uuid [pk]
+${duplicateColumns}
+}`)
+
+  await expect(page.locator('[data-pgml-diagnostics="true"]')).toContainText('Duplicate column')
+  await expect(page.locator('[data-pgml-diagnostic-group="true"]')).toHaveCount(1)
+  await expect(page.locator('[data-pgml-diagnostic-group-summary="true"]').first()).toContainText(/lines/i)
+  await page.locator('[data-pgml-diagnostic-group-summary="true"]').first().click()
+  await expect(page.locator('[data-pgml-diagnostic-line="true"]')).toHaveCount(9)
+})
+
 test('clicking a diagnostic line focuses and scrolls the editor to that source location', async ({ goto, page }) => {
   await goto('/diagram')
 
@@ -536,6 +624,7 @@ Table public.users {
   await setPgmlEditorScrollTop(editor, 0)
 
   await expect(page.locator('[data-pgml-diagnostics="true"]')).toContainText('Duplicate column')
+  await page.locator('[data-pgml-diagnostic-group-summary="true"]').first().click()
   await page.locator('[data-pgml-diagnostic-line="true"]').first().click()
 
   await expect.poll(async () => {

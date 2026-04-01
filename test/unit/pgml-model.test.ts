@@ -1,12 +1,24 @@
 import { describe, expect, it } from 'vitest'
 
 import {
+  dedentPgmlSourceForEditor,
+  extractPgmlRoutineBodyFromExecutableSource,
   getOrderedGroupTables,
   getPgmlSourceScrollTop,
   getPgmlSourceSelectionRange,
+  normalizePgmlBlockSourceForEditor,
+  normalizePgmlSourceIndentation,
   parsePgml,
-  pgmlExample
+  pgmlExample,
+  pgmlVersionedExample,
+  reindentPgmlBlockEditorText,
+  reindentPgmlEditorText,
+  replacePgmlConstraintExpressionInBlock,
+  replacePgmlExecutableSourceInBlock,
+  replacePgmlRoutineBodyInExecutableSource,
+  replacePgmlSourceRange
 } from '../../app/utils/pgml'
+import { getPgmlDocumentBlockPreviewSource, parsePgmlDocument } from '../../app/utils/pgml-document'
 
 describe('PGML model parsing', () => {
   it('parses the bundled example into grouped tables, refs, and custom types', () => {
@@ -18,8 +30,8 @@ describe('PGML model parsing', () => {
       && reference.toColumn === 'id'
     )
 
-    expect(model.groups.map(group => group.name)).toEqual(['Core', 'Commerce', 'Programs'])
-    expect(model.tables).toHaveLength(8)
+    expect(model.groups.map(group => group.name)).toEqual(['Core', 'Commerce', 'Programs', 'Analytics'])
+    expect(model.tables).toHaveLength(10)
     expect(model.references).toEqual(expect.arrayContaining([
       expect.objectContaining({
         fromTable: 'public.users',
@@ -32,16 +44,49 @@ describe('PGML model parsing', () => {
         fromColumn: 'customer_id',
         toTable: 'public.users',
         toColumn: 'id'
+      }),
+      expect.objectContaining({
+        fromTable: 'analytics.order_rollups',
+        fromColumn: 'order_id',
+        toTable: 'public.orders',
+        toColumn: 'id'
       })
     ]))
     expect(orderCustomerReferences).toHaveLength(1)
     expect(model.customTypes).toEqual(expect.arrayContaining([
       expect.objectContaining({ kind: 'Enum', name: 'role_kind' }),
+      expect.objectContaining({ kind: 'Enum', name: 'order_status' }),
       expect.objectContaining({ kind: 'Enum', name: 'entity_type' }),
-      expect.objectContaining({ kind: 'Domain', name: 'email_address' })
+      expect.objectContaining({ kind: 'Domain', name: 'email_address' }),
+      expect.objectContaining({ kind: 'Composite', name: 'address_record' })
     ]))
     expect(model.tables.find(table => table.fullName === 'public.orders')?.groupName).toBe('Commerce')
-    expect(model.schemas).toEqual(['public'])
+    expect(model.tables.find(table => table.fullName === 'analytics.order_rollups')?.groupName).toBe('Analytics')
+    expect(model.schemas).toEqual(expect.arrayContaining(['public', 'audit', 'analytics']))
+    expect(model.schemas).toHaveLength(3)
+  })
+
+  it('ships the bundled studio example as a multi-version document with branch history', () => {
+    const document = parsePgmlDocument(pgmlVersionedExample)
+
+    expect(document.workspace.basedOnVersionId).toBe('v_programs')
+    expect(document.versions.map(version => version.id)).toEqual([
+      'v_foundation',
+      'v_commerce',
+      'v_programs',
+      'v_analytics'
+    ])
+    expect(document.versions.map(version => version.role)).toEqual([
+      'implementation',
+      'design',
+      'implementation',
+      'design'
+    ])
+    expect(document.workspace.snapshot.source).not.toContain('Properties "group:Analytics"')
+    expect(document.workspace.snapshot.source).toContain('TableGroup Analytics')
+    expect(document.workspace.snapshot.source).toContain('Composite address_record')
+    expect(document.workspace.snapshot.source).toContain('Procedure archive_orders(retention_days integer) [replace]')
+    expect(getPgmlDocumentBlockPreviewSource(document.workspace)).toContain('Properties "group:Analytics"')
   })
 
   it('derives sequence ownership and routine metadata from source blocks', () => {
@@ -69,6 +114,36 @@ describe('PGML model parsing', () => {
     ]))
     expect(archiveOrders?.docs?.summary).toContain('Moves stale orders')
     expect(archiveOrders?.affects?.writes).toEqual(['public.orders_archive', 'public.order_item_archive'])
+    expect(archiveOrders?.details).toEqual(expect.arrayContaining([
+      expect.stringContaining('source:\nCREATE OR REPLACE PROCEDURE public.archive_orders(retention_days integer)\nLANGUAGE plpgsql')
+    ]))
+  })
+
+  it('dedents executable source in detail previews while keeping nested SQL indentation', () => {
+    const model = parsePgml(`Procedure public.archive_orders(retention_days integer) {
+  source: $sql$
+        CREATE OR REPLACE PROCEDURE public.archive_orders(retention_days integer)
+        LANGUAGE plpgsql
+        AS $$
+        BEGIN
+          INSERT INTO public.orders_archive
+          SELECT * FROM public.orders;
+        END;
+        $$;
+  $sql$
+}`)
+    const procedure = model.procedures.find(entry => entry.name.endsWith('archive_orders')) || null
+    const sourceDetail = procedure?.details.find(detail => detail.startsWith('source:\n')) || null
+
+    expect(sourceDetail?.trimEnd()).toBe(`source:
+CREATE OR REPLACE PROCEDURE public.archive_orders(retention_days integer)
+LANGUAGE plpgsql
+AS $$
+BEGIN
+  INSERT INTO public.orders_archive
+  SELECT * FROM public.orders;
+END;
+$$;`)
   })
 
   it('derives trigger execution metadata and called routines from trigger source', () => {
@@ -113,6 +188,73 @@ Table public.orders {
         toTable: 'public.users'
       })
     ]))
+  })
+
+  it('parses DBML-style imported indexes, checks, comments, and named composite refs', () => {
+    const source = `/*
+Imported from DBML.
+*/
+Table public.users {
+  id bigint [pk, not null] // System ID
+  email text [not null]
+  status text [not null]
+
+  Indexes {
+    email [name: 'users_email_idx']
+    (email, status) [name: 'users_email_status_idx', unique, where: \`status <> ''\`]
+  }
+
+  checks {
+    \`status <> ''\` [name: 'users_status_check']
+    \`NOT (
+      status = 'draft'
+      AND email = ''
+    )\` [name: 'users_status_email_check']
+  }
+}
+
+Table public.accounts {
+  id bigint [pk]
+  user_id bigint [not null]
+  entity_type text [not null]
+}
+
+Ref account_user_ref: public.accounts.(user_id, entity_type) > public.users.(id, status)`
+    const model = parsePgml(source)
+    const usersTable = model.tables.find(table => table.fullName === 'public.users')
+    const namedReference = model.references.find(reference => reference.name === 'account_user_ref')
+
+    expect(usersTable?.columns.map(column => column.name)).toEqual(['id', 'email', 'status'])
+    expect(usersTable?.indexes).toEqual([
+      expect.objectContaining({
+        columns: ['email'],
+        name: 'users_email_idx'
+      }),
+      expect.objectContaining({
+        columns: ['email', 'status'],
+        name: 'users_email_status_idx'
+      })
+    ])
+    expect(usersTable?.constraints).toEqual([
+      expect.objectContaining({
+        expression: `status <> ''`,
+        name: 'users_status_check'
+      }),
+      expect.objectContaining({
+        expression: `NOT (
+status = 'draft'
+AND email = ''
+)`,
+        name: 'users_status_email_check'
+      })
+    ])
+    expect(namedReference).toEqual(expect.objectContaining({
+      fromColumn: 'user_id',
+      fromColumns: ['user_id', 'entity_type'],
+      name: 'account_user_ref',
+      toColumn: 'id',
+      toColumns: ['id', 'status']
+    }))
   })
 
   it('tracks source ranges for navigable schema objects', () => {
@@ -205,6 +347,195 @@ Function orphan_report() {
     select 1;
   $sql$
 }`)
+  })
+
+  it('replaces the selected source block while preserving surrounding workspace text', () => {
+    const source = `Table public.orders {
+  id integer [pk]
+}
+
+Function orphan_report() {
+  language: sql
+  source: $sql$
+    select 1;
+  $sql$
+}
+
+Table public.audit_log {
+  id integer [pk]
+}`
+
+    const nextSource = replacePgmlSourceRange(source, {
+      startLine: 5,
+      endLine: 10
+    }, `Function orphan_report() {
+  language: sql
+  source: $sql$
+    select 2;
+  $sql$
+}`)
+
+    expect(nextSource).toBe(`Table public.orders {
+  id integer [pk]
+}
+
+Function orphan_report() {
+  language: sql
+  source: $sql$
+    select 2;
+  $sql$
+}
+
+Table public.audit_log {
+  id integer [pk]
+}`)
+  })
+
+  it('dedents and reapplies table-body PGML snippets for popup editing', () => {
+    const originalSnippet = `  Constraint chk_orders_total: total_cents >= 0`
+
+    expect(dedentPgmlSourceForEditor(originalSnippet)).toBe('Constraint chk_orders_total: total_cents >= 0')
+    expect(reindentPgmlEditorText('Constraint chk_orders_total: total_cents > 0', originalSnippet)).toBe(
+      '  Constraint chk_orders_total: total_cents > 0'
+    )
+  })
+
+  it('normalizes over-indented PGML blocks for popup editing and writes them back with stable indentation', () => {
+    const originalBlock = `TableGroup Core {
+                                                                                                        public.tenants
+                                                                                                        public.accounts
+}`
+
+    expect(normalizePgmlBlockSourceForEditor(originalBlock)).toBe(`TableGroup Core {
+  public.tenants
+  public.accounts
+}`)
+    expect(reindentPgmlBlockEditorText(`TableGroup Core {
+  public.tenants
+  public.audit_log
+}`, originalBlock)).toBe(`TableGroup Core {
+  public.tenants
+  public.audit_log
+}`)
+  })
+
+  it('normalizes pathological document indentation while keeping nested SQL structure intact', () => {
+    expect(normalizePgmlSourceIndentation(`TableGroup Core {
+                                                                                                        public.tenants
+}
+
+Function sync_users() returns trigger {
+  source: $sql$
+        CREATE FUNCTION public.sync_users() RETURNS trigger LANGUAGE plpgsql AS $$
+        BEGIN
+                RETURN NEW;
+        END;
+        $$;
+  $sql$
+}`)).toBe(`TableGroup Core {
+  public.tenants
+}
+
+Function sync_users() returns trigger {
+  source: $sql$
+    CREATE FUNCTION public.sync_users() RETURNS trigger LANGUAGE plpgsql AS $$
+    BEGIN
+            RETURN NEW;
+    END;
+    $$;
+  $sql$
+}`)
+  })
+
+  it('replaces executable source bodies without exposing the PGML wrapper to the popup editor', () => {
+    const nextBlock = replacePgmlExecutableSourceInBlock(`Function orphan_report() {
+  language: sql
+  source: $sql$
+    select 1;
+  $sql$
+}`, `select
+  2;`)
+
+    expect(nextBlock).toBe(`Function orphan_report() {
+  language: sql
+  source: $sql$
+    select
+      2;
+  $sql$
+}`)
+  })
+
+  it('rewrites malformed executable source bodies with the expected PGML indentation level', () => {
+    const nextBlock = replacePgmlExecutableSourceInBlock(`Function sync_users() returns trigger {
+  source: $sql$
+                                                                                                        CREATE FUNCTION public.sync_users() RETURNS trigger LANGUAGE plpgsql AS $$
+                                                                                                        BEGIN
+                                                                                                          RETURN NEW;
+                                                                                                        END;
+                                                                                                        $$;
+  $sql$
+}`, `CREATE FUNCTION public.sync_users() RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+  RETURN NEW;
+END;
+$$;`)
+
+    expect(nextBlock).toBe(`Function sync_users() returns trigger {
+  source: $sql$
+    CREATE FUNCTION public.sync_users() RETURNS trigger LANGUAGE plpgsql AS $$
+    BEGIN
+      RETURN NEW;
+    END;
+    $$;
+  $sql$
+}`)
+  })
+
+  it('extracts only the routine body from wrapped function SQL for popup editing', () => {
+    expect(extractPgmlRoutineBodyFromExecutableSource(`CREATE OR REPLACE FUNCTION public.demo()
+RETURNS void AS $$
+BEGIN
+  PERFORM 1;
+END;
+$$ LANGUAGE plpgsql;`)).toBe(`BEGIN
+  PERFORM 1;
+END;`)
+
+    expect(extractPgmlRoutineBodyFromExecutableSource(`CREATE FUNCTION public.touch_users()
+RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+  RETURN NEW;
+END;
+$$;`)).toBe(`BEGIN
+  RETURN NEW;
+END;`)
+  })
+
+  it('reapplies routine body edits while preserving the surrounding language wrapper', () => {
+    const nextExecutableSource = replacePgmlRoutineBodyInExecutableSource(`CREATE OR REPLACE FUNCTION public.demo()
+RETURNS void AS $$
+BEGIN
+  PERFORM 1;
+END;
+$$ LANGUAGE plpgsql;`, `BEGIN
+  PERFORM 2;
+END;`)
+
+    expect(nextExecutableSource).toBe(`CREATE OR REPLACE FUNCTION public.demo()
+RETURNS void AS $$
+BEGIN
+  PERFORM 2;
+END;
+$$ LANGUAGE plpgsql;`)
+  })
+
+  it('replaces constraint expressions directly for popup SQL editing', () => {
+    const nextBlock = replacePgmlConstraintExpressionInBlock(
+      '  Constraint chk_orders_total: total_cents >= 0',
+      'total_cents > 0'
+    )
+
+    expect(nextBlock).toBe('  Constraint chk_orders_total: total_cents > 0')
   })
 
   it('computes editor scroll offsets from the source block start', () => {

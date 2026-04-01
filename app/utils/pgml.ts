@@ -2,8 +2,16 @@ import {
   hasStoredPgmlTableWidthScale,
   normalizePgmlTableWidthScale
 } from './pgml-node-properties'
+import {
+  collectDbmlCompatibleMultilineEntries,
+  normalizePgmlCompatSource,
+  parseDbmlCompatibleCheckDefinition,
+  parseDbmlCompatibleIndexDefinition,
+  parsePgmlCompatibleReference
+} from './pgml-dbml-compat'
 
 export type PgmlColumn = {
+  customMetadata: PgmlMetadataEntry[]
   name: string
   type: string
   modifiers: string[]
@@ -21,6 +29,7 @@ export type PgmlTable = {
   schema: string
   fullName: string
   groupName: string | null
+  customMetadata: PgmlMetadataEntry[]
   note: string | null
   columns: PgmlColumn[]
   indexes: PgmlIndex[]
@@ -46,11 +55,14 @@ export type PgmlConstraint = {
 export type PgmlReference = {
   fromTable: string
   fromColumn: string
+  fromColumns?: string[]
   toTable: string
   toColumn: string
+  toColumns?: string[]
   relation: '>' | '<' | '-'
   onDelete: string | null
   onUpdate: string | null
+  name?: string | null
 }
 
 export type PgmlGroup = {
@@ -227,6 +239,116 @@ const cleanName = (value: string) => value.replaceAll('"', '').trim()
 const cleanText = (value: string) => value.trim().replace(/^"(.*)"$/, '$1').replace(/^'(.*)'$/, '$1')
 const readMatch = (value: string | undefined) => value || ''
 const trimMultiline = (value: string) => value.replace(/^\n+|\n+$/g, '')
+const splitNormalizedLines = (value: string) => value.replaceAll('\r\n', '\n').split('\n')
+const pgmlEmbeddedSourceDelimiterPattern = /^\s*(?:source|definition):\s*(\$(?:[A-Za-z0-9_]+)?\$)(.*)$/
+const getLeadingWhitespaceWidth = (value: string) => {
+  const match = value.match(/^[\t ]+/)
+
+  return match ? match[0].length : 0
+}
+const getCommonLeadingWhitespace = (value: string) => {
+  const nonEmptyLines = splitNormalizedLines(trimMultiline(value)).filter(line => line.trim().length > 0)
+
+  if (nonEmptyLines.length === 0) {
+    return ''
+  }
+
+  const minimumWhitespaceWidth = nonEmptyLines.reduce((minimum, line) => {
+    return Math.min(minimum, getLeadingWhitespaceWidth(line))
+  }, Number.POSITIVE_INFINITY)
+
+  if (!Number.isFinite(minimumWhitespaceWidth) || minimumWhitespaceWidth <= 0) {
+    return ''
+  }
+
+  const anchorLine = nonEmptyLines.find(line => getLeadingWhitespaceWidth(line) >= minimumWhitespaceWidth) || nonEmptyLines[0] || ''
+
+  return anchorLine.slice(0, minimumWhitespaceWidth)
+}
+const indentNonEmptyLines = (
+  value: string,
+  indent: string
+) => {
+  if (value.length === 0) {
+    return []
+  }
+
+  return splitNormalizedLines(value).map((line) => {
+    return line.trim().length > 0 ? `${indent}${line}` : ''
+  })
+}
+const normalizePgmlEmbeddedSourceBodyLines = (
+  lines: string[],
+  sourceIndent: string
+) => {
+  // Embedded SQL often inherits the surrounding PGML indentation repeatedly
+  // when it has been serialized or pasted through nested wrappers. Strip the
+  // shared indentation once, then reapply one PGML level under `source:`.
+  const normalizedBody = dedentPgmlSourceForEditor(lines.join('\n'))
+
+  return indentNonEmptyLines(normalizedBody, `${sourceIndent}  `)
+}
+const collectNormalizedPgmlEmbeddedSourceBlock = (
+  lines: string[],
+  startIndex: number,
+  delimiter: string,
+  sourceIndent: string
+) => {
+  // The raw workspace editor and popup editors both rely on this collector so
+  // malformed embedded SQL is repaired the same way during normalization.
+  const bodyLines: string[] = []
+  let index = startIndex + 1
+
+  while (index < lines.length) {
+    const nextLine = lines[index] || ''
+
+    if (nextLine.trim() === delimiter) {
+      return {
+        bodyLines: normalizePgmlEmbeddedSourceBodyLines(bodyLines, sourceIndent),
+        closingLine: `${sourceIndent}${delimiter}`,
+        nextIndex: index + 1
+      }
+    }
+
+    bodyLines.push(nextLine.replace(/[ \t]+$/g, ''))
+    index += 1
+  }
+
+  return {
+    bodyLines: normalizePgmlEmbeddedSourceBodyLines(bodyLines, sourceIndent),
+    closingLine: null,
+    nextIndex: lines.length
+  }
+}
+const normalizeExecutableDetailSource = (value: string) => {
+  // Detail popovers collapse source bodies into a plain-text preview. Keeping
+  // that formatter here ensures popup rendering mirrors the workspace editor's
+  // dedented SQL/PGML presentation rules.
+  const trimmedSource = trimMultiline(value)
+
+  if (trimmedSource.length === 0) {
+    return 'source:'
+  }
+
+  const lines = trimmedSource
+    .split('\n')
+    .map(line => line.replace(/[ \t]+$/g, ''))
+  const nonEmptyLines = lines.filter(line => line.trim().length > 0)
+  const sharedIndent = nonEmptyLines.reduce((minimumIndent, line) => {
+    return Math.min(minimumIndent, getLeadingWhitespaceWidth(line))
+  }, Number.POSITIVE_INFINITY)
+  const normalizedLines = Number.isFinite(sharedIndent)
+    ? lines.map((line) => {
+        if (line.trim().length === 0) {
+          return ''
+        }
+
+        return line.slice(sharedIndent)
+      })
+    : lines
+
+  return `source:\n${normalizedLines.join('\n')}`
+}
 const normalizeEffectKey = (value: string) => cleanName(value).toLowerCase().replaceAll(/[^\w]+/g, '_')
 const normalizeSource = (value: string) => value.replaceAll('\n', ' ').replace(/\s+/g, ' ').trim()
 const lower = (value: string) => value.toLowerCase()
@@ -485,6 +607,30 @@ const getRoutineNameSearchKeys = (value: string) => {
     cleanForSearch(value.split('.').at(-1) || value)
   ]).filter(entry => entry.length > 0)
 }
+const getSequenceSearchKeys = (value: string) => {
+  return uniqueValues([
+    cleanForSearch(value),
+    cleanForSearch(value.split('.').at(-1) || value)
+  ]).filter(entry => entry.length > 0)
+}
+const getSequenceModifierTableIds = (
+  tables: PgmlTable[],
+  sequence: PgmlSequence
+) => {
+  const searchKeys = getSequenceSearchKeys(sequence.name)
+
+  return uniqueValues(tables.flatMap((table) => {
+    const hasSequenceReference = table.columns.some((column) => {
+      return column.modifiers.some((modifier) => {
+        const haystack = cleanForSearch(modifier)
+
+        return searchKeys.some(key => haystack.includes(key))
+      })
+    })
+
+    return hasSequenceReference ? [table.fullName] : []
+  }))
+}
 const buildTriggerTableIdsByRoutineName = (
   model: PgmlSchemaModel,
   referenceLookup: Map<string, string>
@@ -522,7 +668,20 @@ const getSequenceOwnedTableIds = (
     ? [metadataOwnedBy, ...explicitOwnedBy]
     : explicitOwnedBy
 
-  return getTableIdsFromValues(tables, referenceLookup, values)
+  return uniqueValues([
+    ...getTableIdsFromValues(tables, referenceLookup, values),
+    ...getSequenceModifierTableIds(tables, sequence)
+  ])
+}
+export const getSequenceAttachedTableIds = (
+  tables: PgmlTable[],
+  sequence: PgmlSequence
+) => {
+  return getSequenceOwnedTableIds(
+    tables,
+    buildGroupTableReferenceLookup(tables),
+    sequence
+  )
 }
 const getPersistableStandaloneObjectPropertyTargetIds = (model: PgmlSchemaModel) => {
   const referenceLookup = buildGroupTableReferenceLookup(model.tables)
@@ -548,7 +707,7 @@ const getPersistableStandaloneObjectPropertyTargetIds = (model: PgmlSchemaModel)
     .map(trigger => `trigger:${trigger.name}`)
   const standaloneSequenceIds = model.sequences
     .filter((sequence) => {
-      return getSequenceOwnedTableIds(model.tables, referenceLookup, sequence).length === 0
+      return getSequenceAttachedTableIds(model.tables, sequence).length === 0
     })
     .map(sequence => `sequence:${sequence.name}`)
 
@@ -912,6 +1071,26 @@ const parseReferenceTarget = (value: string) => {
   }
 }
 
+const createGeneratedTableIndexName = (
+  tableName: string,
+  columns: string[],
+  entryIndex: number
+) => {
+  const normalizedColumns = columns
+    .map(column => cleanName(column).replaceAll(/[^\w]+/g, '_'))
+    .filter(column => column.length > 0)
+    .join('_')
+
+  return `${tableName.replaceAll(/[^\w]+/g, '_')}_${normalizedColumns || 'index'}_${entryIndex}`
+}
+
+const createGeneratedTableConstraintName = (
+  tableName: string,
+  entryIndex: number
+) => {
+  return `${tableName.replaceAll(/[^\w]+/g, '_')}_check_${entryIndex}`
+}
+
 export const getPgmlSourceSelectionRange = (source: string, sourceRange: PgmlSourceRange) => {
   const lines = source.replaceAll('\r\n', '\n').split('\n')
 
@@ -938,6 +1117,553 @@ export const getPgmlSourceSelectionRange = (source: string, sourceRange: PgmlSou
   }
 }
 
+export const dedentPgmlSourceForEditor = (value: string) => {
+  const normalizedValue = trimMultiline(value.replaceAll('\r\n', '\n'))
+  const sharedIndent = getCommonLeadingWhitespace(normalizedValue)
+  const dedentedLines = splitNormalizedLines(normalizedValue)
+    .map((line) => {
+      return sharedIndent.length > 0 && line.startsWith(sharedIndent)
+        ? line.slice(sharedIndent.length)
+        : line
+    })
+    .map(line => line.replace(/[ \t]+$/g, ''))
+
+  while (dedentedLines[0]?.trim().length === 0) {
+    dedentedLines.shift()
+  }
+
+  while (dedentedLines.at(-1)?.trim().length === 0) {
+    dedentedLines.pop()
+  }
+
+  if (dedentedLines.length === 0) {
+    return ''
+  }
+
+  return dedentedLines.join('\n')
+}
+
+export const normalizePgmlSourceIndentation = (value: string) => {
+  const sourceLines = splitNormalizedLines(value.replaceAll('\r\n', '\n'))
+  const normalizedLines: string[] = []
+  let blockDepth = 0
+  let index = 0
+
+  while (index < sourceLines.length) {
+    const line = sourceLines[index] || ''
+    const trimmedLine = line.trim()
+    const nextLine = line.replace(/[ \t]+$/g, '')
+
+    if (trimmedLine.length === 0) {
+      normalizedLines.push('')
+      index += 1
+      continue
+    }
+
+    const closingBracePrefix = trimmedLine.match(/^}+/)?.[0].length || 0
+    const effectiveDepth = Math.max(0, blockDepth - closingBracePrefix)
+    const expectedIndentWidth = effectiveDepth * 2
+    const actualIndentWidth = getLeadingWhitespaceWidth(line)
+    const normalizedLine = actualIndentWidth > expectedIndentWidth + 8
+      ? `${' '.repeat(expectedIndentWidth)}${trimmedLine}`
+      : nextLine
+    const embeddedSourceMatch = trimmedLine.match(pgmlEmbeddedSourceDelimiterPattern)
+
+    normalizedLines.push(normalizedLine)
+
+    if (embeddedSourceMatch && !embeddedSourceMatch[2]?.includes(embeddedSourceMatch[1] || '')) {
+      const embeddedSourceBlock = collectNormalizedPgmlEmbeddedSourceBlock(
+        sourceLines,
+        index,
+        embeddedSourceMatch[1] || '',
+        normalizedLine.match(/^[\t ]*/)?.[0] || ''
+      )
+
+      normalizedLines.push(...embeddedSourceBlock.bodyLines)
+
+      if (embeddedSourceBlock.closingLine) {
+        normalizedLines.push(embeddedSourceBlock.closingLine)
+      }
+
+      index = embeddedSourceBlock.nextIndex
+    } else {
+      index += 1
+    }
+
+    const openingBraceCount = (trimmedLine.match(/{/g) || []).length
+    const closingBraceCount = (trimmedLine.match(/}/g) || []).length
+
+    blockDepth = Math.max(0, blockDepth + openingBraceCount - closingBraceCount)
+  }
+
+  return normalizedLines.join('\n')
+}
+
+export const normalizePgmlBlockSourceForEditor = (value: string) => {
+  const dedentedValue = dedentPgmlSourceForEditor(value)
+  const lines = splitNormalizedLines(dedentedValue)
+
+  if (lines.length < 3) {
+    return dedentedValue
+  }
+
+  const bodyLines = lines.slice(1, -1)
+  const minimumBodyIndent = bodyLines.reduce((minimum, line) => {
+    if (line.trim().length === 0) {
+      return minimum
+    }
+
+    return Math.min(minimum, getLeadingWhitespaceWidth(line))
+  }, Number.POSITIVE_INFINITY)
+
+  if (!Number.isFinite(minimumBodyIndent) || minimumBodyIndent <= 2) {
+    return dedentedValue
+  }
+
+  // Some snippets are sliced from already-malformed source where the block body
+  // drifted far to the right. Normalize the first body indentation level back
+  // to two spaces while preserving any deeper nesting under it.
+  const trimWidth = minimumBodyIndent - 2
+  const normalizedLines = lines.map((line, index) => {
+    if (line.trim().length === 0) {
+      return ''
+    }
+
+    if (index === 0 || index === lines.length - 1) {
+      return line.replace(/[ \t]+$/g, '')
+    }
+
+    const removableWidth = Math.min(trimWidth, getLeadingWhitespaceWidth(line))
+
+    return line.slice(removableWidth).replace(/[ \t]+$/g, '')
+  })
+
+  return normalizedLines.join('\n')
+}
+
+export const reindentPgmlEditorText = (
+  value: string,
+  referenceText: string
+) => {
+  const normalizedValue = trimMultiline(value.replaceAll('\r\n', '\n'))
+  const sharedIndent = getCommonLeadingWhitespace(referenceText)
+
+  if (sharedIndent.length === 0) {
+    return normalizedValue
+  }
+
+  return splitNormalizedLines(normalizedValue)
+    .map((line) => {
+      return line.trim().length > 0 ? `${sharedIndent}${line}` : ''
+    })
+    .join('\n')
+}
+
+export const reindentPgmlBlockEditorText = (
+  value: string,
+  referenceText: string
+) => {
+  // Block snippets should round-trip into a clean two-space hierarchy instead
+  // of preserving pathological inner indentation from the original source.
+  const normalizedValue = normalizePgmlBlockSourceForEditor(value)
+  const sharedIndent = getCommonLeadingWhitespace(referenceText)
+
+  if (sharedIndent.length === 0) {
+    return normalizedValue
+  }
+
+  return splitNormalizedLines(normalizedValue)
+    .map((line) => {
+      return line.trim().length > 0 ? `${sharedIndent}${line}` : ''
+    })
+    .join('\n')
+}
+
+const reindentPgmlSnippetWithIndent = (
+  value: string,
+  indent: string
+) => {
+  return splitNormalizedLines(dedentPgmlSourceForEditor(value))
+    .map((line) => {
+      return line.trim().length > 0 ? `${indent}${line}` : ''
+    })
+    .join('\n')
+}
+
+const extractPgmlExecutableSourcePropertyBlock = (blockSource: string) => {
+  const normalizedBlockSource = blockSource.replaceAll('\r\n', '\n')
+  const sourceMatch = normalizedBlockSource.match(
+    /^([ \t]*(?:source|definition):\s*(\$(?:[A-Za-z0-9_]+)?\$)\s*\n[\s\S]*?\n[ \t]*\2)/m
+  )
+
+  return sourceMatch?.[1] || sourceMatch?.[0] || null
+}
+
+const buildExecutableMetadataBodySections = (
+  sections: {
+    affects: {
+      calls: string[]
+      dependsOn: string[]
+      extras: Array<{ key: string, values: string[] }>
+      ownedBy: string[]
+      reads: string[]
+      sets: string[]
+      uses: string[]
+      writes: string[]
+    }
+    docsEntries: Array<{ key: string, value: string }>
+    docsSummary: string
+    metadata: Array<{ key: string, value: string }>
+  },
+  propertyIndent: string
+) => {
+  const bodyLines: string[] = []
+  const pushSpacer = () => {
+    if (bodyLines.length > 0 && bodyLines.at(-1) !== '') {
+      bodyLines.push('')
+    }
+  }
+  const pushDocs = () => {
+    const docsSummary = sections.docsSummary.trim()
+    const docsEntries = sections.docsEntries
+      .map((entry) => {
+        return {
+          key: entry.key.trim(),
+          value: entry.value.trim()
+        }
+      })
+      .filter(entry => entry.key.length > 0 && entry.value.length > 0)
+
+    if (docsSummary.length === 0 && docsEntries.length === 0) {
+      return
+    }
+
+    pushSpacer()
+    bodyLines.push(`${propertyIndent}docs {`)
+
+    if (docsSummary.length > 0) {
+      bodyLines.push(`${propertyIndent}  summary: ${docsSummary}`)
+    }
+
+    docsEntries.forEach((entry) => {
+      bodyLines.push(`${propertyIndent}  ${entry.key}: ${entry.value}`)
+    })
+
+    bodyLines.push(`${propertyIndent}}`)
+  }
+  const pushAffects = () => {
+    const affectEntries = [
+      ['writes', sections.affects.writes],
+      ['sets', sections.affects.sets],
+      ['depends_on', sections.affects.dependsOn],
+      ['reads', sections.affects.reads],
+      ['calls', sections.affects.calls],
+      ['uses', sections.affects.uses],
+      ['owned_by', sections.affects.ownedBy]
+    ] as const
+    const normalizedAffectEntries = affectEntries
+      .map(([key, values]) => {
+        return {
+          key,
+          values: values.map(value => value.trim()).filter(value => value.length > 0)
+        }
+      })
+      .filter(entry => entry.values.length > 0)
+    const extraEntries = sections.affects.extras
+      .map((entry) => {
+        return {
+          key: entry.key.trim(),
+          values: entry.values.map(value => value.trim()).filter(value => value.length > 0)
+        }
+      })
+      .filter(entry => entry.key.length > 0 && entry.values.length > 0)
+
+    if (normalizedAffectEntries.length === 0 && extraEntries.length === 0) {
+      return
+    }
+
+    pushSpacer()
+    bodyLines.push(`${propertyIndent}affects {`)
+
+    normalizedAffectEntries.forEach((entry) => {
+      bodyLines.push(`${propertyIndent}  ${entry.key}: [${entry.values.join(', ')}]`)
+    })
+
+    extraEntries.forEach((entry) => {
+      bodyLines.push(`${propertyIndent}  ${entry.key}: [${entry.values.join(', ')}]`)
+    })
+
+    bodyLines.push(`${propertyIndent}}`)
+  }
+  const pushMetadata = () => {
+    const metadataEntries = sections.metadata
+      .map((entry) => {
+        return {
+          key: entry.key.trim(),
+          value: entry.value.trim()
+        }
+      })
+      .filter(entry => entry.key.length > 0 && entry.value.length > 0)
+
+    if (metadataEntries.length === 0) {
+      return
+    }
+
+    pushSpacer()
+
+    metadataEntries.forEach((entry) => {
+      bodyLines.push(`${propertyIndent}${entry.key}: ${entry.value}`)
+    })
+  }
+
+  pushDocs()
+  pushAffects()
+  pushMetadata()
+
+  if (bodyLines[0] === '') {
+    bodyLines.shift()
+  }
+
+  if (bodyLines.at(-1) === '') {
+    bodyLines.pop()
+  }
+
+  return bodyLines
+}
+
+export const replacePgmlExecutableSourceInBlock = (
+  blockSource: string,
+  nextExecutableSource: string
+) => {
+  const normalizedBlockSource = blockSource.replaceAll('\r\n', '\n')
+  const sourceMatch = normalizedBlockSource.match(
+    /^([ \t]*(?:source|definition):\s*(\$(?:[A-Za-z0-9_]+)?\$)\s*\n)([\s\S]*?)(\n([ \t]*)\2)/m
+  )
+
+  if (!sourceMatch) {
+    return null
+  }
+
+  const header = sourceMatch[1] || ''
+  const closingLine = sourceMatch[4] || ''
+  const propertyIndent = sourceMatch[5] || ''
+  const normalizedExecutableSource = dedentPgmlSourceForEditor(nextExecutableSource.replaceAll('\r\n', '\n'))
+  const indentedBody = indentNonEmptyLines(normalizedExecutableSource, `${propertyIndent}  `).join('\n')
+
+  const nextStoredSource = indentedBody.length > 0
+    ? `${header}${indentedBody}${closingLine}`
+    : `${header}${closingLine}`
+
+  return normalizedBlockSource.replace(sourceMatch[0], () => nextStoredSource)
+}
+
+// Routine sources can arrive from hand-authored PGML or pg_dump-style SQL, so
+// the body extractor accepts both `AS $$\n...` and `AS $$ ...` forms while
+// preserving any trailing wrapper such as `$$ LANGUAGE plpgsql;`.
+const pgmlRoutineBodyPattern = /^([\s\S]*?\bAS\s+(\$(?:[A-Za-z0-9_]+)?\$)[ \t]*\r?\n?)([\s\S]*?)(\r?\n?[ \t]*\2[\s\S]*)$/i
+
+export const extractPgmlRoutineBodyFromExecutableSource = (value: string) => {
+  const normalizedValue = value.replaceAll('\r\n', '\n')
+  const bodyMatch = normalizedValue.match(pgmlRoutineBodyPattern)
+
+  if (!bodyMatch) {
+    return null
+  }
+
+  return dedentPgmlSourceForEditor(bodyMatch[3] || '')
+}
+
+export const replacePgmlRoutineBodyInExecutableSource = (
+  value: string,
+  nextBody: string
+) => {
+  const normalizedValue = value.replaceAll('\r\n', '\n')
+  const bodyMatch = normalizedValue.match(pgmlRoutineBodyPattern)
+
+  if (!bodyMatch) {
+    return null
+  }
+
+  const beforeBody = bodyMatch[1] || ''
+  const currentBody = bodyMatch[3] || ''
+  const afterBody = bodyMatch[4] || ''
+  const bodyIndent = currentBody.trim().length > 0 ? getCommonLeadingWhitespace(currentBody) : ''
+  const normalizedNextBody = trimMultiline(nextBody.replaceAll('\r\n', '\n'))
+  const indentedBody = normalizedNextBody.length === 0
+    ? ''
+    : splitNormalizedLines(normalizedNextBody)
+        .map((line) => {
+          return line.trim().length > 0 ? `${bodyIndent}${line}` : ''
+        })
+        .join('\n')
+
+  const nextExecutableSource = indentedBody.length > 0
+    ? `${beforeBody}${indentedBody}${afterBody}`
+    : `${beforeBody}${afterBody.trimStart()}`
+
+  return normalizedValue.replace(bodyMatch[0], () => nextExecutableSource)
+}
+
+export const replacePgmlRoutineBodyInBlock = (
+  blockSource: string,
+  nextBody: string
+) => {
+  const normalizedBlockSource = blockSource.replaceAll('\r\n', '\n')
+  const sourceMatch = normalizedBlockSource.match(
+    /^([ \t]*(?:source|definition):\s*(\$(?:[A-Za-z0-9_]+)?\$)\s*\n)([\s\S]*?)(\n([ \t]*)\2)/m
+  )
+
+  if (!sourceMatch) {
+    return null
+  }
+
+  // The stored PGML block keeps the executable SQL indented under `source:`.
+  // Strip that wrapper indentation before editing the inner routine body, then
+  // let the block rewriter apply the PGML indentation once on the way back out.
+  const nextExecutableSource = replacePgmlRoutineBodyInExecutableSource(
+    dedentPgmlSourceForEditor(sourceMatch[3] || ''),
+    nextBody
+  )
+
+  if (nextExecutableSource === null) {
+    return null
+  }
+
+  return replacePgmlExecutableSourceInBlock(normalizedBlockSource, nextExecutableSource)
+}
+
+export const replacePgmlConstraintExpressionInBlock = (
+  blockSource: string,
+  nextExpression: string
+) => {
+  const normalizedBlockSource = blockSource.replaceAll('\r\n', '\n')
+  const trimmedExpression = trimMultiline(nextExpression).trim()
+
+  if (trimmedExpression.length === 0) {
+    return normalizedBlockSource
+  }
+
+  return normalizedBlockSource.replace(
+    /^(\s*Constraint\s+[^:]+:\s*)(.+)$/m,
+    `$1${trimmedExpression}`
+  )
+}
+
+export const replacePgmlExecutableMetadataInBlock = (
+  blockSource: string,
+  sections: {
+    affects: {
+      calls: string[]
+      dependsOn: string[]
+      extras: Array<{ key: string, values: string[] }>
+      ownedBy: string[]
+      reads: string[]
+      sets: string[]
+      uses: string[]
+      writes: string[]
+    }
+    docsEntries: Array<{ key: string, value: string }>
+    docsSummary: string
+    metadata: Array<{ key: string, value: string }>
+  }
+) => {
+  const normalizedBlockSource = blockSource.replaceAll('\r\n', '\n')
+  const lines = splitNormalizedLines(normalizedBlockSource)
+  const headerLine = lines[0] || ''
+  const closingLine = lines.at(-1)?.trim() === '}'
+    ? `${headerLine.match(/^[ \t]*/)?.[0] || ''}}`
+    : '}'
+
+  if (!headerLine.trim().endsWith('{')) {
+    return null
+  }
+
+  const blockIndent = headerLine.match(/^[ \t]*/)?.[0] || ''
+  const propertyIndent = `${blockIndent}  `
+  const bodyLines = buildExecutableMetadataBodySections(sections, propertyIndent)
+  const sourceSnippet = extractPgmlExecutableSourcePropertyBlock(normalizedBlockSource)
+  const nextLines = [headerLine]
+
+  if (bodyLines.length > 0) {
+    nextLines.push(...bodyLines)
+  }
+
+  if (sourceSnippet) {
+    if (nextLines.at(-1) !== headerLine && nextLines.at(-1) !== '') {
+      nextLines.push('')
+    }
+
+    nextLines.push(reindentPgmlSnippetWithIndent(sourceSnippet, propertyIndent))
+  }
+
+  nextLines.push(closingLine)
+
+  return nextLines.join('\n')
+}
+
+export const replacePgmlIndexDefinitionInBlock = (
+  blockSource: string,
+  nextDefinition: {
+    columns: string[]
+    name: string
+    type: string
+  }
+) => {
+  const normalizedBlockSource = blockSource.replaceAll('\r\n', '\n')
+  const indent = normalizedBlockSource.match(/^[ \t]*/)?.[0] || ''
+  const columns = nextDefinition.columns
+    .map(value => value.trim())
+    .filter(value => value.length > 0)
+  const type = nextDefinition.type.trim() || 'btree'
+  const name = nextDefinition.name.trim()
+
+  if (name.length === 0 || columns.length === 0) {
+    return null
+  }
+
+  return `${indent}Index ${name} (${columns.join(', ')}) [type: ${type}]`
+}
+
+export const replacePgmlConstraintDefinitionInBlock = (
+  blockSource: string,
+  nextDefinition: {
+    expression: string
+    name: string
+  }
+) => {
+  const normalizedBlockSource = blockSource.replaceAll('\r\n', '\n')
+  const indent = normalizedBlockSource.match(/^[ \t]*/)?.[0] || ''
+  const expression = trimMultiline(nextDefinition.expression).trim()
+  const name = nextDefinition.name.trim()
+
+  if (name.length === 0 || expression.length === 0) {
+    return null
+  }
+
+  return `${indent}Constraint ${name}: ${expression}`
+}
+
+export const replacePgmlSourceRange = (
+  source: string,
+  sourceRange: PgmlSourceRange,
+  nextText: string
+) => {
+  // Source-range edits are line-oriented across the studio. Normalize to LF
+  // first so popup edits, main-editor focus, and serialized workspace updates
+  // all operate on the same offsets.
+  const normalizedSource = source.replaceAll('\r\n', '\n')
+  const normalizedNextText = nextText.replaceAll('\r\n', '\n')
+  const selectionRange = getPgmlSourceSelectionRange(normalizedSource, sourceRange)
+
+  if (!selectionRange) {
+    return null
+  }
+
+  return normalizedSource.slice(0, selectionRange.start)
+    + normalizedNextText
+    + normalizedSource.slice(selectionRange.end)
+}
+
 export const getPgmlSourceScrollTop = (
   sourceRange: PgmlSourceRange,
   lineHeight: number,
@@ -949,8 +1675,7 @@ export const getPgmlSourceScrollTop = (
 }
 
 const collectBlocks = (source: string) => {
-  const lines = source
-    .replaceAll('\r\n', '\n')
+  const lines = normalizePgmlCompatSource(source)
     .split('\n')
 
   const topLevel: string[] = []
@@ -1293,8 +2018,9 @@ const buildExecutableDetails = (
   }
 
   if (source) {
-    details.push('source:')
-    details.push(...source.split('\n'))
+    // The detail popover should show executable source as one readable block,
+    // with shared PGML indentation stripped while preserving nested SQL.
+    details.push(normalizeExecutableDetailSource(source))
   }
 
   return details.filter(detail => detail.length > 0)
@@ -1373,18 +2099,73 @@ const parseTable = (block: NamedBlock) => {
   const indexes: PgmlIndex[] = []
   const constraints: PgmlConstraint[] = []
   let note: string | null = null
+  let lineIndex = 0
 
-  block.body.forEach((line, lineIndex) => {
+  while (lineIndex < block.body.length) {
+    const line = block.body[lineIndex] || ''
     const trimmed = line.trim()
     const sourceLine = block.bodyStartLine + lineIndex
 
     if (trimmed.length === 0 || trimmed.startsWith('//')) {
-      return
+      lineIndex += 1
+      continue
     }
 
     if (trimmed.startsWith('Note:')) {
       note = trimmed.replace('Note:', '').trim()
-      return
+      lineIndex += 1
+      continue
+    }
+
+    if (/^Indexes\s*\{$/i.test(trimmed)) {
+      const nestedBlock = collectNestedBlockBody(block.body, lineIndex)
+
+      nestedBlock.body.forEach((nestedLine, nestedLineIndex) => {
+        const indexDefinition = parseDbmlCompatibleIndexDefinition(nestedLine)
+
+        if (!indexDefinition || indexDefinition.columns.length === 0) {
+          return
+        }
+
+        indexes.push({
+          name: indexDefinition.name || createGeneratedTableIndexName(nameTarget.table, indexDefinition.columns, indexes.length + 1),
+          tableName: `${nameTarget.schema}.${nameTarget.table}`,
+          columns: indexDefinition.columns,
+          type: indexDefinition.type || 'btree',
+          sourceRange: {
+            startLine: sourceLine + nestedLineIndex + 1,
+            endLine: sourceLine + nestedLineIndex + 1
+          }
+        })
+      })
+
+      lineIndex = nestedBlock.nextIndex
+      continue
+    }
+
+    if (/^checks\s*\{$/i.test(trimmed)) {
+      const nestedBlock = collectNestedBlockBody(block.body, lineIndex)
+
+      collectDbmlCompatibleMultilineEntries(nestedBlock.body).forEach((nestedEntry) => {
+        const checkDefinition = parseDbmlCompatibleCheckDefinition(nestedEntry.text)
+
+        if (!checkDefinition || checkDefinition.expression.length === 0) {
+          return
+        }
+
+        constraints.push({
+          name: checkDefinition.name || createGeneratedTableConstraintName(nameTarget.table, constraints.length + 1),
+          tableName: `${nameTarget.schema}.${nameTarget.table}`,
+          expression: checkDefinition.expression,
+          sourceRange: {
+            startLine: sourceLine + nestedEntry.startIndex + 1,
+            endLine: sourceLine + nestedEntry.endIndex + 1
+          }
+        })
+      })
+
+      lineIndex = nestedBlock.nextIndex
+      continue
     }
 
     const indexMatch = trimmed.match(/^Index\s+([^\s(]+)\s*\(([^)]*)\)(?:\s*\[([^\]]+)\])?$/)
@@ -1406,7 +2187,8 @@ const parseTable = (block: NamedBlock) => {
           endLine: sourceLine
         }
       })
-      return
+      lineIndex += 1
+      continue
     }
 
     const constraintMatch = trimmed.match(/^Constraint\s+([^:]+):\s*(.+)$/)
@@ -1424,13 +2206,15 @@ const parseTable = (block: NamedBlock) => {
           endLine: sourceLine
         }
       })
-      return
+      lineIndex += 1
+      continue
     }
 
     const columnMatch = trimmed.match(/^([^\s]+)\s+([^[\]]+?)(?:\s+\[([^\]]+)\])?$/)
 
     if (!columnMatch) {
-      return
+      lineIndex += 1
+      continue
     }
 
     const columnName = readMatch(columnMatch[1])
@@ -1450,33 +2234,39 @@ const parseTable = (block: NamedBlock) => {
         const relation = readMatch(refMatch[1]) as '>' | '<' | '-'
         const refTarget = readMatch(refMatch[2])
         const target = parseReferenceTarget(refTarget)
+        const normalizedColumnName = cleanName(columnName)
 
         reference = {
           fromTable: `${nameTarget.schema}.${nameTarget.table}`,
-          fromColumn: cleanName(columnName),
+          fromColumn: normalizedColumnName,
+          fromColumns: [normalizedColumnName],
           onDelete,
           onUpdate,
           toTable: `${target.schema}.${target.table}`,
           toColumn: target.column,
+          toColumns: [target.column],
           relation
         }
       }
     }
 
     columns.push({
+      customMetadata: [],
       name: cleanName(columnName),
       type: columnType.trim(),
       modifiers,
       note: notePart ? notePart.replace('note:', '').trim() : null,
       reference
     })
-  })
+    lineIndex += 1
+  }
 
   return {
     name: nameTarget.table,
     schema: nameTarget.schema,
     fullName: `${nameTarget.schema}.${nameTarget.table}`,
     groupName,
+    customMetadata: [],
     note,
     columns,
     indexes,
@@ -1695,24 +2485,28 @@ const parseCustomType = (block: NamedBlock) => {
 }
 
 const parseTopLevelReference = (line: string) => {
-  const match = line.match(/^Ref:\s+([^\s]+)\s*([<>-])\s*([^\s]+)$/)
+  const declaration = parsePgmlCompatibleReference(line)
 
-  if (!match) {
+  if (!declaration) {
     return null
   }
 
-  const fromTarget = parseReferenceTarget(readMatch(match[1]))
-  const relation = readMatch(match[2]) as '>' | '<' | '-'
-  const toTarget = parseReferenceTarget(readMatch(match[3]))
+  const fromTarget = parseTableName(declaration.fromTable)
+  const toTarget = parseTableName(declaration.toTable)
+  const fromColumns = declaration.fromColumns.map(column => cleanName(column))
+  const toColumns = declaration.toColumns.map(column => cleanName(column))
 
   return {
     fromTable: `${fromTarget.schema}.${fromTarget.table}`,
-    fromColumn: readMatch(fromTarget.column),
+    fromColumn: fromColumns[0] || '',
+    fromColumns,
+    name: declaration.name,
     onDelete: null,
     onUpdate: null,
     toTable: `${toTarget.schema}.${toTarget.table}`,
-    toColumn: readMatch(toTarget.column),
-    relation
+    toColumn: toColumns[0] || '',
+    toColumns,
+    relation: declaration.relation
   } satisfies PgmlReference
 }
 
@@ -2134,41 +2928,61 @@ export const parsePgml = (source: string) => {
   } satisfies PgmlSchemaModel
 }
 
-export const pgmlExample = `TableGroup Core {
+const pgmlExampleFoundationSnapshot = `TableGroup Core {
   public.tenants
   public.users
   public.roles
   Note: Shared identity and account ownership
 }
 
-TableGroup Commerce {
+Enum role_kind {
+  owner
+  analyst
+  operator
+  support
+}
+
+Domain email_address {
+  base: text
+  check: VALUE ~* '^[^@]+@[^@]+\\\\.[^@]+$'
+}
+
+Table public.tenants {
+  id uuid [pk]
+  name text [not null]
+  slug text [unique, not null]
+  created_at timestamptz [default: now()]
+  Index idx_tenants_slug (slug) [type: btree]
+}
+
+Table public.roles {
+  id uuid [pk]
+  key role_kind [unique, not null]
+  label text [not null]
+}
+
+Table public.users {
+  id uuid [pk]
+  tenant_id uuid [not null, ref: > public.tenants.id, delete: cascade, update: cascade]
+  role_id uuid [not null, ref: > public.roles.id]
+  email email_address [unique, not null]
+  display_name text [not null]
+  created_at timestamptz [default: now()]
+  Constraint chk_users_email: email <> ''
+}`
+
+const pgmlExampleCommerceAdditions = `TableGroup Commerce {
   public.products
   public.orders
   public.order_items
   Note: Buying flow and inventory edges
 }
 
-TableGroup Programs {
-  public.common_entity
-  public.funding_opportunity_profile
-  Note: Shared entity registration hooks for programs
-}
-
-Enum role_kind {
-  owner
-  analyst
-  operator
-}
-
-Enum entity_type {
-  fundingopportunity
-  order
-  user
-}
-
-Domain email_address {
-  base: text
-  check: VALUE ~* '^[^@]+@[^@]+\\\\.[^@]+$'
+Enum order_status {
+  draft
+  submitted
+  fulfilled
+  cancelled
 }
 
 Sequence order_number_seq {
@@ -2188,46 +3002,6 @@ Sequence order_number_seq {
   $sql$
 }
 
-Sequence common_entity_id_seq {
-  docs {
-    summary: "Primary allocator for rows in Common_Entity."
-    purpose: "Supports entity-backed trigger functions shared across domains."
-  }
-
-  source: $sql$
-    CREATE SEQUENCE public.common_entity_id_seq
-      AS bigint
-      START WITH 1000
-      INCREMENT BY 1
-      CACHE 25
-      OWNED BY public.common_entity.id;
-  $sql$
-}
-
-Table public.tenants {
-  id uuid [pk]
-  name text [not null]
-  slug text [unique, not null]
-  created_at timestamptz [default: now()]
-  Index idx_tenants_slug (slug) [type: btree]
-}
-
-Table public.roles {
-  id uuid [pk]
-  key role_kind [unique, not null]
-  label text [not null]
-}
-
-Table public.users {
-  id uuid [pk]
-  tenant_id uuid [not null, ref: > public.tenants.id]
-  role_id uuid [not null, ref: > public.roles.id]
-  email email_address [unique, not null]
-  display_name text [not null]
-  created_at timestamptz [default: now()]
-  Constraint chk_users_email: email <> ''
-}
-
 Table public.products {
   id uuid [pk]
   tenant_id uuid [not null, ref: > public.tenants.id]
@@ -2242,8 +3016,8 @@ Table public.orders {
   id uuid [pk]
   tenant_id uuid [not null, ref: > public.tenants.id]
   order_number bigint [not null, unique, default: nextval('order_number_seq')]
-  customer_id uuid [ref: > public.users.id]
-  status text [not null]
+  customer_id uuid [ref: > public.users.id, delete: restrict, update: cascade]
+  status order_status [not null]
   submitted_at timestamptz
   total_cents integer [not null]
   Constraint chk_orders_total: total_cents >= 0
@@ -2255,21 +3029,6 @@ Table public.order_items {
   product_id uuid [not null, ref: > public.products.id]
   quantity integer [not null]
   unit_price_cents integer [not null]
-}
-
-Table public.common_entity {
-  id bigint [pk, default: nextval('common_entity_id_seq')]
-  entity_type entity_type [not null]
-  created_at timestamptz [default: now()]
-}
-
-Table public.funding_opportunity_profile {
-  id bigint [pk]
-  tenant_id uuid [not null, ref: > public.tenants.id]
-  owner_id uuid [ref: > public.users.id]
-  title text [not null]
-  status text [not null]
-  published_at timestamptz
 }
 
 Function recalc_order_total(order_uuid uuid) returns void [replace] {
@@ -2323,6 +3082,69 @@ Function sync_order_total() returns trigger [replace] {
   $sql$
 }
 
+Trigger trg_order_items_total_sync on public.order_items {
+  docs {
+    summary: "Recalculates the parent order total whenever line items change."
+  }
+
+  affects {
+    writes: [public.orders.total_cents]
+    depends_on: [sync_order_total, recalc_order_total, public.order_items]
+  }
+
+  source: $sql$
+    CREATE TRIGGER trg_order_items_total_sync
+      AFTER INSERT OR UPDATE OR DELETE ON public.order_items
+      FOR EACH ROW
+      EXECUTE FUNCTION public.sync_order_total();
+  $sql$
+}`
+
+const pgmlExampleProgramsAdditions = `TableGroup Programs {
+  public.common_entity
+  public.funding_opportunity_profile
+  Note: Shared entity registration hooks for programs
+}
+
+Enum entity_type {
+  fundingopportunity
+  order
+  user
+}
+
+Sequence common_entity_id_seq {
+  docs {
+    summary: "Primary allocator for rows in Common_Entity."
+    purpose: "Supports entity-backed trigger functions shared across domains."
+  }
+
+  source: $sql$
+    CREATE SEQUENCE public.common_entity_id_seq
+      AS bigint
+      START WITH 1000
+      INCREMENT BY 1
+      CACHE 25
+      OWNED BY public.common_entity.id;
+  $sql$
+}
+
+Table public.common_entity {
+  id bigint [pk, default: nextval('common_entity_id_seq')]
+  entity_type entity_type [not null]
+  created_at timestamptz [default: now()]
+}
+
+Table public.funding_opportunity_profile {
+  id bigint [pk]
+  tenant_id uuid [not null, ref: > public.tenants.id]
+  owner_id uuid
+  title text [not null]
+  status text [not null]
+  published_at timestamptz
+}
+
+Ref: public.funding_opportunity_profile.owner_id > public.users.id
+
 Function register_entity(entity_kind text) returns trigger [replace] {
   docs {
     summary: "Allocates a Common_Entity row and assigns the generated id to NEW.id."
@@ -2350,6 +3172,39 @@ Function register_entity(entity_kind text) returns trigger [replace] {
     END;
     $$ LANGUAGE plpgsql;
   $sql$
+}
+
+Trigger trg_register_fundingopportunity on public.funding_opportunity_profile {
+  docs {
+    summary: "Registers a Common_Entity id before a funding opportunity is inserted."
+    purpose: "Ensures the Programs domain participates in the shared entity registry."
+  }
+
+  affects {
+    writes: [public.common_entity]
+    sets: [public.funding_opportunity_profile.id]
+    depends_on: [register_entity]
+  }
+
+  source: $sql$
+    CREATE TRIGGER trg_register_fundingopportunity
+      BEFORE INSERT ON public.funding_opportunity_profile
+      FOR EACH ROW
+      EXECUTE FUNCTION public.register_entity('fundingopportunity');
+  $sql$
+}`
+
+const pgmlExampleAnalyticsAdditions = `TableGroup Analytics {
+  audit.order_events
+  analytics.order_rollups
+  Note: Read models and event capture around order activity
+}
+
+Composite address_record {
+  line1 text
+  city text
+  region text
+  postal_code text
 }
 
 Procedure archive_orders(retention_days integer) [replace] {
@@ -2387,41 +3242,208 @@ Procedure archive_orders(retention_days integer) [replace] {
   $sql$
 }
 
-Trigger trg_order_items_total_sync on public.order_items {
+Table audit.order_events {
+  id bigint [pk]
+  order_id uuid [not null]
+  event_name text [not null]
+  payload jsonb [not null]
+  captured_at timestamptz [default: now()]
+  Index idx_order_events_order_id (order_id) [type: btree]
+}
+
+Table analytics.order_rollups {
+  order_id uuid [pk]
+  tenant_id uuid [not null]
+  latest_status order_status [not null]
+  customer_email email_address
+  shipping_address address_record
+  last_event_at timestamptz
+  Index idx_order_rollups_status (latest_status) [type: btree]
+}
+
+Ref: audit.order_events.order_id > public.orders.id
+Ref: analytics.order_rollups.order_id > public.orders.id
+Ref: analytics.order_rollups.tenant_id > public.tenants.id
+
+Function audit.capture_order_event() returns trigger [replace] {
   docs {
-    summary: "Recalculates the parent order total whenever line items change."
+    summary: "Records an audit event whenever order status or totals change."
+    purpose: "Feeds the event stream that powers reporting views and replayable debugging."
   }
 
   affects {
-    writes: [public.orders.total_cents]
-    depends_on: [sync_order_total, recalc_order_total, public.order_items]
+    reads: [public.orders.status, public.orders.total_cents]
+    writes: [audit.order_events]
+    depends_on: [audit.order_events, public.orders]
   }
 
   source: $sql$
-    CREATE TRIGGER trg_order_items_total_sync
-      AFTER INSERT OR UPDATE OR DELETE ON public.order_items
-      FOR EACH ROW
-      EXECUTE FUNCTION public.sync_order_total();
+    CREATE OR REPLACE FUNCTION audit.capture_order_event()
+    RETURNS trigger AS $$
+    BEGIN
+      INSERT INTO audit.order_events (id, order_id, event_name, payload)
+      VALUES (
+        EXTRACT(EPOCH FROM now())::bigint,
+        NEW.id,
+        'order.changed',
+        jsonb_build_object(
+          'status', NEW.status,
+          'total_cents', NEW.total_cents
+        )
+      );
+
+      RETURN NEW;
+    END;
+    $$ LANGUAGE plpgsql;
   $sql$
 }
 
-Trigger trg_register_fundingopportunity on public.funding_opportunity_profile {
+Trigger trg_orders_audit on public.orders {
   docs {
-    summary: "Registers a Common_Entity id before a funding opportunity is inserted."
-    purpose: "Ensures the Programs domain participates in the shared entity registry."
+    summary: "Captures analytics-facing audit events after order updates."
   }
 
   affects {
-    writes: [public.common_entity]
-    sets: [public.funding_opportunity_profile.id]
-    depends_on: [register_entity]
+    writes: [audit.order_events]
+    depends_on: [capture_order_event, audit.order_events]
   }
 
   source: $sql$
-    CREATE TRIGGER trg_register_fundingopportunity
-      BEFORE INSERT ON public.funding_opportunity_profile
+    CREATE TRIGGER trg_orders_audit
+      AFTER UPDATE ON public.orders
       FOR EACH ROW
-      EXECUTE FUNCTION public.register_entity('fundingopportunity');
+      WHEN (OLD.status IS DISTINCT FROM NEW.status OR OLD.total_cents IS DISTINCT FROM NEW.total_cents)
+      EXECUTE FUNCTION audit.capture_order_event();
   $sql$
+}`
+
+const indentPgmlExampleBlock = (
+  value: string,
+  indent = '      '
+) => {
+  return value
+    .trim()
+    .split('\n')
+    .map(line => `${indent}${line}`)
+    .join('\n')
 }
-`
+
+const pgmlExampleCommerceSnapshot = `${pgmlExampleFoundationSnapshot}
+
+${pgmlExampleCommerceAdditions}`
+
+const pgmlExampleProgramsSnapshot = `${pgmlExampleCommerceSnapshot}
+
+${pgmlExampleProgramsAdditions}`
+
+const pgmlExampleAnalyticsSnapshot = `${pgmlExampleCommerceSnapshot}
+
+${pgmlExampleAnalyticsAdditions}`
+
+export const pgmlExample = `${pgmlExampleProgramsSnapshot}
+
+${pgmlExampleAnalyticsAdditions}
+
+Properties "group:Core" {
+  x: 40
+  y: 80
+}
+
+Properties "group:Commerce" {
+  x: 520
+  y: 80
+}
+
+Properties "group:Programs" {
+  x: 40
+  y: 1380
+}
+
+Properties "group:Analytics" {
+  x: 520
+  y: 1380
+  color: #0f766e
+  masonry: true
+  table_columns: 2
+}
+
+Properties "custom-type:Enum:role_kind" {
+  x: 40
+  y: 20
+}
+
+Properties "custom-type:Domain:email_address" {
+  x: 220
+  y: 20
+}
+
+Properties "custom-type:Enum:order_status" {
+  x: 520
+  y: 20
+}
+
+Properties "custom-type:Enum:entity_type" {
+  x: 220
+  y: 360
+}
+
+Properties "custom-type:Composite:address_record" {
+  x: 1080
+  y: 620
+  color: #0891b2
+  collapsed: false
+}`
+
+export const pgmlVersionedExample = `VersionSet "Example schema" {
+  Workspace {
+    based_on: v_programs
+    updated_at: "2026-03-29T14:12:00Z"
+
+    Snapshot {
+${indentPgmlExampleBlock(pgmlExample)}
+    }
+  }
+
+  Version v_foundation {
+    name: "Foundation implementation"
+    role: implementation
+    created_at: "2026-03-20T15:00:00Z"
+
+    Snapshot {
+${indentPgmlExampleBlock(pgmlExampleFoundationSnapshot)}
+    }
+  }
+
+  Version v_commerce {
+    name: "Commerce expansion"
+    role: design
+    parent: v_foundation
+    created_at: "2026-03-23T10:00:00Z"
+
+    Snapshot {
+${indentPgmlExampleBlock(pgmlExampleCommerceSnapshot)}
+    }
+  }
+
+  Version v_programs {
+    name: "Programs implementation sync"
+    role: implementation
+    parent: v_commerce
+    created_at: "2026-03-26T09:30:00Z"
+
+    Snapshot {
+${indentPgmlExampleBlock(pgmlExampleProgramsSnapshot)}
+    }
+  }
+
+  Version v_analytics {
+    name: "Analytics branch"
+    role: design
+    parent: v_commerce
+    created_at: "2026-03-28T16:45:00Z"
+
+    Snapshot {
+${indentPgmlExampleBlock(pgmlExampleAnalyticsSnapshot)}
+    }
+  }
+}`

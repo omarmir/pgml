@@ -28,6 +28,8 @@ Follow this order:
 
 This ordering fits the examples used in the repo and avoids most obvious dependency failures.
 
+Ignore `View` blocks, `active_view`, `show_lines`, `show_execs`, `show_fields`, and `Properties` when generating PostgreSQL SQL. Those entries are studio metadata, not database structure.
+
 ## Mapping Rules
 
 ### Enums
@@ -239,7 +241,7 @@ Use the embedded SQL as the emitted DDL unless the task explicitly asks for norm
 
 ## Migration Delta Workflow
 
-Only generate exact migration SQL when both the old and new PGML states are available. If only one version exists, describe a likely migration plan instead of inventing a precise diff.
+Only generate exact migration SQL when both the old and new PGML states are available. In versioned PGML, that usually means a selected base snapshot and target snapshot. If only one state exists, describe a likely migration plan instead of inventing a precise diff.
 
 For a real diff:
 
@@ -259,6 +261,8 @@ Call out risky operations explicitly:
 - changing sequence ownership
 
 If a function or procedure body changes and a `source:` block exists, prefer a `CREATE OR REPLACE` routine update when PostgreSQL semantics allow it.
+
+When the diff spans a forward checkpoint lineage, prefer one migration file per version transition and keep SQL ordering aligned with the version sequence. Apply the same step boundaries to generated Kysely migrations so SQL and Kysely can replay the same history.
 
 ## Writing Application Queries From PGML
 
@@ -335,6 +339,7 @@ Do not turn `docs` or `affects` entries into DDL automatically. They are guidanc
 Watch for these errors:
 
 - treating `Properties` blocks as part of the schema
+- treating `View` blocks or `active_view` metadata as part of the schema
 - inventing columns not present in PGML
 - emitting duplicate foreign keys from repeated refs
 - ignoring schema qualification and accidentally joining the wrong table

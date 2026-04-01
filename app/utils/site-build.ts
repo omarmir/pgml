@@ -1,9 +1,14 @@
 export const staticPrerenderRoutes = ['/', '/spec', '/diagram'] as const
+export const defaultViteAllowedHosts = ['localhost', '.localhost', '127.0.0.1', '::1'] as const
 
 type ResolveGitHubPagesBaseUrlOptions = {
   explicitBaseUrl?: string
   githubRepository?: string
   useRepositoryBaseUrl?: boolean
+}
+
+type ResolveViteAllowedHostsOptions = {
+  extraAllowedHosts?: string
 }
 
 export const normalizeBaseUrl = (value: string) => {
@@ -57,4 +62,25 @@ export const buildPrerenderRouteRules = (routes: readonly string[]) => {
   }
 
   return routeRules
+}
+
+export const resolveViteAllowedHosts = ({ extraAllowedHosts }: ResolveViteAllowedHostsOptions = {}) => {
+  const allowedHosts = [...defaultViteAllowedHosts]
+
+  if (typeof extraAllowedHosts !== 'string' || extraAllowedHosts.trim().length === 0) {
+    return allowedHosts
+  }
+
+  const parsedHosts = extraAllowedHosts
+    .split(',')
+    .map(host => host.trim())
+    .filter(host => host.length > 0)
+
+  for (const host of parsedHosts) {
+    if (!allowedHosts.includes(host)) {
+      allowedHosts.push(host)
+    }
+  }
+
+  return allowedHosts
 }

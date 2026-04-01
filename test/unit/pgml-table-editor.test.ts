@@ -7,9 +7,12 @@ import {
   commonPgmlColumnTypes,
   createEditableGroupDraft,
   createEditableGroupDraftForCreate,
+  createEditableMetadataEntryDraft,
   createEditableTableDraft,
   createEditableTableDraftForGroup,
-  getEditableGroupDraftErrors
+  getEditableGroupDraftErrors,
+  getEditableTableDraftErrors,
+  serializeEditableMetadataEntries
 } from '../../app/utils/pgml-table-editor'
 
 const source = `TableGroup Core {
@@ -22,8 +25,39 @@ Table public.users in Core {
 }`
 
 describe('PGML table editor', () => {
-  it('offers bigserial in the common column type presets', () => {
-    expect(commonPgmlColumnTypes).toContain('bigserial')
+  it('keeps the common column type presets on explicit base types', () => {
+    expect(commonPgmlColumnTypes).toContain('bigint')
+    expect(commonPgmlColumnTypes).toContain('integer')
+    expect(commonPgmlColumnTypes).not.toContain('bigserial')
+    expect(commonPgmlColumnTypes).not.toContain('serial')
+  })
+
+  it('serializes metadata drafts and rejects invalid metadata keys', () => {
+    const draft = createEditableTableDraftForGroup('Core')
+
+    draft.name = 'roles'
+    draft.customMetadata = [
+      createEditableMetadataEntryDraft({
+        key: 'owner',
+        value: 'identity'
+      }),
+      createEditableMetadataEntryDraft({
+        key: 'invalid:key',
+        value: 'broken'
+      })
+    ]
+
+    expect(serializeEditableMetadataEntries(draft.customMetadata)).toEqual([
+      {
+        key: 'owner',
+        value: 'identity'
+      },
+      {
+        key: 'invalid:key',
+        value: 'broken'
+      }
+    ])
+    expect(getEditableTableDraftErrors(draft)).toContain('Table metadata field `invalid:key` cannot contain `:`.')
   })
 
   it('rewrites an edited table block and keeps the group list aligned', () => {

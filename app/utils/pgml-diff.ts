@@ -1,0 +1,549 @@
+import type {
+  PgmlConstraint,
+  PgmlCustomType,
+  PgmlGroup,
+  PgmlIndex,
+  PgmlNodeProperties,
+  PgmlReference,
+  PgmlRoutine,
+  PgmlSchemaModel,
+  PgmlSequence,
+  PgmlTable,
+  PgmlTrigger
+} from './pgml'
+
+export type PgmlDiffChangeKind = 'added' | 'modified' | 'removed'
+
+export type PgmlDiffEntry<T> = {
+  after: T | null
+  before: T | null
+  changes?: string[]
+  id: string
+  kind: PgmlDiffChangeKind
+  label: string
+}
+
+export type PgmlLayoutDiffEntry = PgmlDiffEntry<PgmlNodeProperties>
+
+export type PgmlSchemaDiffSummary = {
+  added: number
+  layoutChanged: number
+  modified: number
+  removed: number
+}
+
+export type PgmlSchemaDiff = {
+  columns: PgmlDiffEntry<{
+    column: PgmlTable['columns'][number]
+    tableId: string
+  }>[]
+  constraints: PgmlDiffEntry<{
+    constraint: PgmlConstraint
+    tableId: string
+  }>[]
+  customTypes: PgmlDiffEntry<PgmlCustomType>[]
+  functions: PgmlDiffEntry<PgmlRoutine>[]
+  groups: PgmlDiffEntry<PgmlGroup>[]
+  indexes: PgmlDiffEntry<{
+    index: PgmlIndex
+    tableId: string
+  }>[]
+  layout: PgmlLayoutDiffEntry[]
+  procedures: PgmlDiffEntry<PgmlRoutine>[]
+  references: PgmlDiffEntry<PgmlReference>[]
+  sequences: PgmlDiffEntry<PgmlSequence>[]
+  summary: PgmlSchemaDiffSummary
+  tables: PgmlDiffEntry<PgmlTable>[]
+  triggers: PgmlDiffEntry<PgmlTrigger>[]
+}
+
+// We compare normalized objects via stable JSON so different field ordering does
+// not create false-positive diffs. That keeps formatting noise out of compare
+// views and migration planning.
+const toStableJson = (value: unknown): string => {
+  if (Array.isArray(value)) {
+    return `[${value.map(entry => toStableJson(entry)).join(',')}]`
+  }
+
+  if (value && typeof value === 'object') {
+    const entries = Object.entries(value as Record<string, unknown>)
+      .filter(([, entry]) => entry !== undefined)
+      .sort(([left], [right]) => left.localeCompare(right))
+      .map(([key, entry]) => `"${key}":${toStableJson(entry)}`)
+
+    return `{${entries.join(',')}}`
+  }
+
+  return JSON.stringify(value)
+}
+
+const sortStringValues = (values: string[]) => {
+  return [...values].sort((left, right) => left.localeCompare(right))
+}
+
+const sortKeyValueEntries = (
+  entries: Array<{
+    key: string
+    value: string
+  }>
+) => {
+  return [...entries].sort((left, right) => {
+    if (left.key !== right.key) {
+      return left.key.localeCompare(right.key)
+    }
+
+    return left.value.localeCompare(right.value)
+  })
+}
+
+const buildChangedFields = (beforeValue: unknown, afterValue: unknown) => {
+  if (
+    beforeValue === null
+    || afterValue === null
+    || Array.isArray(beforeValue)
+    || Array.isArray(afterValue)
+    || typeof beforeValue !== 'object'
+    || typeof afterValue !== 'object'
+  ) {
+    return []
+  }
+
+  const beforeRecord = beforeValue as Record<string, unknown>
+  const afterRecord = afterValue as Record<string, unknown>
+  const fieldNames = Array.from(new Set([
+    ...Object.keys(beforeRecord),
+    ...Object.keys(afterRecord)
+  ])).sort((left, right) => left.localeCompare(right))
+
+  return fieldNames.filter((fieldName) => {
+    return toStableJson(beforeRecord[fieldName]) !== toStableJson(afterRecord[fieldName])
+  })
+}
+
+const buildSortedDiffIds = <T>(
+  beforeValues: Map<string, T>,
+  afterValues: Map<string, T>
+) => {
+  return Array.from(new Set([...beforeValues.keys(), ...afterValues.keys()])).sort((left, right) => {
+    return left.localeCompare(right)
+  })
+}
+
+const normalizeReferenceKey = (reference: PgmlReference) => {
+  return [
+    reference.relation,
+    reference.fromTable,
+    (reference.fromColumns && reference.fromColumns.length > 0 ? reference.fromColumns : [reference.fromColumn]).join(','),
+    reference.toTable,
+    (reference.toColumns && reference.toColumns.length > 0 ? reference.toColumns : [reference.toColumn]).join(',')
+  ].join('::')
+}
+
+const normalizeTableValue = (table: PgmlTable) => {
+  return {
+    fullName: table.fullName,
+    groupName: table.groupName,
+    note: table.note
+  }
+}
+
+const normalizeGroupValue = (group: PgmlGroup) => {
+  return {
+    name: group.name,
+    note: group.note,
+    tableNames: [...group.tableNames]
+  }
+}
+
+const normalizeMetadataEntries = (
+  entries: Array<{
+    key: string
+    value: string
+  }>
+) => {
+  return sortKeyValueEntries(entries.map((entry) => {
+    return {
+      key: entry.key,
+      value: entry.value
+    }
+  }))
+}
+
+const normalizeDocumentationValue = (
+  documentation: PgmlRoutine['docs'] | PgmlTrigger['docs'] | PgmlSequence['docs']
+) => {
+  if (!documentation) {
+    return null
+  }
+
+  return {
+    entries: sortKeyValueEntries(documentation.entries),
+    summary: documentation.summary
+  }
+}
+
+const normalizeAffectsValue = (affects: PgmlRoutine['affects'] | PgmlTrigger['affects'] | PgmlSequence['affects']) => {
+  if (!affects) {
+    return null
+  }
+
+  return {
+    calls: sortStringValues(affects.calls),
+    dependsOn: sortStringValues(affects.dependsOn),
+    extras: [...affects.extras].map((entry) => {
+      return {
+        key: entry.key,
+        values: sortStringValues(entry.values)
+      }
+    }).sort((left, right) => left.key.localeCompare(right.key)),
+    ownedBy: sortStringValues(affects.ownedBy),
+    reads: sortStringValues(affects.reads),
+    sets: sortStringValues(affects.sets),
+    uses: sortStringValues(affects.uses),
+    writes: sortStringValues(affects.writes)
+  }
+}
+
+const normalizeRoutineValue = (routine: PgmlRoutine) => {
+  return {
+    affects: normalizeAffectsValue(routine.affects),
+    docs: normalizeDocumentationValue(routine.docs),
+    metadata: normalizeMetadataEntries(routine.metadata),
+    name: routine.name,
+    signature: routine.signature,
+    source: routine.source?.trim() || null
+  }
+}
+
+const normalizeTriggerValue = (trigger: PgmlTrigger) => {
+  return {
+    affects: normalizeAffectsValue(trigger.affects),
+    docs: normalizeDocumentationValue(trigger.docs),
+    metadata: normalizeMetadataEntries(trigger.metadata),
+    name: trigger.name,
+    source: trigger.source?.trim() || null,
+    tableName: trigger.tableName
+  }
+}
+
+const normalizeSequenceValue = (sequence: PgmlSequence) => {
+  return {
+    affects: normalizeAffectsValue(sequence.affects),
+    docs: normalizeDocumentationValue(sequence.docs),
+    metadata: normalizeMetadataEntries(sequence.metadata),
+    name: sequence.name,
+    source: sequence.source?.trim() || null
+  }
+}
+
+const normalizeCustomTypeValue = (customType: PgmlCustomType) => {
+  return customType
+}
+
+const normalizeColumnValue = (column: PgmlTable['columns'][number]) => {
+  return {
+    modifiers: sortStringValues(column.modifiers),
+    name: column.name,
+    note: column.note,
+    reference: column.reference,
+    type: column.type
+  }
+}
+
+const normalizeIndexValue = (index: PgmlIndex) => {
+  return {
+    columns: [...index.columns],
+    name: index.name,
+    type: index.type
+  }
+}
+
+const normalizeConstraintValue = (constraint: PgmlConstraint) => {
+  return {
+    expression: constraint.expression,
+    name: constraint.name
+  }
+}
+
+const normalizeLayoutValue = (value: PgmlNodeProperties) => {
+  return value
+}
+
+// Diffing is only as stable as the identity keys that feed it. These helpers
+// centralize how top-level schema entities are keyed so compare views and
+// migration planning stay aligned.
+const buildEntityMap = <T>(
+  values: T[],
+  getId: (value: T) => string
+) => {
+  return new Map(values.map(value => [getId(value), value] as const))
+}
+
+const buildDiffEntries = <T>(
+  beforeValues: Map<string, T>,
+  afterValues: Map<string, T>,
+  buildLabel: (id: string, value: T) => string,
+  normalizeValue: (value: T) => unknown
+) => {
+  const ids = buildSortedDiffIds(beforeValues, afterValues)
+
+  return ids.reduce<PgmlDiffEntry<T>[]>((entries, id) => {
+    const beforeValue = beforeValues.get(id) || null
+    const afterValue = afterValues.get(id) || null
+
+    if (beforeValue && !afterValue) {
+      entries.push({
+        after: null,
+        before: beforeValue,
+        id,
+        kind: 'removed',
+        label: buildLabel(id, beforeValue)
+      })
+
+      return entries
+    }
+
+    if (!beforeValue && afterValue) {
+      entries.push({
+        after: afterValue,
+        before: null,
+        id,
+        kind: 'added',
+        label: buildLabel(id, afterValue)
+      })
+
+      return entries
+    }
+
+    if (!beforeValue || !afterValue) {
+      return entries
+    }
+
+    const normalizedBeforeValue = normalizeValue(beforeValue)
+    const normalizedAfterValue = normalizeValue(afterValue)
+
+    if (toStableJson(normalizedBeforeValue) !== toStableJson(normalizedAfterValue)) {
+      entries.push({
+        after: afterValue,
+        before: beforeValue,
+        changes: buildChangedFields(normalizedBeforeValue, normalizedAfterValue),
+        id,
+        kind: 'modified',
+        label: buildLabel(id, afterValue)
+      })
+    }
+
+    return entries
+  }, [])
+}
+
+const buildTableMap = (tables: PgmlTable[]) => {
+  return buildEntityMap(tables, table => table.fullName)
+}
+
+const buildGroupMap = (groups: PgmlGroup[]) => {
+  return buildEntityMap(groups, group => group.name)
+}
+
+const buildRoutineMap = (routines: PgmlRoutine[]) => {
+  return buildEntityMap(routines, routine => routine.name)
+}
+
+const buildTriggerMap = (triggers: PgmlTrigger[]) => {
+  return buildEntityMap(triggers, trigger => `${trigger.tableName}::${trigger.name}`)
+}
+
+const buildSequenceMap = (sequences: PgmlSequence[]) => {
+  return buildEntityMap(sequences, sequence => sequence.name)
+}
+
+const buildCustomTypeMap = (customTypes: PgmlCustomType[]) => {
+  return buildEntityMap(customTypes, customType => `${customType.kind}::${customType.name}`)
+}
+
+const buildReferenceMap = (references: PgmlReference[]) => {
+  return buildEntityMap(references, normalizeReferenceKey)
+}
+
+const buildTableChildMap = <T, TEntry>(
+  tables: PgmlTable[],
+  getValues: (table: PgmlTable) => T[],
+  getId: (table: PgmlTable, value: T) => string,
+  buildEntry: (table: PgmlTable, value: T) => TEntry
+) => {
+  return new Map(tables.flatMap((table) => {
+    return getValues(table).map((value) => {
+      return [getId(table, value), buildEntry(table, value)] as const
+    })
+  }))
+}
+
+const buildColumnMap = (tables: PgmlTable[]) => {
+  return buildTableChildMap(
+    tables,
+    table => table.columns,
+    (table, column) => `${table.fullName}::${column.name}`,
+    (table, column) => ({
+      column,
+      tableId: table.fullName
+    })
+  )
+}
+
+const buildIndexMap = (tables: PgmlTable[]) => {
+  return buildTableChildMap(
+    tables,
+    table => table.indexes,
+    (table, index) => `${table.fullName}::${index.name}`,
+    (table, index) => ({
+      index,
+      tableId: table.fullName
+    })
+  )
+}
+
+const buildConstraintMap = (tables: PgmlTable[]) => {
+  return buildTableChildMap(
+    tables,
+    table => table.constraints,
+    (table, constraint) => `${table.fullName}::${constraint.name}`,
+    (table, constraint) => ({
+      constraint,
+      tableId: table.fullName
+    })
+  )
+}
+
+const buildLayoutMap = (properties: Record<string, PgmlNodeProperties>) => {
+  return new Map(Object.entries(properties))
+}
+
+const buildDiffSummary = (
+  entries: PgmlDiffEntry<unknown>[],
+  layoutEntries: PgmlLayoutDiffEntry[]
+): PgmlSchemaDiffSummary => {
+  return entries.reduce<PgmlSchemaDiffSummary>((totals, entry) => {
+    if (entry.kind === 'added') {
+      totals.added += 1
+    } else if (entry.kind === 'removed') {
+      totals.removed += 1
+    } else {
+      totals.modified += 1
+    }
+
+    return totals
+  }, {
+    added: 0,
+    layoutChanged: layoutEntries.length,
+    modified: 0,
+    removed: 0
+  })
+}
+
+export const diffPgmlSchemaModels = (
+  beforeModel: PgmlSchemaModel,
+  afterModel: PgmlSchemaModel
+): PgmlSchemaDiff => {
+  const tables = buildDiffEntries(
+    buildTableMap(beforeModel.tables),
+    buildTableMap(afterModel.tables),
+    (id, value) => value.fullName || id,
+    normalizeTableValue
+  )
+  const groups = buildDiffEntries(
+    buildGroupMap(beforeModel.groups),
+    buildGroupMap(afterModel.groups),
+    (id, value) => value.name || id,
+    normalizeGroupValue
+  )
+  const functions = buildDiffEntries(
+    buildRoutineMap(beforeModel.functions),
+    buildRoutineMap(afterModel.functions),
+    (id, value) => value.name || id,
+    normalizeRoutineValue
+  )
+  const procedures = buildDiffEntries(
+    buildRoutineMap(beforeModel.procedures),
+    buildRoutineMap(afterModel.procedures),
+    (id, value) => value.name || id,
+    normalizeRoutineValue
+  )
+  const triggers = buildDiffEntries(
+    buildTriggerMap(beforeModel.triggers),
+    buildTriggerMap(afterModel.triggers),
+    (_id, value) => `${value.tableName} :: ${value.name}`,
+    normalizeTriggerValue
+  )
+  const sequences = buildDiffEntries(
+    buildSequenceMap(beforeModel.sequences),
+    buildSequenceMap(afterModel.sequences),
+    (id, value) => value.name || id,
+    normalizeSequenceValue
+  )
+  const customTypes = buildDiffEntries(
+    buildCustomTypeMap(beforeModel.customTypes),
+    buildCustomTypeMap(afterModel.customTypes),
+    (id, value) => value.name || id,
+    normalizeCustomTypeValue
+  )
+  const references = buildDiffEntries(
+    buildReferenceMap(beforeModel.references),
+    buildReferenceMap(afterModel.references),
+    (_id, value) => `${value.fromTable}.${value.fromColumn} -> ${value.toTable}.${value.toColumn}`,
+    value => value
+  )
+  const columns = buildDiffEntries(
+    buildColumnMap(beforeModel.tables),
+    buildColumnMap(afterModel.tables),
+    (_id, value) => `${value.tableId}.${value.column.name}`,
+    value => normalizeColumnValue(value.column)
+  )
+  const indexes = buildDiffEntries(
+    buildIndexMap(beforeModel.tables),
+    buildIndexMap(afterModel.tables),
+    (_id, value) => `${value.tableId}.${value.index.name}`,
+    value => normalizeIndexValue(value.index)
+  )
+  const constraints = buildDiffEntries(
+    buildConstraintMap(beforeModel.tables),
+    buildConstraintMap(afterModel.tables),
+    (_id, value) => `${value.tableId}.${value.constraint.name}`,
+    value => normalizeConstraintValue(value.constraint)
+  )
+  const layout = buildDiffEntries(
+    buildLayoutMap(beforeModel.nodeProperties),
+    buildLayoutMap(afterModel.nodeProperties),
+    id => id,
+    normalizeLayoutValue
+  )
+  const schemaEntries = [
+    ...tables,
+    ...groups,
+    ...functions,
+    ...procedures,
+    ...triggers,
+    ...sequences,
+    ...customTypes,
+    ...references,
+    ...columns,
+    ...indexes,
+    ...constraints
+  ]
+  const summary = buildDiffSummary(schemaEntries, layout)
+
+  return {
+    columns,
+    constraints,
+    customTypes,
+    functions,
+    groups,
+    indexes,
+    layout,
+    procedures,
+    references,
+    sequences,
+    summary,
+    tables,
+    triggers
+  }
+}

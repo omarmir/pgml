@@ -1,6 +1,11 @@
 import { describe, expect, it } from 'vitest'
 
-import { analyzePgmlDocument, getPgmlCompletionItems } from '../../app/utils/pgml-language'
+import {
+  analyzePgmlDocument,
+  getPgmlCompletionItems,
+  getPgmlCompletionItemsFromAnalysis
+} from '../../app/utils/pgml-language'
+import { buildVersionedCompletionFixture, validVersionedEditorSource } from './pgml-editor-fixtures'
 
 describe('PGML language utility', () => {
   it('collects no diagnostics for a structurally valid document', () => {
@@ -31,6 +36,42 @@ Function orphan_report() {
 Properties "function:orphan_report" {
   collapsed: false
 }`
+
+    const analysis = analyzePgmlDocument(source)
+
+    expect(analysis.diagnostics).toEqual([])
+  })
+
+  it('accepts DBML-style imported indexes, checks, comments, and named composite refs', () => {
+    const source = `/*
+Imported from DBML.
+*/
+Table public.users {
+  id bigint [pk, not null] // System ID
+  email text [not null]
+  status text [not null]
+
+  Indexes {
+    email [name: 'users_email_idx']
+    (email, status) [name: 'users_email_status_idx', unique, where: \`status <> ''\`]
+  }
+
+  checks {
+    \`status <> ''\` [name: 'users_status_check']
+    \`NOT (
+      status = 'draft'
+      AND email = ''
+    )\` [name: 'users_status_email_check']
+  }
+}
+
+Table public.accounts {
+  id bigint [pk]
+  user_id bigint [not null]
+  entity_type text [not null]
+}
+
+Ref account_user_ref: public.accounts.(user_id, entity_type) > public.users.(id, status)`
 
     const analysis = analyzePgmlDocument(source)
 
@@ -116,6 +157,10 @@ Enum public.language_preference {
 
     expect(items).toEqual(expect.arrayContaining([
       expect.objectContaining({
+        label: 'VersionSet',
+        kind: 'keyword'
+      }),
+      expect.objectContaining({
         label: 'Table',
         kind: 'keyword'
       }),
@@ -124,6 +169,98 @@ Enum public.language_preference {
         kind: 'keyword'
       })
     ]))
+  })
+
+  it('reuses cached analysis for completion requests without changing the suggestions', () => {
+    const source = buildVersionedCompletionFixture(`  Workspace {
+    Snapshot {
+      Table public.users {
+        id uuid [pk]
+      }
+    }
+  }`)
+    const offset = source.indexOf('    Snapshot {') + '    Snapshot {'.length
+    const analysis = analyzePgmlDocument(source)
+
+    expect(getPgmlCompletionItemsFromAnalysis(analysis, offset)).toEqual(
+      getPgmlCompletionItems(source, offset)
+    )
+  })
+
+  it('collects no diagnostics for a structurally valid versioned document', () => {
+    const analysis = analyzePgmlDocument(validVersionedEditorSource)
+
+    expect(analysis.isVersionedDocument).toBe(true)
+    expect(analysis.diagnostics).toEqual([])
+  })
+
+  it('accepts SchemaMetadata blocks at the VersionSet root and offers matching completions', () => {
+    const source = buildVersionedCompletionFixture(`  SchemaMetadata {
+    Table "public.users" {
+      owner: "identity"
+    }
+
+    Column "public.users.email" {
+      pii: "restricted"
+    }
+  }
+
+  Workspace {
+    Snapshot {
+      Table public.users {
+        id uuid [pk]
+        email text
+      }
+    }
+  }`)
+    const completionOffset = source.indexOf('  SchemaMetadata {') + '  SchemaMetadata {'.length
+    const completions = getPgmlCompletionItems(source, completionOffset)
+    const analysis = analyzePgmlDocument(source)
+
+    expect(analysis.diagnostics).toEqual([])
+    expect(completions).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        label: 'Table',
+        kind: 'keyword'
+      }),
+      expect.objectContaining({
+        label: 'Column',
+        kind: 'keyword'
+      })
+    ]))
+  })
+
+  it('collects no diagnostics for standalone workspace and version document scopes', () => {
+    const workspaceScopeSource = `Workspace {
+  based_on: v2
+  updated_at: "2026-03-29T14:12:00.000Z"
+
+  Snapshot {
+    Table public.users {
+      id uuid [pk]
+    }
+  }
+}`
+    const versionScopeSource = `Version v2 {
+  name: "Workspace base"
+  role: design
+  parent: v1
+  created_at: "2026-03-24T10:30:00.000Z"
+
+  Snapshot {
+    Table public.users {
+      id uuid [pk]
+    }
+  }
+}`
+
+    const workspaceAnalysis = analyzePgmlDocument(workspaceScopeSource)
+    const versionAnalysis = analyzePgmlDocument(versionScopeSource)
+
+    expect(workspaceAnalysis.isVersionedDocument).toBe(true)
+    expect(workspaceAnalysis.diagnostics).toEqual([])
+    expect(versionAnalysis.isVersionedDocument).toBe(true)
+    expect(versionAnalysis.diagnostics).toEqual([])
   })
 
   it('offers table width scale as a properties completion', () => {
@@ -207,6 +344,225 @@ Ref: public.users.id > public.u`
     expect(referenceCompletions).toEqual(expect.arrayContaining([
       expect.objectContaining({
         label: 'public.users.id'
+      })
+    ]))
+  })
+
+  it('offers version-set, workspace, and version-aware completions', () => {
+    const versionSetSource = buildVersionedCompletionFixture(`  Wor
+`)
+    const workspaceSource = buildVersionedCompletionFixture(`  Workspace {
+    ba
+  }
+
+  Version v1 {
+    role: implementation
+    created_at: "2026-03-20T15:00:00.000Z"
+
+    Snapshot {
+      Table public.users {
+        id uuid [pk]
+      }
+    }
+  }
+`)
+    const versionRoleSource = buildVersionedCompletionFixture(`  Workspace {
+    based_on: v1
+
+    Snapshot {
+      Table public.users {
+        id uuid [pk]
+      }
+    }
+  }
+
+  Version v1 {
+    role: im
+    created_at: "2026-03-20T15:00:00.000Z"
+
+    Snapshot {
+      Table public.users {
+        id uuid [pk]
+      }
+    }
+  }
+`)
+    const versionParentSource = buildVersionedCompletionFixture(`  Workspace {
+    based_on: v1
+
+    Snapshot {
+      Table public.users {
+        id uuid [pk]
+      }
+    }
+  }
+
+  Version v1 {
+    role: implementation
+    created_at: "2026-03-20T15:00:00.000Z"
+
+    Snapshot {
+      Table public.users {
+        id uuid [pk]
+      }
+    }
+  }
+
+  Version v2 {
+    parent: v
+    role: design
+    created_at: "2026-03-24T10:30:00.000Z"
+
+    Snapshot {
+      Table public.users {
+        id uuid [pk]
+      }
+    }
+  }
+`)
+
+    const versionSetItems = getPgmlCompletionItems(versionSetSource, versionSetSource.indexOf('Wor') + 'Wor'.length)
+    const workspaceItems = getPgmlCompletionItems(workspaceSource, workspaceSource.indexOf('ba') + 'ba'.length)
+    const versionRoleItems = getPgmlCompletionItems(versionRoleSource, versionRoleSource.indexOf('im') + 'im'.length)
+    const versionParentItems = getPgmlCompletionItems(versionParentSource, versionParentSource.indexOf('parent: v') + 'parent: v'.length)
+
+    expect(versionSetItems).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        label: 'Workspace',
+        kind: 'keyword'
+      })
+    ]))
+    expect(workspaceItems).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        label: 'based_on',
+        kind: 'property'
+      })
+    ]))
+    expect(versionRoleItems).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        label: 'implementation',
+        kind: 'value'
+      })
+    ]))
+    expect(versionParentItems).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        label: 'v1',
+        kind: 'symbol'
+      })
+    ]))
+  })
+
+  it('offers workspace and version completions when those blocks are the scoped root', () => {
+    const workspaceScopeSource = `Workspace {
+  ba
+
+  Snapshot {
+    Table public.users {
+      id uuid [pk]
+    }
+  }
+}`
+    const versionScopeSource = `Version v2 {
+  role: im
+  created_at: "2026-03-24T10:30:00.000Z"
+
+  Snapshot {
+    Table public.users {
+      id uuid [pk]
+    }
+  }
+}`
+
+    const workspaceItems = getPgmlCompletionItems(workspaceScopeSource, workspaceScopeSource.indexOf('ba') + 'ba'.length)
+    const versionItems = getPgmlCompletionItems(versionScopeSource, versionScopeSource.indexOf('im') + 'im'.length)
+
+    expect(workspaceItems).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        label: 'based_on',
+        kind: 'property'
+      })
+    ]))
+    expect(versionItems).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        label: 'implementation',
+        kind: 'value'
+      })
+    ]))
+  })
+
+  it('offers View block completions inside workspace and version scopes', () => {
+    const source = `VersionSet "Billing" {
+  Workspace {
+    act
+
+    Snapshot {
+      Table public.users {
+        id uuid [pk]
+      }
+    }
+
+    Vi
+
+    View "Default" {
+      id: workspace_default
+
+      Prop
+    }
+  }
+
+  Version v1 {
+    role: design
+    created_at: "2026-03-24T10:30:00.000Z"
+    active_view: version_default
+
+    Snapshot {
+      Table public.users {
+        id uuid [pk]
+      }
+    }
+
+    View "Default" {
+      id: version_default
+      show_l
+      snap
+    }
+  }
+}`
+
+    const workspaceMetadataItems = getPgmlCompletionItems(source, source.indexOf('act') + 'act'.length)
+    const workspaceViewItems = getPgmlCompletionItems(source, source.indexOf('\n\n    Vi') + '\n\n    Vi'.length)
+    const viewPropertiesItems = getPgmlCompletionItems(source, source.indexOf('Prop') + 'Prop'.length)
+    const viewBooleanItems = getPgmlCompletionItems(source, source.indexOf('show_l') + 'show_l'.length)
+    const viewSnapItems = getPgmlCompletionItems(source, source.indexOf('snap') + 'snap'.length)
+
+    expect(workspaceMetadataItems).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        label: 'active_view',
+        kind: 'property'
+      })
+    ]))
+    expect(workspaceViewItems).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        label: 'View',
+        kind: 'keyword'
+      })
+    ]))
+    expect(viewPropertiesItems).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        label: 'Properties',
+        kind: 'keyword'
+      })
+    ]))
+    expect(viewBooleanItems).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        label: 'show_lines',
+        kind: 'property'
+      })
+    ]))
+    expect(viewSnapItems).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        label: 'snap_to_grid',
+        kind: 'property'
       })
     ]))
   })

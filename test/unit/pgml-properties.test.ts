@@ -277,4 +277,39 @@ Properties "function:orphan_report" {
     })
     expect(reparsed.nodeProperties['function:public.touch_users']).toBeUndefined()
   })
+
+  it('drops inferred sequence layout blocks when a sequence is attached through a table column modifier', () => {
+    const sourceWithOldLayout = `Table public.orders {
+  id bigint [pk]
+  order_number bigint [not null, unique, default: nextval('invoice_number_seq')]
+}
+
+Sequence invoice_number_seq {
+  source: $sql$
+    CREATE SEQUENCE public.invoice_number_seq;
+  $sql$
+}
+
+Properties "sequence:invoice_number_seq" {
+  x: 1188
+  y: 612
+  width: 308
+  height: 156
+}`
+
+    const built = buildPgmlWithNodeProperties(sourceWithOldLayout, {
+      'sequence:invoice_number_seq': {
+        x: 1188,
+        y: 612,
+        width: 308,
+        height: 156
+      }
+    })
+
+    expect(built).not.toContain('Properties "sequence:invoice_number_seq" {')
+
+    const reparsed = parsePgml(built)
+
+    expect(reparsed.nodeProperties['sequence:invoice_number_seq']).toBeUndefined()
+  })
 })
