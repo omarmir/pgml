@@ -351,6 +351,7 @@ const normalizeExecutableDetailSource = (value: string) => {
 }
 const normalizeEffectKey = (value: string) => cleanName(value).toLowerCase().replaceAll(/[^\w]+/g, '_')
 const normalizeSource = (value: string) => value.replaceAll('\n', ' ').replace(/\s+/g, ' ').trim()
+const escapeRegExp = (value: string) => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
 const lower = (value: string) => value.toLowerCase()
 const getModifierValue = (modifiers: string[], key: string) => {
   const modifier = modifiers.find((entry) => {
@@ -601,17 +602,17 @@ const getRoutinePrimaryTableIds = (
 const getMetadataValue = (metadata: PgmlMetadataEntry[], key: string) => {
   return metadata.find(entry => normalizeEffectKey(entry.key) === normalizeEffectKey(key))?.value || null
 }
-const getRoutineNameSearchKeys = (value: string) => {
+const getNamedObjectSearchKeys = (value: string) => {
   return uniqueValues([
     cleanForSearch(value),
     cleanForSearch(value.split('.').at(-1) || value)
   ]).filter(entry => entry.length > 0)
 }
+const getRoutineNameSearchKeys = (value: string) => {
+  return getNamedObjectSearchKeys(value)
+}
 const getSequenceSearchKeys = (value: string) => {
-  return uniqueValues([
-    cleanForSearch(value),
-    cleanForSearch(value.split('.').at(-1) || value)
-  ]).filter(entry => entry.length > 0)
+  return getNamedObjectSearchKeys(value)
 }
 const getSequenceModifierTableIds = (
   tables: PgmlTable[],
@@ -1471,6 +1472,346 @@ export const extractPgmlRoutineBodyFromExecutableSource = (value: string) => {
   }
 
   return dedentPgmlSourceForEditor(bodyMatch[3] || '')
+}
+
+const createEmptyPgmlAffects = (): PgmlAffects => {
+  return {
+    writes: [],
+    sets: [],
+    dependsOn: [],
+    reads: [],
+    calls: [],
+    uses: [],
+    ownedBy: [],
+    extras: []
+  }
+}
+
+const finalizePgmlAffects = (affects: PgmlAffects) => {
+  const normalizedAffects: PgmlAffects = {
+    writes: uniqueValues(affects.writes),
+    sets: uniqueValues(affects.sets),
+    dependsOn: uniqueValues(affects.dependsOn),
+    reads: uniqueValues(affects.reads),
+    calls: uniqueValues(affects.calls),
+    uses: uniqueValues(affects.uses),
+    ownedBy: uniqueValues(affects.ownedBy),
+    extras: affects.extras
+  }
+  const hasValues = (
+    normalizedAffects.writes.length
+    || normalizedAffects.sets.length
+    || normalizedAffects.dependsOn.length
+    || normalizedAffects.reads.length
+    || normalizedAffects.calls.length
+    || normalizedAffects.uses.length
+    || normalizedAffects.ownedBy.length
+    || normalizedAffects.extras.length
+  )
+
+  return hasValues ? normalizedAffects : null
+}
+
+const sqlIdentifierTokenPattern = `(?:['"]?[A-Za-z_][\\w$]*['"]?)`
+const sqlQualifiedIdentifierPattern = `${sqlIdentifierTokenPattern}(?:\\s*\\.\\s*${sqlIdentifierTokenPattern}){0,2}`
+
+const stripSqlCommentsForInference = (value: string) => {
+  return value
+    .replace(/\/\*[\s\S]*?\*\//g, ' ')
+    .replace(/--[^\n\r]*/g, ' ')
+}
+
+const getRoutineInferenceSource = (source: string) => {
+  const routineBody = extractPgmlRoutineBodyFromExecutableSource(source)
+
+  return stripSqlCommentsForInference((routineBody || source).replaceAll('\r\n', '\n')).trim()
+}
+
+const buildNamedObjectLookup = (
+  values: string[],
+  getSearchKeys: (value: string) => string[]
+) => {
+  const matchesByBareKey = values.reduce<Record<string, string[]>>((entries, value) => {
+    const bareKey = cleanForSearch(value.split('.').at(-1) || value)
+
+    if (!entries[bareKey]) {
+      entries[bareKey] = []
+    }
+
+    entries[bareKey]?.push(value)
+    return entries
+  }, {})
+  const lookup = new Map<string, string>()
+
+  values.forEach((value) => {
+    getSearchKeys(value).forEach((key) => {
+      if (key.includes('.')) {
+        lookup.set(key, value)
+      }
+    })
+  })
+
+  Object.entries(matchesByBareKey).forEach(([bareKey, matchingValues]) => {
+    if (matchingValues.length === 1) {
+      lookup.set(bareKey, matchingValues[0] || '')
+    }
+  })
+
+  return lookup
+}
+
+const collectSqlIdentifiersByKeyword = (
+  source: string,
+  keywordPattern: string
+) => {
+  const pattern = new RegExp(`\\b(?:${keywordPattern})\\s+(${sqlQualifiedIdentifierPattern})`, 'gi')
+
+  return Array.from(source.matchAll(pattern)).map((match) => {
+    return sanitizeReferenceValue(readMatch(match[1]))
+  }).filter(value => value.length > 0)
+}
+
+type TriggerRowAssignmentMatch = {
+  index: number
+  value: string
+}
+
+const collectTriggerRowAssignmentMatchesFromSource = (source: string): TriggerRowAssignmentMatch[] => {
+  const pattern = /(^|[;\n]\s*)(NEW|OLD)\s*\.\s*([A-Za-z_][\w$]*)\s*(?::=|=)/gim
+
+  return Array.from(source.matchAll(pattern)).map((match) => {
+    const prefix = readMatch(match[1])
+    const rowLabel = readMatch(match[2]).toUpperCase()
+    const columnName = cleanName(readMatch(match[3]))
+
+    return {
+      index: (match.index || 0) + prefix.length,
+      value: `${rowLabel}.${columnName}`
+    } satisfies TriggerRowAssignmentMatch
+  }).filter(match => match.value.length > 0)
+}
+
+const collectTriggerRowAssignmentsFromSource = (source: string) => {
+  return collectTriggerRowAssignmentMatchesFromSource(source).map(match => match.value)
+}
+
+const collectTriggerRowReadsFromSource = (source: string) => {
+  const pattern = /\b(NEW|OLD)\s*\.\s*([A-Za-z_][\w$]*)\b/gi
+  const assignmentIndexes = new Set<number>(collectTriggerRowAssignmentMatchesFromSource(source).map(match => match.index))
+
+  return Array.from(source.matchAll(pattern)).flatMap((match) => {
+    const matchedValue = `${readMatch(match[1]).toUpperCase()}.${cleanName(readMatch(match[2]))}`
+    const matchIndex = match.index || 0
+
+    return assignmentIndexes.has(matchIndex) ? [] : [matchedValue]
+  }).filter(value => value.length > 0)
+}
+
+const resolveTriggerRowAffectValues = (
+  tables: PgmlTable[],
+  defaultTableIds: string[],
+  values: string[]
+) => {
+  return uniqueValues(values.flatMap((value) => {
+    const normalizedValue = sanitizeReferenceValue(value)
+    const parts = normalizedValue.split('.')
+    const rowLabel = lower(parts[0] || '')
+    const columnName = parts[1] || ''
+
+    if ((rowLabel !== 'new' && rowLabel !== 'old') || columnName.length === 0) {
+      return normalizedValue.length > 0 ? [normalizedValue] : []
+    }
+
+    if (defaultTableIds.length === 0) {
+      return [`${readMatch(parts[0]).toUpperCase()}.${columnName}`]
+    }
+
+    return defaultTableIds.flatMap((tableId) => {
+      const table = tables.find(entry => entry.fullName === tableId)
+      const matchedColumn = table?.columns.find(column => lower(column.name) === lower(columnName)) || null
+
+      return matchedColumn ? [`${tableId}.${matchedColumn.name}`] : []
+    })
+  }))
+}
+
+const collectRoutineCallsFromSource = (
+  source: string,
+  currentRoutineName: string,
+  routineLookup: Map<string, string>
+) => {
+  const currentRoutineKeys = new Set(getRoutineNameSearchKeys(currentRoutineName))
+  const calls: string[] = []
+
+  routineLookup.forEach((resolvedName, searchKey) => {
+    if (currentRoutineKeys.has(searchKey)) {
+      return
+    }
+
+    const pattern = new RegExp(`\\b${escapeRegExp(searchKey).replaceAll('\\.', '\\s*\\.\\s*')}\\s*\\(`, 'i')
+
+    if (pattern.test(source)) {
+      calls.push(resolvedName)
+    }
+  })
+
+  return uniqueValues(calls)
+}
+
+const collectNamedDependenciesFromSource = (
+  source: string,
+  pattern: RegExp,
+  lookup: Map<string, string>
+) => {
+  return uniqueValues(Array.from(source.matchAll(pattern)).map((match) => {
+    const capturedValue = sanitizeReferenceValue(readMatch(match[1]))
+    const resolvedValue = lookup.get(cleanForSearch(capturedValue))
+
+    return resolvedValue || null
+  }).filter((value): value is string => {
+    return typeof value === 'string' && value.length > 0
+  }))
+}
+
+const inferRoutineAffectsFromSource = (
+  model: PgmlSchemaModel,
+  routine: PgmlRoutine,
+  referenceLookup: Map<string, string>,
+  triggerTableIdsByRoutineName: Map<string, string[]>,
+  sequenceLookup: Map<string, string>,
+  customTypeLookup: Map<string, string>,
+  routineLookup: Map<string, string>
+) => {
+  if (routine.affects || !routine.source) {
+    return routine
+  }
+
+  const inferenceSource = getRoutineInferenceSource(routine.source)
+
+  if (inferenceSource.length === 0) {
+    return routine
+  }
+
+  const defaultTableIds = uniqueValues(getRoutineNameSearchKeys(routine.name).flatMap((key) => {
+    return triggerTableIdsByRoutineName.get(key) || []
+  }))
+  const affects = createEmptyPgmlAffects()
+  const writeTableIds = uniqueValues(collectSqlIdentifiersByKeyword(
+    inferenceSource,
+    'insert\\s+into|update|delete\\s+from|merge\\s+into'
+  ).flatMap((value) => {
+    const tableId = resolveTableIdentifier(model.tables, referenceLookup, value)
+
+    return tableId ? [tableId] : []
+  }))
+  const readTableIds = uniqueValues(collectSqlIdentifiersByKeyword(
+    inferenceSource,
+    'from|join|using'
+  ).flatMap((value) => {
+    const tableId = resolveTableIdentifier(model.tables, referenceLookup, value)
+
+    return tableId ? [tableId] : []
+  }))
+  const resolvedTriggerRowReads = resolveTriggerRowAffectValues(
+    model.tables,
+    defaultTableIds,
+    collectTriggerRowReadsFromSource(inferenceSource)
+  )
+  const resolvedTriggerRowSets = resolveTriggerRowAffectValues(
+    model.tables,
+    defaultTableIds,
+    collectTriggerRowAssignmentsFromSource(inferenceSource)
+  )
+
+  affects.writes.push(...writeTableIds)
+  affects.reads.push(...readTableIds, ...resolvedTriggerRowReads)
+  affects.sets.push(...resolvedTriggerRowSets)
+  affects.calls.push(...collectRoutineCallsFromSource(
+    inferenceSource,
+    routine.name,
+    routineLookup
+  ))
+  affects.dependsOn.push(
+    ...uniqueValues([
+      ...writeTableIds,
+      ...readTableIds,
+      ...getTableIdsFromValues(model.tables, referenceLookup, resolvedTriggerRowReads),
+      ...getTableIdsFromValues(model.tables, referenceLookup, resolvedTriggerRowSets)
+    ])
+  )
+  affects.dependsOn.push(...collectNamedDependenciesFromSource(
+    inferenceSource,
+    new RegExp(`::\\s*(${sqlQualifiedIdentifierPattern})`, 'gi'),
+    customTypeLookup
+  ))
+  affects.dependsOn.push(...collectNamedDependenciesFromSource(
+    inferenceSource,
+    /\bcast\s*\([^)]*\s+as\s+((?:['"]?[A-Za-z_][\w$]*['"]?)(?:\s*\.\s*(?:['"]?[A-Za-z_][\w$]*['"]?)){0,2})\s*\)/gi,
+    customTypeLookup
+  ))
+  affects.dependsOn.push(...collectNamedDependenciesFromSource(
+    inferenceSource,
+    /\b(?:nextval|currval|setval)\s*\(\s*'([^']+)'/gi,
+    sequenceLookup
+  ))
+
+  const inferredAffects = finalizePgmlAffects(affects)
+
+  if (!inferredAffects) {
+    return routine
+  }
+
+  return {
+    ...routine,
+    affects: inferredAffects,
+    details: buildExecutableDetails(routine.metadata, routine.docs, inferredAffects, routine.source)
+  }
+}
+
+const applyRoutineSourceAffectsInference = (model: PgmlSchemaModel) => {
+  const referenceLookup = buildGroupTableReferenceLookup(model.tables)
+  const triggerTableIdsByRoutineName = buildTriggerTableIdsByRoutineName(model, referenceLookup)
+  const sequenceLookup = buildNamedObjectLookup(
+    model.sequences.map(sequence => sequence.name),
+    getSequenceSearchKeys
+  )
+  const customTypeLookup = buildNamedObjectLookup(
+    model.customTypes.map(customType => customType.name),
+    getNamedObjectSearchKeys
+  )
+  const routineLookup = buildNamedObjectLookup(
+    [
+      ...model.functions.map(routine => routine.name),
+      ...model.procedures.map(routine => routine.name)
+    ],
+    getRoutineNameSearchKeys
+  )
+
+  return {
+    ...model,
+    functions: model.functions.map((routine) => {
+      return inferRoutineAffectsFromSource(
+        model,
+        routine,
+        referenceLookup,
+        triggerTableIdsByRoutineName,
+        sequenceLookup,
+        customTypeLookup,
+        routineLookup
+      )
+    }),
+    procedures: model.procedures.map((routine) => {
+      return inferRoutineAffectsFromSource(
+        model,
+        routine,
+        referenceLookup,
+        triggerTableIdsByRoutineName,
+        sequenceLookup,
+        customTypeLookup,
+        routineLookup
+      )
+    })
+  } satisfies PgmlSchemaModel
 }
 
 export const replacePgmlRoutineBodyInExecutableSource = (
@@ -2914,7 +3255,7 @@ export const parsePgml = (source: string) => {
     schemaSet.add(table.schema)
   }
 
-  return {
+  const model = {
     tables: normalizedTables,
     groups,
     references,
@@ -2926,6 +3267,8 @@ export const parsePgml = (source: string) => {
     schemas: Array.from(schemaSet),
     nodeProperties
   } satisfies PgmlSchemaModel
+
+  return applyRoutineSourceAffectsInference(model)
 }
 
 const pgmlExampleFoundationSnapshot = `TableGroup Core {

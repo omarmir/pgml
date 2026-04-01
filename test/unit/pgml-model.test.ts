@@ -119,6 +119,235 @@ describe('PGML model parsing', () => {
     ]))
   })
 
+  it('infers routine affects from executable source when no affects block is present', () => {
+    const model = parsePgml(`Enum entity_type {
+  fundingopportunity
+}
+
+Sequence public.common_entity_id_seq {
+  source: $sql$
+    CREATE SEQUENCE public.common_entity_id_seq;
+  $sql$
+}
+
+Table public.common_entity {
+  id bigint [pk, default: nextval('common_entity_id_seq')]
+  entity_type entity_type [not null]
+}
+
+Table public.funding_opportunity_profile {
+  id bigint [pk]
+}
+
+Function register_entity() returns trigger {
+  source: $sql$
+    CREATE OR REPLACE FUNCTION public.register_entity() RETURNS trigger AS $$
+    DECLARE
+      allocated_id bigint;
+    BEGIN
+      INSERT INTO 'Common_Entity' (entity_type)
+      VALUES (TG_ARGV[0]::'Entity_Type')
+      RETURNING id INTO allocated_id;
+
+      NEW.id := allocated_id;
+      RETURN NEW;
+    END;
+    $$ LANGUAGE plpgsql;
+  $sql$
+}
+
+Trigger trg_register_fundingopportunity on public.funding_opportunity_profile {
+  source: $sql$
+    CREATE TRIGGER trg_register_fundingopportunity
+      BEFORE INSERT ON public.funding_opportunity_profile
+      FOR EACH ROW
+      EXECUTE FUNCTION public.register_entity('fundingopportunity');
+  $sql$
+}`)
+    const routine = model.functions.find(entry => entry.name === 'register_entity') || null
+
+    expect(routine?.affects?.writes).toEqual(['public.common_entity'])
+    expect(routine?.affects?.sets).toEqual(['public.funding_opportunity_profile.id'])
+    expect(routine?.affects?.dependsOn).toEqual(expect.arrayContaining([
+      'public.common_entity',
+      'entity_type'
+    ]))
+  })
+
+  it('expands trigger-row affects across multiple trigger attachments', () => {
+    const model = parsePgml(`Table public.orders {
+  id uuid [pk]
+}
+
+Table public.invoices {
+  id uuid [pk]
+}
+
+Function assign_entity_id() returns trigger {
+  source: $sql$
+    CREATE OR REPLACE FUNCTION public.assign_entity_id() RETURNS trigger AS $$
+    BEGIN
+      NEW.id := COALESCE(NEW.id, gen_random_uuid());
+      RETURN NEW;
+    END;
+    $$ LANGUAGE plpgsql;
+  $sql$
+}
+
+Trigger trg_assign_order_id on public.orders {
+  source: $sql$
+    CREATE TRIGGER trg_assign_order_id
+      BEFORE INSERT ON public.orders
+      FOR EACH ROW
+      EXECUTE FUNCTION public.assign_entity_id();
+  $sql$
+}
+
+Trigger trg_assign_invoice_id on public.invoices {
+  source: $sql$
+    CREATE TRIGGER trg_assign_invoice_id
+      BEFORE INSERT ON public.invoices
+      FOR EACH ROW
+      EXECUTE FUNCTION public.assign_entity_id();
+  $sql$
+}`)
+    const routine = model.functions.find(entry => entry.name === 'assign_entity_id') || null
+
+    expect(routine?.affects?.sets).toEqual([
+      'public.orders.id',
+      'public.invoices.id'
+    ])
+    expect(routine?.affects?.reads).toEqual([
+      'public.orders.id',
+      'public.invoices.id'
+    ])
+    expect(routine?.affects?.dependsOn).toEqual([
+      'public.orders',
+      'public.invoices'
+    ])
+  })
+
+  it('does not mistake trigger-row comparisons for column writes', () => {
+    const model = parsePgml(`Table public.common_completion {
+  id uuid [pk]
+  egcs_cn_value boolean
+  egcs_cn_user uuid
+  egcs_cn_completedat timestamptz
+}
+
+Function trg_fn_enforce_completion_audit_fields() returns trigger {
+  source: $sql$
+    BEGIN
+      IF NEW.egcs_cn_value IS DISTINCT FROM true THEN
+        RAISE EXCEPTION 'Completion rows must store egcs_cn_value = true';
+      END IF;
+
+      IF TG_OP = 'UPDATE' THEN
+        IF OLD.egcs_cn_value = true THEN
+          IF NEW.egcs_cn_user IS DISTINCT FROM OLD.egcs_cn_user THEN
+            RAISE EXCEPTION 'Completion user cannot be changed after completion';
+          END IF;
+
+          IF NEW.egcs_cn_value IS DISTINCT FROM OLD.egcs_cn_value THEN
+            RAISE EXCEPTION 'Completion value cannot be changed after completion';
+          END IF;
+
+          IF NEW.egcs_cn_completedat IS DISTINCT FROM OLD.egcs_cn_completedat THEN
+            RAISE EXCEPTION 'Completion timestamp cannot be changed after completion';
+          END IF;
+        END IF;
+      END IF;
+
+      IF TG_OP = 'INSERT' THEN
+        IF NEW.egcs_cn_value = true THEN
+          NEW.egcs_cn_completedat := NOW();
+        END IF;
+      ELSIF TG_OP = 'UPDATE' THEN
+        IF OLD.egcs_cn_value IS DISTINCT FROM true AND NEW.egcs_cn_value IS DISTINCT FROM OLD.egcs_cn_value THEN
+          NEW.egcs_cn_completedat := NOW();
+        END IF;
+      END IF;
+
+      RETURN NEW;
+    END;
+  $sql$
+}
+
+Trigger trg_enforce_completion_audit_fields on public.common_completion {
+  source: $sql$
+    CREATE TRIGGER trg_enforce_completion_audit_fields
+      BEFORE INSERT OR UPDATE ON public.common_completion
+      FOR EACH ROW
+      EXECUTE FUNCTION trg_fn_enforce_completion_audit_fields();
+  $sql$
+}`)
+    const routine = model.functions.find(entry => entry.name === 'trg_fn_enforce_completion_audit_fields') || null
+
+    expect(routine?.affects?.sets).toEqual(['public.common_completion.egcs_cn_completedat'])
+    expect(routine?.affects?.reads).toEqual(expect.arrayContaining([
+      'public.common_completion.egcs_cn_value',
+      'public.common_completion.egcs_cn_user',
+      'public.common_completion.egcs_cn_completedat'
+    ]))
+    expect(routine?.affects?.reads).not.toEqual(expect.arrayContaining([
+      'NEW.egcs_cn_value',
+      'OLD.egcs_cn_value'
+    ]))
+  })
+
+  it('infers multiple read and write targets for source-only procedures', () => {
+    const model = parsePgml(`Table public.orders {
+  id uuid [pk]
+}
+
+Table public.order_items {
+  id uuid [pk]
+  order_id uuid [not null]
+}
+
+Table public.orders_archive {
+  id uuid [pk]
+}
+
+Table public.order_item_archive {
+  id uuid [pk]
+}
+
+Procedure archive_orders(retention_days integer) [replace] {
+  source: $sql$
+    CREATE OR REPLACE PROCEDURE public.archive_orders(retention_days integer)
+    LANGUAGE plpgsql
+    AS $$
+    BEGIN
+      INSERT INTO public.orders_archive
+      SELECT *
+      FROM public.orders;
+
+      INSERT INTO public.order_item_archive
+      SELECT items.*
+      FROM public.order_items AS items
+      INNER JOIN public.orders AS orders
+        ON orders.id = items.order_id;
+    END;
+    $$;
+  $sql$
+}`)
+    const routine = model.procedures.find(entry => entry.name === 'archive_orders') || null
+
+    expect(routine?.affects?.writes).toEqual([
+      'public.orders_archive',
+      'public.order_item_archive'
+    ])
+    expect(routine?.affects?.reads).toEqual([
+      'public.orders',
+      'public.order_items'
+    ])
+    expect(routine?.affects?.dependsOn).toEqual(expect.arrayContaining([
+      'public.orders',
+      'public.order_items'
+    ]))
+  })
+
   it('dedents executable source in detail previews while keeping nested SQL indentation', () => {
     const model = parsePgml(`Procedure public.archive_orders(retention_days integer) {
   source: $sql$
