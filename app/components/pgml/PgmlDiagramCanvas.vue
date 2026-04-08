@@ -19,6 +19,11 @@ type VersionCompareOption = {
   value: string
 }
 
+type ComparisonItem = {
+  label: string
+  value: string
+}
+
 type DiagramViewItem = {
   label: string
   value: string
@@ -73,10 +78,12 @@ const {
   canEditDetailSource = false,
   compareBaseLabel = 'Base',
   compareBaseModel = null,
+  compareComparisonItems = [],
   compareEntries = [],
   compareExcludedGroupNames = [],
   compareExcludedTableIds = [],
   compareRelationshipSummary = '',
+  compareSelectedComparisonId = null,
   compareTargetLabel = 'Target',
   exportBaseName = 'pgml-schema',
   exportPreferenceKey = 'name:pgml-schema',
@@ -108,10 +115,12 @@ const {
   canEditDetailSource?: boolean
   compareBaseLabel?: string
   compareBaseModel?: PgmlSchemaModel | null
+  compareComparisonItems?: ComparisonItem[]
   compareEntries?: PgmlDiagramCompareEntry[]
   compareExcludedGroupNames?: string[]
   compareExcludedTableIds?: string[]
   compareRelationshipSummary?: string
+  compareSelectedComparisonId?: string | null
   compareTargetLabel?: string
   diagramViewItems?: DiagramViewItem[]
   diagramViewSettings?: DiagramViewSettings
@@ -135,12 +144,15 @@ const {
 
 const emit = defineEmits<{
   createGroup: []
+  createCompareComparison: []
   createTable: [groupName: string | null]
   createDiagramView: []
+  deleteCompareComparison: []
   deleteDiagramView: []
   editGroup: [groupName: string]
-  editCompareTargetExclusions: []
+  editCompareExclusions: []
   renameDiagramView: []
+  renameCompareComparison: []
   renameVersion: [versionId: string]
   editTable: [tableId: string]
   focusSource: [sourceRange: PgmlSourceRange]
@@ -151,6 +163,7 @@ const emit = defineEmits<{
   toolPanelVisibilityChange: [payload: { open: boolean, tab: DiagramToolPanelTab }]
   replaceSourceRange: [payload: { nextText: string, sourceRange: PgmlSourceRange }]
   restoreVersion: [versionId: string]
+  selectCompareComparison: [comparisonId: string | null]
   selectDiagramView: [viewId: string]
   updateDiagramViewSettings: [settings: Partial<DiagramViewSettings>]
   updateVersionCompareBaseId: [value: string | null]
@@ -188,10 +201,12 @@ defineExpose<CanvasHandle>({
     :can-edit-detail-source="canEditDetailSource"
     :compare-base-label="compareBaseLabel"
     :compare-base-model="compareBaseModel"
+    :compare-comparison-items="compareComparisonItems"
     :compare-entries="compareEntries"
     :compare-excluded-group-names="compareExcludedGroupNames"
     :compare-excluded-table-ids="compareExcludedTableIds"
     :compare-relationship-summary="compareRelationshipSummary"
+    :compare-selected-comparison-id="compareSelectedComparisonId"
     :compare-target-label="compareTargetLabel"
     :diagram-view-items="diagramViewItems"
     :diagram-view-settings="diagramViewSettings"
@@ -218,13 +233,16 @@ defineExpose<CanvasHandle>({
     :workspace-base-label="workspaceBaseLabel"
     :workspace-status="workspaceStatus"
     :viewport-reset-key="viewportResetKey"
+    @create-compare-comparison="emit('createCompareComparison')"
     @create-group="emit('createGroup')"
     @create-table="emit('createTable', $event)"
     @create-diagram-view="emit('createDiagramView')"
+    @delete-compare-comparison="emit('deleteCompareComparison')"
     @delete-diagram-view="emit('deleteDiagramView')"
     @edit-group="emit('editGroup', $event)"
-    @edit-compare-target-exclusions="emit('editCompareTargetExclusions')"
+    @edit-compare-exclusions="emit('editCompareExclusions')"
     @rename-diagram-view="emit('renameDiagramView')"
+    @rename-compare-comparison="emit('renameCompareComparison')"
     @rename-version="emit('renameVersion', $event)"
     @edit-table="emit('editTable', $event)"
     @focus-source="emit('focusSource', $event)"
@@ -235,6 +253,7 @@ defineExpose<CanvasHandle>({
     @tool-panel-visibility-change="emit('toolPanelVisibilityChange', $event)"
     @replace-source-range="emit('replaceSourceRange', $event)"
     @restore-version="emit('restoreVersion', $event)"
+    @select-compare-comparison="emit('selectCompareComparison', $event)"
     @select-diagram-view="emit('selectDiagramView', $event)"
     @update-diagram-view-settings="emit('updateDiagramViewSettings', $event)"
     @update-version-compare-base-id="emit('updateVersionCompareBaseId', $event)"

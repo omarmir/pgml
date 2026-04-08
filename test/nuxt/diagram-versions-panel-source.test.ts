@@ -55,6 +55,7 @@ describe('diagram versions panel source', () => {
       'data-version-import-dbml="true"',
       'label="Import DBML"',
       'Pick the workspace or a locked checkpoint to change the diagram preview. Restore copies a locked snapshot back into the workspace draft.',
+      '<div class="grid gap-2">',
       'Locked {{ version.role }} checkpoint',
       'Leaf',
       'Latest overall',
@@ -83,5 +84,6 @@ describe('diagram versions panel source', () => {
     expect(versionsFile).not.toContain(':data-version-compare-base="version.id"')
     expect(versionsFile).not.toContain(':data-version-compare-target="version.id"')
     expect(versionsFile).not.toContain('sticky top-0 z-[1]')
+    expect(versionsFile).not.toContain('class="grid gap-2 border border-[color:var(--studio-divider)] bg-[color:var(--studio-control-bg)] px-3 py-3"')
   })
 })

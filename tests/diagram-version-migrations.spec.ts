@@ -642,7 +642,7 @@ Table public.orders {
   await expectComparePanelWithinContainer(page)
 })
 
-test('compare panel exclusions hide selected groups and tables and carry forward into new checkpoints', async ({ goto, page }) => {
+test('saved comparisons persist their base, target, and exclusions and can be recalled later', async ({ goto, page }) => {
   await goto('/diagram')
   const editor = getPgmlEditor(page)
 
@@ -713,8 +713,12 @@ TableGroup Core {
   const exclusionsDialog = page.locator('[data-studio-modal-surface="compare-exclusions"]')
 
   await expect(exclusionsDialog).toBeVisible()
-  await exclusionsDialog.locator('[data-compare-exclusion-group="Core"]').click()
-  await exclusionsDialog.locator('[data-compare-exclusion-table="public.kysely_migration"]').click()
+  await expect(exclusionsDialog.locator('[data-compare-exclusion-groups-section="true"]')).toContainText('Groups')
+  await expect(exclusionsDialog.locator('[data-compare-exclusion-group-section="Core"]')).toContainText('public.users')
+  await expect(exclusionsDialog.locator('[data-compare-exclusion-group-section="Core"]')).toContainText('public.orders')
+  await expect(exclusionsDialog.locator('[data-compare-exclusion-ungrouped-section="true"]')).toContainText('Ungrouped tables')
+  await exclusionsDialog.locator('[data-compare-exclusion-group-section="Core"] [data-compare-exclusion-option="group:Core"]').click()
+  await exclusionsDialog.locator('[data-compare-exclusion-ungrouped-section="true"] [data-compare-exclusion-option="table:public.kysely_migration"]').click()
   await exclusionsDialog.locator('[data-compare-exclusions-save="true"]').click()
   await expect(exclusionsDialog).toHaveCount(0)
 
@@ -725,19 +729,41 @@ TableGroup Core {
   await expect(migrationColumnEntry).toHaveCount(0)
   await expect(auditLogColumnEntry).toBeVisible()
 
+  await comparePanel.locator('[data-compare-create-comparison="true"]').click()
+  const comparisonDialog = page.locator('[data-studio-modal-surface="compare-comparison"]')
+  await expect(comparisonDialog).toBeVisible()
+  await comparisonDialog.locator('[data-compare-comparison-name-input="true"]').fill('Implemented scope')
+  await comparisonDialog.locator('[data-compare-comparison-save="true"]').click()
+  await expect(comparisonDialog).toHaveCount(0)
+
   await createCheckpoint(page, 'App-only')
   await openComparator(page)
-  await getComparePanel(page).locator('[data-compare-base-select="true"]').click()
-  await page.getByRole('option', { name: 'Baseline' }).click()
-  await getComparePanel(page).locator('[data-compare-target-select="true"]').click()
-  await page.getByRole('option', { name: 'App-only' }).click()
+  const recalledComparePanel = getComparePanel(page)
+  await expect(recalledComparePanel.locator('[data-compare-entry="column:public.users::email"]')).toHaveCount(0)
+  await recalledComparePanel.locator('[data-compare-comparison-select="true"]').click()
+  await page.getByRole('option', { name: 'Implemented scope' }).click()
 
-  await expect(comparePanel).toContainText('Group Core')
-  await expect(comparePanel).toContainText('Table public.kysely_migration')
-  await expect(usersColumnEntry).toHaveCount(0)
-  await expect(ordersColumnEntry).toHaveCount(0)
-  await expect(migrationColumnEntry).toHaveCount(0)
-  await expect(auditLogColumnEntry).toBeVisible()
+  await expect(recalledComparePanel).toContainText('Group Core')
+  await expect(recalledComparePanel).toContainText('Table public.kysely_migration')
+  await expect(recalledComparePanel.locator('[data-compare-entry="column:public.users::email"]')).toHaveCount(0)
+  await expect(recalledComparePanel.locator('[data-compare-entry="column:public.orders::status"]')).toHaveCount(0)
+  await expect(recalledComparePanel.locator('[data-compare-entry="column:public.kysely_migration::name"]')).toHaveCount(0)
+  await expect(recalledComparePanel.locator('[data-compare-entry="column:public.audit_log::action"]')).toBeVisible()
+  await expect(recalledComparePanel.locator('[data-compare-base-select="true"]')).toContainText('Baseline')
+
+  await recalledComparePanel.locator('[data-compare-rename-comparison="true"]').click()
+  await expect(comparisonDialog).toBeVisible()
+  await comparisonDialog.locator('[data-compare-comparison-name-input="true"]').fill('Implemented today')
+  await comparisonDialog.locator('[data-compare-comparison-save="true"]').click()
+  await expect(comparisonDialog).toHaveCount(0)
+  await expect(recalledComparePanel.locator('[data-compare-comparison-select="true"]')).toContainText('Implemented today')
+
+  await recalledComparePanel.locator('[data-compare-delete-comparison="true"]').click()
+  await expect(recalledComparePanel.locator('[data-compare-comparison-select="true"]')).toContainText('Current comparison')
+  await expect(recalledComparePanel.locator('[data-compare-entry="column:public.users::email"]')).toHaveCount(0)
+  await expect(recalledComparePanel.locator('[data-compare-entry="column:public.orders::status"]')).toHaveCount(0)
+  await expect(recalledComparePanel.locator('[data-compare-entry="column:public.kysely_migration::name"]')).toHaveCount(0)
+  await expect(recalledComparePanel.locator('[data-compare-entry="column:public.audit_log::action"]')).toBeVisible()
 })
 
 test('versions overview controls render inline instead of as a sticky floating card', async ({ goto, page }) => {
@@ -871,7 +897,7 @@ Ref: public.orders.user_id > public.users.id`)
 
   await expect(comparePanel.locator('[data-compare-context-entry]').filter({ hasText: 'public.users.email' })).toBeVisible()
   await expect(detail).toContainText('public.users.email')
-  await expect(detail).toContainText('Changed column public.users.email: modifiers and type.')
+  await expect(detail).toContainText('Changed column public.users.email: modifiers none -> [not null]; type text -> varchar.')
   await expect(detail).toContainText('Before snapshot')
   await expect(detail).toContainText('"type": "text"')
   await expect(detail).toContainText('"type": "varchar"')

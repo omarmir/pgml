@@ -49,7 +49,9 @@ const emit = defineEmits<{
 const fileInputRef: Ref<HTMLInputElement | null> = ref(null)
 const modalPrimaryButtonClass = studioButtonClasses.primary
 const modalSecondaryButtonClass = studioButtonClasses.secondary
-const fileSelectionPanelClass = 'grid gap-2 border border-[color:var(--studio-shell-border)] bg-[color:var(--studio-control-bg)] px-3 py-3'
+const importRulesClass = 'grid gap-1.5'
+const importRulesSummaryClass = 'border-t border-[color:var(--studio-divider)] pt-2 text-[0.68rem] leading-6 text-[color:var(--studio-shell-muted)]'
+const settingsPanelClass = 'grid gap-2 border border-[color:var(--studio-shell-border)] bg-[color:var(--studio-control-bg)] px-3 py-3'
 const errorPanelClass = 'grid gap-1 border border-[color:var(--studio-shell-error)]/40 bg-[color:var(--studio-shell-error)]/8 px-3 py-3 text-[0.74rem] text-[color:var(--studio-shell-error)]'
 const hasPastedText = computed(() => modelValue.trim().length > 0)
 const hasSelectedFile = computed(() => selectedFileName.trim().length > 0)
@@ -104,21 +106,21 @@ const handleTextInput = (event: Event) => {
     @update:open="emit('update:open', $event)"
   >
     <div class="grid gap-4">
-      <div :class="fileSelectionPanelClass">
+      <div :class="importRulesClass">
         <div :class="studioCompactFieldKickerClass">
           Import rules
         </div>
         <p :class="studioBodyCopyClass">
           {{ inputDescription }}
         </p>
-        <div class="border border-[color:var(--studio-shell-border)] bg-[color:var(--studio-input-bg)] px-3 py-2 text-[0.68rem] text-[color:var(--studio-shell-muted)]">
+        <p :class="importRulesSummaryClass">
           {{ activeInputSummary }}
-        </div>
+        </p>
       </div>
 
       <slot name="before-inputs" />
 
-      <div :class="fileSelectionPanelClass">
+      <div :class="settingsPanelClass">
         <div class="flex items-start justify-between gap-4">
           <div class="grid gap-1">
             <div :class="studioFieldKickerClass">

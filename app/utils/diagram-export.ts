@@ -1,3 +1,5 @@
+export const diagramRasterExportScaleFactors = [1, 2, 3, 4, 8] as const
+
 export const MAX_RASTER_EXPORT_DIMENSION = 32767
 export const MAX_RASTER_EXPORT_PIXELS = 268_435_456
 

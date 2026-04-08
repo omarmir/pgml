@@ -150,6 +150,19 @@ const buildFieldSummaryLabel = (changedFields: string[]) => {
   return `${labels.slice(0, -1).join(', ')}, and ${labels[labels.length - 1]}`
 }
 
+const buildChangedFieldNames = (
+  beforeValue: unknown,
+  afterValue: unknown,
+  changedFields: string[]
+) => {
+  return changedFields.length > 0
+    ? changedFields
+    : Array.from(new Set([
+        ...Object.keys((beforeValue as Record<string, unknown>) || {}),
+        ...Object.keys((afterValue as Record<string, unknown>) || {})
+      ])).sort((left, right) => left.localeCompare(right))
+}
+
 // Snapshot text feeds the compare inspector, so it should stay stable across runs.
 // We intentionally remove transient source-range metadata and sort object keys to
 // keep the before/after payloads easy to diff in tests and in the UI.
@@ -195,17 +208,123 @@ const formatFieldValue = (value: unknown) => {
   return JSON.stringify(buildStableSnapshotValue(value), null, 2)
 }
 
+const truncateInlineValue = (value: string, maxLength = 72) => {
+  return value.length > maxLength
+    ? `${value.slice(0, maxLength - 1)}…`
+    : value
+}
+
+const formatReferenceSummaryValue = (value: unknown) => {
+  if (!value || typeof value !== 'object') {
+    return null
+  }
+
+  const reference = value as Record<string, unknown>
+  const relation = typeof reference.relation === 'string' ? reference.relation : null
+  const toTable = typeof reference.toTable === 'string' ? reference.toTable : null
+  const toColumn = typeof reference.toColumn === 'string' ? reference.toColumn : null
+  const onDelete = typeof reference.onDelete === 'string' ? reference.onDelete : null
+  const onUpdate = typeof reference.onUpdate === 'string' ? reference.onUpdate : null
+
+  if (!relation || !toTable || !toColumn) {
+    return null
+  }
+
+  const actions = [
+    onDelete ? `delete=${onDelete}` : null,
+    onUpdate ? `update=${onUpdate}` : null
+  ].filter(hasValue)
+
+  return truncateInlineValue([
+    `${relation} ${toTable}.${toColumn}`,
+    actions.length > 0 ? `(${actions.join(', ')})` : null
+  ].filter(hasValue).join(' '))
+}
+
+const formatDescriptionFieldValue = (
+  fieldName: string,
+  value: unknown
+) => {
+  if (value === undefined || value === null) {
+    return 'none'
+  }
+
+  if (fieldName === 'reference') {
+    const referenceSummary = formatReferenceSummaryValue(value)
+
+    if (referenceSummary) {
+      return referenceSummary
+    }
+  }
+
+  if (Array.isArray(value)) {
+    if (value.length === 0) {
+      return 'none'
+    }
+
+    const primitiveValues = value.every((entry) => {
+      return typeof entry === 'string' || typeof entry === 'number' || typeof entry === 'boolean'
+    })
+
+    if (primitiveValues) {
+      return truncateInlineValue(`[${value.join(', ')}]`)
+    }
+
+    return truncateInlineValue(JSON.stringify(buildStableSnapshotValue(value)))
+  }
+
+  if (typeof value === 'string') {
+    return truncateInlineValue(value)
+  }
+
+  if (typeof value === 'number' || typeof value === 'boolean') {
+    return `${value}`
+  }
+
+  return truncateInlineValue(JSON.stringify(buildStableSnapshotValue(value)))
+}
+
+const buildFieldChangeSummary = (
+  beforeValue: unknown,
+  afterValue: unknown,
+  changedFields: string[]
+) => {
+  const beforeRecord = beforeValue && typeof beforeValue === 'object'
+    ? beforeValue as Record<string, unknown>
+    : {}
+  const afterRecord = afterValue && typeof afterValue === 'object'
+    ? afterValue as Record<string, unknown>
+    : {}
+  const summaries = buildChangedFieldNames(beforeValue, afterValue, changedFields)
+    .map((fieldName) => {
+      const before = formatDescriptionFieldValue(fieldName, beforeRecord[fieldName])
+      const after = formatDescriptionFieldValue(fieldName, afterRecord[fieldName])
+
+      if (before === after) {
+        return null
+      }
+
+      return `${formatCompareFieldLabel(fieldName)} ${before} -> ${after}`
+    })
+    .filter(hasValue)
+
+  if (summaries.length === 0) {
+    return null
+  }
+
+  if (summaries.length <= 2) {
+    return summaries.join('; ')
+  }
+
+  return `${summaries.slice(0, 2).join('; ')}; +${summaries.length - 2} more`
+}
+
 const buildFieldRecords = (
   beforeValue: unknown,
   afterValue: unknown,
   changedFields: string[]
 ) => {
-  const fieldNames = changedFields.length > 0
-    ? changedFields
-    : Array.from(new Set([
-        ...Object.keys((beforeValue as Record<string, unknown>) || {}),
-        ...Object.keys((afterValue as Record<string, unknown>) || {})
-      ])).sort((left, right) => left.localeCompare(right))
+  const fieldNames = buildChangedFieldNames(beforeValue, afterValue, changedFields)
 
   return fieldNames.map((fieldName) => {
     const beforeRecord = beforeValue && typeof beforeValue === 'object'
@@ -259,6 +378,8 @@ const buildEntryDescription = (
   changeKind: PgmlDiffChangeKind,
   entityKind: PgmlDiagramCompareEntityKind,
   label: string,
+  beforeValue: unknown,
+  afterValue: unknown,
   changedFields: string[]
 ) => {
   const baseDescription = `${compareChangeVerbByKind[changeKind]} ${compareEntityKindLabelByValue[entityKind].toLowerCase()} ${label}`
@@ -267,10 +388,14 @@ const buildEntryDescription = (
     return `${baseDescription}.`
   }
 
-  const fieldSummary = buildFieldSummaryLabel(changedFields)
+  const fieldSummary = buildFieldChangeSummary(beforeValue, afterValue, changedFields)
 
   if (!fieldSummary) {
-    return `${baseDescription}.`
+    const fallbackFieldSummary = buildFieldSummaryLabel(changedFields)
+
+    return fallbackFieldSummary
+      ? `${baseDescription}: ${fallbackFieldSummary}.`
+      : `${baseDescription}.`
   }
 
   return `${baseDescription}: ${fieldSummary}.`
@@ -406,7 +531,14 @@ const buildStandaloneObjectEntry = <T>(input: {
     beforeSnapshot: formatCompareSnapshot(input.entry.before),
     changeKind: input.entry.kind,
     changedFields: input.entry.changes || [],
-    description: buildEntryDescription(input.entry.kind, input.entityKind, input.entry.label, input.entry.changes || []),
+    description: buildEntryDescription(
+      input.entry.kind,
+      input.entityKind,
+      input.entry.label,
+      input.entry.before || null,
+      input.entry.after || null,
+      input.entry.changes || []
+    ),
     entityKind: input.entityKind,
     fields: buildFieldRecords(input.entry.before || null, input.entry.after || null, input.entry.changes || []),
     id: `${input.idPrefix}:${input.entry.id}`,
@@ -453,7 +585,7 @@ export const buildPgmlDiagramCompareEntries = (
         beforeSnapshot: formatCompareSnapshot(entry.before),
         changeKind: entry.kind,
         changedFields: entry.changes || [],
-        description: buildEntryDescription(entry.kind, 'table', entry.label, entry.changes || []),
+        description: buildEntryDescription(entry.kind, 'table', entry.label, entry.before, entry.after, entry.changes || []),
         entityKind: 'table',
         fields: buildFieldRecords(entry.before, entry.after, entry.changes || []),
         id: `table:${entry.id}`,
@@ -484,7 +616,7 @@ export const buildPgmlDiagramCompareEntries = (
         beforeSnapshot: formatCompareSnapshot(entry.before),
         changeKind: entry.kind,
         changedFields: entry.changes || [],
-        description: buildEntryDescription(entry.kind, 'group', entry.label, entry.changes || []),
+        description: buildEntryDescription(entry.kind, 'group', entry.label, entry.before, entry.after, entry.changes || []),
         entityKind: 'group',
         fields: buildFieldRecords(entry.before, entry.after, entry.changes || []),
         id: `group:${entry.id}`,
@@ -515,7 +647,14 @@ export const buildPgmlDiagramCompareEntries = (
         beforeSnapshot: formatCompareSnapshot(entry.before?.column),
         changeKind: entry.kind,
         changedFields: entry.changes || [],
-        description: buildEntryDescription(entry.kind, 'column', entry.label, entry.changes || []),
+        description: buildEntryDescription(
+          entry.kind,
+          'column',
+          entry.label,
+          entry.before?.column || null,
+          entry.after?.column || null,
+          entry.changes || []
+        ),
         entityKind: 'column',
         fields: buildFieldRecords(entry.before?.column || null, entry.after?.column || null, entry.changes || []),
         id: `column:${entry.id}`,
@@ -550,7 +689,14 @@ export const buildPgmlDiagramCompareEntries = (
         beforeSnapshot: formatCompareSnapshot(entry.before?.index),
         changeKind: entry.kind,
         changedFields: entry.changes || [],
-        description: buildEntryDescription(entry.kind, 'index', entry.label, entry.changes || []),
+        description: buildEntryDescription(
+          entry.kind,
+          'index',
+          entry.label,
+          entry.before?.index || null,
+          entry.after?.index || null,
+          entry.changes || []
+        ),
         entityKind: 'index',
         fields: buildFieldRecords(entry.before?.index || null, entry.after?.index || null, entry.changes || []),
         id: `index:${entry.id}`,
@@ -585,7 +731,14 @@ export const buildPgmlDiagramCompareEntries = (
         beforeSnapshot: formatCompareSnapshot(entry.before?.constraint),
         changeKind: entry.kind,
         changedFields: entry.changes || [],
-        description: buildEntryDescription(entry.kind, 'constraint', entry.label, entry.changes || []),
+        description: buildEntryDescription(
+          entry.kind,
+          'constraint',
+          entry.label,
+          entry.before?.constraint || null,
+          entry.after?.constraint || null,
+          entry.changes || []
+        ),
         entityKind: 'constraint',
         fields: buildFieldRecords(entry.before?.constraint || null, entry.after?.constraint || null, entry.changes || []),
         id: `constraint:${entry.id}`,
@@ -621,7 +774,7 @@ export const buildPgmlDiagramCompareEntries = (
         beforeSnapshot: formatCompareSnapshot(entry.before),
         changeKind: entry.kind,
         changedFields: entry.changes || [],
-        description: buildEntryDescription(entry.kind, 'reference', entry.label, entry.changes || []),
+        description: buildEntryDescription(entry.kind, 'reference', entry.label, entry.before || null, entry.after || null, entry.changes || []),
         entityKind: 'reference',
         fields: buildFieldRecords(entry.before || null, entry.after || null, entry.changes || []),
         id: `reference:${entry.id}`,
@@ -695,7 +848,7 @@ export const buildPgmlDiagramCompareEntries = (
         beforeSnapshot: formatCompareSnapshot(entry.before),
         changeKind: entry.kind,
         changedFields: entry.changes || [],
-        description: buildEntryDescription(entry.kind, 'trigger', entry.label, entry.changes || []),
+        description: buildEntryDescription(entry.kind, 'trigger', entry.label, entry.before || null, entry.after || null, entry.changes || []),
         entityKind: 'trigger',
         fields: buildFieldRecords(entry.before || null, entry.after || null, entry.changes || []),
         id: `trigger:${entry.id}`,
@@ -753,7 +906,7 @@ export const buildPgmlDiagramCompareEntries = (
       beforeSnapshot: formatCompareSnapshot(entry.before),
       changeKind: entry.kind,
       changedFields: entry.changes || [],
-      description: buildEntryDescription(entry.kind, 'layout', entry.label, entry.changes || []),
+      description: buildEntryDescription(entry.kind, 'layout', entry.label, entry.before || null, entry.after || null, entry.changes || []),
       entityKind: 'layout' as const,
       fields: buildFieldRecords(entry.before || null, entry.after || null, entry.changes || []),
       id: `layout:${entry.id}`,

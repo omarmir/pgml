@@ -50,9 +50,11 @@ type PgmlBlockKind = 'Table'
   | 'Sequence'
   | 'Properties'
   | 'SchemaMetadata'
+  | 'CompareExclusions'
   | 'VersionSet'
   | 'Workspace'
   | 'Version'
+  | 'Comparison'
   | 'Snapshot'
   | 'View'
   | 'Unknown'
@@ -72,6 +74,8 @@ type PgmlRawBlock = {
 type PgmlContextKind = 'top-level'
   | 'version-set'
   | 'schema-metadata'
+  | 'comparison'
+  | 'compare-exclusions'
   | 'workspace'
   | 'version'
   | 'snapshot'
@@ -202,6 +206,7 @@ const rootKeywordTemplates = [
 const versionSetKeywordTemplates = [
   { label: 'SchemaMetadata', detail: 'Persist table and column metadata outside version snapshots.', apply: 'SchemaMetadata {' },
   { label: 'Workspace', detail: 'Define the mutable working draft.', apply: 'Workspace {' },
+  { label: 'Comparison', detail: 'Store a named compare preset with its exclusions.', apply: 'Comparison "' },
   { label: 'Version', detail: 'Lock an immutable checkpoint.', apply: 'Version ' }
 ] as const
 
@@ -232,6 +237,13 @@ const viewKeywordTemplates = [
   { label: 'View', detail: 'Store a named diagram view for this workspace or version.', apply: 'View "' }
 ] as const
 
+const comparisonMetadataKeywordTemplates = [
+  { label: 'id', detail: 'Persist the stable id for this comparison.', apply: 'id: ' },
+  { label: 'base', detail: 'Choose the base version, workspace, or empty state.', apply: 'base: ' },
+  { label: 'target', detail: 'Choose the comparison target version or workspace.', apply: 'target: ' },
+  { label: 'CompareExclusions', detail: 'Store excluded groups and tables for this comparison.', apply: 'CompareExclusions {' }
+] as const
+
 const viewMetadataKeywordTemplates = [
   { label: 'id', detail: 'Persist the stable id for this view.', apply: 'id: ' },
   { label: 'show_lines', detail: 'Hide or show relationship lines in this view.', apply: 'show_lines: false' },
@@ -247,6 +259,8 @@ const versionRoleValueTemplates = [
 
 const workspaceMetadataKeys = new Set(['based_on', 'updated_at', 'active_view'])
 const versionMetadataKeys = new Set(['name', 'role', 'parent', 'created_at', 'active_view', 'default_view'])
+const comparisonMetadataKeys = new Set(['id', 'base', 'target'])
+const compareExclusionsMetadataKeys = new Set(['group', 'table', 'include_group', 'include_table'])
 const viewMetadataKeys = new Set(['id', 'show_lines', 'lines', 'snap_to_grid', 'snap', 'show_execs', 'execs', 'show_fields', 'fields'])
 
 const tableBodyKeywordTemplates = [
@@ -501,6 +515,10 @@ const parseBlockKind = (header: string): { kind: PgmlBlockKind, keyword: string 
     return { kind: 'SchemaMetadata', keyword }
   }
 
+  if (keyword === 'CompareExclusions') {
+    return { kind: 'CompareExclusions', keyword }
+  }
+
   if (keyword === 'VersionSet') {
     return { kind: 'VersionSet', keyword }
   }
@@ -511,6 +529,10 @@ const parseBlockKind = (header: string): { kind: PgmlBlockKind, keyword: string 
 
   if (keyword === 'Version') {
     return { kind: 'Version', keyword }
+  }
+
+  if (keyword === 'Comparison') {
+    return { kind: 'Comparison', keyword }
   }
 
   if (keyword === 'Snapshot') {
@@ -799,6 +821,16 @@ const getVersionIdFromHeader = (header: string) => {
 
 const getVersionSetNameFromHeader = (header: string) => {
   const match = header.match(/^VersionSet\s+(.+)$/)
+
+  if (!match) {
+    return null
+  }
+
+  return cleanText(match[1] || '')
+}
+
+const getComparisonNameFromHeader = (header: string) => {
+  const match = header.match(/^Comparison\s+(.+)$/)
 
   if (!match) {
     return null
@@ -1777,6 +1809,18 @@ const buildContexts = (blocks: PgmlRawBlock[], contexts: PgmlContextRange[]) => 
       return
     }
 
+    if (block.kind === 'Comparison') {
+      contexts.push({
+        kind: 'comparison',
+        blockKind: block.kind,
+        from: block.from,
+        to: block.to,
+        startLine: block.startLine,
+        endLine: block.endLine
+      })
+      return
+    }
+
     if (block.kind === 'Version') {
       contexts.push({
         kind: 'version',
@@ -1792,6 +1836,18 @@ const buildContexts = (blocks: PgmlRawBlock[], contexts: PgmlContextRange[]) => 
     if (block.kind === 'Snapshot') {
       contexts.push({
         kind: 'snapshot',
+        blockKind: block.kind,
+        from: block.from,
+        to: block.to,
+        startLine: block.startLine,
+        endLine: block.endLine
+      })
+      return
+    }
+
+    if (block.kind === 'CompareExclusions') {
+      contexts.push({
+        kind: 'compare-exclusions',
         blockKind: block.kind,
         from: block.from,
         to: block.to,
@@ -2332,6 +2388,7 @@ const validateVersionSetChildren = (
   diagnostics: PgmlLanguageDiagnostic[],
   fallbackLine: PgmlLineInfo
 ) => {
+  const comparisonBlocks = nestedBlocks.filter(nestedBlock => nestedBlock.kind === 'Comparison')
   const schemaMetadataBlocks = nestedBlocks.filter(nestedBlock => nestedBlock.kind === 'SchemaMetadata')
   const workspaceBlocks = nestedBlocks.filter(nestedBlock => nestedBlock.kind === 'Workspace')
   const versionBlocks = nestedBlocks.filter(nestedBlock => nestedBlock.kind === 'Version')
@@ -2374,23 +2431,115 @@ const validateVersionSetChildren = (
     if (
       nestedBlock.kind !== 'SchemaMetadata'
       && nestedBlock.kind !== 'Workspace'
+      && nestedBlock.kind !== 'Comparison'
       && nestedBlock.kind !== 'Version'
     ) {
       createDiagnostic(
         diagnostics,
         'pgml/version-set-block-kind',
         'error',
-        'VersionSet only allows SchemaMetadata, Workspace, and Version blocks.',
+        'VersionSet only allows SchemaMetadata, Workspace, Comparison, and Version blocks.',
         nestedBlock.headerLine
       )
     }
   })
 
   return {
+    comparisonBlocks,
     schemaMetadataBlock: schemaMetadataBlocks[0] || null,
     versionBlocks,
     workspaceBlock: workspaceBlocks[0] || null
   }
+}
+
+const analyzeCompareExclusionsBlock = (
+  block: PgmlRawBlock,
+  diagnostics: PgmlLanguageDiagnostic[],
+  contexts: PgmlContextRange[],
+  containerLabel: string
+) => {
+  if (block.header !== 'CompareExclusions') {
+    createDiagnostic(
+      diagnostics,
+      'pgml/compare-exclusions-header',
+      'error',
+      `${containerLabel} CompareExclusions blocks must use \`CompareExclusions {\`.`,
+      block.headerLine
+    )
+    return
+  }
+
+  const nested = collectRawBlocks(block.body, diagnostics, contexts, {
+    topLevelContextKind: null
+  })
+  const metadataLines = collectParsedMetadataLines(nested.topLevelLines)
+
+  validateMetadataOnlyLines(metadataLines, diagnostics, {
+    allowedKeys: compareExclusionsMetadataKeys,
+    entryCode: 'pgml/compare-exclusions-entry',
+    entryMessage: 'CompareExclusions only allows metadata entries.',
+    keyCode: 'pgml/compare-exclusions-key',
+    keyMessage: 'CompareExclusions only supports `group`, `table`, `include_group`, and `include_table` metadata.'
+  })
+
+  nested.blocks.forEach((nestedBlock) => {
+    createDiagnostic(
+      diagnostics,
+      'pgml/compare-exclusions-block-kind',
+      'error',
+      'CompareExclusions does not allow nested blocks.',
+      nestedBlock.headerLine
+    )
+  })
+}
+
+const analyzeComparisonBlock = (
+  block: PgmlRawBlock,
+  diagnostics: PgmlLanguageDiagnostic[],
+  contexts: PgmlContextRange[],
+  _analysisState: PgmlAnalysisState
+) => {
+  const comparisonName = getComparisonNameFromHeader(block.header)
+
+  if (!comparisonName || comparisonName.trim().length === 0) {
+    createDiagnostic(
+      diagnostics,
+      'pgml/comparison-header',
+      'error',
+      'Comparison headers must use `Comparison "Name" {`.',
+      block.headerLine
+    )
+    return
+  }
+
+  const nested = collectRawBlocks(block.body, diagnostics, contexts, {
+    topLevelContextKind: null
+  })
+  const metadataLines = collectParsedMetadataLines(nested.topLevelLines)
+
+  validateMetadataOnlyLines(metadataLines, diagnostics, {
+    allowedKeys: comparisonMetadataKeys,
+    entryCode: 'pgml/comparison-entry',
+    entryMessage: 'Comparison only allows metadata entries plus nested CompareExclusions blocks.',
+    keyCode: 'pgml/comparison-key',
+    keyMessage: 'Comparison only supports `id`, `base`, and `target` metadata.'
+  })
+
+  nested.blocks.forEach((nestedBlock) => {
+    if (nestedBlock.kind !== 'CompareExclusions') {
+      createDiagnostic(
+        diagnostics,
+        'pgml/comparison-block-kind',
+        'error',
+        'Comparison only allows nested CompareExclusions blocks.',
+        nestedBlock.headerLine
+      )
+    }
+  })
+
+  nested.blocks
+    .filter(nestedBlock => nestedBlock.kind === 'CompareExclusions')
+    .forEach(nestedBlock => analyzeCompareExclusionsBlock(nestedBlock, diagnostics, contexts, `Comparison ${comparisonName}`))
 }
 
 const analyzeWorkspaceBlock = (
@@ -2416,20 +2565,20 @@ const analyzeWorkspaceBlock = (
   validateMetadataOnlyLines(metadataLines, diagnostics, {
     allowedKeys: workspaceMetadataKeys,
     entryCode: 'pgml/workspace-entry',
-    entryMessage: 'Workspace only allows metadata entries plus nested Snapshot and View blocks.',
+    entryMessage: 'Workspace only allows metadata entries plus nested Snapshot, View, and CompareExclusions blocks.',
     keyCode: 'pgml/workspace-key',
     keyMessage: 'Workspace only supports `based_on`, `active_view`, and `updated_at` metadata.'
   })
 
   const snapshotBlocks = validateSnapshotOnlyChildren(nested.blocks, diagnostics, {
-    allowedSiblingKinds: ['View'],
+    allowedSiblingKinds: ['View', 'CompareExclusions'],
     fallbackLine: block.headerLine,
     missingCode: 'pgml/workspace-snapshot-missing',
     missingMessage: 'Workspace requires a Snapshot block.',
     duplicateCode: 'pgml/workspace-snapshot-duplicate',
     duplicateMessage: 'Workspace only allows one Snapshot block.',
     invalidBlockCode: 'pgml/workspace-block-kind',
-    invalidBlockMessage: 'Workspace only allows nested Snapshot and View blocks.'
+    invalidBlockMessage: 'Workspace only allows nested Snapshot, View, and CompareExclusions blocks.'
   })
 
   if (snapshotBlocks[0]) {
@@ -2439,6 +2588,9 @@ const analyzeWorkspaceBlock = (
   nested.blocks
     .filter(nestedBlock => nestedBlock.kind === 'View')
     .forEach(nestedBlock => analyzeViewBlock(nestedBlock, diagnostics, contexts, analysisState, 'Workspace'))
+  nested.blocks
+    .filter(nestedBlock => nestedBlock.kind === 'CompareExclusions')
+    .forEach(nestedBlock => analyzeCompareExclusionsBlock(nestedBlock, diagnostics, contexts, 'Workspace'))
 }
 
 const analyzeVersionBlock = (
@@ -2468,7 +2620,7 @@ const analyzeVersionBlock = (
   validateMetadataOnlyLines(metadataLines, diagnostics, {
     allowedKeys: versionMetadataKeys,
     entryCode: 'pgml/version-entry',
-    entryMessage: 'Version only allows metadata entries plus nested Snapshot and View blocks.',
+    entryMessage: 'Version only allows metadata entries plus nested Snapshot, View, and CompareExclusions blocks.',
     keyCode: 'pgml/version-key',
     keyMessage: 'Version only supports `name`, `role`, `parent`, `active_view`, and `created_at` metadata.'
   })
@@ -2490,14 +2642,14 @@ const analyzeVersionBlock = (
   })
 
   const snapshotBlocks = validateSnapshotOnlyChildren(nested.blocks, diagnostics, {
-    allowedSiblingKinds: ['View'],
+    allowedSiblingKinds: ['View', 'CompareExclusions'],
     fallbackLine: block.headerLine,
     missingCode: 'pgml/version-snapshot-missing',
     missingMessage: `Version ${versionId} requires a Snapshot block.`,
     duplicateCode: 'pgml/version-snapshot-duplicate',
     duplicateMessage: `Version ${versionId} only allows one Snapshot block.`,
     invalidBlockCode: 'pgml/version-block-kind',
-    invalidBlockMessage: 'Version only allows nested Snapshot and View blocks.'
+    invalidBlockMessage: 'Version only allows nested Snapshot, View, and CompareExclusions blocks.'
   })
 
   if (snapshotBlocks[0]) {
@@ -2507,6 +2659,9 @@ const analyzeVersionBlock = (
   nested.blocks
     .filter(nestedBlock => nestedBlock.kind === 'View')
     .forEach(nestedBlock => analyzeViewBlock(nestedBlock, diagnostics, contexts, analysisState, `Version ${versionId}`))
+  nested.blocks
+    .filter(nestedBlock => nestedBlock.kind === 'CompareExclusions')
+    .forEach(nestedBlock => analyzeCompareExclusionsBlock(nestedBlock, diagnostics, contexts, `Version ${versionId}`))
 }
 
 const analyzeVersionSetBlock = (
@@ -2540,12 +2695,13 @@ const analyzeVersionSetBlock = (
       diagnostics,
       'pgml/version-set-entry',
       'error',
-      'VersionSet only allows SchemaMetadata, Workspace, and Version blocks.',
+      'VersionSet only allows SchemaMetadata, Workspace, Comparison, and Version blocks.',
       line
     )
   })
 
   const {
+    comparisonBlocks,
     schemaMetadataBlock,
     workspaceBlock,
     versionBlocks
@@ -2559,6 +2715,7 @@ const analyzeVersionSetBlock = (
     analyzeWorkspaceBlock(workspaceBlock, diagnostics, contexts, analysisState)
   }
 
+  comparisonBlocks.forEach(comparisonBlock => analyzeComparisonBlock(comparisonBlock, diagnostics, contexts, analysisState))
   versionBlocks.forEach(versionBlock => analyzeVersionBlock(versionBlock, diagnostics, contexts, analysisState))
 }
 
@@ -3104,6 +3261,19 @@ const getVersionCompletionItems = (
   ]
 }
 
+const getComparisonCompletionItems = (
+  beforeCursor: string,
+  fragment: string,
+  from: number,
+  to: number
+) => {
+  if (/^\s*Comparison\s+/.test(beforeCursor)) {
+    return [] as PgmlLanguageCompletionItem[]
+  }
+
+  return filterCompletionTemplates(comparisonMetadataKeywordTemplates, 'property', fragment, from, to)
+}
+
 const getViewCompletionItems = (
   analysis: PgmlDocumentAnalysis,
   beforeCursor: string,
@@ -3191,6 +3361,10 @@ const getCompletionItemsForLine = (
 
   if (context.kind === 'version') {
     return getVersionCompletionItems(analysis, beforeCursor, fragment, from, to)
+  }
+
+  if (context.kind === 'comparison') {
+    return getComparisonCompletionItems(beforeCursor, fragment, from, to)
   }
 
   if (context.kind === 'snapshot') {

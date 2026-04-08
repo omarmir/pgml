@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 
 import {
+  diagramRasterExportScaleFactors,
   getRasterExportPlan,
   getRasterExportDimensions,
   MAX_RASTER_EXPORT_DIMENSION,
@@ -8,6 +9,10 @@ import {
 } from '../../app/utils/diagram-export'
 
 describe('getRasterExportDimensions', () => {
+  it('exposes the supported raster export scale ladder in ascending order', () => {
+    expect([...diagramRasterExportScaleFactors]).toEqual([1, 2, 3, 4, 8])
+  })
+
   it('allows a larger 8x export when it stays within safe browser limits', () => {
     expect(getRasterExportDimensions(2080, 1970, 8)).toEqual({
       rasterWidth: 16640,

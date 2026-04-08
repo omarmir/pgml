@@ -14,13 +14,16 @@ import {
 import {
   buildPgmlCheckpointName,
   canCreatePgmlCheckpoint,
+  clonePgmlDocumentComparison,
   clonePgmlDocumentView,
   clonePgmlVersionSetDocument,
+  createPgmlDocumentComparison,
   createPgmlDocumentView,
   createInitialPgmlDocument,
   createPgmlVersionFromWorkspace,
   buildPgmlVersionLineageLabel,
   getPgmlDocumentBlockPreviewSource,
+  getPgmlDocumentComparison,
   getPgmlDocumentView,
   getPgmlChildVersions,
   getPgmlBranchRootLabel,
@@ -56,13 +59,18 @@ import {
   getPgmlVersionDisplayLabel,
   getPgmlVersionRoleDisplayLabel,
   normalizePgmlSnapshotSource,
+  type PgmlDocumentComparison,
   type PgmlDocumentDiagramView,
   type PgmlVersionDocumentBlock,
   type PgmlDocumentEditorScope,
   type PgmlVersionRole,
   type PgmlVersionSetDocument
 } from '~/utils/pgml-document'
-import { clonePgmlCompareExclusions, stripPgmlPropertiesBlocks } from '~/utils/pgml'
+import {
+  clonePgmlCompareExclusions,
+  createEmptyPgmlCompareExclusions,
+  stripPgmlPropertiesBlocks
+} from '~/utils/pgml'
 import type { PgmlCompareExclusions, PgmlNodeProperties } from '~/utils/pgml'
 import {
   clonePgmlDocumentSchemaMetadata,
@@ -81,6 +89,11 @@ export type PgmlVersionedDocumentScopeItem = {
 }
 
 export type PgmlDiagramViewItem = {
+  label: string
+  value: string
+}
+
+export type PgmlComparisonItem = {
   label: string
   value: string
 }
@@ -414,6 +427,10 @@ const normalizeDiagramViewName = (value: string | null | undefined) => {
   return value?.trim() || ''
 }
 
+const normalizeComparisonName = (value: string | null | undefined) => {
+  return value?.trim() || ''
+}
+
 const normalizeVersionName = (value: string | null | undefined) => {
   return value?.trim() || ''
 }
@@ -431,6 +448,22 @@ const hasDiagramViewName = (
     }
 
     return view.name === name
+  })
+}
+
+const hasComparisonName = (
+  comparisons: PgmlDocumentComparison[],
+  name: string,
+  options?: {
+    excludeComparisonId?: string | null
+  }
+) => {
+  return comparisons.some((comparison) => {
+    if (options?.excludeComparisonId && comparison.id === options.excludeComparisonId) {
+      return false
+    }
+
+    return comparison.name === name
   })
 }
 
@@ -455,6 +488,8 @@ export const usePgmlStudioVersionHistory = (
   const documentEditorScope: Ref<PgmlDocumentEditorScope> = ref('all')
   const compareBaseId: Ref<string | null> = ref(null)
   const compareTargetId: Ref<string> = ref('workspace')
+  const compareExclusions: Ref<PgmlCompareExclusions> = ref(createEmptyPgmlCompareExclusions())
+  const selectedComparisonId: Ref<string | null> = ref(null)
   const document: ComputedRef<PgmlVersionSetDocument> = computed(() => {
     return buildWorkspaceSyncedDocument(documentState.value, input.source.value)
   })
@@ -477,6 +512,7 @@ export const usePgmlStudioVersionHistory = (
     // the same canonical snapshot formatting and compare defaults.
     const normalizedDocument: PgmlVersionSetDocument = {
       ...nextDocument,
+      comparisons: nextDocument.comparisons.map(clonePgmlDocumentComparison),
       name: input.documentName.value,
       schemaMetadata: clonePgmlDocumentSchemaMetadata(nextDocument.schemaMetadata),
       versions: nextDocument.versions.map((version) => {
@@ -502,8 +538,10 @@ export const usePgmlStudioVersionHistory = (
     input.source.value = getPgmlDocumentBlockPreviewSource(normalizedDocument.workspace)
     previewTargetId.value = 'workspace'
     documentEditorScope.value = normalizePgmlDocumentEditorScope(normalizedDocument, documentEditorScope.value)
+    selectedComparisonId.value = null
     compareBaseId.value = buildDefaultCompareBaseId(normalizedDocument)
     compareTargetId.value = buildDefaultCompareTargetId(normalizedDocument)
+    compareExclusions.value = createEmptyPgmlCompareExclusions()
   }
 
   const normalizeSelectionState = () => {
@@ -511,6 +549,9 @@ export const usePgmlStudioVersionHistory = (
     // every derived id back onto the current document before the UI renders it.
     previewTargetId.value = normalizePreviewTargetId(documentState.value, previewTargetId.value)
     documentEditorScope.value = normalizePgmlDocumentEditorScope(documentState.value, documentEditorScope.value)
+    if (selectedComparisonId.value && !getPgmlDocumentComparison(documentState.value, selectedComparisonId.value)) {
+      selectedComparisonId.value = null
+    }
     compareBaseId.value = normalizeCompareBaseSelection(documentState.value, compareBaseId.value)
     compareTargetId.value = normalizeCompareTargetSelection(documentState.value, compareTargetId.value)
   }
@@ -545,6 +586,7 @@ export const usePgmlStudioVersionHistory = (
   }
 
   const versions = computed(() => documentState.value.versions)
+  const comparisons = computed(() => documentState.value.comparisons)
   const hasVersions = computed(() => hasPgmlVersions(documentState.value))
   const hasDesignVersions = computed(() => hasPgmlVersionRole(documentState.value, 'design'))
   const hasImplementationVersions = computed(() => hasPgmlVersionRole(documentState.value, 'implementation'))
@@ -580,6 +622,14 @@ export const usePgmlStudioVersionHistory = (
   })
   const versionedDocumentScopeItems = computed<PgmlVersionedDocumentScopeItem[]>(() => {
     return buildVersionedDocumentScopeItems(documentState.value)
+  })
+  const comparisonItems = computed<PgmlComparisonItem[]>(() => {
+    return documentState.value.comparisons.map((comparison) => {
+      return {
+        label: comparison.name,
+        value: comparison.id
+      } satisfies PgmlComparisonItem
+    })
   })
   const versionedDocumentScopeSource = computed(() => {
     return serializePgmlDocumentScope(buildNamedWorkingDocument(), documentEditorScope.value)
@@ -633,6 +683,9 @@ export const usePgmlStudioVersionHistory = (
     }
 
     return getPgmlVersionById(documentState.value, compareTargetId.value)
+  })
+  const selectedComparison = computed(() => {
+    return getPgmlDocumentComparison(documentState.value, selectedComparisonId.value)
   })
   const compareBaseSource = computed(() => {
     return compareBaseId.value === null
@@ -915,45 +968,170 @@ export const usePgmlStudioVersionHistory = (
 
     return true
   }
-  const setCompareExclusions = (
-    targetId: PgmlVersionPreviewTarget,
-    compareExclusions: PgmlCompareExclusions
-  ) => {
-    const nextDocument = clonePgmlVersionSetDocument(
-      buildWorkspaceSyncedDocument(documentState.value, input.source.value)
-    )
 
-    if (targetId === 'workspace') {
-      nextDocument.workspace.compareExclusions = clonePgmlCompareExclusions(compareExclusions)
-      documentState.value = nextDocument
-      normalizeSelectionState()
-
+  const syncSelectedComparison = (inputOptions?: {
+    baseId?: string | null
+    exclusions?: Partial<PgmlCompareExclusions>
+    targetId?: string
+  }) => {
+    if (!selectedComparisonId.value) {
       return true
     }
 
-    const targetVersion = nextDocument.versions.find(version => version.id === targetId)
+    const nextDocument = clonePgmlVersionSetDocument(
+      buildWorkspaceSyncedDocument(documentState.value, input.source.value)
+    )
+    const targetComparison = getPgmlDocumentComparison(nextDocument, selectedComparisonId.value)
 
-    if (!targetVersion) {
+    if (!targetComparison) {
       return false
     }
 
-    targetVersion.compareExclusions = clonePgmlCompareExclusions(compareExclusions)
+    targetComparison.baseId = inputOptions?.baseId === undefined
+      ? compareBaseId.value
+      : inputOptions.baseId
+    targetComparison.targetId = inputOptions?.targetId === undefined
+      ? compareTargetId.value
+      : inputOptions.targetId
+    targetComparison.exclusions = clonePgmlCompareExclusions(
+      inputOptions?.exclusions === undefined
+        ? compareExclusions.value
+        : inputOptions.exclusions
+    )
     documentState.value = nextDocument
     normalizeSelectionState()
 
     return true
   }
+
+  const setCurrentCompareExclusions = (
+    nextCompareExclusions: Partial<PgmlCompareExclusions>
+  ) => {
+    compareExclusions.value = clonePgmlCompareExclusions(nextCompareExclusions)
+
+    return syncSelectedComparison({
+      exclusions: compareExclusions.value
+    })
+  }
+
+  const selectComparison = (comparisonId: string | null) => {
+    if (comparisonId === null) {
+      selectedComparisonId.value = null
+      compareBaseId.value = normalizeCompareBaseSelection(documentState.value, compareBaseId.value)
+      compareTargetId.value = normalizeCompareTargetSelection(documentState.value, compareTargetId.value)
+
+      return true
+    }
+
+    const comparison = getPgmlDocumentComparison(documentState.value, comparisonId)
+
+    if (!comparison) {
+      return false
+    }
+
+    selectedComparisonId.value = comparison.id
+    compareBaseId.value = normalizeCompareBaseSelection(documentState.value, comparison.baseId)
+    compareTargetId.value = normalizeCompareTargetSelection(documentState.value, comparison.targetId)
+    compareExclusions.value = clonePgmlCompareExclusions(comparison.exclusions)
+
+    return true
+  }
+
+  const createComparison = (name: string) => {
+    const normalizedName = normalizeComparisonName(name)
+
+    if (normalizedName.length === 0 || hasComparisonName(documentState.value.comparisons, normalizedName)) {
+      return null
+    }
+
+    const nextDocument = clonePgmlVersionSetDocument(
+      buildWorkspaceSyncedDocument(documentState.value, input.source.value)
+    )
+    const comparison = createPgmlDocumentComparison({
+      baseId: compareBaseId.value,
+      exclusions: compareExclusions.value,
+      name: normalizedName,
+      targetId: compareTargetId.value
+    })
+
+    nextDocument.comparisons = [
+      ...nextDocument.comparisons.map(clonePgmlDocumentComparison),
+      comparison
+    ]
+    documentState.value = nextDocument
+    selectedComparisonId.value = comparison.id
+    compareExclusions.value = clonePgmlCompareExclusions(comparison.exclusions)
+    normalizeSelectionState()
+
+    return comparison
+  }
+
+  const renameComparison = (
+    comparisonId: string,
+    name: string
+  ) => {
+    const normalizedName = normalizeComparisonName(name)
+
+    if (normalizedName.length === 0) {
+      return false
+    }
+
+    const nextDocument = clonePgmlVersionSetDocument(
+      buildWorkspaceSyncedDocument(documentState.value, input.source.value)
+    )
+    const targetComparison = getPgmlDocumentComparison(nextDocument, comparisonId)
+
+    if (
+      !targetComparison
+      || hasComparisonName(nextDocument.comparisons, normalizedName, {
+        excludeComparisonId: comparisonId
+      })
+    ) {
+      return false
+    }
+
+    targetComparison.name = normalizedName
+    documentState.value = nextDocument
+    normalizeSelectionState()
+
+    return true
+  }
+
+  const deleteComparison = (comparisonId: string) => {
+    const comparison = getPgmlDocumentComparison(documentState.value, comparisonId)
+
+    if (!comparison) {
+      return false
+    }
+
+    const nextDocument = clonePgmlVersionSetDocument(
+      buildWorkspaceSyncedDocument(documentState.value, input.source.value)
+    )
+
+    nextDocument.comparisons = nextDocument.comparisons.filter(entry => entry.id !== comparisonId)
+    documentState.value = nextDocument
+
+    if (selectedComparisonId.value === comparisonId) {
+      selectedComparisonId.value = null
+    }
+
+    normalizeSelectionState()
+
+    return true
+  }
+
   // Restores and imports both replace the live workspace, so they should land
   // back on the editable draft with a compare pair anchored to that new base.
   const resetWorkspaceSelectionState = (baseId: string | null) => {
     previewTargetId.value = 'workspace'
+    selectedComparisonId.value = null
     compareBaseId.value = baseId
+    compareExclusions.value = createEmptyPgmlCompareExclusions()
     compareTargetId.value = 'workspace'
   }
   const replaceWorkspaceSnapshotAndResetSelection = (inputOptions: {
     activeViewId?: string | null
     basedOnVersionId: string | null
-    compareExclusions?: PgmlCompareExclusions
     selectionBaseId: string | null
     source: string
     updatedAt: string
@@ -964,7 +1142,6 @@ export const usePgmlStudioVersionHistory = (
     const nextDocument = replacePgmlWorkspaceFromSnapshot(documentState.value, {
       activeViewId: inputOptions.activeViewId,
       basedOnVersionId: inputOptions.basedOnVersionId,
-      compareExclusions: inputOptions.compareExclusions,
       source: inputOptions.source,
       updatedAt: inputOptions.updatedAt,
       views: inputOptions.views
@@ -984,7 +1161,6 @@ export const usePgmlStudioVersionHistory = (
     replaceWorkspaceSnapshotAndResetSelection({
       activeViewId: targetVersion.activeViewId,
       basedOnVersionId: targetVersion.id,
-      compareExclusions: targetVersion.compareExclusions,
       selectionBaseId: targetVersion.parentVersionId,
       source: targetVersion.snapshot.source,
       updatedAt: new Date().toISOString(),
@@ -1011,7 +1187,6 @@ export const usePgmlStudioVersionHistory = (
     replaceWorkspaceSnapshotAndResetSelection({
       activeViewId: null,
       basedOnVersionId: inputOptions.basedOnVersionId,
-      compareExclusions: baseVersion.compareExclusions,
       selectionBaseId: inputOptions.basedOnVersionId,
       source: normalizeSnapshotSource(inputOptions.source, inputOptions.includeLayout),
       updatedAt: new Date().toISOString(),
@@ -1033,6 +1208,11 @@ export const usePgmlStudioVersionHistory = (
       ? null
       : normalizeCompareBaseSelection(documentState.value, inputOptions.baseId)
     compareTargetId.value = normalizeCompareTargetSelection(documentState.value, inputOptions.targetId)
+
+    return syncSelectedComparison({
+      baseId: compareBaseId.value,
+      targetId: compareTargetId.value
+    })
   }
 
   const setDocumentEditorScope = (nextScope: PgmlDocumentEditorScope) => {
@@ -1047,8 +1227,11 @@ export const usePgmlStudioVersionHistory = (
     activeDiagramViewId,
     activeDiagramViewName,
     compareBaseId,
+    compareExclusions,
     compareBaseSource,
     compareBaseVersion,
+    comparisonItems,
+    comparisons,
     compareRelationshipSummary,
     compareTargetId,
     compareTargetSource,
@@ -1056,8 +1239,10 @@ export const usePgmlStudioVersionHistory = (
     canCheckpoint,
     canDeleteDiagramView,
     createCheckpoint,
+    createComparison,
     createDiagramView,
     createNamedDiagramView,
+    deleteComparison,
     document,
     diagramViewItems,
     diagramViewSettings,
@@ -1075,14 +1260,18 @@ export const usePgmlStudioVersionHistory = (
     replaceWorkspaceFromImportedSnapshot,
     replaceWorkspaceFromVersion,
     renameActiveDiagramView,
+    renameComparison,
     renameVersion,
     resetDocument,
     rootVersions,
+    selectComparison,
     selectDiagramView,
+    selectedComparison,
+    selectedComparisonId,
     serializeCurrentDocument,
     setSchemaMetadata,
     setCompareTargets,
-    setCompareExclusions,
+    setCurrentCompareExclusions,
     setDocumentEditorScope,
     setPreviewTarget,
     latestDesignVersion,

@@ -260,7 +260,68 @@ Table public.orders {
     expect(serialized).toContain('active_view: version_compact')
   })
 
-  it('serializes and parses compare exclusions for workspace and locked versions', () => {
+  it('serializes and parses saved comparisons with root-level compare exclusions', () => {
+    const parsed = parsePgmlDocument(`VersionSet "Billing" {
+  Workspace {
+    based_on: v1
+
+    Snapshot {
+      Table public.users in Core {
+        id uuid [pk]
+      }
+    }
+  }
+
+  Comparison "Implemented scope" {
+    id: cmp_implemented
+    base: v1
+    target: workspace
+
+    CompareExclusions {
+      group: "Core"
+      table: "public.audit_log"
+    }
+  }
+
+  Version v1 {
+    name: "Initial implementation"
+    role: implementation
+    created_at: "2026-03-29T12:00:00.000Z"
+
+    Snapshot {
+      Table public.users {
+        id uuid [pk]
+      }
+    }
+  }
+}`)
+
+    const serialized = serializePgmlDocument(parsed)
+
+    expect(parsed.comparisons).toEqual([
+      {
+        baseId: 'v1',
+        exclusions: {
+          groupNames: ['Core'],
+          includedGroupNames: [],
+          includedTableIds: [],
+          tableIds: ['public.audit_log']
+        },
+        id: 'cmp_implemented',
+        name: 'Implemented scope',
+        targetId: 'workspace'
+      }
+    ])
+    expect(serialized).toContain('Comparison "Implemented scope" {')
+    expect(serialized).toContain('id: cmp_implemented')
+    expect(serialized).toContain('base: v1')
+    expect(serialized).toContain('target: workspace')
+    expect(serialized).toContain('CompareExclusions {')
+    expect(serialized).toContain('group: "Core"')
+    expect(serialized).toContain('table: "public.audit_log"')
+  })
+
+  it('migrates legacy workspace and version compare exclusions into saved comparisons', () => {
     const parsed = parsePgmlDocument(`VersionSet "Billing" {
   Workspace {
     based_on: v1
@@ -268,6 +329,8 @@ Table public.orders {
     CompareExclusions {
       group: "Core"
       table: "public.audit_log"
+      include_group: "Deferred"
+      include_table: "public.users"
     }
 
     Snapshot {
@@ -285,6 +348,8 @@ Table public.orders {
     CompareExclusions {
       group: "Legacy"
       table: "public.kysely_migration"
+      include_group: "Core"
+      include_table: "public.audit_log"
     }
 
     Snapshot {
@@ -299,16 +364,45 @@ Table public.orders {
 
     expect(parsed.workspace.compareExclusions).toEqual({
       groupNames: ['Core'],
+      includedGroupNames: ['Deferred'],
+      includedTableIds: ['public.users'],
       tableIds: ['public.audit_log']
     })
     expect(parsed.versions[0]?.compareExclusions).toEqual({
       groupNames: ['Legacy'],
+      includedGroupNames: ['Core'],
+      includedTableIds: ['public.audit_log'],
       tableIds: ['public.kysely_migration']
     })
-    expect(serialized).toContain('CompareExclusions {')
-    expect(serialized).toContain('group: "Core"')
-    expect(serialized).toContain('table: "public.audit_log"')
-    expect(serialized).toContain('group: "Legacy"')
+    expect(parsed.comparisons).toEqual([
+      {
+        baseId: 'v1',
+        exclusions: {
+          groupNames: ['Core', 'Legacy'],
+          includedGroupNames: [],
+          includedTableIds: [],
+          tableIds: ['public.audit_log', 'public.kysely_migration']
+        },
+        id: expect.stringMatching(/^cmp_/),
+        name: 'Current workspace comparison',
+        targetId: 'workspace'
+      },
+      {
+        baseId: null,
+        exclusions: {
+          groupNames: ['Legacy'],
+          includedGroupNames: [],
+          includedTableIds: [],
+          tableIds: ['public.kysely_migration']
+        },
+        id: expect.stringMatching(/^cmp_/),
+        name: 'Initial implementation comparison',
+        targetId: 'v1'
+      }
+    ])
+    expect(serialized).toContain('Comparison "Current workspace comparison" {')
+    expect(serialized).toContain('Comparison "Initial implementation comparison" {')
+    expect(serialized).not.toContain('Workspace {\n    based_on: v1\n\n    CompareExclusions {')
   })
 
   it('migrates legacy snapshot Properties blocks into the default workspace view', () => {
@@ -392,11 +486,19 @@ Table public.memberships {
     expect(withFirstVersion.versions[0]?.id.startsWith('v_')).toBe(true)
     expect(withFirstVersion.versions[0]?.compareExclusions).toEqual({
       groupNames: ['Core'],
+      includedGroupNames: [],
+      includedTableIds: [],
       tableIds: ['public.audit_log']
     })
     expect(withSecondVersion.versions[1]?.parentVersionId).toBe(withFirstVersion.versions[0]?.id)
     expect(withSecondVersion.versions[1]?.id.startsWith('v_')).toBe(true)
     expect(withSecondVersion.workspace.basedOnVersionId).toBe(withSecondVersion.versions[1]?.id)
+    expect(withSecondVersion.workspace.compareExclusions).toEqual({
+      groupNames: [],
+      includedGroupNames: [],
+      includedTableIds: [],
+      tableIds: []
+    })
   })
 
   it('treats view-only changes as layout dirtiness and ignores them when layout is excluded', () => {

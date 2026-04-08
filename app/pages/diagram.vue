@@ -66,7 +66,6 @@ import {
 } from '~/utils/pgml-version-summary'
 import {
   buildPgmlCheckpointName,
-  getPgmlCompareExclusionsForTarget,
   getPgmlVersionDisplayLabel,
   getLatestPgmlVersion,
   serializePgmlDocumentScope
@@ -99,6 +98,7 @@ import {
   buildPgmlRestoreSuccessDescription,
   buildPgmlRestoreVersionDescription
 } from '~/utils/pgml-version-copy'
+import { diagramRasterExportScaleFactors } from '~/utils/diagram-export'
 import {
   buildPgmlImportBaseVersionItems,
   buildPgmlVersionCompareOptions
@@ -107,6 +107,7 @@ import {
   clonePgmlCompareExclusions,
   createEmptyPgmlCompareExclusions,
   filterPgmlSchemaModelForCompareExclusions,
+  getOrderedGroupTables,
   parsePgml,
   pgmlExample,
   pgmlVersionedExample,
@@ -323,6 +324,9 @@ const restoreVersionId: Ref<string | null> = ref(null)
 const compareExclusionsDialogOpen: Ref<boolean> = ref(false)
 const compareExclusionsDraft: Ref<PgmlCompareExclusions | null> = ref(null)
 const compareExclusionsSearchQuery: Ref<string> = ref('')
+const comparisonDialogOpen: Ref<boolean> = ref(false)
+const comparisonDialogMode: Ref<'create' | 'rename'> = ref('create')
+const comparisonDraftName: Ref<string> = ref('')
 const renameVersionDialogOpen: Ref<boolean> = ref(false)
 const renameVersionDraftName: Ref<string> = ref('')
 const renameVersionId: Ref<string | null> = ref(null)
@@ -330,7 +334,7 @@ const tableEditorDraft: Ref<PgmlEditableTableDraft | null> = ref(null)
 const tableEditorOpen: Ref<boolean> = ref(false)
 const groupEditorDraft: Ref<PgmlEditableGroupDraft | null> = ref(null)
 const groupEditorOpen: Ref<boolean> = ref(false)
-const exportScales = [1, 2, 3, 4, 8]
+const exportScales = [...diagramRasterExportScaleFactors]
 const lastSaveErrorToastMessage: Ref<string | null> = ref(null)
 const browserSchemaStatusEligible: Ref<boolean> = ref(false)
 const { clearStudioHeaderActions, setStudioHeaderActions } = useStudioHeaderActions()
@@ -358,13 +362,17 @@ const {
   activeDiagramViewId,
   compareBaseId: versionCompareBaseId,
   compareBaseSource,
+  compareExclusions: activeCompareExclusions,
+  comparisonItems,
   compareTargetId: versionCompareTargetId,
   compareTargetSource,
   canCheckpoint,
   canDeleteDiagramView,
   compareRelationshipSummary,
   createCheckpoint: createVersionCheckpoint,
+  createComparison,
   createNamedDiagramView,
+  deleteComparison,
   document: versionDocument,
   diagramViewItems,
   diagramViewSettings,
@@ -379,11 +387,15 @@ const {
   replaceWorkspaceFromImportedSnapshot,
   replaceWorkspaceFromVersion,
   renameActiveDiagramView,
+  renameComparison,
   renameVersion,
-  setCompareExclusions,
+  selectComparison,
   selectDiagramView,
+  selectedComparison,
+  selectedComparisonId,
   serializeCurrentDocument,
   setCompareTargets,
+  setCurrentCompareExclusions,
   setDocumentEditorScope,
   setPreviewTarget,
   setSchemaMetadata,
@@ -1196,9 +1208,19 @@ const shouldBuildMigrationArtifacts = computed(() => {
 const shouldBuildVersionArtifacts = computed(() => {
   return shouldBuildCompareArtifacts.value || shouldBuildMigrationArtifacts.value
 })
-const compareTargetExclusions = computed<PgmlCompareExclusions>(() => {
-  return getPgmlCompareExclusionsForTarget(versionDocument.value, versionCompareTargetId.value)
-})
+type CompareExclusionOption = {
+  id: string
+  kind: 'group' | 'table'
+  label: string
+  searchText: string
+  value: string
+}
+type CompareExclusionGroupSection = {
+  id: string
+  groupOption: CompareExclusionOption
+  tableOptions: CompareExclusionOption[]
+}
+
 const compareBaseRawModel = computed<PgmlSchemaModel | null>(() => {
   if (!shouldBuildVersionArtifacts.value) {
     return null
@@ -1215,12 +1237,12 @@ const compareTargetRawModel = computed<PgmlSchemaModel | null>(() => {
 })
 const compareBaseModel = computed<PgmlSchemaModel | null>(() => {
   return compareBaseRawModel.value
-    ? filterPgmlSchemaModelForCompareExclusions(compareBaseRawModel.value, compareTargetExclusions.value)
+    ? filterPgmlSchemaModelForCompareExclusions(compareBaseRawModel.value, activeCompareExclusions.value)
     : null
 })
 const compareTargetModel = computed<PgmlSchemaModel | null>(() => {
   return compareTargetRawModel.value
-    ? filterPgmlSchemaModelForCompareExclusions(compareTargetRawModel.value, compareTargetExclusions.value)
+    ? filterPgmlSchemaModelForCompareExclusions(compareTargetRawModel.value, activeCompareExclusions.value)
     : null
 })
 const compareDiff = computed(() => {
@@ -1351,46 +1373,180 @@ const selectedImportDbmlBaseVersion = computed(() => {
     ? versions.value.find(version => version.id === importDbmlBaseVersionId.value) || null
     : null
 })
-const compareExclusionsTargetVersion = computed(() => {
-  return versionCompareTargetId.value === 'workspace'
-    ? null
-    : versions.value.find(version => version.id === versionCompareTargetId.value) || null
+const compareComparisonLabel = computed(() => {
+  return selectedComparison.value?.name || 'Current comparison'
 })
-const compareExclusionsTargetLabel = computed(() => {
-  return versionCompareTargetId.value === 'workspace'
-    ? 'Current workspace'
-    : (compareExclusionsTargetVersion.value ? getVersionLabel(compareExclusionsTargetVersion.value) : 'Selected version')
+const compareExclusionsEffective = computed<PgmlCompareExclusions>(() => {
+  return compareExclusionsDraft.value
+    ? compareExclusionsDraft.value
+    : activeCompareExclusions.value
 })
-const compareExclusionGroupOptions = computed(() => {
-  return (compareTargetRawModel.value?.groups || [])
-    .map(group => group.name)
+const compareExclusionsSelectionCount = computed(() => {
+  if (!compareExclusionsDraft.value) {
+    return 0
+  }
+
+  return (
+    compareExclusionsDraft.value.groupNames.length
+    + compareExclusionsDraft.value.tableIds.length
+  )
+})
+const compareExclusionSourceModels = computed<PgmlSchemaModel[]>(() => {
+  const sources = [compareBaseSource.value, compareTargetSource.value]
+
+  return sources.flatMap((sourceText) => {
+    return sourceText.trim().length > 0 ? [parsePgml(sourceText)] : []
+  })
+})
+const createCompareExclusionGroupOption = (groupName: string): CompareExclusionOption => {
+  return {
+    id: `group:${groupName}`,
+    kind: 'group',
+    label: `Group ${groupName}`,
+    searchText: `group ${groupName}`.toLowerCase(),
+    value: groupName
+  }
+}
+const createCompareExclusionTableOption = (tableId: string): CompareExclusionOption => {
+  return {
+    id: `table:${tableId}`,
+    kind: 'table',
+    label: tableId,
+    searchText: `table ${tableId}`.toLowerCase(),
+    value: tableId
+  }
+}
+const compareExclusionGroupSections = computed<CompareExclusionGroupSection[]>(() => {
+  const groupNames = new Set<string>([
+    ...compareExclusionSourceModels.value.flatMap(model => model.groups.map(group => group.name)),
+    ...compareExclusionsEffective.value.groupNames
+  ])
+
+  return Array.from(groupNames)
     .sort((left, right) => left.localeCompare(right))
-})
-const compareExclusionTableOptions = computed(() => {
-  return (compareTargetRawModel.value?.tables || [])
-    .map(table => table.fullName)
-    .sort((left, right) => left.localeCompare(right))
+    .map((groupName) => {
+      const tableIdsForGroup: string[] = []
+      const seenTableIds = new Set<string>()
+      const pushTableId = (tableId: string) => {
+        if (seenTableIds.has(tableId)) {
+          return
+        }
+
+        seenTableIds.add(tableId)
+        tableIdsForGroup.push(tableId)
+      }
+
+      compareExclusionSourceModels.value.forEach((model) => {
+        getOrderedGroupTables(model, groupName).forEach((table) => {
+          pushTableId(table.fullName)
+        })
+      })
+
+      compareExclusionsEffective.value.tableIds
+        .filter((tableId) => {
+          return compareExclusionSourceModels.value.some((model) => {
+            return model.tables.some((table) => {
+              return table.fullName === tableId && table.groupName === groupName
+            })
+          })
+        })
+        .sort((left, right) => left.localeCompare(right))
+        .forEach(pushTableId)
+
+      return {
+        id: `group-section:${groupName}`,
+        groupOption: createCompareExclusionGroupOption(groupName),
+        tableOptions: tableIdsForGroup.map(createCompareExclusionTableOption)
+      } satisfies CompareExclusionGroupSection
+    })
 })
 const normalizedCompareExclusionsSearchQuery = computed(() => {
   return compareExclusionsSearchQuery.value.trim().toLowerCase()
 })
-const filteredCompareExclusionGroupOptions = computed(() => {
-  if (normalizedCompareExclusionsSearchQuery.value.length === 0) {
-    return compareExclusionGroupOptions.value
+const filteredCompareExclusionGroupSections = computed(() => {
+  const searchQuery = normalizedCompareExclusionsSearchQuery.value
+
+  if (searchQuery.length === 0) {
+    return compareExclusionGroupSections.value
   }
 
-  return compareExclusionGroupOptions.value.filter((groupName) => {
-    return groupName.toLowerCase().includes(normalizedCompareExclusionsSearchQuery.value)
+  return compareExclusionGroupSections.value.flatMap((section) => {
+    const groupMatches = section.groupOption.searchText.includes(searchQuery)
+    let visibleTableOptions = section.tableOptions
+
+    if (!groupMatches) {
+      visibleTableOptions = section.tableOptions.filter((tableOption) => {
+        return tableOption.searchText.includes(searchQuery)
+      })
+    }
+
+    if (!groupMatches && visibleTableOptions.length === 0) {
+      return []
+    }
+
+    return [{
+      ...section,
+      tableOptions: visibleTableOptions
+    }]
   })
 })
-const filteredCompareExclusionTableOptions = computed(() => {
+const filteredCompareExclusionUngroupedTableOptions = computed(() => {
+  const groupedTableIds = new Set(
+    compareExclusionGroupSections.value.flatMap(section => section.tableOptions.map(option => option.value))
+  )
+  const ungroupedTableIds = new Set<string>([
+    ...compareExclusionSourceModels.value.flatMap((model) => {
+      return model.tables.flatMap((table) => {
+        return table.groupName ? [] : [table.fullName]
+      })
+    }),
+    ...compareExclusionsEffective.value.tableIds.filter(tableId => !groupedTableIds.has(tableId))
+  ])
+  const tableOptions = Array.from(ungroupedTableIds)
+    .sort((left, right) => left.localeCompare(right))
+    .map(createCompareExclusionTableOption)
+
   if (normalizedCompareExclusionsSearchQuery.value.length === 0) {
-    return compareExclusionTableOptions.value
+    return tableOptions
   }
 
-  return compareExclusionTableOptions.value.filter((tableId) => {
-    return tableId.toLowerCase().includes(normalizedCompareExclusionsSearchQuery.value)
+  return tableOptions.filter((option) => {
+    return option.searchText.includes(normalizedCompareExclusionsSearchQuery.value)
   })
+})
+const hasVisibleCompareExclusionOptions = computed(() => {
+  return filteredCompareExclusionGroupSections.value.length > 0
+    || filteredCompareExclusionUngroupedTableOptions.value.length > 0
+})
+const comparisonDialogTitle = computed(() => {
+  return comparisonDialogMode.value === 'rename' ? 'Rename comparison' : 'Create comparison'
+})
+const comparisonDialogDescription = computed(() => {
+  return comparisonDialogMode.value === 'rename'
+    ? 'Update the saved comparison name without changing its base, target, or exclusions.'
+    : 'Save the current compare base, target, and exclusions as a reusable comparison preset.'
+})
+const normalizedComparisonDraftName = computed(() => {
+  return comparisonDraftName.value.trim()
+})
+const comparisonNameError = computed(() => {
+  if (normalizedComparisonDraftName.value.length === 0) {
+    return 'Comparison name is required.'
+  }
+
+  if (comparisonDialogMode.value === 'rename' && selectedComparisonId.value) {
+    const duplicateComparison = comparisonItems.value.find((comparison) => {
+      return comparison.label === normalizedComparisonDraftName.value && comparison.value !== selectedComparisonId.value
+    })
+
+    return duplicateComparison ? 'Comparison name must be unique.' : null
+  }
+
+  const duplicateComparison = comparisonItems.value.find((comparison) => {
+    return comparison.label === normalizedComparisonDraftName.value
+  })
+
+  return duplicateComparison ? 'Comparison name must be unique.' : null
 })
 const renameVersionCandidate = computed(() => {
   return renameVersionId.value
@@ -1543,16 +1699,17 @@ const closeRestoreVersionDialog = () => {
   restoreVersionId.value = null
 }
 const compareExclusionsDialogDescription = computed(() => {
-  return `Choose the groups and tables to hide whenever ${compareExclusionsTargetLabel.value} is used as the compare target. New checkpoints keep the workspace exclusions, and imports or restores inherit the selected base version exclusions.`
+  return selectedComparison.value
+    ? `Choose the tables and groups to exclude for ${compareComparisonLabel.value}. Changes here update that saved comparison preset.`
+    : 'Choose the tables and groups to exclude from the current comparison. Save it as a comparison preset if you want to reuse it later.'
 })
-const hasCompareExclusionGroup = (groupName: string) => {
-  return compareExclusionsDraft.value?.groupNames.includes(groupName) || false
-}
-const hasCompareExclusionTable = (tableId: string) => {
-  return compareExclusionsDraft.value?.tableIds.includes(tableId) || false
+const isCompareExclusionOptionSelected = (option: CompareExclusionOption) => {
+  return option.kind === 'group'
+    ? compareExclusionsEffective.value.groupNames.includes(option.value)
+    : compareExclusionsEffective.value.tableIds.includes(option.value)
 }
 const openCompareExclusionsDialog = () => {
-  compareExclusionsDraft.value = clonePgmlCompareExclusions(compareTargetExclusions.value)
+  compareExclusionsDraft.value = clonePgmlCompareExclusions(activeCompareExclusions.value)
   compareExclusionsSearchQuery.value = ''
   compareExclusionsDialogOpen.value = true
 }
@@ -1561,28 +1718,27 @@ const closeCompareExclusionsDialog = () => {
   compareExclusionsDraft.value = null
   compareExclusionsSearchQuery.value = ''
 }
-const toggleCompareExclusionGroup = (groupName: string) => {
+const toggleCompareExclusionOption = (option: CompareExclusionOption) => {
   if (!compareExclusionsDraft.value) {
     return
   }
 
-  compareExclusionsDraft.value = clonePgmlCompareExclusions({
-    ...compareExclusionsDraft.value,
-    groupNames: hasCompareExclusionGroup(groupName)
-      ? compareExclusionsDraft.value.groupNames.filter(value => value !== groupName)
-      : [...compareExclusionsDraft.value.groupNames, groupName]
-  })
-}
-const toggleCompareExclusionTable = (tableId: string) => {
-  if (!compareExclusionsDraft.value) {
-    return
+  const nextDraft = clonePgmlCompareExclusions(compareExclusionsDraft.value)
+  const nextValues = new Set(
+    option.kind === 'group'
+      ? nextDraft.groupNames
+      : nextDraft.tableIds
+  )
+
+  if (isCompareExclusionOptionSelected(option)) {
+    nextValues.delete(option.value)
+  } else {
+    nextValues.add(option.value)
   }
 
   compareExclusionsDraft.value = clonePgmlCompareExclusions({
-    ...compareExclusionsDraft.value,
-    tableIds: hasCompareExclusionTable(tableId)
-      ? compareExclusionsDraft.value.tableIds.filter(value => value !== tableId)
-      : [...compareExclusionsDraft.value.tableIds, tableId]
+    ...nextDraft,
+    [option.kind === 'group' ? 'groupNames' : 'tableIds']: Array.from(nextValues)
   })
 }
 const clearCompareExclusionsDraft = () => {
@@ -1593,20 +1749,98 @@ const saveCompareExclusionsDialog = () => {
     return
   }
 
-  const didSave = setCompareExclusions(
-    versionCompareTargetId.value,
-    compareExclusionsDraft.value
-  )
+  const didSave = setCurrentCompareExclusions(compareExclusionsDraft.value)
 
   if (!didSave) {
     return
   }
 
-  markBrowserSchemaStatusEligible()
+  if (selectedComparison.value) {
+    markBrowserSchemaStatusEligible()
+  }
+
   closeCompareExclusionsDialog()
   toast.add({
     title: 'Compare exclusions updated',
-    description: `${compareExclusionsTargetLabel.value} now keeps its selected compare exclusions.`,
+    description: selectedComparison.value
+      ? `${compareComparisonLabel.value} now keeps its saved exclusions.`
+      : 'The current comparison now uses the updated exclusions.',
+    color: 'success',
+    icon: 'i-lucide-check'
+  })
+}
+const buildNextComparisonName = () => {
+  let index = comparisonItems.value.length + 1
+
+  while (comparisonItems.value.some(item => item.label === `Comparison ${index}`)) {
+    index += 1
+  }
+
+  return `Comparison ${index}`
+}
+const openCreateComparisonDialog = () => {
+  comparisonDialogMode.value = 'create'
+  comparisonDraftName.value = buildNextComparisonName()
+  comparisonDialogOpen.value = true
+}
+const openRenameComparisonDialog = () => {
+  if (!selectedComparison.value) {
+    return
+  }
+
+  comparisonDialogMode.value = 'rename'
+  comparisonDraftName.value = selectedComparison.value.name
+  comparisonDialogOpen.value = true
+}
+const closeComparisonDialog = () => {
+  comparisonDialogOpen.value = false
+  comparisonDraftName.value = ''
+}
+const saveComparisonDialog = () => {
+  if (comparisonNameError.value) {
+    return
+  }
+
+  if (comparisonDialogMode.value === 'rename') {
+    if (!selectedComparisonId.value || !renameComparison(selectedComparisonId.value, normalizedComparisonDraftName.value)) {
+      return
+    }
+
+    markBrowserSchemaStatusEligible()
+    closeComparisonDialog()
+    toast.add({
+      title: 'Comparison renamed',
+      description: `${normalizedComparisonDraftName.value} is now the saved comparison label.`,
+      color: 'success',
+      icon: 'i-lucide-check'
+    })
+    return
+  }
+
+  const nextComparison = createComparison(normalizedComparisonDraftName.value)
+
+  if (!nextComparison) {
+    return
+  }
+
+  markBrowserSchemaStatusEligible()
+  closeComparisonDialog()
+  toast.add({
+    title: 'Comparison created',
+    description: `${nextComparison.name} now stores the current base, target, and exclusions.`,
+    color: 'success',
+    icon: 'i-lucide-check'
+  })
+}
+const deleteSelectedComparisonPreset = () => {
+  if (!selectedComparison.value || !deleteComparison(selectedComparison.value.id)) {
+    return
+  }
+
+  markBrowserSchemaStatusEligible()
+  toast.add({
+    title: 'Comparison deleted',
+    description: 'The saved comparison preset was removed from this PGML document.',
     color: 'success',
     icon: 'i-lucide-check'
   })
@@ -2218,10 +2452,14 @@ const updateVersionCompareSelection = (input: {
   baseId: string | null
   targetId: string
 }) => {
-  setCompareTargets({
+  const didUpdate = setCompareTargets({
     baseId: input.baseId,
     targetId: input.targetId
   })
+
+  if (didUpdate && selectedComparisonId.value) {
+    markBrowserSchemaStatusEligible()
+  }
 }
 const updateVersionCompareBaseId = (value: string | null) => {
   updateVersionCompareSelection({
@@ -3033,10 +3271,12 @@ onBeforeUnmount(() => {
           :can-edit-detail-source="isWorkspacePreview"
           :compare-base-label="compareBaseLabel"
           :compare-base-model="compareBaseModel"
+          :compare-comparison-items="comparisonItems"
           :compare-entries="compareEntries"
-          :compare-excluded-group-names="compareTargetExclusions.groupNames"
-          :compare-excluded-table-ids="compareTargetExclusions.tableIds"
+          :compare-excluded-group-names="activeCompareExclusions.groupNames"
+          :compare-excluded-table-ids="activeCompareExclusions.tableIds"
           :compare-relationship-summary="compareRelationshipSummary"
+          :compare-selected-comparison-id="selectedComparisonId"
           :compare-target-label="compareTargetLabel"
           :diagram-view-items="diagramViewItems"
           :diagram-view-settings="diagramViewSettings"
@@ -3063,6 +3303,7 @@ onBeforeUnmount(() => {
           :workspace-base-label="workspaceBaseLabel"
           :workspace-status="workspaceStatus"
           :viewport-reset-key="canvasViewportResetKey"
+          @create-compare-comparison="openCreateComparisonDialog"
           @create-group="openGroupCreator"
           @create-diagram-view="createActiveDiagramView"
           @focus-source="handleCanvasFocusSource"
@@ -3072,14 +3313,17 @@ onBeforeUnmount(() => {
           @tool-panel-tab-change="handleCanvasToolPanelTabChange"
           @tool-panel-visibility-change="handleCanvasToolPanelVisibilityChange"
           @create-table="openTableCreator"
+          @delete-compare-comparison="deleteSelectedComparisonPreset"
           @delete-diagram-view="deleteSelectedDiagramView"
           @edit-group="openGroupEditor"
           @edit-table="openTableEditor"
-          @edit-compare-target-exclusions="openCompareExclusionsDialog"
+          @edit-compare-exclusions="openCompareExclusionsDialog"
           @node-properties-change="syncSourceWithNodeProperties"
+          @rename-compare-comparison="openRenameComparisonDialog"
           @rename-diagram-view="renameSelectedDiagramView"
           @rename-version="openRenameVersionDialog"
           @restore-version="restoreVersionToWorkspace"
+          @select-compare-comparison="selectComparison"
           @select-diagram-view="selectActiveDiagramView"
           @update-diagram-view-settings="updateDiagramViewSettings"
           @update-version-compare-base-id="updateVersionCompareBaseId"
@@ -3156,10 +3400,12 @@ onBeforeUnmount(() => {
           :can-edit-detail-source="isWorkspacePreview"
           :compare-base-label="compareBaseLabel"
           :compare-base-model="compareBaseModel"
+          :compare-comparison-items="comparisonItems"
           :compare-entries="compareEntries"
-          :compare-excluded-group-names="compareTargetExclusions.groupNames"
-          :compare-excluded-table-ids="compareTargetExclusions.tableIds"
+          :compare-excluded-group-names="activeCompareExclusions.groupNames"
+          :compare-excluded-table-ids="activeCompareExclusions.tableIds"
           :compare-relationship-summary="compareRelationshipSummary"
+          :compare-selected-comparison-id="selectedComparisonId"
           :compare-target-label="compareTargetLabel"
           :diagram-view-items="diagramViewItems"
           :diagram-view-settings="diagramViewSettings"
@@ -3183,6 +3429,7 @@ onBeforeUnmount(() => {
           :workspace-base-label="workspaceBaseLabel"
           :workspace-status="workspaceStatus"
           :viewport-reset-key="canvasViewportResetKey"
+          @create-compare-comparison="openCreateComparisonDialog"
           @create-group="openGroupCreator"
           @create-diagram-view="createActiveDiagramView"
           @focus-source="handleCanvasFocusSource"
@@ -3192,14 +3439,17 @@ onBeforeUnmount(() => {
           @tool-panel-tab-change="handleCanvasToolPanelTabChange"
           @tool-panel-visibility-change="handleCanvasToolPanelVisibilityChange"
           @create-table="openTableCreator"
+          @delete-compare-comparison="deleteSelectedComparisonPreset"
           @delete-diagram-view="deleteSelectedDiagramView"
           @edit-group="openGroupEditor"
           @edit-table="openTableEditor"
-          @edit-compare-target-exclusions="openCompareExclusionsDialog"
+          @edit-compare-exclusions="openCompareExclusionsDialog"
           @node-properties-change="syncSourceWithNodeProperties"
+          @rename-compare-comparison="openRenameComparisonDialog"
           @rename-diagram-view="renameSelectedDiagramView"
           @rename-version="openRenameVersionDialog"
           @restore-version="restoreVersionToWorkspace"
+          @select-compare-comparison="selectComparison"
           @select-diagram-view="selectActiveDiagramView"
           @update-diagram-view-settings="updateDiagramViewSettings"
           @update-version-compare-base-id="updateVersionCompareBaseId"
@@ -3387,25 +3637,96 @@ onBeforeUnmount(() => {
       </StudioModalFrame>
 
       <StudioModalFrame
+        v-model:open="comparisonDialogOpen"
+        :title="comparisonDialogTitle"
+        :description="comparisonDialogDescription"
+        surface-id="compare-comparison"
+        body-class="grid gap-4 px-4 py-3"
+        @close="closeComparisonDialog"
+      >
+        <div class="grid gap-3">
+          <div class="border border-[color:var(--studio-shell-border)] bg-[color:var(--studio-control-bg)] px-3 py-3">
+            <div :class="studioFieldKickerClass">
+              Current comparison
+            </div>
+            <div class="mt-2 text-[0.85rem] font-semibold text-[color:var(--studio-shell-text)]">
+              {{ compareBaseLabel }} to {{ compareTargetLabel }}
+            </div>
+            <p class="mt-2 text-[0.74rem] leading-6 text-[color:var(--studio-shell-muted)]">
+              {{
+                `${activeCompareExclusions.groupNames.length} excluded group${activeCompareExclusions.groupNames.length === 1 ? '' : 's'} · ${activeCompareExclusions.tableIds.length} excluded table${activeCompareExclusions.tableIds.length === 1 ? '' : 's'}`
+              }}
+            </p>
+          </div>
+
+          <label class="grid gap-1">
+            <span :class="studioFieldKickerClass">
+              Comparison name
+            </span>
+            <UInput
+              v-model="comparisonDraftName"
+              data-compare-comparison-name-input="true"
+              placeholder="Comparison name"
+              color="neutral"
+              variant="outline"
+              size="sm"
+              :ui="studioFieldUi"
+            />
+          </label>
+
+          <div
+            v-if="comparisonNameError"
+            class="grid gap-1 border border-[color:var(--studio-shell-error)]/40 bg-[color:var(--studio-shell-error)]/8 px-3 py-3 text-[0.74rem] text-[color:var(--studio-shell-error)]"
+          >
+            <div class="font-mono text-[0.58rem] uppercase tracking-[0.08em]">
+              Comparison name
+            </div>
+            <div>
+              {{ comparisonNameError }}
+            </div>
+          </div>
+        </div>
+
+        <template #footer>
+          <UButton
+            label="Cancel"
+            color="neutral"
+            variant="outline"
+            :class="secondaryModalButtonClass"
+            @click="closeComparisonDialog"
+          />
+          <UButton
+            :label="comparisonDialogMode === 'rename' ? 'Rename comparison' : 'Create comparison'"
+            data-compare-comparison-save="true"
+            color="neutral"
+            variant="soft"
+            :class="primaryModalButtonClass"
+            :disabled="comparisonNameError !== null"
+            @click="saveComparisonDialog"
+          />
+        </template>
+      </StudioModalFrame>
+
+      <StudioModalFrame
         v-model:open="compareExclusionsDialogOpen"
-        title="Edit compare exclusions"
+        title="Manage compare exclusions"
         :description="compareExclusionsDialogDescription"
         surface-id="compare-exclusions"
-        body-class="grid gap-4 px-4 py-3"
+        body-class="grid min-h-0 gap-4 px-4 py-3"
         @close="closeCompareExclusionsDialog"
       >
         <div class="grid gap-4">
           <div class="border border-[color:var(--studio-shell-border)] bg-[color:var(--studio-control-bg)] px-3 py-3">
             <div :class="studioFieldKickerClass">
-              Target snapshot
+              Editing exclusions for
             </div>
             <div class="mt-2 text-[0.85rem] font-semibold text-[color:var(--studio-shell-text)]">
-              {{ compareExclusionsTargetLabel }}
+              {{ compareComparisonLabel }}
             </div>
             <p class="mt-2 text-[0.74rem] leading-6 text-[color:var(--studio-shell-muted)]">
               {{
                 compareExclusionsDraft
-                  ? `${compareExclusionsDraft.groupNames.length} excluded group${compareExclusionsDraft.groupNames.length === 1 ? '' : 's'} · ${compareExclusionsDraft.tableIds.length} excluded table${compareExclusionsDraft.tableIds.length === 1 ? '' : 's'}`
+                  ? `${compareExclusionsEffective.groupNames.length} excluded group${compareExclusionsEffective.groupNames.length === 1 ? '' : 's'} · ${compareExclusionsEffective.tableIds.length} excluded table${compareExclusionsEffective.tableIds.length === 1 ? '' : 's'} · ${compareExclusionsSelectionCount} selected chip${compareExclusionsSelectionCount === 1 ? '' : 's'}`
                   : 'No exclusions loaded.'
               }}
             </p>
@@ -3424,77 +3745,126 @@ onBeforeUnmount(() => {
             >
           </label>
 
-          <div class="grid gap-4 lg:grid-cols-2">
-            <div class="grid gap-2">
-              <div :class="studioFieldKickerClass">
-                Excluded groups
-              </div>
-              <div
-                v-if="filteredCompareExclusionGroupOptions.length > 0"
-                class="grid gap-2"
-              >
-                <button
-                  v-for="groupName in filteredCompareExclusionGroupOptions"
-                  :key="groupName"
-                  type="button"
-                  :data-compare-exclusion-group="groupName"
-                  class="flex items-center justify-between gap-3 border px-3 py-2 text-left transition-colors duration-150"
-                  :class="hasCompareExclusionGroup(groupName)
-                    ? 'border-[color:var(--studio-ring)] bg-[color:var(--studio-input-bg)] text-[color:var(--studio-shell-text)]'
-                    : 'border-[color:var(--studio-divider)] bg-[color:var(--studio-control-bg)] text-[color:var(--studio-shell-muted)]'"
-                  :aria-pressed="hasCompareExclusionGroup(groupName)"
-                  @click="toggleCompareExclusionGroup(groupName)"
-                >
-                  <span class="min-w-0 break-words text-[0.74rem] font-semibold [overflow-wrap:anywhere]">
-                    {{ groupName }}
-                  </span>
-                  <span class="font-mono text-[0.54rem] uppercase tracking-[0.08em]">
-                    {{ hasCompareExclusionGroup(groupName) ? 'Excluded' : 'Included' }}
-                  </span>
-                </button>
-              </div>
-              <div
-                v-else
-                :class="studioEmptyStateClass"
-              >
-                No table groups match the current filter.
-              </div>
+          <div class="grid gap-2">
+            <div :class="studioFieldKickerClass">
+              Exclude from compare
             </div>
-
-            <div class="grid gap-2">
-              <div :class="studioFieldKickerClass">
-                Excluded tables
-              </div>
-              <div
-                v-if="filteredCompareExclusionTableOptions.length > 0"
+            <p :class="studioCompactBodyCopyClass">
+              Select a group to exclude its full cluster, or pick individual tables inside it. Ungrouped tables are listed separately.
+            </p>
+            <div
+              v-if="hasVisibleCompareExclusionOptions"
+              class="grid max-h-[50vh] gap-4 overflow-y-auto pr-1"
+            >
+              <section
+                data-compare-exclusion-groups-section="true"
                 class="grid gap-2"
               >
-                <button
-                  v-for="tableId in filteredCompareExclusionTableOptions"
-                  :key="tableId"
-                  type="button"
-                  :data-compare-exclusion-table="tableId"
-                  class="flex items-center justify-between gap-3 border px-3 py-2 text-left transition-colors duration-150"
-                  :class="hasCompareExclusionTable(tableId)
-                    ? 'border-[color:var(--studio-ring)] bg-[color:var(--studio-input-bg)] text-[color:var(--studio-shell-text)]'
-                    : 'border-[color:var(--studio-divider)] bg-[color:var(--studio-control-bg)] text-[color:var(--studio-shell-muted)]'"
-                  :aria-pressed="hasCompareExclusionTable(tableId)"
-                  @click="toggleCompareExclusionTable(tableId)"
+                <div :class="studioFieldKickerClass">
+                  Groups
+                </div>
+                <div
+                  v-if="filteredCompareExclusionGroupSections.length > 0"
+                  class="grid gap-3"
                 >
-                  <span class="min-w-0 break-words text-[0.74rem] font-semibold [overflow-wrap:anywhere]">
-                    {{ tableId }}
-                  </span>
-                  <span class="font-mono text-[0.54rem] uppercase tracking-[0.08em]">
-                    {{ hasCompareExclusionTable(tableId) ? 'Excluded' : 'Included' }}
-                  </span>
-                </button>
-              </div>
-              <div
-                v-else
-                :class="studioEmptyStateClass"
+                  <section
+                    v-for="section in filteredCompareExclusionGroupSections"
+                    :key="section.id"
+                    :data-compare-exclusion-group-section="section.groupOption.value"
+                    class="grid gap-2 border border-[color:var(--studio-shell-border)]/70 px-3 py-3"
+                  >
+                    <div class="flex flex-wrap items-center gap-2">
+                      <button
+                        type="button"
+                        :data-compare-exclusion-option="section.groupOption.id"
+                        :class="getStudioToggleChipClass({
+                          active: isCompareExclusionOptionSelected(section.groupOption),
+                          extraClass: 'px-2 py-1 font-mono text-[0.58rem] uppercase tracking-[0.08em]'
+                        })"
+                        :aria-pressed="isCompareExclusionOptionSelected(section.groupOption)"
+                        @click="toggleCompareExclusionOption(section.groupOption)"
+                      >
+                        {{ section.groupOption.label }}
+                      </button>
+                      <span class="font-mono text-[0.58rem] uppercase tracking-[0.08em] text-[color:var(--studio-shell-muted)]">
+                        {{ section.tableOptions.length }} table{{ section.tableOptions.length === 1 ? '' : 's' }}
+                      </span>
+                    </div>
+
+                    <div
+                      v-if="section.tableOptions.length > 0"
+                      :data-compare-exclusion-group-tables="section.groupOption.value"
+                      class="grid gap-2 border-l border-[color:var(--studio-divider)] pl-3"
+                    >
+                      <div class="font-mono text-[0.58rem] uppercase tracking-[0.08em] text-[color:var(--studio-shell-muted)]">
+                        Tables
+                      </div>
+                      <div class="flex flex-wrap gap-2">
+                        <button
+                          v-for="option in section.tableOptions"
+                          :key="`${section.groupOption.value}:${option.id}`"
+                          type="button"
+                          :data-compare-exclusion-option="option.id"
+                          :class="getStudioToggleChipClass({
+                            active: isCompareExclusionOptionSelected(option),
+                            extraClass: 'px-2 py-1 font-mono text-[0.58rem] uppercase tracking-[0.08em]'
+                          })"
+                          :aria-pressed="isCompareExclusionOptionSelected(option)"
+                          @click="toggleCompareExclusionOption(option)"
+                        >
+                          {{ option.label }}
+                        </button>
+                      </div>
+                    </div>
+                  </section>
+                </div>
+                <div
+                  v-else
+                  :class="studioEmptyStateClass"
+                >
+                  No groups or grouped tables match the current filter.
+                </div>
+              </section>
+
+              <section
+                data-compare-exclusion-ungrouped-section="true"
+                class="grid gap-2"
               >
-                No tables match the current filter.
-              </div>
+                <div :class="studioFieldKickerClass">
+                  Ungrouped tables
+                </div>
+                <div
+                  v-if="filteredCompareExclusionUngroupedTableOptions.length > 0"
+                  class="flex flex-wrap gap-2"
+                >
+                  <button
+                    v-for="option in filteredCompareExclusionUngroupedTableOptions"
+                    :key="option.id"
+                    type="button"
+                    :data-compare-exclusion-option="option.id"
+                    :class="getStudioToggleChipClass({
+                      active: isCompareExclusionOptionSelected(option),
+                      extraClass: 'px-2 py-1 font-mono text-[0.58rem] uppercase tracking-[0.08em]'
+                    })"
+                    :aria-pressed="isCompareExclusionOptionSelected(option)"
+                    @click="toggleCompareExclusionOption(option)"
+                  >
+                    {{ option.label }}
+                  </button>
+                </div>
+                <div
+                  v-else
+                  :class="studioEmptyStateClass"
+                >
+                  No ungrouped tables match the current filter.
+                </div>
+              </section>
+            </div>
+            <div
+              v-else
+              :class="studioEmptyStateClass"
+            >
+              No groups or tables match the current filter.
             </div>
           </div>
         </div>
@@ -3512,7 +3882,7 @@ onBeforeUnmount(() => {
             color="neutral"
             variant="outline"
             :class="secondaryModalButtonClass"
-            :disabled="!compareExclusionsDraft || (compareExclusionsDraft.groupNames.length === 0 && compareExclusionsDraft.tableIds.length === 0)"
+            :disabled="!compareExclusionsDraft || compareExclusionsSelectionCount === 0"
             @click="clearCompareExclusionsDraft"
           />
           <UButton

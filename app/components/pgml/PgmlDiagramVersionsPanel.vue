@@ -131,7 +131,7 @@ const previewLabel = computed(() => {
       </p>
     </div>
 
-    <div class="grid gap-2 border border-[color:var(--studio-divider)] bg-[color:var(--studio-control-bg)] px-3 py-3">
+    <div class="grid gap-2">
       <div class="font-mono text-[0.6rem] uppercase tracking-[0.08em] text-[color:var(--studio-shell-label)]">
         Version Switcher
       </div>

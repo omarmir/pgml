@@ -69,7 +69,7 @@ Properties "public.users" {
 
     expect(modifiedColumn).toMatchObject({
       changeKind: 'modified',
-      description: 'Changed column public.users.email: modifiers and type.',
+      description: 'Changed column public.users.email: modifiers none -> [not null]; type text -> varchar.',
       entityKind: 'column',
       label: 'public.users.email',
       rowKey: 'public.users.email',
@@ -144,7 +144,7 @@ Table public.orders {
 
     expect(modifiedReference).toMatchObject({
       changeKind: 'modified',
-      description: 'Changed reference public.orders.user_id -> public.users.id: delete action.',
+      description: 'Changed reference public.orders.user_id -> public.users.id: delete action none -> cascade.',
       entityKind: 'reference',
       label: 'public.orders.user_id -> public.users.id',
       rowKey: 'public.orders.user_id'
@@ -154,6 +154,44 @@ Table public.orders {
       before: null,
       id: 'onDelete',
       label: 'delete action'
+    })
+  })
+
+  it('describes modified columns with concrete reference changes', () => {
+    const baseModel = parseSnapshotModel(`Table public.agencies {
+  id uuid [pk]
+}
+
+Table public.accounts {
+  id uuid [pk]
+  agency_id uuid
+}`)
+    const targetModel = parseSnapshotModel(`Table public.agencies {
+  id uuid [pk]
+}
+
+Table public.accounts {
+  id uuid [pk]
+  agency_id uuid [ref: > public.agencies.id]
+}`)
+    const entries = buildPgmlDiagramCompareEntries(
+      diffPgmlSchemaModels(baseModel, targetModel),
+      baseModel,
+      targetModel
+    )
+    const modifiedColumn = entries.find(entry => entry.id === 'column:public.accounts::agency_id') || null
+
+    expect(modifiedColumn).toMatchObject({
+      changeKind: 'modified',
+      description: 'Changed column public.accounts.agency_id: modifiers none -> [ref: > public.agencies.id]; reference none -> > public.agencies.id.',
+      entityKind: 'column',
+      label: 'public.accounts.agency_id'
+    })
+    expect(modifiedColumn?.fields).toContainEqual({
+      after: expect.stringContaining('"toTable": "public.agencies"'),
+      before: null,
+      id: 'reference',
+      label: 'reference'
     })
   })
 

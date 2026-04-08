@@ -72,6 +72,26 @@ test('studio exports svg and png downloads', async ({ goto, page }) => {
   expect(pngDownload.suggestedFilename()).toBe('pgml-diagram-8x.png')
 })
 
+test('diagram export panel exposes every supported png scale and downloads from the 8x action', async ({ goto, page }) => {
+  await goto('/diagram')
+  await page.locator('[data-diagram-panel-tab="export"]').click()
+
+  await expect(page.locator('[data-diagram-export-button="png-1x"]')).toBeVisible()
+  await expect(page.locator('[data-diagram-export-button="png-2x"]')).toBeVisible()
+  await expect(page.locator('[data-diagram-export-button="png-3x"]')).toBeVisible()
+  await expect(page.locator('[data-diagram-export-button="png-4x"]')).toBeVisible()
+  await expect(page.locator('[data-diagram-export-button="png-8x"]')).toBeVisible()
+  await expect(page.locator('[data-diagram-export-button="svg"]')).toBeVisible()
+
+  const pngDownloadPromise = page.waitForEvent('download')
+
+  await page.locator('[data-diagram-export-button="png-8x"]').click()
+
+  const pngDownload = await pngDownloadPromise
+
+  expect(pngDownload.suggestedFilename()).toBe('example-schema-diagram.png')
+})
+
 test('diagram export tab previews SQL and Kysely artifacts, downloads files, and persists export options', async ({ goto, page }) => {
   await goto('/diagram')
 

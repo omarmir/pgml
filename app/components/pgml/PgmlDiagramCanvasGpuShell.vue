@@ -12,6 +12,9 @@ import PgmlDiagramMigrationsPanel from '~/components/pgml/PgmlDiagramMigrationsP
 import PgmlDiagramTableRows from '~/components/pgml/PgmlDiagramTableRows.vue'
 import PgmlDiagramVersionsPanel from '~/components/pgml/PgmlDiagramVersionsPanel.vue'
 import {
+  diagramRasterExportScaleFactors
+} from '~/utils/diagram-export'
+import {
   buildDiagramConnectionPreviewLayers,
   type DiagramNodeDragPreview
 } from '~/utils/diagram-connection-preview'
@@ -383,10 +386,12 @@ const {
   canEditDetailSource = false,
   compareBaseLabel = 'Base',
   compareBaseModel = null,
+  compareComparisonItems = [],
   compareEntries = [],
   compareExcludedGroupNames = [],
   compareExcludedTableIds = [],
   compareRelationshipSummary = '',
+  compareSelectedComparisonId = null,
   compareTargetLabel = 'Target',
   diagramViewItems = [],
   diagramViewSettings = null,
@@ -420,10 +425,15 @@ const {
   canEditDetailSource?: boolean
   compareBaseLabel?: string
   compareBaseModel?: PgmlSchemaModel | null
+  compareComparisonItems?: Array<{
+    label: string
+    value: string
+  }>
   compareEntries?: PgmlDiagramCompareEntry[]
   compareExcludedGroupNames?: string[]
   compareExcludedTableIds?: string[]
   compareRelationshipSummary?: string
+  compareSelectedComparisonId?: string | null
   compareTargetLabel?: string
   diagramViewItems?: DiagramViewItem[]
   diagramViewSettings?: DiagramViewSettings | null
@@ -446,13 +456,16 @@ const {
 }>()
 
 const emit = defineEmits<{
+  createCompareComparison: []
   createGroup: []
   createTable: [groupName: string | null]
   createDiagramView: []
+  deleteCompareComparison: []
   deleteDiagramView: []
   editGroup: [groupName: string]
-  editCompareTargetExclusions: []
+  editCompareExclusions: []
   renameDiagramView: []
+  renameCompareComparison: []
   renameVersion: [versionId: string]
   editTable: [tableId: string]
   focusSource: [sourceRange: PgmlSourceRange]
@@ -463,6 +476,7 @@ const emit = defineEmits<{
   toolPanelVisibilityChange: [payload: { open: boolean, tab: DiagramToolPanelTab }]
   replaceSourceRange: [payload: { nextText: string, sourceRange: PgmlSourceRange }]
   restoreVersion: [versionId: string]
+  selectCompareComparison: [comparisonId: string | null]
   selectDiagramView: [viewId: string]
   updateDiagramViewSettings: [settings: Partial<DiagramViewSettings>]
   updateVersionCompareBaseId: [value: string | null]
@@ -7762,7 +7776,7 @@ defineExpose<{
         <div
           v-else
           data-inspector-overview="true"
-          class="grid gap-3 rounded-none border border-[color:var(--studio-divider)] bg-[color:var(--studio-control-bg)] px-3 py-3 text-[0.7rem] leading-6 text-[color:var(--studio-shell-muted)]"
+          class="grid gap-3 text-[0.7rem] leading-6 text-[color:var(--studio-shell-muted)]"
         >
           <div class="grid gap-1">
             <div class="font-mono text-[0.58rem] uppercase tracking-[0.08em] text-[color:var(--studio-shell-label)]">
@@ -8352,34 +8366,28 @@ defineExpose<{
         <div class="rounded-none border border-[color:var(--studio-divider)] bg-[color:var(--studio-control-bg)] px-3 py-3 text-[0.7rem] leading-6 text-[color:var(--studio-shell-muted)]">
           Export the accelerated scene directly. The preview renderer keeps diagram export working while visual behavior is being reviewed.
         </div>
-        <div class="grid grid-cols-2 gap-2">
-          <UButton
-            data-diagram-export-button="png-1x"
-            label="PNG 1x"
-            color="neutral"
-            variant="outline"
-            size="sm"
-            :class="exportPanelButtonClass"
-            :disabled="hasBlockingSourceErrors"
-            @click="exportPng(1)"
-          />
-          <UButton
-            data-diagram-export-button="png-2x"
-            label="PNG 2x"
-            color="neutral"
-            variant="outline"
-            size="sm"
-            :class="exportPanelButtonClass"
-            :disabled="hasBlockingSourceErrors"
-            @click="exportPng(2)"
-          />
+        <div class="grid gap-2">
+          <div class="grid grid-cols-2 gap-2">
+            <UButton
+              v-for="scaleFactor in diagramRasterExportScaleFactors"
+              :key="scaleFactor"
+              :data-diagram-export-button="`png-${scaleFactor}x`"
+              :label="`PNG ${scaleFactor}x`"
+              color="neutral"
+              variant="outline"
+              size="sm"
+              :class="exportPanelButtonClass"
+              :disabled="hasBlockingSourceErrors"
+              @click="exportPng(scaleFactor)"
+            />
+          </div>
           <UButton
             data-diagram-export-button="svg"
             label="SVG"
             color="neutral"
             variant="outline"
             size="sm"
-            :class="joinStudioClasses(exportPanelButtonClass, 'col-span-2')"
+            :class="exportPanelButtonClass"
             :disabled="hasBlockingSourceErrors"
             @click="exportSvg"
           />
@@ -8466,6 +8474,8 @@ defineExpose<{
       >
         <PgmlDiagramComparePanel
           :base-label="compareBaseLabel"
+          :comparison-items="compareComparisonItems"
+          :comparison-label="compareSelectedComparisonId ? compareComparisonItems.find(item => item.value === compareSelectedComparisonId)?.label || 'Saved comparison' : 'Current comparison'"
           :compare-base-id="versionCompareBaseId"
           :compare-options="versionCompareOptions"
           :compare-target-id="versionCompareTargetId"
@@ -8473,12 +8483,17 @@ defineExpose<{
           :excluded-table-ids="compareExcludedTableIds"
           :entries="compareEntries"
           :relationship-summary="compareRelationshipSummary"
+          :selected-comparison-id="compareSelectedComparisonId"
           :selected-diagram-context-ids="selectedDiagramCompareEntryIds"
           :selected-entry-id="selectedCompareEntryId"
           :target-label="compareTargetLabel"
-          @edit-target-exclusions="emit('editCompareTargetExclusions')"
+          @create-comparison="emit('createCompareComparison')"
+          @delete-comparison="emit('deleteCompareComparison')"
+          @edit-comparison-exclusions="emit('editCompareExclusions')"
           @focus-source="focusSourceRange"
           @focus-target="focusCompareEntry"
+          @rename-comparison="emit('renameCompareComparison')"
+          @select-comparison="emit('selectCompareComparison', $event)"
           @select-entry="selectedCompareEntryId = $event"
           @update:compare-base-id="emit('updateVersionCompareBaseId', $event)"
           @update:compare-target-id="emit('updateVersionCompareTargetId', $event)"

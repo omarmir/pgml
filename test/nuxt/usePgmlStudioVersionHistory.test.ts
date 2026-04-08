@@ -576,45 +576,67 @@ Properties "public.users" {
     expect(api.versionedDocumentSource.value).toContain('classification: "identifier"')
   })
 
-  it('persists compare exclusions across checkpoints, restores, and imports from a selected base version', async () => {
-    const { api, source } = await mountVersionHistoryComposable({
+  it('stores saved comparisons with their own exclusions and recalls them after checkpointing', async () => {
+    const { api } = await mountVersionHistoryComposable({
       source: groupedWorkspaceSource
     })
 
-    expect(api.setCompareExclusions('workspace', {
-      groupNames: ['Core'],
-      tableIds: ['public.audit_log']
-    })).toBe(true)
-
     const initialVersion = createDesignCheckpoint(api, 'Initial design')
 
-    expect(initialVersion.compareExclusions).toEqual({
+    expect(api.setCompareTargets({
+      baseId: initialVersion.id,
+      targetId: 'workspace'
+    })).toBe(true)
+    expect(api.setCurrentCompareExclusions({
       groupNames: ['Core'],
       tableIds: ['public.audit_log']
-    })
+    })).toBe(true)
 
-    expect(api.setCompareExclusions('workspace', {
+    const savedComparison = api.createComparison('Implemented scope')
+
+    expect(savedComparison).toEqual(expect.objectContaining({
+      baseId: initialVersion.id,
+      name: 'Implemented scope',
+      targetId: 'workspace'
+    }))
+    expect(savedComparison?.exclusions).toEqual({
+      groupNames: ['Core'],
+      includedGroupNames: [],
+      includedTableIds: [],
+      tableIds: ['public.audit_log']
+    })
+    expect(api.comparisons.value).toHaveLength(1)
+    expect(api.selectedComparisonId.value).toBe(savedComparison?.id || null)
+    expect(api.versionedDocumentSource.value).toContain('Comparison "Implemented scope" {')
+
+    const appOnlyVersion = createDesignCheckpoint(api, 'App-only')
+
+    expect(api.selectedComparisonId.value).toBeNull()
+    expect(api.compareBaseId.value).toBe(appOnlyVersion.id)
+    expect(api.compareTargetId.value).toBe('workspace')
+    expect(api.compareExclusions.value).toEqual({
       groupNames: [],
+      includedGroupNames: [],
+      includedTableIds: [],
       tableIds: []
-    })).toBe(true)
-
-    expect(api.replaceWorkspaceFromVersion(initialVersion.id)).toBe(true)
-    expect(api.document.value.workspace.compareExclusions).toEqual({
+    })
+    expect(api.selectComparison(savedComparison?.id || null)).toBe(true)
+    expect(api.compareBaseId.value).toBe(initialVersion.id)
+    expect(api.compareTargetId.value).toBe('workspace')
+    expect(api.compareExclusions.value).toEqual({
       groupNames: ['Core'],
+      includedGroupNames: [],
+      includedTableIds: [],
       tableIds: ['public.audit_log']
     })
 
-    source.value = importedWorkspaceSource
-
-    expect(api.replaceWorkspaceFromImportedSnapshot({
-      basedOnVersionId: initialVersion.id,
-      includeLayout: true,
-      source: importedWorkspaceSource
-    })).toBe(true)
-    expect(api.document.value.workspace.compareExclusions).toEqual({
-      groupNames: ['Core'],
-      tableIds: ['public.audit_log']
+    expect(api.renameComparison(savedComparison?.id || '', 'Implemented today')).toBe(true)
+    expect(api.comparisonItems.value).toContainEqual({
+      label: 'Implemented today',
+      value: savedComparison?.id || ''
     })
+    expect(api.deleteComparison(savedComparison?.id || '')).toBe(true)
+    expect(api.comparisons.value).toHaveLength(0)
   })
 
   it('returns false when restoring a missing version id and keeps compare targets editable', async () => {

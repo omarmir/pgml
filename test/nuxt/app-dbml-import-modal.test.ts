@@ -7,6 +7,9 @@ describe('DBML import modal source', () => {
 
     expect(file).toContain('<StudioModalFrame')
     expect(file).toContain('Comment parsing')
+    expect(file).toContain('const importRulesClass = \'grid gap-1.5\'')
+    expect(file).toContain('const importRulesSummaryClass = \'border-t border-[color:var(--studio-divider)] pt-2 text-[0.68rem] leading-6 text-[color:var(--studio-shell-muted)]\'')
+    expect(file).toContain('const settingsPanelClass = \'grid gap-2 border border-[color:var(--studio-shell-border)] bg-[color:var(--studio-control-bg)] px-3 py-3\'')
     expect(file).toContain('Upload a DBML file')
     expect(file).toContain('Paste DBML text')
     expect(file).toContain('<USwitch')
@@ -18,5 +21,6 @@ describe('DBML import modal source', () => {
     expect(file).toContain('emit(\'update:parseExecutableComments\'')
     expect(file).toContain('emit(\'select-file\'')
     expect(file).toContain('emit(\'submit\'')
+    expect(file).not.toContain('const fileSelectionPanelClass')
   })
 })

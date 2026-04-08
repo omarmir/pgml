@@ -87,6 +87,8 @@ export type PgmlNodeProperties = {
 
 export type PgmlCompareExclusions = {
   groupNames: string[]
+  includedGroupNames: string[]
+  includedTableIds: string[]
   tableIds: string[]
 }
 
@@ -252,12 +254,14 @@ const sortValues = (left: string, right: string) => left.localeCompare(right)
 export const createEmptyPgmlCompareExclusions = (): PgmlCompareExclusions => {
   return {
     groupNames: [],
+    includedGroupNames: [],
+    includedTableIds: [],
     tableIds: []
   }
 }
 
 export const clonePgmlCompareExclusions = (
-  exclusions?: PgmlCompareExclusions | null
+  exclusions?: Partial<PgmlCompareExclusions> | null
 ): PgmlCompareExclusions => {
   const normalizeValues = (values: string[]) => {
     return Array.from(new Set(values.map(normalizeCompareExclusionValue).filter(value => value.length > 0))).sort(sortValues)
@@ -265,8 +269,92 @@ export const clonePgmlCompareExclusions = (
 
   return {
     groupNames: normalizeValues(exclusions?.groupNames || []),
+    includedGroupNames: normalizeValues(exclusions?.includedGroupNames || []),
+    includedTableIds: normalizeValues(exclusions?.includedTableIds || []),
     tableIds: normalizeValues(exclusions?.tableIds || [])
   }
+}
+
+export const hasPgmlCompareExclusionOverrides = (
+  exclusions?: Partial<PgmlCompareExclusions> | null
+) => {
+  const normalizedExclusions = clonePgmlCompareExclusions(exclusions)
+
+  return (
+    normalizedExclusions.groupNames.length > 0
+    || normalizedExclusions.tableIds.length > 0
+    || normalizedExclusions.includedGroupNames.length > 0
+    || normalizedExclusions.includedTableIds.length > 0
+  )
+}
+
+export const resolvePgmlCompareExclusions = (
+  inheritedExclusions?: Partial<PgmlCompareExclusions> | null,
+  localOverrides?: Partial<PgmlCompareExclusions> | null
+) => {
+  const normalizedInheritedExclusions = clonePgmlCompareExclusions(inheritedExclusions)
+  const normalizedLocalOverrides = clonePgmlCompareExclusions(localOverrides)
+  const effectiveGroupNames = new Set(normalizedInheritedExclusions.groupNames)
+  const effectiveTableIds = new Set(normalizedInheritedExclusions.tableIds)
+
+  normalizedLocalOverrides.includedGroupNames.forEach((groupName) => {
+    effectiveGroupNames.delete(groupName)
+  })
+  normalizedLocalOverrides.includedTableIds.forEach((tableId) => {
+    effectiveTableIds.delete(tableId)
+  })
+  normalizedLocalOverrides.groupNames.forEach((groupName) => {
+    effectiveGroupNames.add(groupName)
+  })
+  normalizedLocalOverrides.tableIds.forEach((tableId) => {
+    effectiveTableIds.add(tableId)
+  })
+
+  return clonePgmlCompareExclusions({
+    groupNames: Array.from(effectiveGroupNames),
+    includedGroupNames: [],
+    includedTableIds: [],
+    tableIds: Array.from(effectiveTableIds)
+  })
+}
+
+export const setPgmlCompareExclusionOverride = (
+  input: {
+    exclusions: PgmlCompareExclusions
+    inheritedExclusions?: PgmlCompareExclusions | null
+    kind: 'group' | 'table'
+    selected: boolean
+    value: string
+  }
+) => {
+  const normalizedExclusions = clonePgmlCompareExclusions(input.exclusions)
+  const normalizedInheritedExclusions = clonePgmlCompareExclusions(input.inheritedExclusions)
+  const localExcludedKey = input.kind === 'group' ? 'groupNames' : 'tableIds'
+  const localIncludedKey = input.kind === 'group' ? 'includedGroupNames' : 'includedTableIds'
+  const inheritedValues = input.kind === 'group'
+    ? normalizedInheritedExclusions.groupNames
+    : normalizedInheritedExclusions.tableIds
+  const nextExcludedValues = new Set(normalizedExclusions[localExcludedKey])
+  const nextIncludedValues = new Set(normalizedExclusions[localIncludedKey])
+
+  if (input.selected) {
+    nextIncludedValues.delete(input.value)
+    nextExcludedValues.add(input.value)
+  } else {
+    nextExcludedValues.delete(input.value)
+
+    if (inheritedValues.includes(input.value)) {
+      nextIncludedValues.add(input.value)
+    } else {
+      nextIncludedValues.delete(input.value)
+    }
+  }
+
+  return clonePgmlCompareExclusions({
+    ...normalizedExclusions,
+    [localExcludedKey]: Array.from(nextExcludedValues),
+    [localIncludedKey]: Array.from(nextIncludedValues)
+  })
 }
 
 const getLeadingWhitespaceWidth = (value: string) => {
@@ -715,7 +803,7 @@ export const getSequenceAttachedTableIds = (
 
 export const filterPgmlSchemaModelForCompareExclusions = (
   model: PgmlSchemaModel,
-  exclusions: PgmlCompareExclusions
+  exclusions: Partial<PgmlCompareExclusions>
 ) => {
   const normalizedExclusions = clonePgmlCompareExclusions(exclusions)
 

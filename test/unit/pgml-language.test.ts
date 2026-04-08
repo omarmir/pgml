@@ -230,6 +230,38 @@ Enum public.language_preference {
     ]))
   })
 
+  it('accepts Comparison blocks at the VersionSet root and offers comparison completions', () => {
+    const source = buildVersionedCompletionFixture(`  Workspace {
+    Snapshot {
+      Table public.users {
+        id uuid [pk]
+      }
+    }
+  }
+
+  Comparison "Implemented scope" {
+    id: cmp_scope
+    base: workspace
+    target: workspace
+    
+  }`)
+    const comparisonOffset = source.indexOf('    \n  }', source.indexOf('target: workspace')) + 4
+    const comparisonCompletions = getPgmlCompletionItems(source, comparisonOffset)
+    const analysis = analyzePgmlDocument(source)
+
+    expect(analysis.diagnostics).toEqual([])
+    expect(comparisonCompletions).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        label: 'id',
+        kind: 'property'
+      }),
+      expect.objectContaining({
+        label: 'CompareExclusions',
+        kind: 'property'
+      })
+    ]))
+  })
+
   it('collects no diagnostics for standalone workspace and version document scopes', () => {
     const workspaceScopeSource = `Workspace {
   based_on: v2

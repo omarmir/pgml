@@ -14,12 +14,13 @@ import {
   studioButtonClasses,
   studioCompactBodyCopyClass,
   studioCompactInputClass,
-  studioEmptyStateClass,
-  studioPanelSurfaceClass
+  studioEmptyStateClass
 } from '~/utils/uiStyles'
 
 const {
   baseLabel,
+  comparisonItems = [],
+  comparisonLabel = 'Current comparison',
   compareBaseId = null,
   compareOptions,
   compareTargetId,
@@ -27,11 +28,17 @@ const {
   excludedTableIds = [],
   entries,
   relationshipSummary = '',
+  selectedComparisonId = null,
   selectedDiagramContextIds = [],
   selectedEntryId = null,
   targetLabel
 } = defineProps<{
   baseLabel: string
+  comparisonItems?: Array<{
+    label: string
+    value: string
+  }>
+  comparisonLabel?: string
   compareBaseId?: string | null
   compareOptions: Array<{
     label: string
@@ -42,15 +49,20 @@ const {
   excludedTableIds?: string[]
   entries: PgmlDiagramCompareEntry[]
   relationshipSummary?: string
+  selectedComparisonId?: string | null
   selectedDiagramContextIds?: string[]
   selectedEntryId?: string | null
   targetLabel: string
 }>()
 
 const emit = defineEmits<{
+  'create-comparison': []
+  'delete-comparison': []
+  'edit-comparison-exclusions': []
   'focus-source': [sourceRange: PgmlSourceRange]
   'focus-target': [entryId: string]
-  'edit-target-exclusions': []
+  'rename-comparison': []
+  'select-comparison': [comparisonId: string | null]
   'select-entry': [entryId: string]
   'update:compareBaseId': [value: string | null]
   'update:compareTargetId': [value: string]
@@ -69,7 +81,10 @@ const filterKind: Ref<PgmlCompareFilterKind> = ref('all')
 const filterButtonClass = joinStudioClasses(studioButtonClasses.secondary, 'text-[0.62rem]')
 const activeFilterButtonClass = joinStudioClasses(studioButtonClasses.primary, 'text-[0.62rem]')
 const compareStatLabelClass = 'font-mono text-[0.58rem] uppercase tracking-[0.08em]'
+const compareOverviewSectionClass = 'grid min-w-0 gap-3 border-b border-[color:var(--studio-divider)] pb-3'
+const compareDividerSectionClass = 'grid min-w-0 gap-3 border-t border-[color:var(--studio-divider)] pt-3'
 const exclusionChipClass = 'border border-[color:var(--studio-divider)] px-1.5 py-0.5 font-mono text-[0.52rem] uppercase tracking-[0.08em] text-[color:var(--studio-shell-muted)]'
+const currentComparisonOptionValue = '__current__'
 const compareStatKinds: PgmlCompareStatKind[] = ['added', 'modified', 'removed']
 const compareStatLabelByKind: Readonly<Record<PgmlCompareStatKind, string>> = Object.freeze({
   added: 'Added',
@@ -109,6 +124,16 @@ const visibleExcludedLabels = computed(() => {
 const hiddenExcludedLabelCount = computed(() => {
   return excludedGroupNames.length + excludedTableIds.length - visibleExcludedLabels.value.length
 })
+const comparisonSelectOptions = computed(() => {
+  return [
+    {
+      label: 'Current comparison',
+      value: currentComparisonOptionValue
+    },
+    ...comparisonItems
+  ]
+})
+const hasSavedComparison = computed(() => selectedComparisonId !== null)
 const buildEntrySearchHaystack = (entry: PgmlDiagramCompareEntry) => {
   return [
     entry.label,
@@ -202,6 +227,12 @@ const updateCompareTargetId = (value: unknown) => {
   emit('update:compareTargetId', nextValue)
 }
 
+const updateSelectedComparisonId = (value: unknown) => {
+  const nextValue = normalizeCompareSelectValue(value)
+
+  emit('select-comparison', nextValue === currentComparisonOptionValue ? null : nextValue)
+}
+
 // Keep the active detail selection valid when filters or compare sources change.
 watch(filteredEntries, (nextEntries) => {
   if (nextEntries.length === 0) {
@@ -269,7 +300,7 @@ const clearFilters = () => {
       data-studio-scrollable="true"
       class="grid min-h-0 min-w-0 content-start gap-3 overflow-y-auto overflow-x-hidden px-3 py-3"
     >
-      <div :class="joinStudioClasses(studioPanelSurfaceClass, 'grid min-w-0 gap-3 px-3 py-3')">
+      <div :class="compareOverviewSectionClass">
         <div class="flex flex-wrap items-center gap-2">
           <span class="border border-[color:var(--studio-divider)] px-1.5 py-0.5 font-mono text-[0.52rem] uppercase tracking-[0.08em] text-[color:var(--studio-shell-muted)]">
             {{ baseLabel }}
@@ -292,6 +323,56 @@ const clearFilters = () => {
         >
           {{ relationshipSummary }}
         </p>
+
+        <div class="grid gap-2 lg:grid-cols-[minmax(0,1fr)_auto_auto_auto] lg:items-end">
+          <label class="grid gap-1 lg:min-w-0">
+            <span class="text-[0.68rem] text-[color:var(--studio-shell-muted)]">Saved comparison</span>
+            <USelect
+              data-compare-comparison-select="true"
+              :items="comparisonSelectOptions"
+              :model-value="selectedComparisonId || currentComparisonOptionValue"
+              value-key="value"
+              label-key="label"
+              color="neutral"
+              variant="outline"
+              size="sm"
+              :ui="studioSelectUi"
+              @update:model-value="updateSelectedComparisonId"
+            />
+          </label>
+
+          <UButton
+            label="New"
+            data-compare-create-comparison="true"
+            color="neutral"
+            variant="outline"
+            size="sm"
+            :class="filterButtonClass"
+            @click="emit('create-comparison')"
+          />
+
+          <UButton
+            label="Rename"
+            data-compare-rename-comparison="true"
+            color="neutral"
+            variant="outline"
+            size="sm"
+            :class="filterButtonClass"
+            :disabled="!hasSavedComparison"
+            @click="emit('rename-comparison')"
+          />
+
+          <UButton
+            label="Delete"
+            data-compare-delete-comparison="true"
+            color="neutral"
+            variant="outline"
+            size="sm"
+            :class="filterButtonClass"
+            :disabled="!hasSavedComparison"
+            @click="emit('delete-comparison')"
+          />
+        </div>
 
         <div class="grid gap-2 md:grid-cols-2">
           <label class="grid gap-1">
@@ -352,17 +433,17 @@ const clearFilters = () => {
           </button>
         </div>
 
-        <div class="grid gap-2 border border-[color:var(--studio-divider)] bg-[color:var(--studio-control-bg)] px-3 py-3">
+        <div class="grid gap-2 border-t border-[color:var(--studio-divider)] pt-3">
           <div class="flex flex-wrap items-center justify-between gap-2">
             <div class="grid gap-1">
               <div class="font-mono text-[0.58rem] uppercase tracking-[0.08em] text-[color:var(--studio-shell-label)]">
-                Target exclusions
+                Compare exclusions
               </div>
               <div class="text-[0.68rem] leading-5 text-[color:var(--studio-shell-muted)]">
                 {{
                   hasExcludedEntities
-                    ? `${exclusionSummary}. These exclusions hide matching tables and grouped members from compare results for ${targetLabel}.`
-                    : `No groups or tables are excluded for ${targetLabel}.`
+                    ? `${exclusionSummary}. Current compare results use the exclusions stored on ${comparisonLabel}.`
+                    : `No groups or tables are excluded for ${comparisonLabel}.`
                 }}
               </div>
             </div>
@@ -374,7 +455,7 @@ const clearFilters = () => {
               variant="outline"
               size="xs"
               :class="filterButtonClass"
-              @click="emit('edit-target-exclusions')"
+              @click="emit('edit-comparison-exclusions')"
             />
           </div>
 
@@ -401,7 +482,7 @@ const clearFilters = () => {
 
       <div
         v-if="contextEntries.length > 0"
-        :class="joinStudioClasses(studioPanelSurfaceClass, 'grid min-w-0 gap-2 px-3 py-3')"
+        :class="compareDividerSectionClass"
       >
         <div class="font-mono text-[0.58rem] uppercase tracking-[0.08em] text-[color:var(--studio-shell-label)]">
           Selected On Diagram
@@ -438,7 +519,7 @@ const clearFilters = () => {
         </div>
       </div>
 
-      <div :class="joinStudioClasses(studioPanelSurfaceClass, 'grid min-w-0 gap-3 px-3 py-3')">
+      <div :class="compareDividerSectionClass">
         <div class="flex flex-wrap items-center gap-2">
           <input
             v-model="searchQuery"
@@ -518,7 +599,7 @@ const clearFilters = () => {
       <div
         v-if="selectedEntry"
         data-compare-entry-detail="true"
-        :class="joinStudioClasses(studioPanelSurfaceClass, 'grid min-w-0 gap-3 px-3 py-3')"
+        :class="compareDividerSectionClass"
       >
         <div class="flex flex-wrap items-start justify-between gap-3">
           <div class="min-w-0 flex-1">
