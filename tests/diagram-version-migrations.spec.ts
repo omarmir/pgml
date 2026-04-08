@@ -57,6 +57,50 @@ const getHistoryToolsPanel = (page: Page) => {
   return page.locator('[data-diagram-tool-panel="true"]')
 }
 
+const expectHistoryToolsHeaderActionsWithinPanel = async (page: Page) => {
+  const historyToolsPanel = getHistoryToolsPanel(page)
+
+  await expect.poll(async () => {
+    return historyToolsPanel.evaluate((element) => {
+      const actions = element.querySelector('[data-diagram-tool-panel-actions="true"]')
+
+      if (!(element instanceof HTMLElement) || !(actions instanceof HTMLElement)) {
+        return false
+      }
+
+      const panelRect = element.getBoundingClientRect()
+      const actionsRect = actions.getBoundingClientRect()
+
+      return actionsRect.right <= panelRect.right - 10
+        && actionsRect.left >= panelRect.left + 10
+        && actionsRect.top >= panelRect.top
+        && actionsRect.bottom <= panelRect.bottom
+    })
+  }).toBe(true)
+}
+
+const expectHistoryToolsPanelToFillViewport = async (page: Page) => {
+  const historyToolsPanel = getHistoryToolsPanel(page)
+
+  await expect.poll(async () => {
+    return historyToolsPanel.evaluate((element) => {
+      const viewport = element.closest('[data-diagram-viewport="true"]')
+
+      if (!(element instanceof HTMLElement) || !(viewport instanceof HTMLElement)) {
+        return false
+      }
+
+      const panelRect = element.getBoundingClientRect()
+      const viewportRect = viewport.getBoundingClientRect()
+
+      return Math.abs(panelRect.left - viewportRect.left) <= 1
+        && Math.abs(panelRect.top - viewportRect.top) <= 1
+        && Math.abs(panelRect.right - viewportRect.right) <= 1
+        && Math.abs(panelRect.bottom - viewportRect.bottom) <= 1
+    })
+  }).toBe(true)
+}
+
 const getMigrationArtifact = (page: Page) => {
   return getMigrationsPanel(page).locator('[data-version-migration-artifact="true"]')
 }
@@ -570,6 +614,62 @@ Ref: public.orders.user_id > public.users.id`)
   await expect(comparePanel.locator('[data-compare-entry]').filter({ hasText: 'public.audit_log' })).toHaveCount(0)
 })
 
+test('compare panel ignores equivalent sequence defaults that only differ by regclass syntax or modifier order', async ({ goto, page }) => {
+  await goto('/diagram')
+  const editor = getPgmlEditor(page)
+
+  await setPgmlEditorValue(editor, `Table public.agency_cost_category_line_item {
+  id bigint [pk, not null, default: nextval('public.agency_cost_category_line_item_id_seq')]
+}`)
+  await createCheckpoint(page, 'Equivalent defaults baseline')
+
+  await setPgmlEditorValue(editor, `Table public.agency_cost_category_line_item {
+  id bigint [not null, default: nextval('public.\\"agency_cost_category_line_item_id_seq\\"'::regclass), pk]
+}`)
+
+  await compareFromVersion(page, 'Equivalent defaults baseline')
+
+  const comparePanel = getComparePanel(page)
+  const modifiedStat = comparePanel.locator('[data-compare-stat-filter="modified"]')
+  const addedStat = comparePanel.locator('[data-compare-stat-filter="added"]')
+  const removedStat = comparePanel.locator('[data-compare-stat-filter="removed"]')
+
+  await expect(modifiedStat).toContainText('0')
+  await expect(addedStat).toContainText('0')
+  await expect(removedStat).toContainText('0')
+  await expect(comparePanel.locator('[data-compare-entry]')).toHaveCount(0)
+  await expect(comparePanel).toContainText('No diff entries match the current filter.')
+})
+
+test('compare panel ignores equivalent built-in type aliases like varchar and character varying', async ({ goto, page }) => {
+  await goto('/diagram')
+  const editor = getPgmlEditor(page)
+
+  await setPgmlEditorValue(editor, `Table public.agency_profile {
+  legal_name varchar(255) [not null]
+  submitted_at timestamp
+}`)
+  await createCheckpoint(page, 'Equivalent type aliases baseline')
+
+  await setPgmlEditorValue(editor, `Table public.agency_profile {
+  legal_name character varying(255) [not null]
+  submitted_at timestamp without time zone
+}`)
+
+  await compareFromVersion(page, 'Equivalent type aliases baseline')
+
+  const comparePanel = getComparePanel(page)
+  const modifiedStat = comparePanel.locator('[data-compare-stat-filter="modified"]')
+  const addedStat = comparePanel.locator('[data-compare-stat-filter="added"]')
+  const removedStat = comparePanel.locator('[data-compare-stat-filter="removed"]')
+
+  await expect(modifiedStat).toContainText('0')
+  await expect(addedStat).toContainText('0')
+  await expect(removedStat).toContainText('0')
+  await expect(comparePanel.locator('[data-compare-entry]')).toHaveCount(0)
+  await expect(comparePanel).toContainText('No diff entries match the current filter.')
+})
+
 test('compare panel stat cards filter the visible entries and keep the panel within its container', async ({ goto, page }) => {
   await goto('/diagram')
   const editor = getPgmlEditor(page)
@@ -615,17 +715,26 @@ Table public.orders {
   await expect(removedTableEntry).toBeVisible()
   await expectComparePanelWithinContainer(page)
 
+  await modifiedColumnEntry.click()
+  const modifiedRow = comparePanel.locator('[data-compare-entry-row="column:public.users::email"]')
+  const modifiedDetail = modifiedRow.locator('[data-compare-entry-detail="true"]')
+  await expect(modifiedRow.getByText('public.users.email', { exact: true })).toHaveCount(1)
+  await expect(modifiedDetail).toContainText('Show on diagram')
+  await expect(modifiedDetail).toContainText('modifiers')
+
   await addedStat.click()
   await expect(addedStat).toHaveAttribute('aria-pressed', 'true')
   await expect(addedTableEntry).toBeVisible()
   await expect(modifiedColumnEntry).toHaveCount(0)
   await expect(removedTableEntry).toHaveCount(0)
+  await expect(comparePanel.locator('[data-compare-entry-detail="true"]')).toHaveCount(0)
 
   await modifiedStat.click()
   await expect(modifiedStat).toHaveAttribute('aria-pressed', 'true')
   await expect(addedTableEntry).toHaveCount(0)
   await expect(modifiedColumnEntry).toBeVisible()
   await expect(removedTableEntry).toHaveCount(0)
+  await expect(comparePanel.locator('[data-compare-entry-row="column:public.users::email"]').getByText('public.users.email', { exact: true })).toHaveCount(1)
 
   await removedStat.click()
   await expect(removedStat).toHaveAttribute('aria-pressed', 'true')
@@ -640,6 +749,128 @@ Table public.orders {
   await expect(modifiedColumnEntry).toBeVisible()
   await expect(removedTableEntry).toBeVisible()
   await expectComparePanelWithinContainer(page)
+})
+
+test('compare panel entity-kind filters surface executable diffs and narrow the visible entries', async ({ goto, page }) => {
+  await goto('/diagram')
+  const editor = getPgmlEditor(page)
+
+  await setPgmlEditorValue(editor, `Table public.users {
+  id uuid [pk]
+}`)
+  await createCheckpoint(page, 'Entity filter baseline')
+
+  await setPgmlEditorValue(editor, `Table public.users {
+  id uuid [pk]
+}
+
+Table public.orders {
+  id uuid [pk]
+}
+
+Function public.refresh_users() returns void {
+  source: $sql$
+    select 1;
+  $sql$
+}
+
+Sequence public.user_number_seq {
+  source: $sql$
+    CREATE SEQUENCE public.user_number_seq;
+  $sql$
+}`)
+
+  await compareFromVersion(page, 'Entity filter baseline')
+
+  const comparePanel = getComparePanel(page)
+  const addedStat = comparePanel.locator('[data-compare-stat-filter="added"]')
+  const tableEntry = comparePanel.locator('[data-compare-entry="table:public.orders"]')
+  const functionEntry = comparePanel.locator('[data-compare-entry="function:public.refresh_users"]')
+  const sequenceEntry = comparePanel.locator('[data-compare-entry="sequence:public.user_number_seq"]')
+  const tableFilter = comparePanel.locator('[data-compare-entity-filter="table"]')
+  const functionFilter = comparePanel.locator('[data-compare-entity-filter="function"]')
+  const sequenceFilter = comparePanel.locator('[data-compare-entity-filter="sequence"]')
+  const clearFilters = comparePanel.getByRole('button', { name: 'Clear filters' })
+
+  await addedStat.click()
+  await expect(tableEntry).toBeVisible()
+  await expect(functionEntry).toBeVisible()
+  await expect(sequenceEntry).toBeVisible()
+  await expect(functionFilter).toContainText('Functions 1')
+  await expect(sequenceFilter).toContainText('Sequences 1')
+
+  await functionFilter.click()
+  await expect(functionFilter).toHaveAttribute('aria-pressed', 'true')
+  await expect(tableEntry).toHaveCount(0)
+  await expect(functionEntry).toBeVisible()
+  await expect(sequenceEntry).toHaveCount(0)
+
+  await clearFilters.click()
+  await expect(tableEntry).toBeVisible()
+  await expect(functionEntry).toBeVisible()
+  await expect(sequenceEntry).toBeVisible()
+
+  await sequenceFilter.click()
+  await expect(sequenceFilter).toHaveAttribute('aria-pressed', 'true')
+  await expect(tableEntry).toHaveCount(0)
+  await expect(functionEntry).toHaveCount(0)
+  await expect(sequenceEntry).toBeVisible()
+
+  await clearFilters.click()
+  await tableFilter.click()
+  await expect(tableFilter).toHaveAttribute('aria-pressed', 'true')
+  await expect(tableEntry).toBeVisible()
+  await expect(functionEntry).toHaveCount(0)
+  await expect(sequenceEntry).toHaveCount(0)
+})
+
+test('history tools panel can expand to fill the full diagram viewport without clipping header actions', async ({ goto, page }) => {
+  await goto('/diagram')
+  await openVersionsPanel(page)
+
+  const historyToolsPanel = getHistoryToolsPanel(page)
+  const expandButton = historyToolsPanel.locator('[data-diagram-tool-panel-expand="true"]')
+
+  await expect(historyToolsPanel).toHaveAttribute('data-diagram-tool-panel-expanded', 'false')
+  await expect(expandButton).toHaveText('Expand')
+  await expectHistoryToolsHeaderActionsWithinPanel(page)
+
+  const dockedWidth = await historyToolsPanel.evaluate((element) => {
+    return element.getBoundingClientRect().width
+  })
+
+  await expandButton.click()
+  await expect(historyToolsPanel).toHaveAttribute('data-diagram-tool-panel-expanded', 'true')
+  await expect(expandButton).toHaveText('Restore')
+  await expectHistoryToolsPanelToFillViewport(page)
+  await expectHistoryToolsHeaderActionsWithinPanel(page)
+
+  const expandedWidth = await historyToolsPanel.evaluate((element) => {
+    return element.getBoundingClientRect().width
+  })
+
+  expect(expandedWidth).toBeGreaterThan(dockedWidth + 120)
+
+  await historyToolsPanel.locator('[data-diagram-tool-panel-tab="compare"]').click()
+  await expect(historyToolsPanel).toHaveAttribute('data-diagram-tool-panel-mode', 'compare')
+  await expect(historyToolsPanel).toHaveAttribute('data-diagram-tool-panel-expanded', 'true')
+  await expectHistoryToolsHeaderActionsWithinPanel(page)
+
+  await historyToolsPanel.locator('[data-diagram-tool-panel-tab="migrations"]').click()
+  await expect(historyToolsPanel).toHaveAttribute('data-diagram-tool-panel-mode', 'migrations')
+  await expect(historyToolsPanel).toHaveAttribute('data-diagram-tool-panel-expanded', 'true')
+  await expectHistoryToolsHeaderActionsWithinPanel(page)
+
+  await expandButton.click()
+  await expect(historyToolsPanel).toHaveAttribute('data-diagram-tool-panel-expanded', 'false')
+  await expect(expandButton).toHaveText('Expand')
+  await expectHistoryToolsHeaderActionsWithinPanel(page)
+
+  const restoredWidth = await historyToolsPanel.evaluate((element) => {
+    return element.getBoundingClientRect().width
+  })
+
+  expect(Math.abs(restoredWidth - dockedWidth)).toBeLessThanOrEqual(2)
 })
 
 test('saved comparisons persist their base, target, and exclusions and can be recalled later', async ({ goto, page }) => {
@@ -690,6 +921,17 @@ Table public.kysely_migration {
   name text
 }
 
+Enum public.review_status {
+  pending
+  approved
+}
+
+Function public.refresh_users() returns void {
+  source: $sql$
+    select 1;
+  $sql$
+}
+
 TableGroup Core {
   public.users
   public.orders
@@ -702,11 +944,15 @@ TableGroup Core {
   const ordersColumnEntry = comparePanel.locator('[data-compare-entry="column:public.orders::status"]')
   const auditLogColumnEntry = comparePanel.locator('[data-compare-entry="column:public.audit_log::action"]')
   const migrationColumnEntry = comparePanel.locator('[data-compare-entry="column:public.kysely_migration::name"]')
+  const addedTypeEntry = comparePanel.locator('[data-compare-entry="custom-type:Enum::public.review_status"]')
+  const addedFunctionEntry = comparePanel.locator('[data-compare-entry="function:public.refresh_users"]')
 
   await expect(usersColumnEntry).toBeVisible()
   await expect(ordersColumnEntry).toBeVisible()
   await expect(auditLogColumnEntry).toBeVisible()
   await expect(migrationColumnEntry).toBeVisible()
+  await expect(addedTypeEntry).toBeVisible()
+  await expect(addedFunctionEntry).toBeVisible()
 
   await comparePanel.locator('[data-compare-edit-exclusions="true"]').click()
 
@@ -717,16 +963,25 @@ TableGroup Core {
   await expect(exclusionsDialog.locator('[data-compare-exclusion-group-section="Core"]')).toContainText('public.users')
   await expect(exclusionsDialog.locator('[data-compare-exclusion-group-section="Core"]')).toContainText('public.orders')
   await expect(exclusionsDialog.locator('[data-compare-exclusion-ungrouped-section="true"]')).toContainText('Ungrouped tables')
+  await expect(exclusionsDialog.locator('[data-compare-exclusion-entities-section="true"]')).toContainText('Other compare entities')
+  await expect(exclusionsDialog.locator('[data-compare-exclusion-entity-section="custom-type"]')).toContainText('public.review_status')
+  await expect(exclusionsDialog.locator('[data-compare-exclusion-entity-section="function"]')).toContainText('public.refresh_users')
   await exclusionsDialog.locator('[data-compare-exclusion-group-section="Core"] [data-compare-exclusion-option="group:Core"]').click()
   await exclusionsDialog.locator('[data-compare-exclusion-ungrouped-section="true"] [data-compare-exclusion-option="table:public.kysely_migration"]').click()
+  await exclusionsDialog.locator('[data-compare-exclusion-entity-section="custom-type"] [data-compare-exclusion-option="custom-type:Enum::public.review_status"]').click()
+  await exclusionsDialog.locator('[data-compare-exclusion-entity-section="function"] [data-compare-exclusion-option="function:public.refresh_users"]').click()
   await exclusionsDialog.locator('[data-compare-exclusions-save="true"]').click()
   await expect(exclusionsDialog).toHaveCount(0)
 
   await expect(comparePanel).toContainText('Group Core')
   await expect(comparePanel).toContainText('Table public.kysely_migration')
+  await expect(comparePanel).toContainText('Type public.review_status')
+  await expect(comparePanel).toContainText('Function public.refresh_users')
   await expect(usersColumnEntry).toHaveCount(0)
   await expect(ordersColumnEntry).toHaveCount(0)
   await expect(migrationColumnEntry).toHaveCount(0)
+  await expect(addedTypeEntry).toHaveCount(0)
+  await expect(addedFunctionEntry).toHaveCount(0)
   await expect(auditLogColumnEntry).toBeVisible()
 
   await comparePanel.locator('[data-compare-create-comparison="true"]').click()
@@ -745,9 +1000,13 @@ TableGroup Core {
 
   await expect(recalledComparePanel).toContainText('Group Core')
   await expect(recalledComparePanel).toContainText('Table public.kysely_migration')
+  await expect(recalledComparePanel).toContainText('Type public.review_status')
+  await expect(recalledComparePanel).toContainText('Function public.refresh_users')
   await expect(recalledComparePanel.locator('[data-compare-entry="column:public.users::email"]')).toHaveCount(0)
   await expect(recalledComparePanel.locator('[data-compare-entry="column:public.orders::status"]')).toHaveCount(0)
   await expect(recalledComparePanel.locator('[data-compare-entry="column:public.kysely_migration::name"]')).toHaveCount(0)
+  await expect(recalledComparePanel.locator('[data-compare-entry="custom-type:Enum::public.review_status"]')).toHaveCount(0)
+  await expect(recalledComparePanel.locator('[data-compare-entry="function:public.refresh_users"]')).toHaveCount(0)
   await expect(recalledComparePanel.locator('[data-compare-entry="column:public.audit_log::action"]')).toBeVisible()
   await expect(recalledComparePanel.locator('[data-compare-base-select="true"]')).toContainText('Baseline')
 
@@ -763,6 +1022,8 @@ TableGroup Core {
   await expect(recalledComparePanel.locator('[data-compare-entry="column:public.users::email"]')).toHaveCount(0)
   await expect(recalledComparePanel.locator('[data-compare-entry="column:public.orders::status"]')).toHaveCount(0)
   await expect(recalledComparePanel.locator('[data-compare-entry="column:public.kysely_migration::name"]')).toHaveCount(0)
+  await expect(recalledComparePanel.locator('[data-compare-entry="custom-type:Enum::public.review_status"]')).toHaveCount(0)
+  await expect(recalledComparePanel.locator('[data-compare-entry="function:public.refresh_users"]')).toHaveCount(0)
   await expect(recalledComparePanel.locator('[data-compare-entry="column:public.audit_log::action"]')).toBeVisible()
 })
 
@@ -893,12 +1154,15 @@ Ref: public.orders.user_id > public.users.id`)
   })
 
   const comparePanel = getComparePanel(page)
-  const detail = comparePanel.locator('[data-compare-entry-detail="true"]')
+  const contextRow = comparePanel.locator('[data-compare-context-entry-row="column:public.users::email"]')
+  const detail = comparePanel.locator('[data-compare-context-entry-row="column:public.users::email"] [data-compare-entry-detail="true"]')
 
   await expect(comparePanel.locator('[data-compare-context-entry]').filter({ hasText: 'public.users.email' })).toBeVisible()
-  await expect(detail).toContainText('public.users.email')
-  await expect(detail).toContainText('Changed column public.users.email: modifiers none -> [not null]; type text -> varchar.')
-  await expect(detail).toContainText('Before snapshot')
+  await expect(contextRow.getByText('public.users.email', { exact: true })).toHaveCount(1)
+  await expect(detail).toContainText('Show on diagram')
+  await expect(detail).toContainText('modifiers')
+  await expect(detail).toContainText('Users baseline')
+  await expect(detail).toContainText('Current workspace')
   await expect(detail).toContainText('"type": "text"')
   await expect(detail).toContainText('"type": "varchar"')
   await expect(detail).toContainText('modifiers')
@@ -1188,6 +1452,48 @@ Ref: public.orders.user_id > public.users.id`)
   await expect(migrationArtifact).toContainText('ALTER TABLE "public"."orders" ADD FOREIGN KEY ("user_id") REFERENCES "public"."users" ("id");')
   await expect(migrationArtifact).not.toContainText('Users and teams')
   await expect(migrationArtifact).not.toContainText('DROP TABLE IF EXISTS "public"."teams";')
+})
+
+test('importing DBML onto a selected base version can fold imported identifiers to lowercase', async ({ goto, page }) => {
+  await goto('/diagram')
+  const editor = getPgmlEditor(page)
+
+  await setPgmlEditorValue(editor, `Table public.users {
+  id uuid [pk]
+}`)
+  await createCheckpoint(page, 'Users baseline')
+
+  await openVersionsPanel(page)
+  await page.locator('[data-version-import-dbml="true"]').click()
+
+  const importDialog = page.locator('[data-studio-modal-surface="dbml-import"]')
+
+  await expect(importDialog).toBeVisible()
+  await importDialog.getByLabel('Increment from version').click()
+  await page.getByRole('option', { name: /Users baseline/i }).click()
+  await importDialog.locator('textarea').fill(`Enum Agreement_Type {
+  pending
+}
+
+Table Agency_Profile {
+  ID uuid [pk]
+}
+
+Table Agency_Agreement_Type {
+  EGCS_AY_AgreementType Agreement_Type [not null, ref: > Agency_Profile.ID]
+}`)
+  await importDialog.getByRole('switch').nth(1).click()
+  await importDialog.getByRole('button', { name: 'Replace workspace with import' }).click()
+  await expect(importDialog).toHaveCount(0)
+
+  const importedSource = await readPgmlEditorValue(editor)
+
+  expect(importedSource).toContain('Enum public.agreement_type {')
+  expect(importedSource).toContain('Table public.agency_profile {')
+  expect(importedSource).toContain('Table public.agency_agreement_type {')
+  expect(importedSource).toContain('egcs_ay_agreementtype public.agreement_type [not null, ref: > public.agency_profile.id]')
+  expect(importedSource).not.toContain('Table Agency_Profile')
+  expect(importedSource).not.toContain('Agreement_Type [not null')
 })
 
 test('versions panel can preview and restore an older checkpoint without losing later history', async ({ goto, page }) => {

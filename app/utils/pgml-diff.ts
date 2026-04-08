@@ -11,6 +11,8 @@ import type {
   PgmlTable,
   PgmlTrigger
 } from './pgml'
+import { normalizePgmlColumnModifiers } from './pgml-column-modifiers'
+import { normalizePgmlTypeExpression } from './pgml-types'
 
 export type PgmlDiffChangeKind = 'added' | 'modified' | 'removed'
 
@@ -147,11 +149,21 @@ const normalizeTableValue = (table: PgmlTable) => {
   }
 }
 
+const normalizeGroupTableName = (value: string) => {
+  const cleanedValue = value.replaceAll('"', '').trim()
+
+  if (cleanedValue.includes('.')) {
+    return cleanedValue
+  }
+
+  return `public.${cleanedValue}`
+}
+
 const normalizeGroupValue = (group: PgmlGroup) => {
   return {
     name: group.name,
     note: group.note,
-    tableNames: [...group.tableNames]
+    tableNames: group.tableNames.map(normalizeGroupTableName)
   }
 }
 
@@ -237,16 +249,35 @@ const normalizeSequenceValue = (sequence: PgmlSequence) => {
 }
 
 const normalizeCustomTypeValue = (customType: PgmlCustomType) => {
+  if (customType.kind === 'Domain') {
+    return {
+      ...customType,
+      baseType: customType.baseType ? normalizePgmlTypeExpression(customType.baseType) : null
+    }
+  }
+
+  if (customType.kind === 'Composite') {
+    return {
+      ...customType,
+      fields: customType.fields.map((field) => {
+        return {
+          ...field,
+          type: normalizePgmlTypeExpression(field.type)
+        }
+      })
+    }
+  }
+
   return customType
 }
 
 const normalizeColumnValue = (column: PgmlTable['columns'][number]) => {
   return {
-    modifiers: sortStringValues(column.modifiers),
+    modifiers: normalizePgmlColumnModifiers(column.modifiers),
     name: column.name,
     note: column.note,
     reference: column.reference,
-    type: column.type
+    type: normalizePgmlTypeExpression(column.type)
   }
 }
 

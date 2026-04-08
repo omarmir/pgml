@@ -1,9 +1,11 @@
 import { getStoredGroupId, type DiagramGpuSelection } from './diagram-gpu-scene'
-import type {
-  PgmlCustomType,
-  PgmlRoutine,
-  PgmlSchemaModel,
-  PgmlSourceRange
+import {
+  clonePgmlCompareExclusions,
+  type PgmlCompareExclusions,
+  type PgmlCustomType,
+  type PgmlRoutine,
+  type PgmlSchemaModel,
+  type PgmlSourceRange
 } from './pgml'
 import type {
   PgmlDiffChangeKind,
@@ -62,6 +64,21 @@ const compareEntityKindLabelByValue: Readonly<Record<PgmlDiagramCompareEntityKin
   'sequence': 'Sequence',
   'table': 'Table',
   'trigger': 'Trigger'
+})
+
+const compareEntryIdPrefixKindMap: Readonly<Record<string, PgmlDiagramCompareEntityKind>> = Object.freeze({
+  'column': 'column',
+  'constraint': 'constraint',
+  'custom-type': 'custom-type',
+  'function': 'function',
+  'group': 'group',
+  'index': 'index',
+  'layout': 'layout',
+  'procedure': 'procedure',
+  'reference': 'reference',
+  'sequence': 'sequence',
+  'table': 'table',
+  'trigger': 'trigger'
 })
 
 const compareChangeVerbByKind: Readonly<Record<PgmlDiffChangeKind, string>> = Object.freeze({
@@ -557,12 +574,37 @@ export const getPgmlDiagramCompareEntityKindLabel = (kind: PgmlDiagramCompareEnt
   return compareEntityKindLabelByValue[kind]
 }
 
+export const getPgmlDiagramCompareEntityKindFromEntryId = (
+  entryId: string
+): PgmlDiagramCompareEntityKind | null => {
+  const separatorIndex = entryId.indexOf(':')
+
+  if (separatorIndex <= 0) {
+    return null
+  }
+
+  return compareEntryIdPrefixKindMap[entryId.slice(0, separatorIndex)] || null
+}
+
 export const getPgmlDiagramCompareChangeVerb = (kind: PgmlDiffChangeKind) => {
   return compareChangeVerbByKind[kind]
 }
 
 export const getPgmlDiagramCompareChangeColor = (kind: PgmlDiffChangeKind) => {
   return compareChangeColorByKind[kind]
+}
+
+export const filterPgmlDiagramCompareEntriesForExclusions = (
+  entries: PgmlDiagramCompareEntry[],
+  exclusions?: Partial<PgmlCompareExclusions> | null
+) => {
+  const excludedEntityIds = new Set(clonePgmlCompareExclusions(exclusions).entityIds)
+
+  if (excludedEntityIds.size === 0) {
+    return entries
+  }
+
+  return entries.filter(entry => !excludedEntityIds.has(entry.id))
 }
 
 export const buildPgmlDiagramCompareEntries = (

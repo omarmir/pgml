@@ -28,6 +28,9 @@ Ref: users.id < orders.user_id`
     expect(result.schemaName).toBe('commerce')
     expect(result.pgml).toContain('// Imported from DBML.')
     expect(result.pgml).not.toContain('Project commerce')
+    expect(result.pgml).toContain('Table public.users {')
+    expect(result.pgml).toContain('Table public.orders {')
+    expect(result.pgml).toContain('Ref: public.users.id < public.orders.user_id')
     expect(model.tables.map(table => table.name)).toEqual(['users', 'orders'])
     expect(model.references).toHaveLength(1)
   })
@@ -85,6 +88,68 @@ Ref: users.id < orders.user_id`
 }`
       })
     }).toThrow('No importable schema objects were found in that DBML.')
+  })
+
+  it('canonicalizes imported DBML type references to schema-qualified PGML names', () => {
+    const result = convertDbmlToPgml({
+      dbml: `Enum Agreement_Type {
+  pending
+  approved
+}
+
+Table Agency_Agreement_Type {
+  egcs_ay_agreementtype Agreement_Type [not null]
+}`
+    })
+
+    expect(result.pgml).toContain(`Enum public.Agreement_Type {
+  pending
+  approved
+}`)
+    expect(result.pgml).toContain(`Table public.Agency_Agreement_Type {
+  egcs_ay_agreementtype public.Agreement_Type [not null]
+}`)
+  })
+
+  it('canonicalizes built-in type aliases during DBML import', () => {
+    const result = convertDbmlToPgml({
+      dbml: `Table Agency_Profile {
+  name character varying(255) [not null]
+  submitted_at timestamp without time zone
+}`
+    })
+
+    expect(result.pgml).toContain(`Table public.Agency_Profile {
+  name varchar(255) [not null]
+  submitted_at timestamp
+}`)
+  })
+
+  it('optionally folds imported DBML identifiers to lowercase', () => {
+    const result = convertDbmlToPgml({
+      dbml: `Enum Agreement_Type {
+  pending
+}
+
+Table Agency_Profile {
+  ID uuid [pk]
+}
+
+Table Agency_Agreement_Type {
+  EGCS_AY_AgreementType Agreement_Type [not null, ref: > Agency_Profile.ID]
+}`,
+      foldIdentifiersToLowercase: true
+    })
+
+    expect(result.pgml).toContain(`Enum public.agreement_type {
+  pending
+}`)
+    expect(result.pgml).toContain(`Table public.agency_profile {
+  id uuid [pk]
+}`)
+    expect(result.pgml).toContain(`Table public.agency_agreement_type {
+  egcs_ay_agreementtype public.agreement_type [not null, ref: > public.agency_profile.id]
+}`)
   })
 
   it('keeps executable SQL inside DBML comments untouched when comment parsing is disabled', () => {
@@ -280,9 +345,9 @@ Table omega {
       parseExecutableComments: true
     })
 
-    const alphaIndex = result.pgml.indexOf('Table alpha {')
+    const alphaIndex = result.pgml.indexOf('Table public.alpha {')
     const functionIndex = result.pgml.indexOf('Function public.fn_middle() returns trigger {')
-    const omegaIndex = result.pgml.indexOf('Table omega {')
+    const omegaIndex = result.pgml.indexOf('Table public.omega {')
 
     expect(alphaIndex).toBeGreaterThanOrEqual(0)
     expect(functionIndex).toBeGreaterThan(alphaIndex)

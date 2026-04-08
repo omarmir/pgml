@@ -17,6 +17,7 @@ const {
   confirmLabel,
   description,
   errorMessage = null,
+  foldIdentifiersToLowercase = false,
   inputDescription,
   isSubmitting = false,
   modelValue,
@@ -28,6 +29,7 @@ const {
   confirmLabel: string
   description: string
   errorMessage?: string | null
+  foldIdentifiersToLowercase?: boolean
   inputDescription: string
   isSubmitting?: boolean
   modelValue: string
@@ -41,6 +43,7 @@ const emit = defineEmits<{
   'clear-file': []
   'select-file': [files: FileList | null]
   'submit': []
+  'update:foldIdentifiersToLowercase': [value: boolean]
   'update:parseExecutableComments': [value: boolean]
   'update:modelValue': [value: string]
   'update:open': [value: boolean]
@@ -136,6 +139,24 @@ const handleTextInput = (event: Event) => {
             color="neutral"
             :ui="studioSwitchUi"
             @update:model-value="emit('update:parseExecutableComments', $event === true)"
+          />
+        </div>
+
+        <div class="flex items-start justify-between gap-4">
+          <div class="grid gap-1">
+            <div :class="studioFieldKickerClass">
+              Lowercase folding
+            </div>
+            <p :class="studioBodyCopyClass">
+              Canonicalize imported identifiers to lowercase after schema qualification so unqualified PostgreSQL-style names stay consistent across tables, columns, refs, types, and executable headers.
+            </p>
+          </div>
+
+          <USwitch
+            :model-value="foldIdentifiersToLowercase"
+            color="neutral"
+            :ui="studioSwitchUi"
+            @update:model-value="emit('update:foldIdentifiersToLowercase', $event === true)"
           />
         </div>
       </div>

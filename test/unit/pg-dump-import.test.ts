@@ -142,4 +142,48 @@ ALTER TABLE ONLY public."Transfer_Payment_Profile"
       })
     }).toThrow('No importable schema objects were found in that pg_dump.')
   })
+
+  it('optionally folds imported pg_dump identifiers to lowercase', () => {
+    const sql = `CREATE TYPE public."Agreement_Type" AS ENUM ('pending');
+CREATE TABLE public."Agency_Agreement_Type" (
+  "EGCS_AY_AgreementType" public."Agreement_Type" NOT NULL
+);`
+    const result = convertPgDumpToPgml({
+      foldIdentifiersToLowercase: true,
+      sql
+    })
+
+    expect(result.pgml).toContain(`Enum public.agreement_type {
+  pending
+}`)
+    expect(result.pgml).toContain(`Table public.agency_agreement_type {
+  egcs_ay_agreementtype public.agreement_type [not null]
+}`)
+  })
+
+  it('canonicalizes built-in type aliases during pg_dump import', () => {
+    const sql = `CREATE TABLE public."Agency_Profile" (
+  name character varying(255) NOT NULL,
+  submitted_at timestamp without time zone
+);`
+    const result = convertPgDumpToPgml({ sql })
+
+    expect(result.pgml).toContain(`Table public.Agency_Profile {
+  name varchar(255) [not null]
+  submitted_at timestamp
+}`)
+  })
+
+  it('canonicalizes sequence-backed defaults and modifier ordering during pg_dump import', () => {
+    const sql = `CREATE TABLE public."Agency_Cost_Category_Line_Item" (
+  id bigint DEFAULT nextval('public."Agency_Cost_Category_Line_Item_id_seq"'::regclass) NOT NULL
+);
+ALTER TABLE ONLY public."Agency_Cost_Category_Line_Item"
+  ADD CONSTRAINT "Agency_Cost_Category_Line_Item_pkey" PRIMARY KEY (id);`
+    const result = convertPgDumpToPgml({ sql })
+
+    expect(result.pgml).toContain(`Table public.Agency_Cost_Category_Line_Item {
+  id bigint [pk, not null, default: nextval('public.Agency_Cost_Category_Line_Item_id_seq')]
+}`)
+  })
 })

@@ -1,4 +1,5 @@
 import { normalizeSchemaName } from './studio-browser-schemas'
+import { canonicalizeImportedPgmlSource } from './pgml-import-normalization'
 
 type PgDumpImportColumn = {
   modifiers: string[]
@@ -1642,6 +1643,7 @@ const renderImportedPgml = (accumulator: PgDumpImportAccumulator) => {
 }
 
 export const convertPgDumpToPgml = (input: {
+  foldIdentifiersToLowercase?: boolean
   preferredName?: string | null
   sql: string
 }): PgDumpImportResult => {
@@ -1720,7 +1722,9 @@ export const convertPgDumpToPgml = (input: {
     }
   })
 
-  const pgml = renderImportedPgml(accumulator)
+  const pgml = canonicalizeImportedPgmlSource(renderImportedPgml(accumulator), {
+    foldIdentifiersToLowercase: input.foldIdentifiersToLowercase
+  })
   const hasImportedObjects = accumulator.tables.size > 0
     || accumulator.enums.size > 0
     || accumulator.domains.size > 0

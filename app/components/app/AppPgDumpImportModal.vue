@@ -1,7 +1,8 @@
 <script setup lang="ts">
 import type { Ref } from 'vue'
 import {
-  studioFieldUi
+  studioFieldUi,
+  studioSwitchUi
 } from '~/constants/ui'
 import {
   joinStudioClasses,
@@ -16,6 +17,7 @@ const {
   confirmLabel,
   description,
   errorMessage = null,
+  foldIdentifiersToLowercase = false,
   inputDescription,
   isSubmitting = false,
   modelValue,
@@ -26,6 +28,7 @@ const {
   confirmLabel: string
   description: string
   errorMessage?: string | null
+  foldIdentifiersToLowercase?: boolean
   inputDescription: string
   isSubmitting?: boolean
   modelValue: string
@@ -38,6 +41,7 @@ const emit = defineEmits<{
   'clear-file': []
   'select-file': [files: FileList | null]
   'submit': []
+  'update:foldIdentifiersToLowercase': [value: boolean]
   'update:modelValue': [value: string]
   'update:open': [value: boolean]
 }>()
@@ -47,6 +51,7 @@ const modalPrimaryButtonClass = studioButtonClasses.primary
 const modalSecondaryButtonClass = studioButtonClasses.secondary
 const importRulesClass = 'grid gap-1.5'
 const importRulesSummaryClass = 'border-t border-[color:var(--studio-divider)] pt-2 text-[0.68rem] leading-6 text-[color:var(--studio-shell-muted)]'
+const settingsPanelClass = 'grid gap-2 border border-[color:var(--studio-shell-border)] bg-[color:var(--studio-control-bg)] px-3 py-3'
 const errorPanelClass = 'grid gap-1 border border-[color:var(--studio-shell-error)]/40 bg-[color:var(--studio-shell-error)]/8 px-3 py-3 text-[0.74rem] text-[color:var(--studio-shell-error)]'
 const hasPastedText = computed(() => modelValue.trim().length > 0)
 const hasSelectedFile = computed(() => selectedFileName.trim().length > 0)
@@ -114,6 +119,26 @@ const handleTextInput = (event: Event) => {
       </div>
 
       <slot name="before-inputs" />
+
+      <div :class="settingsPanelClass">
+        <div class="flex items-start justify-between gap-4">
+          <div class="grid gap-1">
+            <div :class="studioFieldKickerClass">
+              Lowercase folding
+            </div>
+            <p :class="studioBodyCopyClass">
+              Canonicalize imported identifiers to lowercase after schema qualification so unqualified PostgreSQL-style names stay consistent across tables, columns, refs, types, and executable headers.
+            </p>
+          </div>
+
+          <USwitch
+            :model-value="foldIdentifiersToLowercase"
+            color="neutral"
+            :ui="studioSwitchUi"
+            @update:model-value="emit('update:foldIdentifiersToLowercase', $event === true)"
+          />
+        </div>
+      </div>
 
       <label class="grid gap-2">
         <div class="flex items-center justify-between gap-3">

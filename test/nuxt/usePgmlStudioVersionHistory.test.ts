@@ -120,7 +120,7 @@ describe('usePgmlStudioVersionHistory', () => {
       source: malformedWorkspaceSource
     })
 
-    expect(source.value).toBe(`Function sync_users() returns trigger {
+    expect(source.value).toBe(`Function public.sync_users() returns trigger {
   source: $sql$
     CREATE FUNCTION public.sync_users() RETURNS trigger LANGUAGE plpgsql AS $$
     BEGIN
@@ -588,6 +588,7 @@ Properties "public.users" {
       targetId: 'workspace'
     })).toBe(true)
     expect(api.setCurrentCompareExclusions({
+      entityIds: ['function:public.refresh_users'],
       groupNames: ['Core'],
       tableIds: ['public.audit_log']
     })).toBe(true)
@@ -600,7 +601,9 @@ Properties "public.users" {
       targetId: 'workspace'
     }))
     expect(savedComparison?.exclusions).toEqual({
+      entityIds: ['function:public.refresh_users'],
       groupNames: ['Core'],
+      includedEntityIds: [],
       includedGroupNames: [],
       includedTableIds: [],
       tableIds: ['public.audit_log']
@@ -615,7 +618,9 @@ Properties "public.users" {
     expect(api.compareBaseId.value).toBe(appOnlyVersion.id)
     expect(api.compareTargetId.value).toBe('workspace')
     expect(api.compareExclusions.value).toEqual({
+      entityIds: [],
       groupNames: [],
+      includedEntityIds: [],
       includedGroupNames: [],
       includedTableIds: [],
       tableIds: []
@@ -624,7 +629,9 @@ Properties "public.users" {
     expect(api.compareBaseId.value).toBe(initialVersion.id)
     expect(api.compareTargetId.value).toBe('workspace')
     expect(api.compareExclusions.value).toEqual({
+      entityIds: ['function:public.refresh_users'],
       groupNames: ['Core'],
+      includedEntityIds: [],
       includedGroupNames: [],
       includedTableIds: [],
       tableIds: ['public.audit_log']

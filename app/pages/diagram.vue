@@ -40,6 +40,10 @@ import {
 import { diffPgmlSchemaModels } from '~/utils/pgml-diff'
 import {
   buildPgmlDiagramCompareEntries,
+  filterPgmlDiagramCompareEntriesForExclusions,
+  getPgmlDiagramCompareEntityKindFromEntryId,
+  getPgmlDiagramCompareEntityKindLabel,
+  type PgmlDiagramCompareEntityKind,
   type PgmlDiagramCompareEntry
 } from '~/utils/pgml-diagram-compare'
 import { convertDbmlToPgml } from '~/utils/dbml-import'
@@ -305,6 +309,7 @@ const diagramViewDraftName: Ref<string> = ref('')
 const importDbmlDialogOpen: Ref<boolean> = ref(false)
 const importDbmlBaseVersionId: Ref<string | null> = ref(null)
 const importDbmlError: Ref<string | null> = ref(null)
+const importDbmlFoldIdentifiersToLowercase: Ref<boolean> = ref(false)
 const importDbmlParseExecutableComments: Ref<boolean> = ref(false)
 const importDbmlSelectedFile: Ref<File | null> = ref(null)
 const importDbmlText: Ref<string> = ref('')
@@ -312,6 +317,7 @@ const isSubmittingImportDbml: Ref<boolean> = ref(false)
 const importDumpDialogOpen: Ref<boolean> = ref(false)
 const importDumpBaseVersionId: Ref<string | null> = ref(null)
 const importDumpError: Ref<string | null> = ref(null)
+const importDumpFoldIdentifiersToLowercase: Ref<boolean> = ref(false)
 const importDumpRetainMatchingTableGroups: Ref<boolean> = ref(true)
 const importDumpSelectedFile: Ref<File | null> = ref(null)
 const importDumpText: Ref<string> = ref('')
@@ -1208,9 +1214,12 @@ const shouldBuildMigrationArtifacts = computed(() => {
 const shouldBuildVersionArtifacts = computed(() => {
   return shouldBuildCompareArtifacts.value || shouldBuildMigrationArtifacts.value
 })
+type CompareExclusionOptionKind = 'entity' | 'group' | 'table'
+
 type CompareExclusionOption = {
+  entityKind?: PgmlDiagramCompareEntityKind | null
   id: string
-  kind: 'group' | 'table'
+  kind: CompareExclusionOptionKind
   label: string
   searchText: string
   value: string
@@ -1220,6 +1229,40 @@ type CompareExclusionGroupSection = {
   groupOption: CompareExclusionOption
   tableOptions: CompareExclusionOption[]
 }
+type CompareExclusionEntitySection = {
+  entityKind: PgmlDiagramCompareEntityKind
+  id: string
+  options: CompareExclusionOption[]
+  title: string
+}
+
+const compareExclusionEntityKindOrder: PgmlDiagramCompareEntityKind[] = [
+  'column',
+  'index',
+  'constraint',
+  'reference',
+  'custom-type',
+  'function',
+  'procedure',
+  'trigger',
+  'sequence',
+  'layout'
+]
+
+const compareExclusionEntitySectionTitleByKind: Readonly<Record<PgmlDiagramCompareEntityKind, string>> = Object.freeze({
+  'column': 'Columns',
+  'constraint': 'Constraints',
+  'custom-type': 'Types',
+  'function': 'Functions',
+  'group': 'Groups',
+  'index': 'Indexes',
+  'layout': 'Layout',
+  'procedure': 'Procedures',
+  'reference': 'References',
+  'sequence': 'Sequences',
+  'table': 'Tables',
+  'trigger': 'Triggers'
+})
 
 const compareBaseRawModel = computed<PgmlSchemaModel | null>(() => {
   if (!shouldBuildVersionArtifacts.value) {
@@ -1252,7 +1295,7 @@ const compareDiff = computed(() => {
 
   return diffPgmlSchemaModels(compareBaseModel.value, compareTargetModel.value)
 })
-const compareEntries = computed<PgmlDiagramCompareEntry[]>(() => {
+const compareRawEntries = computed<PgmlDiagramCompareEntry[]>(() => {
   if (!compareDiff.value || !compareBaseModel.value || !compareTargetModel.value) {
     return []
   }
@@ -1262,6 +1305,9 @@ const compareEntries = computed<PgmlDiagramCompareEntry[]>(() => {
     compareBaseModel.value,
     compareTargetModel.value
   )
+})
+const compareEntries = computed<PgmlDiagramCompareEntry[]>(() => {
+  return filterPgmlDiagramCompareEntriesForExclusions(compareRawEntries.value, activeCompareExclusions.value)
 })
 const compareBaseLabel = computed(() => {
   if (versionCompareBaseId.value === null) {
@@ -1376,6 +1422,26 @@ const selectedImportDbmlBaseVersion = computed(() => {
 const compareComparisonLabel = computed(() => {
   return selectedComparison.value?.name || 'Current comparison'
 })
+const buildCompareExclusionSummary = (
+  exclusions: Partial<PgmlCompareExclusions> | null | undefined
+) => {
+  const normalizedExclusions = clonePgmlCompareExclusions(exclusions)
+  const parts: string[] = []
+
+  if (normalizedExclusions.groupNames.length > 0) {
+    parts.push(`${normalizedExclusions.groupNames.length} excluded group${normalizedExclusions.groupNames.length === 1 ? '' : 's'}`)
+  }
+
+  if (normalizedExclusions.tableIds.length > 0) {
+    parts.push(`${normalizedExclusions.tableIds.length} excluded table${normalizedExclusions.tableIds.length === 1 ? '' : 's'}`)
+  }
+
+  if (normalizedExclusions.entityIds.length > 0) {
+    parts.push(`${normalizedExclusions.entityIds.length} excluded compare entit${normalizedExclusions.entityIds.length === 1 ? 'y' : 'ies'}`)
+  }
+
+  return parts.length > 0 ? parts.join(' · ') : null
+}
 const compareExclusionsEffective = computed<PgmlCompareExclusions>(() => {
   return compareExclusionsDraft.value
     ? compareExclusionsDraft.value
@@ -1387,19 +1453,54 @@ const compareExclusionsSelectionCount = computed(() => {
   }
 
   return (
-    compareExclusionsDraft.value.groupNames.length
+    compareExclusionsDraft.value.entityIds.length
+    + compareExclusionsDraft.value.groupNames.length
     + compareExclusionsDraft.value.tableIds.length
   )
 })
-const compareExclusionSourceModels = computed<PgmlSchemaModel[]>(() => {
-  const sources = [compareBaseSource.value, compareTargetSource.value]
-
-  return sources.flatMap((sourceText) => {
-    return sourceText.trim().length > 0 ? [parsePgml(sourceText)] : []
-  })
+const activeCompareExclusionSummary = computed(() => {
+  return buildCompareExclusionSummary(activeCompareExclusions.value)
 })
+const draftCompareExclusionSummary = computed(() => {
+  return compareExclusionsDraft.value
+    ? buildCompareExclusionSummary(compareExclusionsEffective.value)
+    : null
+})
+const compareExclusionSourceModels = computed<PgmlSchemaModel[]>(() => {
+  return [compareBaseRawModel.value, compareTargetRawModel.value].flatMap(model => model ? [model] : [])
+})
+const splitCompareExclusionEntryId = (entryId: string) => {
+  const separatorIndex = entryId.indexOf(':')
+
+  return separatorIndex > -1
+    ? {
+        prefix: entryId.slice(0, separatorIndex),
+        suffix: entryId.slice(separatorIndex + 1)
+      }
+    : {
+        prefix: '',
+        suffix: entryId
+      }
+}
+const buildCompareExclusionFallbackEntityLabel = (
+  entryId: string,
+  entityKind: PgmlDiagramCompareEntityKind | null
+) => {
+  const { suffix } = splitCompareExclusionEntryId(entryId)
+
+  if (entityKind === 'column' || entityKind === 'index' || entityKind === 'constraint') {
+    return suffix.replace('::', '.')
+  }
+
+  if (entityKind === 'custom-type') {
+    return suffix.replace('::', ' ')
+  }
+
+  return suffix.replaceAll('::', ' :: ')
+}
 const createCompareExclusionGroupOption = (groupName: string): CompareExclusionOption => {
   return {
+    entityKind: null,
     id: `group:${groupName}`,
     kind: 'group',
     label: `Group ${groupName}`,
@@ -1409,6 +1510,7 @@ const createCompareExclusionGroupOption = (groupName: string): CompareExclusionO
 }
 const createCompareExclusionTableOption = (tableId: string): CompareExclusionOption => {
   return {
+    entityKind: null,
     id: `table:${tableId}`,
     kind: 'table',
     label: tableId,
@@ -1416,6 +1518,84 @@ const createCompareExclusionTableOption = (tableId: string): CompareExclusionOpt
     value: tableId
   }
 }
+const createCompareExclusionEntityOption = (entry: PgmlDiagramCompareEntry): CompareExclusionOption => {
+  const entityKindLabel = getPgmlDiagramCompareEntityKindLabel(entry.entityKind)
+
+  return {
+    entityKind: entry.entityKind,
+    id: entry.id,
+    kind: 'entity',
+    label: entry.label,
+    searchText: `${entityKindLabel} ${entry.label} ${entry.description}`.toLowerCase(),
+    value: entry.id
+  }
+}
+const createStoredCompareExclusionEntityOption = (entryId: string): CompareExclusionOption => {
+  const entityKind = getPgmlDiagramCompareEntityKindFromEntryId(entryId)
+  const entityKindLabel = entityKind ? getPgmlDiagramCompareEntityKindLabel(entityKind) : 'Entity'
+  const label = buildCompareExclusionFallbackEntityLabel(entryId, entityKind)
+
+  return {
+    entityKind,
+    id: entryId,
+    kind: 'entity',
+    label,
+    searchText: `${entityKindLabel} ${label}`.toLowerCase(),
+    value: entryId
+  }
+}
+const compareExclusionEntityOptionMap = computed(() => {
+  const options = new Map<string, CompareExclusionOption>()
+
+  compareRawEntries.value
+    .filter((entry) => {
+      return entry.entityKind !== 'group' && entry.entityKind !== 'table'
+    })
+    .forEach((entry) => {
+      options.set(entry.id, createCompareExclusionEntityOption(entry))
+    })
+
+  compareExclusionsEffective.value.entityIds.forEach((entryId) => {
+    if (!options.has(entryId)) {
+      options.set(entryId, createStoredCompareExclusionEntityOption(entryId))
+    }
+  })
+
+  return options
+})
+const resolveCompareExclusionEntityOption = (entryId: string) => {
+  return compareExclusionEntityOptionMap.value.get(entryId) || createStoredCompareExclusionEntityOption(entryId)
+}
+const buildCompareExclusionSummaryLabel = (option: CompareExclusionOption) => {
+  if (option.kind === 'group') {
+    return option.label
+  }
+
+  if (option.kind === 'table') {
+    return `Table ${option.label}`
+  }
+
+  const entityKindLabel = option.entityKind ? getPgmlDiagramCompareEntityKindLabel(option.entityKind) : 'Entity'
+
+  return `${entityKindLabel} ${option.label}`
+}
+const buildCompareExclusionVisibleLabels = (
+  exclusions: Partial<PgmlCompareExclusions> | null | undefined
+) => {
+  const normalizedExclusions = clonePgmlCompareExclusions(exclusions)
+
+  return [
+    ...normalizedExclusions.groupNames.map(groupName => buildCompareExclusionSummaryLabel(createCompareExclusionGroupOption(groupName))),
+    ...normalizedExclusions.tableIds.map(tableId => buildCompareExclusionSummaryLabel(createCompareExclusionTableOption(tableId))),
+    ...normalizedExclusions.entityIds.map(entryId => buildCompareExclusionSummaryLabel(resolveCompareExclusionEntityOption(entryId)))
+  ]
+}
+const activeCompareExclusionVisibleLabels = computed(() => {
+  return buildCompareExclusionVisibleLabels(activeCompareExclusions.value).slice(0, 6)
+})
+const activeCompareExclusionHiddenLabelCount = computed(() => {
+  return buildCompareExclusionVisibleLabels(activeCompareExclusions.value).length - activeCompareExclusionVisibleLabels.value.length
+})
 const compareExclusionGroupSections = computed<CompareExclusionGroupSection[]>(() => {
   const groupNames = new Set<string>([
     ...compareExclusionSourceModels.value.flatMap(model => model.groups.map(group => group.name)),
@@ -1460,6 +1640,75 @@ const compareExclusionGroupSections = computed<CompareExclusionGroupSection[]>((
       } satisfies CompareExclusionGroupSection
     })
 })
+const compareExclusionUngroupedTableOptions = computed(() => {
+  const groupedTableIds = new Set(
+    compareExclusionGroupSections.value.flatMap(section => section.tableOptions.map(option => option.value))
+  )
+  const ungroupedTableIds = new Set<string>([
+    ...compareExclusionSourceModels.value.flatMap((model) => {
+      return model.tables.flatMap((table) => {
+        return table.groupName ? [] : [table.fullName]
+      })
+    }),
+    ...compareExclusionsEffective.value.tableIds.filter(tableId => !groupedTableIds.has(tableId))
+  ])
+
+  return Array.from(ungroupedTableIds)
+    .sort((left, right) => left.localeCompare(right))
+    .map(createCompareExclusionTableOption)
+})
+const compareExclusionEntitySections = computed<CompareExclusionEntitySection[]>(() => {
+  const optionsByKind = new Map<PgmlDiagramCompareEntityKind, CompareExclusionOption[]>()
+  const seenOptionIdsByKind = new Map<PgmlDiagramCompareEntityKind, Set<string>>()
+  const pushOption = (option: CompareExclusionOption) => {
+    if (!option.entityKind || option.entityKind === 'group' || option.entityKind === 'table') {
+      return
+    }
+
+    const seenOptionIds = seenOptionIdsByKind.get(option.entityKind) || new Set<string>()
+
+    if (seenOptionIds.has(option.id)) {
+      return
+    }
+
+    seenOptionIds.add(option.id)
+    seenOptionIdsByKind.set(option.entityKind, seenOptionIds)
+    optionsByKind.set(option.entityKind, [
+      ...(optionsByKind.get(option.entityKind) || []),
+      option
+    ])
+  }
+
+  compareRawEntries
+    .value
+    .filter((entry) => {
+      return entry.entityKind !== 'group' && entry.entityKind !== 'table'
+    })
+    .forEach((entry) => {
+      pushOption(createCompareExclusionEntityOption(entry))
+    })
+
+  compareExclusionsEffective.value.entityIds.forEach((entryId) => {
+    pushOption(resolveCompareExclusionEntityOption(entryId))
+  })
+
+  return compareExclusionEntityKindOrder.flatMap((entityKind) => {
+    const options = (optionsByKind.get(entityKind) || []).sort((left, right) => {
+      return left.label.localeCompare(right.label)
+    })
+
+    if (options.length === 0) {
+      return []
+    }
+
+    return [{
+      entityKind,
+      id: `compare-exclusion-entity-section:${entityKind}`,
+      options,
+      title: compareExclusionEntitySectionTitleByKind[entityKind]
+    } satisfies CompareExclusionEntitySection]
+  })
+})
 const normalizedCompareExclusionsSearchQuery = computed(() => {
   return compareExclusionsSearchQuery.value.trim().toLowerCase()
 })
@@ -1491,32 +1740,43 @@ const filteredCompareExclusionGroupSections = computed(() => {
   })
 })
 const filteredCompareExclusionUngroupedTableOptions = computed(() => {
-  const groupedTableIds = new Set(
-    compareExclusionGroupSections.value.flatMap(section => section.tableOptions.map(option => option.value))
-  )
-  const ungroupedTableIds = new Set<string>([
-    ...compareExclusionSourceModels.value.flatMap((model) => {
-      return model.tables.flatMap((table) => {
-        return table.groupName ? [] : [table.fullName]
-      })
-    }),
-    ...compareExclusionsEffective.value.tableIds.filter(tableId => !groupedTableIds.has(tableId))
-  ])
-  const tableOptions = Array.from(ungroupedTableIds)
-    .sort((left, right) => left.localeCompare(right))
-    .map(createCompareExclusionTableOption)
-
   if (normalizedCompareExclusionsSearchQuery.value.length === 0) {
-    return tableOptions
+    return compareExclusionUngroupedTableOptions.value
   }
 
-  return tableOptions.filter((option) => {
+  return compareExclusionUngroupedTableOptions.value.filter((option) => {
     return option.searchText.includes(normalizedCompareExclusionsSearchQuery.value)
+  })
+})
+const filteredCompareExclusionEntitySections = computed(() => {
+  const searchQuery = normalizedCompareExclusionsSearchQuery.value
+
+  if (searchQuery.length === 0) {
+    return compareExclusionEntitySections.value
+  }
+
+  return compareExclusionEntitySections.value.flatMap((section) => {
+    const titleMatches = section.title.toLowerCase().includes(searchQuery)
+    const options = titleMatches
+      ? section.options
+      : section.options.filter((option) => {
+          return option.searchText.includes(searchQuery)
+        })
+
+    if (!titleMatches && options.length === 0) {
+      return []
+    }
+
+    return [{
+      ...section,
+      options
+    }]
   })
 })
 const hasVisibleCompareExclusionOptions = computed(() => {
   return filteredCompareExclusionGroupSections.value.length > 0
     || filteredCompareExclusionUngroupedTableOptions.value.length > 0
+    || filteredCompareExclusionEntitySections.value.length > 0
 })
 const comparisonDialogTitle = computed(() => {
   return comparisonDialogMode.value === 'rename' ? 'Rename comparison' : 'Create comparison'
@@ -1700,13 +1960,19 @@ const closeRestoreVersionDialog = () => {
 }
 const compareExclusionsDialogDescription = computed(() => {
   return selectedComparison.value
-    ? `Choose the tables and groups to exclude for ${compareComparisonLabel.value}. Changes here update that saved comparison preset.`
-    : 'Choose the tables and groups to exclude from the current comparison. Save it as a comparison preset if you want to reuse it later.'
+    ? `Choose the compare entities to exclude for ${compareComparisonLabel.value}. Changes here update that saved comparison preset.`
+    : 'Choose the compare entities to exclude from the current comparison. Save it as a comparison preset if you want to reuse it later.'
 })
 const isCompareExclusionOptionSelected = (option: CompareExclusionOption) => {
-  return option.kind === 'group'
-    ? compareExclusionsEffective.value.groupNames.includes(option.value)
-    : compareExclusionsEffective.value.tableIds.includes(option.value)
+  if (option.kind === 'group') {
+    return compareExclusionsEffective.value.groupNames.includes(option.value)
+  }
+
+  if (option.kind === 'table') {
+    return compareExclusionsEffective.value.tableIds.includes(option.value)
+  }
+
+  return compareExclusionsEffective.value.entityIds.includes(option.value)
 }
 const openCompareExclusionsDialog = () => {
   compareExclusionsDraft.value = clonePgmlCompareExclusions(activeCompareExclusions.value)
@@ -1725,9 +1991,11 @@ const toggleCompareExclusionOption = (option: CompareExclusionOption) => {
 
   const nextDraft = clonePgmlCompareExclusions(compareExclusionsDraft.value)
   const nextValues = new Set(
-    option.kind === 'group'
-      ? nextDraft.groupNames
-      : nextDraft.tableIds
+    option.kind === 'entity'
+      ? nextDraft.entityIds
+      : option.kind === 'group'
+        ? nextDraft.groupNames
+        : nextDraft.tableIds
   )
 
   if (isCompareExclusionOptionSelected(option)) {
@@ -1738,7 +2006,7 @@ const toggleCompareExclusionOption = (option: CompareExclusionOption) => {
 
   compareExclusionsDraft.value = clonePgmlCompareExclusions({
     ...nextDraft,
-    [option.kind === 'group' ? 'groupNames' : 'tableIds']: Array.from(nextValues)
+    [option.kind === 'entity' ? 'entityIds' : option.kind === 'group' ? 'groupNames' : 'tableIds']: Array.from(nextValues)
   })
 }
 const clearCompareExclusionsDraft = () => {
@@ -2025,6 +2293,7 @@ const syncImportDumpConflictError = () => {
 const resetImportDumpDialog = () => {
   importDumpDialogOpen.value = false
   importDumpError.value = null
+  importDumpFoldIdentifiersToLowercase.value = false
   importDumpRetainMatchingTableGroups.value = true
   importDumpSelectedFile.value = null
   importDumpText.value = ''
@@ -2048,6 +2317,7 @@ const syncImportDbmlConflictError = () => {
 const resetImportDbmlDialog = () => {
   importDbmlDialogOpen.value = false
   importDbmlError.value = null
+  importDbmlFoldIdentifiersToLowercase.value = false
   importDbmlParseExecutableComments.value = false
   importDbmlSelectedFile.value = null
   importDbmlText.value = ''
@@ -2220,6 +2490,7 @@ const openImportDumpDialog = () => {
 
   importDumpDialogOpen.value = true
   importDumpError.value = null
+  importDumpFoldIdentifiersToLowercase.value = false
   importDumpRetainMatchingTableGroups.value = true
   importDumpSelectedFile.value = null
   importDumpText.value = ''
@@ -2233,6 +2504,7 @@ const openImportDbmlDialog = () => {
 
   importDbmlDialogOpen.value = true
   importDbmlError.value = null
+  importDbmlFoldIdentifiersToLowercase.value = false
   importDbmlParseExecutableComments.value = false
   importDbmlSelectedFile.value = null
   importDbmlText.value = ''
@@ -2315,6 +2587,7 @@ const submitImportDump = async () => {
   try {
     const importedSql = selectedFile ? await selectedFile.text() : importDumpText.value
     const importedSchema = convertPgDumpToPgml({
+      foldIdentifiersToLowercase: importDumpFoldIdentifiersToLowercase.value,
       preferredName: selectedFile?.name,
       sql: importedSql
     })
@@ -2384,6 +2657,7 @@ const submitImportDbml = async () => {
     const importedDbml = selectedFile ? await selectedFile.text() : importDbmlText.value
     const importedSchema = convertDbmlToPgml({
       dbml: importedDbml,
+      foldIdentifiersToLowercase: importDbmlFoldIdentifiersToLowercase.value,
       parseExecutableComments: importDbmlParseExecutableComments.value,
       preferredName: selectedFile?.name
     })
@@ -3273,8 +3547,9 @@ onBeforeUnmount(() => {
           :compare-base-model="compareBaseModel"
           :compare-comparison-items="comparisonItems"
           :compare-entries="compareEntries"
-          :compare-excluded-group-names="activeCompareExclusions.groupNames"
-          :compare-excluded-table-ids="activeCompareExclusions.tableIds"
+          :compare-excluded-labels="activeCompareExclusionVisibleLabels"
+          :compare-excluded-summary="activeCompareExclusionSummary"
+          :compare-hidden-excluded-label-count="activeCompareExclusionHiddenLabelCount"
           :compare-relationship-summary="compareRelationshipSummary"
           :compare-selected-comparison-id="selectedComparisonId"
           :compare-target-label="compareTargetLabel"
@@ -3402,8 +3677,9 @@ onBeforeUnmount(() => {
           :compare-base-model="compareBaseModel"
           :compare-comparison-items="comparisonItems"
           :compare-entries="compareEntries"
-          :compare-excluded-group-names="activeCompareExclusions.groupNames"
-          :compare-excluded-table-ids="activeCompareExclusions.tableIds"
+          :compare-excluded-labels="activeCompareExclusionVisibleLabels"
+          :compare-excluded-summary="activeCompareExclusionSummary"
+          :compare-hidden-excluded-label-count="activeCompareExclusionHiddenLabelCount"
           :compare-relationship-summary="compareRelationshipSummary"
           :compare-selected-comparison-id="selectedComparisonId"
           :compare-target-label="compareTargetLabel"
@@ -3653,9 +3929,7 @@ onBeforeUnmount(() => {
               {{ compareBaseLabel }} to {{ compareTargetLabel }}
             </div>
             <p class="mt-2 text-[0.74rem] leading-6 text-[color:var(--studio-shell-muted)]">
-              {{
-                `${activeCompareExclusions.groupNames.length} excluded group${activeCompareExclusions.groupNames.length === 1 ? '' : 's'} · ${activeCompareExclusions.tableIds.length} excluded table${activeCompareExclusions.tableIds.length === 1 ? '' : 's'}`
-              }}
+              {{ activeCompareExclusionSummary || 'No compare exclusions selected yet.' }}
             </p>
           </div>
 
@@ -3726,7 +4000,7 @@ onBeforeUnmount(() => {
             <p class="mt-2 text-[0.74rem] leading-6 text-[color:var(--studio-shell-muted)]">
               {{
                 compareExclusionsDraft
-                  ? `${compareExclusionsEffective.groupNames.length} excluded group${compareExclusionsEffective.groupNames.length === 1 ? '' : 's'} · ${compareExclusionsEffective.tableIds.length} excluded table${compareExclusionsEffective.tableIds.length === 1 ? '' : 's'} · ${compareExclusionsSelectionCount} selected chip${compareExclusionsSelectionCount === 1 ? '' : 's'}`
+                  ? `${draftCompareExclusionSummary || 'No compare exclusions selected'} · ${compareExclusionsSelectionCount} selected chip${compareExclusionsSelectionCount === 1 ? '' : 's'}`
                   : 'No exclusions loaded.'
               }}
             </p>
@@ -3740,7 +4014,7 @@ onBeforeUnmount(() => {
               v-model="compareExclusionsSearchQuery"
               data-compare-exclusions-search="true"
               type="search"
-              placeholder="Filter groups and tables"
+              placeholder="Filter groups, tables, and compare entities"
               :class="joinStudioClasses(studioCompactInputClass, 'w-full')"
             >
           </label>
@@ -3750,7 +4024,7 @@ onBeforeUnmount(() => {
               Exclude from compare
             </div>
             <p :class="studioCompactBodyCopyClass">
-              Select a group to exclude its full cluster, or pick individual tables inside it. Ungrouped tables are listed separately.
+              Select a group to exclude its full cluster, pick individual tables inside it, or exclude any other comparable entity kind directly.
             </p>
             <div
               v-if="hasVisibleCompareExclusionOptions"
@@ -3859,12 +4133,58 @@ onBeforeUnmount(() => {
                   No ungrouped tables match the current filter.
                 </div>
               </section>
+
+              <section
+                data-compare-exclusion-entities-section="true"
+                class="grid gap-2"
+              >
+                <div :class="studioFieldKickerClass">
+                  Other compare entities
+                </div>
+                <div
+                  v-if="filteredCompareExclusionEntitySections.length > 0"
+                  class="grid gap-3"
+                >
+                  <section
+                    v-for="section in filteredCompareExclusionEntitySections"
+                    :key="section.id"
+                    :data-compare-exclusion-entity-section="section.entityKind"
+                    class="grid gap-2"
+                  >
+                    <div class="font-mono text-[0.58rem] uppercase tracking-[0.08em] text-[color:var(--studio-shell-muted)]">
+                      {{ section.title }}
+                    </div>
+                    <div class="flex flex-wrap gap-2">
+                      <button
+                        v-for="option in section.options"
+                        :key="option.id"
+                        type="button"
+                        :data-compare-exclusion-option="option.id"
+                        :class="getStudioToggleChipClass({
+                          active: isCompareExclusionOptionSelected(option),
+                          extraClass: 'px-2 py-1 font-mono text-[0.58rem] uppercase tracking-[0.08em]'
+                        })"
+                        :aria-pressed="isCompareExclusionOptionSelected(option)"
+                        @click="toggleCompareExclusionOption(option)"
+                      >
+                        {{ option.label }}
+                      </button>
+                    </div>
+                  </section>
+                </div>
+                <div
+                  v-else
+                  :class="studioEmptyStateClass"
+                >
+                  No additional compare entities match the current filter.
+                </div>
+              </section>
             </div>
             <div
               v-else
               :class="studioEmptyStateClass"
             >
-              No groups or tables match the current filter.
+              No compare exclusions match the current filter.
             </div>
           </div>
         </div>
@@ -3973,12 +4293,14 @@ onBeforeUnmount(() => {
         :description="importDbmlDialogCopy.description"
         :confirm-label="importDbmlDialogCopy.confirmLabel"
         :input-description="importDbmlDialogCopy.inputDescription"
+        :fold-identifiers-to-lowercase="importDbmlFoldIdentifiersToLowercase"
         :model-value="importDbmlText"
         :parse-executable-comments="importDbmlParseExecutableComments"
         :selected-file-name="importDbmlSelectedFileName"
         :error-message="importDbmlError"
         :is-submitting="isSubmittingImportDbml"
         @update:open="handleImportDbmlDialogOpenChange"
+        @update:fold-identifiers-to-lowercase="importDbmlFoldIdentifiersToLowercase = $event"
         @update:model-value="setImportDbmlText"
         @update:parse-executable-comments="importDbmlParseExecutableComments = $event"
         @select-file="setImportDbmlFile"
@@ -4030,11 +4352,13 @@ onBeforeUnmount(() => {
         :description="importDumpDialogCopy.description"
         :confirm-label="importDumpDialogCopy.confirmLabel"
         :input-description="importDumpDialogCopy.inputDescription"
+        :fold-identifiers-to-lowercase="importDumpFoldIdentifiersToLowercase"
         :model-value="importDumpText"
         :selected-file-name="importDumpSelectedFileName"
         :error-message="importDumpError"
         :is-submitting="isSubmittingImportDump"
         @update:open="handleImportDumpDialogOpenChange"
+        @update:fold-identifiers-to-lowercase="importDumpFoldIdentifiersToLowercase = $event"
         @update:model-value="setImportDumpText"
         @select-file="setImportDumpFile"
         @clear-file="clearImportDumpFile"

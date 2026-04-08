@@ -127,6 +127,7 @@ type ImportDialogCopy = {
 const computerFileAccessDialogOpen: Ref<boolean> = ref(false)
 const dbmlImportDialogOpen: Ref<boolean> = ref(false)
 const dbmlImportError: Ref<string | null> = ref(null)
+const dbmlImportFoldIdentifiersToLowercase: Ref<boolean> = ref(false)
 const dbmlImportParseExecutableComments: Ref<boolean> = ref(false)
 const dbmlImportSelectedFile: Ref<File | null> = ref(null)
 const dbmlImportTarget: Ref<PgDumpImportTarget | null> = ref(null)
@@ -137,6 +138,7 @@ const isSubmittingPgDumpImport: Ref<boolean> = ref(false)
 const pendingComputerFileAction: Ref<PendingComputerFileAction | null> = ref(null)
 const pgDumpImportDialogOpen: Ref<boolean> = ref(false)
 const pgDumpImportError: Ref<string | null> = ref(null)
+const pgDumpImportFoldIdentifiersToLowercase: Ref<boolean> = ref(false)
 const pgDumpImportSelectedFile: Ref<File | null> = ref(null)
 const pgDumpImportTarget: Ref<PgDumpImportTarget | null> = ref(null)
 const pgDumpImportText: Ref<string> = ref('')
@@ -547,10 +549,12 @@ const queueComputerFileAccessAction = (action: PendingComputerFileAction) => {
   computerFileAccessDialogOpen.value = true
 }
 const openDbmlImportDialog = (cardId: SourceCardId) => {
+  dbmlImportFoldIdentifiersToLowercase.value = false
   dbmlImportParseExecutableComments.value = false
   openImportDialogForCard(dbmlImportState, cardId)
 }
 const openPgDumpImportDialog = (cardId: SourceCardId) => {
+  pgDumpImportFoldIdentifiersToLowercase.value = false
   openImportDialogForCard(pgDumpImportState, cardId)
 }
 const handlePgDumpImportDialogOpenChange = (nextOpen: boolean) => {
@@ -558,11 +562,13 @@ const handlePgDumpImportDialogOpenChange = (nextOpen: boolean) => {
 }
 const handleDbmlImportDialogOpenChange = (nextOpen: boolean) => {
   if (nextOpen) {
+    dbmlImportFoldIdentifiersToLowercase.value = false
     dbmlImportParseExecutableComments.value = false
     dbmlImportState.dialogOpen.value = true
     return
   }
 
+  dbmlImportFoldIdentifiersToLowercase.value = false
   dbmlImportParseExecutableComments.value = false
   closeImportDialog(dbmlImportState)
 }
@@ -581,6 +587,7 @@ const submitDbmlImport = async () => {
     convert: ({ preferredName, sourceText }) => {
       return convertDbmlToPgml({
         dbml: sourceText,
+        foldIdentifiersToLowercase: dbmlImportFoldIdentifiersToLowercase.value,
         parseExecutableComments: dbmlImportParseExecutableComments.value,
         preferredName
       })
@@ -604,6 +611,7 @@ const submitPgDumpImport = async () => {
     conflictErrorMessage: pgDumpImportConflictErrorMessage,
     convert: ({ preferredName, sourceText }) => {
       return convertPgDumpToPgml({
+        foldIdentifiersToLowercase: pgDumpImportFoldIdentifiersToLowercase.value,
         preferredName,
         sql: sourceText
       })
@@ -1119,12 +1127,14 @@ onBeforeRouteLeave((to) => {
         :description="dbmlImportDialogCopy.description"
         :confirm-label="dbmlImportDialogCopy.confirmLabel"
         :input-description="dbmlImportDialogCopy.inputDescription"
+        :fold-identifiers-to-lowercase="dbmlImportFoldIdentifiersToLowercase"
         :model-value="dbmlImportText"
         :parse-executable-comments="dbmlImportParseExecutableComments"
         :selected-file-name="dbmlImportSelectedFileName"
         :error-message="dbmlImportError"
         :is-submitting="isSubmittingDbmlImport"
         @update:open="handleDbmlImportDialogOpenChange"
+        @update:fold-identifiers-to-lowercase="dbmlImportFoldIdentifiersToLowercase = $event"
         @update:model-value="setDbmlImportText"
         @update:parse-executable-comments="dbmlImportParseExecutableComments = $event"
         @select-file="setDbmlImportFile"
@@ -1138,11 +1148,13 @@ onBeforeRouteLeave((to) => {
         :description="pgDumpImportDialogCopy.description"
         :confirm-label="pgDumpImportDialogCopy.confirmLabel"
         :input-description="pgDumpImportDialogCopy.inputDescription"
+        :fold-identifiers-to-lowercase="pgDumpImportFoldIdentifiersToLowercase"
         :model-value="pgDumpImportText"
         :selected-file-name="pgDumpImportSelectedFileName"
         :error-message="pgDumpImportError"
         :is-submitting="isSubmittingPgDumpImport"
         @update:open="handlePgDumpImportDialogOpenChange"
+        @update:fold-identifiers-to-lowercase="pgDumpImportFoldIdentifiersToLowercase = $event"
         @update:model-value="setPgDumpImportText"
         @select-file="setPgDumpImportFile"
         @clear-file="clearPgDumpImportFile"

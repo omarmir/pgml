@@ -184,6 +184,16 @@ Table public.orders {
 }`)
   })
 
+  it('canonicalizes built-in type aliases when normalizing snapshot source text', () => {
+    expect(normalizePgmlSnapshotSource(`Table public.agency_profile {
+  legal_name character varying(255) [not null]
+  submitted_at timestamp without time zone
+}`)).toBe(`Table public.agency_profile {
+  legal_name varchar(255) [not null]
+  submitted_at timestamp
+}`)
+  })
+
   it('serializes and parses named diagram views for workspace and versions', () => {
     const parsed = parsePgmlDocument(`VersionSet "Billing" {
   Workspace {
@@ -278,6 +288,7 @@ Table public.orders {
     target: workspace
 
     CompareExclusions {
+      entity: "function:public.refresh_users"
       group: "Core"
       table: "public.audit_log"
     }
@@ -302,7 +313,9 @@ Table public.orders {
       {
         baseId: 'v1',
         exclusions: {
+          entityIds: ['function:public.refresh_users'],
           groupNames: ['Core'],
+          includedEntityIds: [],
           includedGroupNames: [],
           includedTableIds: [],
           tableIds: ['public.audit_log']
@@ -317,6 +330,7 @@ Table public.orders {
     expect(serialized).toContain('base: v1')
     expect(serialized).toContain('target: workspace')
     expect(serialized).toContain('CompareExclusions {')
+    expect(serialized).toContain('entity: "function:public.refresh_users"')
     expect(serialized).toContain('group: "Core"')
     expect(serialized).toContain('table: "public.audit_log"')
   })
@@ -327,8 +341,10 @@ Table public.orders {
     based_on: v1
 
     CompareExclusions {
+      entity: "custom-type:Enum::public.release_status"
       group: "Core"
       table: "public.audit_log"
+      include_entity: "function:public.refresh_users"
       include_group: "Deferred"
       include_table: "public.users"
     }
@@ -346,8 +362,10 @@ Table public.orders {
     created_at: "2026-03-29T12:00:00.000Z"
 
     CompareExclusions {
+      entity: "function:public.refresh_users"
       group: "Legacy"
       table: "public.kysely_migration"
+      include_entity: "custom-type:Enum::public.release_status"
       include_group: "Core"
       include_table: "public.audit_log"
     }
@@ -363,13 +381,17 @@ Table public.orders {
     const serialized = serializePgmlDocument(parsed)
 
     expect(parsed.workspace.compareExclusions).toEqual({
+      entityIds: ['custom-type:Enum::public.release_status'],
       groupNames: ['Core'],
+      includedEntityIds: ['function:public.refresh_users'],
       includedGroupNames: ['Deferred'],
       includedTableIds: ['public.users'],
       tableIds: ['public.audit_log']
     })
     expect(parsed.versions[0]?.compareExclusions).toEqual({
+      entityIds: ['function:public.refresh_users'],
       groupNames: ['Legacy'],
+      includedEntityIds: ['custom-type:Enum::public.release_status'],
       includedGroupNames: ['Core'],
       includedTableIds: ['public.audit_log'],
       tableIds: ['public.kysely_migration']
@@ -378,7 +400,9 @@ Table public.orders {
       {
         baseId: 'v1',
         exclusions: {
+          entityIds: ['custom-type:Enum::public.release_status'],
           groupNames: ['Core', 'Legacy'],
+          includedEntityIds: [],
           includedGroupNames: [],
           includedTableIds: [],
           tableIds: ['public.audit_log', 'public.kysely_migration']
@@ -390,7 +414,9 @@ Table public.orders {
       {
         baseId: null,
         exclusions: {
+          entityIds: ['function:public.refresh_users'],
           groupNames: ['Legacy'],
+          includedEntityIds: [],
           includedGroupNames: [],
           includedTableIds: [],
           tableIds: ['public.kysely_migration']
@@ -485,7 +511,9 @@ Table public.memberships {
     expect(withFirstVersion.versions[0]?.parentVersionId).toBeNull()
     expect(withFirstVersion.versions[0]?.id.startsWith('v_')).toBe(true)
     expect(withFirstVersion.versions[0]?.compareExclusions).toEqual({
+      entityIds: [],
       groupNames: ['Core'],
+      includedEntityIds: [],
       includedGroupNames: [],
       includedTableIds: [],
       tableIds: ['public.audit_log']
@@ -494,7 +522,9 @@ Table public.memberships {
     expect(withSecondVersion.versions[1]?.id.startsWith('v_')).toBe(true)
     expect(withSecondVersion.workspace.basedOnVersionId).toBe(withSecondVersion.versions[1]?.id)
     expect(withSecondVersion.workspace.compareExclusions).toEqual({
+      entityIds: [],
       groupNames: [],
+      includedEntityIds: [],
       includedGroupNames: [],
       includedTableIds: [],
       tableIds: []

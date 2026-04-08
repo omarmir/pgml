@@ -85,8 +85,8 @@ describe('PGML model parsing', () => {
     ])
     expect(document.workspace.snapshot.source).not.toContain('Properties "group:Analytics"')
     expect(document.workspace.snapshot.source).toContain('TableGroup Analytics')
-    expect(document.workspace.snapshot.source).toContain('Composite address_record')
-    expect(document.workspace.snapshot.source).toContain('Procedure archive_orders(retention_days integer) [replace]')
+    expect(document.workspace.snapshot.source).toContain('Composite public.address_record')
+    expect(document.workspace.snapshot.source).toContain('Procedure public.archive_orders(retention_days integer) [replace]')
     expect(getPgmlDocumentBlockPreviewSource(document.workspace)).toContain('Properties "group:Analytics"')
   })
 

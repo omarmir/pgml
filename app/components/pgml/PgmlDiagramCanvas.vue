@@ -80,8 +80,9 @@ const {
   compareBaseModel = null,
   compareComparisonItems = [],
   compareEntries = [],
-  compareExcludedGroupNames = [],
-  compareExcludedTableIds = [],
+  compareExcludedLabels = [],
+  compareExcludedSummary = null,
+  compareHiddenExcludedLabelCount = 0,
   compareRelationshipSummary = '',
   compareSelectedComparisonId = null,
   compareTargetLabel = 'Target',
@@ -117,8 +118,9 @@ const {
   compareBaseModel?: PgmlSchemaModel | null
   compareComparisonItems?: ComparisonItem[]
   compareEntries?: PgmlDiagramCompareEntry[]
-  compareExcludedGroupNames?: string[]
-  compareExcludedTableIds?: string[]
+  compareExcludedLabels?: string[]
+  compareExcludedSummary?: string | null
+  compareHiddenExcludedLabelCount?: number
   compareRelationshipSummary?: string
   compareSelectedComparisonId?: string | null
   compareTargetLabel?: string
@@ -203,8 +205,9 @@ defineExpose<CanvasHandle>({
     :compare-base-model="compareBaseModel"
     :compare-comparison-items="compareComparisonItems"
     :compare-entries="compareEntries"
-    :compare-excluded-group-names="compareExcludedGroupNames"
-    :compare-excluded-table-ids="compareExcludedTableIds"
+    :compare-excluded-labels="compareExcludedLabels"
+    :compare-excluded-summary="compareExcludedSummary"
+    :compare-hidden-excluded-label-count="compareHiddenExcludedLabelCount"
     :compare-relationship-summary="compareRelationshipSummary"
     :compare-selected-comparison-id="compareSelectedComparisonId"
     :compare-target-label="compareTargetLabel"

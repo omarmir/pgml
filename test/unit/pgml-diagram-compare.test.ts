@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 
 import {
   buildPgmlDiagramCompareEntries,
+  filterPgmlDiagramCompareEntriesForExclusions,
   getPgmlDiagramCompareChangeColor,
   getPgmlDiagramCompareChangeVerb,
   getPgmlDiagramCompareEntityKindLabel
@@ -116,6 +117,49 @@ Properties "public.users" {
       rowKey: null,
       targetNodeIds: ['public.orders', 'public.users']
     })
+  })
+
+  it('omits compare entries when a column default only differs by quoted regclass syntax or modifier order', () => {
+    const baseModel = parseSnapshotModel(`Table public.agency_cost_category_line_item {
+  id bigint [pk, not null, default: nextval('public.agency_cost_category_line_item_id_seq')]
+}`)
+    const targetModel = parseSnapshotModel(`Table public.agency_cost_category_line_item {
+  id bigint [not null, default: nextval('public.\\"agency_cost_category_line_item_id_seq\\"'::regclass), pk]
+}`)
+    const entries = buildPgmlDiagramCompareEntries(
+      diffPgmlSchemaModels(baseModel, targetModel),
+      baseModel,
+      targetModel
+    )
+
+    expect(entries.some(entry => entry.id === 'column:public.agency_cost_category_line_item::id')).toBe(false)
+  })
+
+  it('filters excluded compare entities by their stable compare entry ids', () => {
+    const baseModel = parseSnapshotModel(`Table public.users {
+  id uuid [pk]
+}`)
+    const targetModel = parseSnapshotModel(`Table public.users {
+  id uuid [pk]
+  email text
+}
+
+Function public.refresh_users() returns void {
+  source: $sql$
+    select 1;
+  $sql$
+}`)
+    const entries = buildPgmlDiagramCompareEntries(
+      diffPgmlSchemaModels(baseModel, targetModel),
+      baseModel,
+      targetModel
+    )
+    const filteredEntries = filterPgmlDiagramCompareEntriesForExclusions(entries, {
+      entityIds: ['function:public.refresh_users']
+    })
+
+    expect(filteredEntries.some(entry => entry.id === 'function:public.refresh_users')).toBe(false)
+    expect(filteredEntries.some(entry => entry.id === 'column:public.users::email')).toBe(true)
   })
 
   it('describes modified references with the changed reference fields', () => {

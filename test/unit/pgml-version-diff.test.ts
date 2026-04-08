@@ -75,6 +75,43 @@ describe('PGML version diffing', () => {
     expect(diff.summary.modified).toBe(0)
   })
 
+  it('ignores equivalent sequence-backed defaults that only differ by quoting, regclass casts, or modifier order', () => {
+    const beforeModel = parsePgml(`Table public.agency_cost_category_line_item {
+  id bigint [pk, not null, default: nextval('public.agency_cost_category_line_item_id_seq')]
+}`)
+    const afterModel = parsePgml(`Table public.agency_cost_category_line_item {
+  id bigint [not null, default: nextval('public.\\"agency_cost_category_line_item_id_seq\\"'::regclass), pk]
+}`)
+    const diff = diffPgmlSchemaModels(beforeModel, afterModel)
+    const migrationBundle = buildPgmlMigrationDiffBundle(beforeModel, afterModel)
+
+    expect(diff.columns).toEqual([])
+    expect(diff.summary.modified).toBe(0)
+    expect(migrationBundle.meta.hasChanges).toBe(false)
+    expect(migrationBundle.meta.statementCount).toBe(0)
+    expect(migrationBundle.sql.migration.content).not.toContain('SET DEFAULT')
+  })
+
+  it('ignores equivalent built-in type aliases when diffing and generating migrations', () => {
+    const beforeModel = parsePgml(`Table public.agency_profile {
+  legal_name varchar(255) [not null]
+  submitted_at timestamp
+}`)
+    const afterModel = parsePgml(`Table public.agency_profile {
+  legal_name character varying(255) [not null]
+  submitted_at timestamp without time zone
+}`)
+    const diff = diffPgmlSchemaModels(beforeModel, afterModel)
+    const migrationBundle = buildPgmlMigrationDiffBundle(beforeModel, afterModel)
+
+    expect(diff.columns).toEqual([])
+    expect(diff.summary.modified).toBe(0)
+    expect(migrationBundle.meta.hasChanges).toBe(false)
+    expect(migrationBundle.meta.statementCount).toBe(0)
+    expect(migrationBundle.sql.migration.content).not.toContain('ALTER COLUMN "legal_name" TYPE')
+    expect(migrationBundle.sql.migration.content).not.toContain('ALTER COLUMN "submitted_at" TYPE')
+  })
+
   it('ignores metadata ordering for routines when semantic content is unchanged', () => {
     const diff = diffPgmlSchemaModels(
       parsePgml(`Function public.refresh_orders() returns void {
@@ -124,6 +161,38 @@ describe('PGML version diffing', () => {
       id: 'public.users::email',
       kind: 'modified'
     }))
+  })
+
+  it('ignores group changes when table members only differ by implicit public schema qualification', () => {
+    const diff = diffPgmlSchemaModels(
+      parsePgml(`TableGroup Agency {
+  Agency_Profile
+  Agency_Cost_Category
+}
+
+Table public.Agency_Profile {
+  id uuid [pk]
+}
+
+Table public.Agency_Cost_Category {
+  id uuid [pk]
+}`),
+      parsePgml(`TableGroup Agency {
+  public.Agency_Profile
+  public.Agency_Cost_Category
+}
+
+Table public.Agency_Profile {
+  id uuid [pk]
+}
+
+Table public.Agency_Cost_Category {
+  id uuid [pk]
+}`)
+    )
+
+    expect(diff.groups).toEqual([])
+    expect(diff.summary.modified).toBe(0)
   })
 
   it('omits routine migration statements when only metadata ordering changes', () => {
@@ -363,7 +432,7 @@ Table public.invoices {
       'ALTER TYPE "public"."money_amount" DROP ATTRIBUTE IF EXISTS "legacy_code";'
     )
     expect(migrationBundle.sql.migration.content).toContain(
-      'ALTER TYPE "public"."money_amount" ALTER ATTRIBUTE "amount" TYPE numeric(12,2);'
+      'ALTER TYPE "public"."money_amount" ALTER ATTRIBUTE "amount" TYPE numeric(12, 2);'
     )
     expect(migrationBundle.sql.migration.content).toContain(
       'ALTER TYPE "public"."money_amount" ADD ATTRIBUTE "precision" text;'
@@ -375,7 +444,7 @@ Table public.invoices {
     expect(migrationBundle.sql.migration.content).not.toContain('CREATE TYPE "public"."money_amount" AS (')
 
     const compositeAlterIndex = migrationBundle.sql.migration.content.indexOf(
-      'ALTER TYPE "public"."money_amount" ALTER ATTRIBUTE "amount" TYPE numeric(12,2);'
+      'ALTER TYPE "public"."money_amount" ALTER ATTRIBUTE "amount" TYPE numeric(12, 2);'
     )
     const addColumnIndex = migrationBundle.sql.migration.content.indexOf(
       'ALTER TABLE "public"."invoices" ADD COLUMN "processed_at" timestamptz;'

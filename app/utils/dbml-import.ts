@@ -1,6 +1,7 @@
 import { extractExecutableEntitiesFromDbmlComments } from './dbml-comment-executables'
 import { parsePgml } from './pgml'
 import { normalizePgmlCompatSource } from './pgml-dbml-compat'
+import { canonicalizeImportedPgmlSource } from './pgml-import-normalization'
 import { normalizeSchemaName } from './studio-browser-schemas'
 
 export type DbmlImportResult = {
@@ -194,6 +195,7 @@ const normalizeDbmlSerialColumns = (source: string) => {
 
 export const convertDbmlToPgml = (input: {
   dbml: string
+  foldIdentifiersToLowercase?: boolean
   parseExecutableComments?: boolean
   preferredName?: string | null
 }): DbmlImportResult => {
@@ -204,7 +206,12 @@ export const convertDbmlToPgml = (input: {
         executableBlocks: [],
         source: strippedDbml
       }
-  const normalizedDbml = normalizeDbmlSerialColumns(extractedCommentEntities.source)
+  const normalizedDbml = canonicalizeImportedPgmlSource(
+    normalizeDbmlSerialColumns(extractedCommentEntities.source),
+    {
+      foldIdentifiersToLowercase: input.foldIdentifiersToLowercase
+    }
+  )
 
   if (normalizedDbml.length === 0) {
     throw new Error('No importable schema objects were found in that DBML.')

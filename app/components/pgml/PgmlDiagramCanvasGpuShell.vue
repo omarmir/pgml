@@ -388,8 +388,9 @@ const {
   compareBaseModel = null,
   compareComparisonItems = [],
   compareEntries = [],
-  compareExcludedGroupNames = [],
-  compareExcludedTableIds = [],
+  compareExcludedLabels = [],
+  compareExcludedSummary = null,
+  compareHiddenExcludedLabelCount = 0,
   compareRelationshipSummary = '',
   compareSelectedComparisonId = null,
   compareTargetLabel = 'Target',
@@ -430,8 +431,9 @@ const {
     value: string
   }>
   compareEntries?: PgmlDiagramCompareEntry[]
-  compareExcludedGroupNames?: string[]
-  compareExcludedTableIds?: string[]
+  compareExcludedLabels?: string[]
+  compareExcludedSummary?: string | null
+  compareHiddenExcludedLabelCount?: number
   compareRelationshipSummary?: string
   compareSelectedComparisonId?: string | null
   compareTargetLabel?: string
@@ -501,6 +503,7 @@ const activePanelTab: Ref<DiagramPanelTab> = ref('inspector')
 const activeToolPanelTab: Ref<DiagramToolPanelTab> = ref('versions')
 const isDesktopSidePanelOpen: Ref<boolean> = ref(true)
 const isToolPanelOpen: Ref<boolean> = ref(false)
+const isDesktopToolPanelViewportExpanded: Ref<boolean> = ref(false)
 const showRelationshipLines: Ref<boolean> = ref(true)
 const showExecutableObjects: Ref<boolean> = ref(true)
 const showTableFields: Ref<boolean> = ref(true)
@@ -5521,9 +5524,11 @@ const diagramPanelSurfaceClass = computed(() => {
 })
 
 const toolPanelSurfaceClass = computed(() => {
-  return isMobileCanvasShell.value
-    ? 'absolute inset-0 z-[5] grid min-h-0 w-full grid-rows-[auto_auto_minmax(0,1fr)] overflow-hidden'
-    : 'absolute bottom-3 right-3 top-14 z-[4] grid min-h-0 grid-rows-[auto_auto_minmax(0,1fr)] overflow-hidden border max-[900px]:left-3'
+  if (isMobileCanvasShell.value || isDesktopToolPanelViewportExpanded.value) {
+    return 'absolute inset-0 z-[5] grid min-h-0 w-full grid-rows-[auto_auto_minmax(0,1fr)] overflow-hidden border'
+  }
+
+  return 'absolute bottom-3 right-3 top-14 z-[4] grid min-h-0 grid-rows-[auto_auto_minmax(0,1fr)] overflow-hidden border max-[900px]:left-3'
 })
 
 const shouldShowToolPanel = computed(() => {
@@ -5539,14 +5544,30 @@ const shouldShowToolPanel = computed(() => {
 })
 
 const toolPanelSurfaceStyle = computed<CSSProperties>(() => {
+  if (isMobileCanvasShell.value || isDesktopToolPanelViewportExpanded.value) {
+    return floatingPanelStyle
+  }
+
   return {
     ...floatingPanelStyle,
-    width: isMobileCanvasShell.value ? '100%' : 'min(42rem, calc(100% - 1.5rem))'
+    width: 'min(42rem, calc(100% - 1.5rem))'
   }
+})
+
+const isToolPanelViewportExpanded = computed(() => {
+  return !isMobileCanvasShell.value && isDesktopToolPanelViewportExpanded.value
 })
 
 const toggleSidePanel = () => {
   isDesktopSidePanelOpen.value = !isDesktopSidePanelOpen.value
+}
+
+const toggleToolPanelViewportExpanded = () => {
+  if (isMobileCanvasShell.value) {
+    return
+  }
+
+  isDesktopToolPanelViewportExpanded.value = !isDesktopToolPanelViewportExpanded.value
 }
 
 const focusSourceRange = (sourceRange?: PgmlSourceRange) => {
@@ -6366,7 +6387,7 @@ watch(
       return
     }
 
-    selectedCompareEntryId.value = nextEntries[0]?.id || null
+    selectedCompareEntryId.value = null
   },
   {
     deep: true,
@@ -8399,11 +8420,12 @@ defineExpose<{
       v-if="shouldShowToolPanel"
       data-diagram-tool-panel="true"
       :data-diagram-tool-panel-mode="activeToolPanelTab"
+      :data-diagram-tool-panel-expanded="isToolPanelViewportExpanded ? 'true' : 'false'"
       :class="toolPanelSurfaceClass"
       :style="toolPanelSurfaceStyle"
     >
-      <div class="flex items-start justify-between gap-3 border-b border-[color:var(--studio-divider)] px-3 py-2.5">
-        <div class="min-w-0 flex-1">
+      <div class="flex flex-wrap items-start justify-between gap-x-3 gap-y-2 border-b border-[color:var(--studio-divider)] pl-3 pr-4 py-2.5">
+        <div class="min-w-0 flex-1 basis-0">
           <div class="font-mono text-[0.6rem] uppercase tracking-[0.08em] text-[color:var(--studio-shell-label)]">
             History tools
           </div>
@@ -8415,7 +8437,10 @@ defineExpose<{
           </p>
         </div>
 
-        <div class="flex shrink-0 items-start gap-1">
+        <div
+          data-diagram-tool-panel-actions="true"
+          class="flex shrink-0 flex-wrap items-center justify-end gap-1 pl-2"
+        >
           <UButton
             v-if="activeToolPanelTab === 'compare' && selectedCompareEntry"
             data-compare-clear-selection="true"
@@ -8425,6 +8450,17 @@ defineExpose<{
             size="xs"
             :class="sidePanelActionButtonClass"
             @click="selectedCompareEntryId = null"
+          />
+
+          <UButton
+            v-if="!isMobileCanvasShell"
+            data-diagram-tool-panel-expand="true"
+            :label="isToolPanelViewportExpanded ? 'Restore' : 'Expand'"
+            color="neutral"
+            variant="ghost"
+            size="xs"
+            :class="sidePanelActionButtonClass"
+            @click="toggleToolPanelViewportExpanded"
           />
 
           <UButton
@@ -8479,9 +8515,10 @@ defineExpose<{
           :compare-base-id="versionCompareBaseId"
           :compare-options="versionCompareOptions"
           :compare-target-id="versionCompareTargetId"
-          :excluded-group-names="compareExcludedGroupNames"
-          :excluded-table-ids="compareExcludedTableIds"
+          :excluded-labels="compareExcludedLabels"
+          :excluded-summary="compareExcludedSummary"
           :entries="compareEntries"
+          :hidden-excluded-label-count="compareHiddenExcludedLabelCount"
           :relationship-summary="compareRelationshipSummary"
           :selected-comparison-id="compareSelectedComparisonId"
           :selected-diagram-context-ids="selectedDiagramCompareEntryIds"

@@ -241,7 +241,7 @@ const comparisonMetadataKeywordTemplates = [
   { label: 'id', detail: 'Persist the stable id for this comparison.', apply: 'id: ' },
   { label: 'base', detail: 'Choose the base version, workspace, or empty state.', apply: 'base: ' },
   { label: 'target', detail: 'Choose the comparison target version or workspace.', apply: 'target: ' },
-  { label: 'CompareExclusions', detail: 'Store excluded groups and tables for this comparison.', apply: 'CompareExclusions {' }
+  { label: 'CompareExclusions', detail: 'Store excluded compare entities for this comparison.', apply: 'CompareExclusions {' }
 ] as const
 
 const viewMetadataKeywordTemplates = [
@@ -260,7 +260,7 @@ const versionRoleValueTemplates = [
 const workspaceMetadataKeys = new Set(['based_on', 'updated_at', 'active_view'])
 const versionMetadataKeys = new Set(['name', 'role', 'parent', 'created_at', 'active_view', 'default_view'])
 const comparisonMetadataKeys = new Set(['id', 'base', 'target'])
-const compareExclusionsMetadataKeys = new Set(['group', 'table', 'include_group', 'include_table'])
+const compareExclusionsMetadataKeys = new Set(['entity', 'group', 'table', 'include_entity', 'include_group', 'include_table'])
 const viewMetadataKeys = new Set(['id', 'show_lines', 'lines', 'snap_to_grid', 'snap', 'show_execs', 'execs', 'show_fields', 'fields'])
 
 const tableBodyKeywordTemplates = [
@@ -2479,7 +2479,7 @@ const analyzeCompareExclusionsBlock = (
     entryCode: 'pgml/compare-exclusions-entry',
     entryMessage: 'CompareExclusions only allows metadata entries.',
     keyCode: 'pgml/compare-exclusions-key',
-    keyMessage: 'CompareExclusions only supports `group`, `table`, `include_group`, and `include_table` metadata.'
+    keyMessage: 'CompareExclusions only supports `entity`, `group`, `table`, `include_entity`, `include_group`, and `include_table` metadata.'
   })
 
   nested.blocks.forEach((nestedBlock) => {

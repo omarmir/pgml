@@ -9,6 +9,7 @@ import {
   parseDbmlCompatibleIndexDefinition,
   parsePgmlCompatibleReference
 } from './pgml-dbml-compat'
+import { normalizePgmlTypeExpression } from './pgml-types'
 
 export type PgmlColumn = {
   customMetadata: PgmlMetadataEntry[]
@@ -86,7 +87,9 @@ export type PgmlNodeProperties = {
 }
 
 export type PgmlCompareExclusions = {
+  entityIds: string[]
   groupNames: string[]
+  includedEntityIds: string[]
   includedGroupNames: string[]
   includedTableIds: string[]
   tableIds: string[]
@@ -253,7 +256,9 @@ const sortValues = (left: string, right: string) => left.localeCompare(right)
 
 export const createEmptyPgmlCompareExclusions = (): PgmlCompareExclusions => {
   return {
+    entityIds: [],
     groupNames: [],
+    includedEntityIds: [],
     includedGroupNames: [],
     includedTableIds: [],
     tableIds: []
@@ -268,7 +273,9 @@ export const clonePgmlCompareExclusions = (
   }
 
   return {
+    entityIds: normalizeValues(exclusions?.entityIds || []),
     groupNames: normalizeValues(exclusions?.groupNames || []),
+    includedEntityIds: normalizeValues(exclusions?.includedEntityIds || []),
     includedGroupNames: normalizeValues(exclusions?.includedGroupNames || []),
     includedTableIds: normalizeValues(exclusions?.includedTableIds || []),
     tableIds: normalizeValues(exclusions?.tableIds || [])
@@ -281,8 +288,10 @@ export const hasPgmlCompareExclusionOverrides = (
   const normalizedExclusions = clonePgmlCompareExclusions(exclusions)
 
   return (
-    normalizedExclusions.groupNames.length > 0
+    normalizedExclusions.entityIds.length > 0
+    || normalizedExclusions.groupNames.length > 0
     || normalizedExclusions.tableIds.length > 0
+    || normalizedExclusions.includedEntityIds.length > 0
     || normalizedExclusions.includedGroupNames.length > 0
     || normalizedExclusions.includedTableIds.length > 0
   )
@@ -294,14 +303,21 @@ export const resolvePgmlCompareExclusions = (
 ) => {
   const normalizedInheritedExclusions = clonePgmlCompareExclusions(inheritedExclusions)
   const normalizedLocalOverrides = clonePgmlCompareExclusions(localOverrides)
+  const effectiveEntityIds = new Set(normalizedInheritedExclusions.entityIds)
   const effectiveGroupNames = new Set(normalizedInheritedExclusions.groupNames)
   const effectiveTableIds = new Set(normalizedInheritedExclusions.tableIds)
 
+  normalizedLocalOverrides.includedEntityIds.forEach((entityId) => {
+    effectiveEntityIds.delete(entityId)
+  })
   normalizedLocalOverrides.includedGroupNames.forEach((groupName) => {
     effectiveGroupNames.delete(groupName)
   })
   normalizedLocalOverrides.includedTableIds.forEach((tableId) => {
     effectiveTableIds.delete(tableId)
+  })
+  normalizedLocalOverrides.entityIds.forEach((entityId) => {
+    effectiveEntityIds.add(entityId)
   })
   normalizedLocalOverrides.groupNames.forEach((groupName) => {
     effectiveGroupNames.add(groupName)
@@ -311,7 +327,9 @@ export const resolvePgmlCompareExclusions = (
   })
 
   return clonePgmlCompareExclusions({
+    entityIds: Array.from(effectiveEntityIds),
     groupNames: Array.from(effectiveGroupNames),
+    includedEntityIds: [],
     includedGroupNames: [],
     includedTableIds: [],
     tableIds: Array.from(effectiveTableIds)
@@ -322,18 +340,28 @@ export const setPgmlCompareExclusionOverride = (
   input: {
     exclusions: PgmlCompareExclusions
     inheritedExclusions?: PgmlCompareExclusions | null
-    kind: 'group' | 'table'
+    kind: 'entity' | 'group' | 'table'
     selected: boolean
     value: string
   }
 ) => {
   const normalizedExclusions = clonePgmlCompareExclusions(input.exclusions)
   const normalizedInheritedExclusions = clonePgmlCompareExclusions(input.inheritedExclusions)
-  const localExcludedKey = input.kind === 'group' ? 'groupNames' : 'tableIds'
-  const localIncludedKey = input.kind === 'group' ? 'includedGroupNames' : 'includedTableIds'
-  const inheritedValues = input.kind === 'group'
-    ? normalizedInheritedExclusions.groupNames
-    : normalizedInheritedExclusions.tableIds
+  const localExcludedKey = input.kind === 'entity'
+    ? 'entityIds'
+    : input.kind === 'group'
+      ? 'groupNames'
+      : 'tableIds'
+  const localIncludedKey = input.kind === 'entity'
+    ? 'includedEntityIds'
+    : input.kind === 'group'
+      ? 'includedGroupNames'
+      : 'includedTableIds'
+  const inheritedValues = input.kind === 'entity'
+    ? normalizedInheritedExclusions.entityIds
+    : input.kind === 'group'
+      ? normalizedInheritedExclusions.groupNames
+      : normalizedInheritedExclusions.tableIds
   const nextExcludedValues = new Set(normalizedExclusions[localExcludedKey])
   const nextIncludedValues = new Set(normalizedExclusions[localIncludedKey])
 
@@ -2843,7 +2871,7 @@ const parseTable = (block: NamedBlock) => {
     columns.push({
       customMetadata: [],
       name: cleanName(columnName),
-      type: columnType.trim(),
+      type: normalizePgmlTypeExpression(columnType),
       modifiers,
       note: notePart ? notePart.replace('note:', '').trim() : null,
       reference
@@ -3042,7 +3070,7 @@ const parseCustomType = (block: NamedBlock) => {
     return {
       kind,
       name,
-      baseType: baseEntry ? baseEntry.replace('base:', '').trim() : null,
+      baseType: baseEntry ? normalizePgmlTypeExpression(baseEntry.replace('base:', '').trim()) : null,
       check: checkEntry ? checkEntry.replace('check:', '').trim() : null,
       details,
       sourceRange
@@ -3065,7 +3093,7 @@ const parseCustomType = (block: NamedBlock) => {
 
       entries.push({
         name: cleanName(readMatch(fieldMatch[1])),
-        type: readMatch(fieldMatch[2]).trim()
+        type: normalizePgmlTypeExpression(readMatch(fieldMatch[2]))
       })
       return entries
     }, []),

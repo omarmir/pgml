@@ -1,4 +1,9 @@
 import type { PgmlExportArtifact } from './pgml-export'
+import {
+  getNormalizedPgmlColumnDefaultModifierValue,
+  normalizePgmlColumnModifiers
+} from './pgml-column-modifiers'
+import { normalizePgmlTypeExpression } from './pgml-types'
 import type {
   PgmlColumn,
   PgmlCompositeType,
@@ -258,6 +263,10 @@ const buildReferenceActionClause = (keyword: 'DELETE' | 'UPDATE', action: string
 
 const getColumnDefaultValue = (column: PgmlColumn) => {
   return column.modifiers.find(modifier => modifier.startsWith('default:'))?.replace('default:', '').trim() || null
+}
+
+const getNormalizedColumnDefaultValue = (column: PgmlColumn) => {
+  return getNormalizedPgmlColumnDefaultModifierValue(column.modifiers)
 }
 
 const buildColumnDefinition = (column: PgmlColumn) => {
@@ -861,12 +870,12 @@ const buildTableAlterStatements = (
       return
     }
 
-    if (beforeColumn.type !== afterColumn.type) {
+    if (normalizePgmlTypeExpression(beforeColumn.type) !== normalizePgmlTypeExpression(afterColumn.type)) {
       tableStatements.push(`ALTER TABLE ${formatQualifiedSqlName(afterTable.fullName)} ALTER COLUMN ${quoteSqlIdentifier(afterColumn.name)} TYPE ${afterColumn.type};`)
     }
 
-    const beforeDefault = getColumnDefaultValue(beforeColumn)
-    const afterDefault = getColumnDefaultValue(afterColumn)
+    const beforeDefault = getNormalizedColumnDefaultValue(beforeColumn)
+    const afterDefault = getNormalizedColumnDefaultValue(afterColumn)
 
     if (beforeDefault !== afterDefault) {
       if (afterDefault) {
@@ -876,18 +885,20 @@ const buildTableAlterStatements = (
       }
     }
 
-    const beforeNotNull = beforeColumn.modifiers.includes('not null')
-    const afterNotNull = afterColumn.modifiers.includes('not null')
+    const normalizedBeforeModifiers = normalizePgmlColumnModifiers(beforeColumn.modifiers)
+    const normalizedAfterModifiers = normalizePgmlColumnModifiers(afterColumn.modifiers)
+    const beforeNotNull = normalizedBeforeModifiers.includes('not null')
+    const afterNotNull = normalizedAfterModifiers.includes('not null')
 
     if (beforeNotNull !== afterNotNull) {
       tableStatements.push(`ALTER TABLE ${formatQualifiedSqlName(afterTable.fullName)} ALTER COLUMN ${quoteSqlIdentifier(afterColumn.name)} ${afterNotNull ? 'SET' : 'DROP'} NOT NULL;`)
     }
 
-    if (beforeColumn.modifiers.includes('unique') !== afterColumn.modifiers.includes('unique')) {
+    if (normalizedBeforeModifiers.includes('unique') !== normalizedAfterModifiers.includes('unique')) {
       warnings.add(`Column uniqueness changed for ${afterTable.fullName}.${afterColumn.name}; migration output does not infer named unique constraints automatically.`)
     }
 
-    if (beforeColumn.modifiers.includes('pk') !== afterColumn.modifiers.includes('pk')) {
+    if (normalizedBeforeModifiers.includes('pk') !== normalizedAfterModifiers.includes('pk')) {
       warnings.add(`Primary key membership changed for ${afterTable.fullName}.${afterColumn.name}; migration output does not rewrite primary keys automatically.`)
     }
   })

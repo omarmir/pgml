@@ -19,6 +19,7 @@ import {
   type PgmlDocumentSchemaMetadata,
   type PgmlDocumentTableSchemaMetadata
 } from './pgml-schema-metadata'
+import { canonicalizePgmlSource } from './pgml-import-normalization'
 
 export type PgmlVersionRole = 'design' | 'implementation'
 
@@ -283,7 +284,9 @@ export const normalizePgmlSnapshotSource = (value: string) => {
   // Snapshot sources are serialized inside Workspace/Version wrappers, but the
   // editor always works on the inner body. Normalizing here keeps equality,
   // dirty-state checks, and round-trips aligned on that canonical form.
-  return normalizePgmlSourceIndentation(normalizeLineEndings(value)).trim()
+  return canonicalizePgmlSource(
+    normalizePgmlSourceIndentation(normalizeLineEndings(value)).trim()
+  )
 }
 
 export const getPgmlVersionRoleDisplayLabel = (role: PgmlVersionRole) => {
@@ -957,11 +960,16 @@ const parseCompareExclusionsBlock = (
   const nested = collectBlocks(block.body.join('\n'))
 
   if (nested.blocks.length > 0) {
-    throw new Error(`${context} CompareExclusions only allows table and group metadata entries.`)
+    throw new Error(`${context} CompareExclusions only allows metadata entries.`)
   }
 
   const entries = parseRepeatedMetadataEntries(nested.topLevel, `${context} CompareExclusions`)
   const compareExclusions = entries.reduce<PgmlCompareExclusions>((nextExclusions, entry) => {
+    if (entry.key === 'entity') {
+      nextExclusions.entityIds.push(entry.value)
+      return nextExclusions
+    }
+
     if (entry.key === 'group') {
       nextExclusions.groupNames.push(entry.value)
       return nextExclusions
@@ -969,6 +977,11 @@ const parseCompareExclusionsBlock = (
 
     if (entry.key === 'table') {
       nextExclusions.tableIds.push(entry.value)
+      return nextExclusions
+    }
+
+    if (entry.key === 'include_entity') {
+      nextExclusions.includedEntityIds.push(entry.value)
       return nextExclusions
     }
 
@@ -982,7 +995,7 @@ const parseCompareExclusionsBlock = (
       return nextExclusions
     }
 
-    throw new Error(`${context} CompareExclusions only allows group, table, include_group, and include_table entries.`)
+    throw new Error(`${context} CompareExclusions only allows entity, group, table, include_entity, include_group, and include_table entries.`)
   }, createEmptyPgmlCompareExclusions())
 
   return clonePgmlCompareExclusions(compareExclusions)
@@ -1686,11 +1699,17 @@ const buildCompareExclusionsBlock = (
 
   const lines = [`${'  '.repeat(level)}${compareExclusionsKeyword} {`]
 
+  normalizedCompareExclusions.entityIds.forEach((entityId) => {
+    lines.push(buildMetadataLine('entity', entityId, level + 1, true))
+  })
   normalizedCompareExclusions.groupNames.forEach((groupName) => {
     lines.push(buildMetadataLine('group', groupName, level + 1, true))
   })
   normalizedCompareExclusions.tableIds.forEach((tableId) => {
     lines.push(buildMetadataLine('table', tableId, level + 1, true))
+  })
+  normalizedCompareExclusions.includedEntityIds.forEach((entityId) => {
+    lines.push(buildMetadataLine('include_entity', entityId, level + 1, true))
   })
   normalizedCompareExclusions.includedGroupNames.forEach((groupName) => {
     lines.push(buildMetadataLine('include_group', groupName, level + 1, true))
