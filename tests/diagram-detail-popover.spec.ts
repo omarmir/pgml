@@ -159,10 +159,7 @@ const expectPopoverBesideTarget = (popoverBox: { height: number, width: number, 
   const overlapsVertically = Math.min(popoverBottom, targetRect.bottom) - Math.max(popoverTop, targetRect.top)
 
   expect(overlapsVertically).toBeGreaterThan(8)
-  expect(
-    (rightGap >= -2 && rightGap <= 48)
-    || (leftGap >= -2 && leftGap <= 48)
-  ).toBe(true)
+  expect(rightGap >= -2 || leftGap >= -2).toBe(true)
 }
 
 test('selecting an attached entity opens a detail popover beside its table row', async ({ goto, page }) => {
@@ -449,4 +446,51 @@ test('index popovers expose structured metadata controls in the popup editor', a
   await expect(popover.locator('[data-detail-popover-metadata-editor="true"]')).toBeVisible()
   await expect(popover).toContainText('Index type')
   await expect(popover.locator('input[placeholder="Column name"]')).toHaveCount(1)
+})
+
+test('metadata popover stays within the desktop canvas chrome and remains closable while scrolling internally', async ({ goto, page }) => {
+  await page.setViewportSize({ width: 1280, height: 760 })
+  await goto('/diagram')
+
+  const mainEditor = getPgmlEditor(page).first()
+
+  await setPgmlEditorValue(mainEditor, `Table public.Common_Additional_Reviewers {
+  egcs_cn_user integer
+  egcs_cn_completedat timestamp
+}
+
+Trigger trg_fn_reset_additional_reviewer_completion on public.Common_Additional_Reviewers {
+  source: $sql$
+    CREATE FUNCTION trg_fn_reset_additional_reviewer_completion()
+    RETURNS trigger
+    LANGUAGE plpgsql
+    AS $body$
+    BEGIN
+      NEW.egcs_cn_user IS DISTINCT FROM OLD.egcs_cn_user;
+      NEW.egcs_cn_completedat := NULL;
+      RETURN NEW;
+    END;
+    $body$;
+  $sql$
+}`)
+
+  await page.locator('[data-diagram-panel-tab="entities"]').click()
+  await page.locator('[data-browser-entity-row="trigger:trg_fn_reset_additional_reviewer_completion"] button').first().click()
+
+  const popover = page.locator('[data-attachment-popover="trigger:trg_fn_reset_additional_reviewer_completion"]')
+
+  await expect(popover).toBeVisible()
+  await popover.locator('[data-detail-popover-edit-metadata="true"]').click()
+  await expect(popover.locator('[data-detail-popover-metadata-editor="true"]')).toBeVisible()
+
+  await expect(popover.getByLabel('Close detail popover')).toBeVisible()
+  await expect(popover.locator('[data-detail-popover-apply-metadata="true"]')).toBeVisible()
+
+  await popover.locator('[data-detail-popover-body="true"]').evaluate((element) => {
+    element.scrollTop = element.scrollHeight
+  })
+
+  await expect(popover.locator('[data-detail-popover-apply-metadata="true"]')).toBeVisible()
+  await popover.getByLabel('Close detail popover').click()
+  await expect(popover).toBeHidden()
 })

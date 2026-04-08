@@ -69,6 +69,7 @@ Properties "public.users" {
 
     expect(modifiedColumn).toMatchObject({
       changeKind: 'modified',
+      description: 'Changed column public.users.email: modifiers and type.',
       entityKind: 'column',
       label: 'public.users.email',
       rowKey: 'public.users.email',
@@ -77,6 +78,7 @@ Properties "public.users" {
     expect(modifiedColumn?.beforeSnapshot).toContain('"type": "text"')
     expect(modifiedColumn?.afterSnapshot).toContain('"type": "varchar"')
     expect(modifiedColumn?.fields.some(field => field.label === 'modifiers')).toBe(true)
+    expect(modifiedColumn?.fields.some(field => field.id === 'modifiers' && field.label === 'modifiers')).toBe(true)
     expect(modifiedColumn?.selectionCandidates).toContainEqual({
       columnName: 'email',
       kind: 'column',
@@ -113,6 +115,45 @@ Properties "public.users" {
       entityKind: 'reference',
       rowKey: null,
       targetNodeIds: ['public.orders', 'public.users']
+    })
+  })
+
+  it('describes modified references with the changed reference fields', () => {
+    const baseModel = parseSnapshotModel(`Table public.users {
+  id uuid [pk]
+}
+
+Table public.orders {
+  id uuid [pk]
+  user_id uuid [ref: > public.users.id]
+}`)
+    const targetModel = parseSnapshotModel(`Table public.users {
+  id uuid [pk]
+}
+
+Table public.orders {
+  id uuid [pk]
+  user_id uuid [ref: > public.users.id, delete: cascade]
+}`)
+    const entries = buildPgmlDiagramCompareEntries(
+      diffPgmlSchemaModels(baseModel, targetModel),
+      baseModel,
+      targetModel
+    )
+    const modifiedReference = entries.find(entry => entry.id === 'reference:>::public.orders::user_id::public.users::id') || null
+
+    expect(modifiedReference).toMatchObject({
+      changeKind: 'modified',
+      description: 'Changed reference public.orders.user_id -> public.users.id: delete action.',
+      entityKind: 'reference',
+      label: 'public.orders.user_id -> public.users.id',
+      rowKey: 'public.orders.user_id'
+    })
+    expect(modifiedReference?.fields).toContainEqual({
+      after: 'cascade',
+      before: null,
+      id: 'onDelete',
+      label: 'delete action'
     })
   })
 

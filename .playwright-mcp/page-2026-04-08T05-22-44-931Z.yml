@@ -1,0 +1,206 @@
+- generic [active] [ref=e1]:
+  - generic [ref=e3]:
+    - banner [ref=e4]:
+      - generic [ref=e5]:
+        - generic [ref=e6]:
+          - link "DB PGML" [ref=e7] [cursor=pointer]:
+            - /url: /
+            - generic [ref=e8]: DB
+            - generic [ref=e9]: PGML
+          - navigation "Primary" [ref=e10]:
+            - link "Home" [ref=e11] [cursor=pointer]:
+              - /url: /
+            - link "Spec" [ref=e12] [cursor=pointer]:
+              - /url: /spec
+          - generic [ref=e13]:
+            - button "Schema" [ref=e14]:
+              - generic [ref=e17]: Schema
+            - button "Export" [ref=e18]:
+              - generic [ref=e21]: Export
+        - generic:
+          - generic:
+            - paragraph: Storage probe schema
+            - paragraph: Waiting to save to local storage...
+        - button "Switch to dark mode" [ref=e23]
+    - main [ref=e26]:
+      - generic [ref=e28]:
+        - complementary [ref=e29]:
+          - generic [ref=e30]:
+            - generic [ref=e32]:
+              - button "Workspace draft" [ref=e33]
+              - button "Versioned document" [ref=e34]
+            - paragraph [ref=e35]: Editing the current workspace snapshot. Checkpoint it when you want to lock a version into the history.
+          - generic [ref=e39]:
+            - generic [ref=e41]:
+              - generic [ref=e42]: "1"
+              - generic [ref=e43]: "2"
+              - generic [ref=e44]: "3"
+              - generic [ref=e45]: "4"
+              - generic [ref=e46]: "5"
+              - generic [ref=e47]: "6"
+              - generic [ref=e48]: "7"
+              - generic [ref=e49]: "8"
+              - generic [ref=e50]: "9"
+              - generic [ref=e51]: "10"
+              - generic [ref=e52]: "11"
+              - generic [ref=e53]: "12"
+              - generic [ref=e54]: "13"
+              - generic [ref=e55]: "14"
+              - generic [ref=e56]: "15"
+              - generic [ref=e57]: "16"
+              - generic [ref=e58]: "17"
+              - generic [ref=e59]: "18"
+              - generic [ref=e60]: "19"
+              - generic [ref=e61]: "20"
+              - generic [ref=e62]: "21"
+              - generic [ref=e63]: "22"
+              - generic [ref=e64]: "23"
+              - generic [ref=e65]: "24"
+              - generic [ref=e66]: "25"
+              - generic [ref=e67]: "26"
+              - generic [ref=e68]: "27"
+              - generic [ref=e69]: "28"
+              - generic [ref=e70]: "29"
+              - generic [ref=e71]: "30"
+              - generic [ref=e72]: "31"
+              - generic [ref=e73]: "32"
+              - generic [ref=e74]: "33"
+              - generic [ref=e75]: "34"
+              - generic [ref=e76]: "35"
+              - generic [ref=e77]: "36"
+            - textbox "PGML editor" [ref=e80]:
+              - generic [ref=e81]: "TableGroup Core {"
+              - generic [ref=e82]: tenants
+              - generic [ref=e83]: users
+              - generic [ref=e84]: roles
+              - generic [ref=e85]: "Note: Shared identity and account ownership"
+              - generic [ref=e86]: "}"
+              - generic [ref=e88]: "TableGroup Commerce {"
+              - generic [ref=e89]: products
+              - generic [ref=e90]: orders
+              - generic [ref=e91]: order_items
+              - generic [ref=e92]: "Note: Buying flow and inventory edges"
+              - generic [ref=e93]: "}"
+              - generic [ref=e95]: "TableGroup Programs {"
+              - generic [ref=e96]: common_entity
+              - generic [ref=e97]: funding_opportunity_profile
+              - generic [ref=e98]: "Note: Shared entity registration hooks for programs"
+              - generic [ref=e99]: "}"
+              - generic [ref=e101]: "Enum role_kind {"
+              - generic [ref=e102]: owner
+              - generic [ref=e103]: analyst
+              - generic [ref=e104]: operator
+              - generic [ref=e105]: "}"
+              - generic [ref=e107]: "Enum entity_type {"
+              - generic [ref=e108]: fundingopportunity
+              - generic [ref=e109]: order
+              - generic [ref=e110]: user
+              - generic [ref=e111]: "}"
+              - generic [ref=e113]: "Domain email_address {"
+              - generic [ref=e114]: "base: text"
+              - generic [ref=e115]: "check: VALUE ~* '^[^@]+@[^@]+\\\\.[^@]+$'"
+              - generic [ref=e116]: "}"
+          - generic [ref=e118]: No diagnostics
+        - separator "Resize PGML editor" [ref=e119]
+        - generic [ref=e124]:
+          - button "Hide PGML editor" [ref=e125]:
+            - generic [ref=e127]: Hide PGML editor
+          - generic [ref=e128]:
+            - generic [ref=e131]:
+              - button "Zoom out" [ref=e132]
+              - generic [ref=e134]: 38%
+              - button "Zoom in" [ref=e135]
+              - button "Fit view" [ref=e137]:
+                - generic [ref=e138]: Fit view
+              - generic [ref=e140]:
+                - generic [ref=e141]: View
+                - combobox "View" [ref=e142]:
+                  - generic: Default
+              - button "Create view" [ref=e145]
+              - button "Rename active view" [ref=e147]
+              - button "Delete active view" [disabled] [ref=e149]
+              - button "Lines" [pressed] [ref=e151]: Lines
+              - button "Execs" [pressed] [ref=e153]: Execs
+              - button "Fields" [pressed] [ref=e155]: Fields
+              - button "Snap" [pressed] [ref=e157]: Snap
+              - generic [ref=e160]:
+                - generic [ref=e161]: Renderer
+                - combobox "Renderer" [ref=e162]:
+                  - generic: Auto
+              - generic "WebGPU active" [ref=e165]
+            - generic:
+              - button "Versions" [ref=e166]:
+                - generic [ref=e168]: Versions
+              - button "Compare" [ref=e169]:
+                - generic [ref=e171]: Compare
+              - button "Migrations" [ref=e172]:
+                - generic [ref=e174]: Migrations
+              - button "Hide panel" [ref=e175]:
+                - generic [ref=e177]: Hide panel
+            - complementary [ref=e178]:
+              - generic [ref=e180]:
+                - generic [ref=e181]:
+                  - generic [ref=e182]:
+                    - generic [ref=e183]: Diagram panel
+                    - heading "Inspector" [level=3] [ref=e184]
+                    - paragraph [ref=e185]: Select a group, table, row, or object.
+                  - button "Hide panel" [ref=e187]
+                - generic [ref=e189]:
+                  - button "Add table" [ref=e190]:
+                    - generic [ref=e192]: Add table
+                  - button "Add group" [ref=e193]:
+                    - generic [ref=e195]: Add group
+                - generic [ref=e196]:
+                  - generic [ref=e197]:
+                    - generic [ref=e198]: View
+                    - generic [ref=e199]:
+                      - combobox "View Create view Rename active view Delete active view" [ref=e200]:
+                        - generic: Default
+                      - button "Create view" [ref=e203]
+                      - button "Rename active view" [ref=e205]
+                      - button "Delete active view" [disabled] [ref=e207]
+                  - generic [ref=e209]:
+                    - generic [ref=e210]: Renderer
+                    - combobox "Renderer" [ref=e211]:
+                      - generic: Auto
+                  - paragraph [ref=e214]: WebGPU active
+              - generic [ref=e215]:
+                - button "Inspector" [ref=e216]
+                - button "Entities" [ref=e217]
+                - button "Export" [ref=e218]
+              - generic [ref=e220]:
+                - generic [ref=e221]:
+                  - generic [ref=e222]: Schema overview
+                  - paragraph [ref=e223]: Click a group, table, column, attachment, or object to inspect it.
+                - generic [ref=e224]:
+                  - generic [ref=e225]:
+                    - generic [ref=e226]: Groups
+                    - generic [ref=e227]: "3"
+                  - generic [ref=e228]:
+                    - generic [ref=e229]: Tables
+                    - generic [ref=e230]: "8"
+                  - generic [ref=e231]:
+                    - generic [ref=e232]: Objects
+                    - generic [ref=e233]: "3"
+                  - generic [ref=e234]:
+                    - generic [ref=e235]: Lines
+                    - generic [ref=e236]: "12"
+                - generic [ref=e237]:
+                  - button "Browse entities" [ref=e238]:
+                    - generic [ref=e240]: Browse entities
+                  - button "Fit diagram" [ref=e241]:
+                    - generic [ref=e243]: Fit diagram
+  - generic:
+    - img
+  - generic:
+    - img
+  - generic [ref=e244]:
+    - button "Toggle Nuxt DevTools" [ref=e245] [cursor=pointer]:
+      - img [ref=e246]
+    - generic "Page load time" [ref=e249]:
+      - generic [ref=e250]: "130"
+      - generic [ref=e251]: ms
+    - button "Toggle Component Inspector" [ref=e253] [cursor=pointer]:
+      - img [ref=e254]
+  - region "Notifications (F8)":
+    - list

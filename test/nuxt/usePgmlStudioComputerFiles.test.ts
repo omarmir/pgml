@@ -288,4 +288,98 @@ describe('usePgmlStudioComputerFiles', () => {
     expect(api.hasPendingComputerFileChanges.value).toBe(false)
     expect(api.currentComputerFileUpdatedAt.value).toBe('2026-03-20T10:15:00.000Z')
   })
+
+  it('clears the saving state when manual file saves throw unexpectedly', async () => {
+    const source = ref('')
+    let api!: ReturnType<typeof usePgmlStudioComputerFiles>
+
+    await mountSuspended(defineComponent({
+      setup() {
+        api = usePgmlStudioComputerFiles({
+          buildSchemaText: () => source.value,
+          fileOperations: {
+            listRecentComputerFiles: async () => [{
+              id: 'linked-file',
+              name: 'linked-schema',
+              updatedAt: '2026-03-20T10:00:00.000Z'
+            }],
+            loadRecentComputerFile: async () => {
+              return {
+                entry: {
+                  id: 'linked-file',
+                  name: 'linked-schema',
+                  updatedAt: '2026-03-20T10:00:00.000Z'
+                },
+                text: 'Table public.linked {\n  id uuid [pk]\n}'
+              }
+            },
+            openComputerFile: async () => null,
+            writeRecentComputerFile: async () => {
+              throw new Error('Disk write stalled')
+            }
+          },
+          source
+        })
+
+        return () => null
+      }
+    }))
+
+    await api.loadRecentComputerFileById('linked-file')
+    source.value = 'Table public.linked {\n  id uuid [pk]\n  status text\n}'
+
+    await expect(api.saveSchemaToComputerFile(false)).resolves.toBe(false)
+
+    expect(api.isSavingToComputerFile.value).toBe(false)
+    expect(api.computerFileSaveError.value).toBe('Disk write stalled')
+    expect(api.hasPendingComputerFileChanges.value).toBe(true)
+  })
+
+  it('clears the saving state when autosave file writes throw unexpectedly', async () => {
+    vi.useFakeTimers()
+
+    const source = ref('')
+    let api!: ReturnType<typeof usePgmlStudioComputerFiles>
+
+    await mountSuspended(defineComponent({
+      setup() {
+        api = usePgmlStudioComputerFiles({
+          buildSchemaText: () => source.value,
+          fileOperations: {
+            listRecentComputerFiles: async () => [{
+              id: 'linked-file',
+              name: 'linked-schema',
+              updatedAt: '2026-03-20T10:00:00.000Z'
+            }],
+            loadRecentComputerFile: async () => {
+              return {
+                entry: {
+                  id: 'linked-file',
+                  name: 'linked-schema',
+                  updatedAt: '2026-03-20T10:00:00.000Z'
+                },
+                text: 'Table public.linked {\n  id uuid [pk]\n}'
+              }
+            },
+            openComputerFile: async () => null,
+            writeRecentComputerFile: async () => {
+              throw new Error('Passive write stalled')
+            }
+          },
+          source
+        })
+
+        return () => null
+      }
+    }))
+
+    await api.loadRecentComputerFileById('linked-file')
+    source.value = 'Table public.linked {\n  id uuid [pk]\n  status text\n}'
+
+    await vi.advanceTimersByTimeAsync(5000)
+
+    expect(api.isSavingToComputerFile.value).toBe(false)
+    expect(api.computerFileSaveError.value).toBe('Passive write stalled')
+    expect(api.hasPendingComputerFileChanges.value).toBe(true)
+  })
 })

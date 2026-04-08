@@ -27,6 +27,8 @@ type SelectItem = {
   value: string
 }
 
+const unsetSelectValue = '__pgml_detail_metadata_unset__'
+
 const {
   description = '',
   modelValue,
@@ -64,7 +66,7 @@ const affectSections: Array<{ key: AffectsListKey, label: string }> = [
 ]
 
 const languageItems: SelectItem[] = [
-  { label: 'Auto / unset', value: '' },
+  { label: 'Auto / unset', value: unsetSelectValue },
   { label: 'plpgsql', value: 'plpgsql' },
   { label: 'sql', value: 'sql' },
   { label: 'plpython3u', value: 'plpython3u' },
@@ -72,24 +74,24 @@ const languageItems: SelectItem[] = [
   { label: 'plperl', value: 'plperl' }
 ]
 const volatilityItems: SelectItem[] = [
-  { label: 'Auto / unset', value: '' },
+  { label: 'Auto / unset', value: unsetSelectValue },
   { label: 'Volatile', value: 'volatile' },
   { label: 'Stable', value: 'stable' },
   { label: 'Immutable', value: 'immutable' }
 ]
 const securityItems: SelectItem[] = [
-  { label: 'Auto / unset', value: '' },
+  { label: 'Auto / unset', value: unsetSelectValue },
   { label: 'Invoker', value: 'invoker' },
   { label: 'Definer', value: 'definer' }
 ]
 const triggerTimingItems: SelectItem[] = [
-  { label: 'Auto / unset', value: '' },
+  { label: 'Auto / unset', value: unsetSelectValue },
   { label: 'Before', value: 'before' },
   { label: 'After', value: 'after' },
   { label: 'Instead of', value: 'instead of' }
 ]
 const triggerLevelItems: SelectItem[] = [
-  { label: 'Auto / unset', value: '' },
+  { label: 'Auto / unset', value: unsetSelectValue },
   { label: 'Row', value: 'row' },
   { label: 'Statement', value: 'statement' }
 ]
@@ -100,13 +102,13 @@ const triggerEventItems: SelectItem[] = [
   { label: 'Truncate', value: 'truncate' }
 ]
 const sequenceTypeItems: SelectItem[] = [
-  { label: 'Auto / unset', value: '' },
+  { label: 'Auto / unset', value: unsetSelectValue },
   { label: 'bigint', value: 'bigint' },
   { label: 'integer', value: 'integer' },
   { label: 'smallint', value: 'smallint' }
 ]
 const cycleItems: SelectItem[] = [
-  { label: 'Auto / unset', value: '' },
+  { label: 'Auto / unset', value: unsetSelectValue },
   { label: 'Cycle', value: 'true' },
   { label: 'No cycle', value: 'false' }
 ]
@@ -324,6 +326,25 @@ const updateKnownScalar = (field: keyof PgmlDetailPopoverMetadataDraft['known'],
   })
 }
 
+const getSelectModelValue = (value: string) => {
+  return value === '' ? unsetSelectValue : value
+}
+
+const normalizeSelectUpdateValue = (value: string | null | undefined) => {
+  if (value === unsetSelectValue || value === null || value === undefined) {
+    return ''
+  }
+
+  return value
+}
+
+const updateKnownScalarSelect = (
+  field: keyof PgmlDetailPopoverMetadataDraft['known'],
+  value: string | null | undefined
+) => {
+  updateKnownScalar(field, normalizeSelectUpdateValue(value))
+}
+
 const addKnownListItem = (field: KnownListKey) => {
   appendDraftListItem(draft => draft.known[field])
 }
@@ -421,37 +442,37 @@ const getKindLabel = (kind: PgmlDetailMetadataDraftKind) => {
         >
           <span :class="studioCompactFieldKickerClass">Language</span>
           <USelect
-            :model-value="modelValue.known.language"
+            :model-value="getSelectModelValue(modelValue.known.language)"
             :items="languageItems"
             color="neutral"
             variant="outline"
             size="sm"
             :ui="studioSelectUi"
-            @update:model-value="updateKnownScalar('language', String($event || ''))"
+            @update:model-value="updateKnownScalarSelect('language', typeof $event === 'string' ? $event : undefined)"
           />
         </label>
         <label class="grid gap-1">
           <span :class="studioCompactFieldKickerClass">Volatility</span>
           <USelect
-            :model-value="modelValue.known.volatility"
+            :model-value="getSelectModelValue(modelValue.known.volatility)"
             :items="volatilityItems"
             color="neutral"
             variant="outline"
             size="sm"
             :ui="studioSelectUi"
-            @update:model-value="updateKnownScalar('volatility', String($event || ''))"
+            @update:model-value="updateKnownScalarSelect('volatility', typeof $event === 'string' ? $event : undefined)"
           />
         </label>
         <label class="grid gap-1">
           <span :class="studioCompactFieldKickerClass">Security</span>
           <USelect
-            :model-value="modelValue.known.security"
+            :model-value="getSelectModelValue(modelValue.known.security)"
             :items="securityItems"
             color="neutral"
             variant="outline"
             size="sm"
             :ui="studioSelectUi"
-            @update:model-value="updateKnownScalar('security', String($event || ''))"
+            @update:model-value="updateKnownScalarSelect('security', typeof $event === 'string' ? $event : undefined)"
           />
         </label>
       </div>
@@ -464,25 +485,25 @@ const getKindLabel = (kind: PgmlDetailMetadataDraftKind) => {
           <label class="grid gap-1">
             <span :class="studioCompactFieldKickerClass">Timing</span>
             <USelect
-              :model-value="modelValue.known.triggerTiming"
+              :model-value="getSelectModelValue(modelValue.known.triggerTiming)"
               :items="triggerTimingItems"
               color="neutral"
               variant="outline"
               size="sm"
               :ui="studioSelectUi"
-              @update:model-value="updateKnownScalar('triggerTiming', String($event || ''))"
+              @update:model-value="updateKnownScalarSelect('triggerTiming', typeof $event === 'string' ? $event : undefined)"
             />
           </label>
           <label class="grid gap-1">
             <span :class="studioCompactFieldKickerClass">Level</span>
             <USelect
-              :model-value="modelValue.known.triggerLevel"
+              :model-value="getSelectModelValue(modelValue.known.triggerLevel)"
               :items="triggerLevelItems"
               color="neutral"
               variant="outline"
               size="sm"
               :ui="studioSelectUi"
-              @update:model-value="updateKnownScalar('triggerLevel', String($event || ''))"
+              @update:model-value="updateKnownScalarSelect('triggerLevel', typeof $event === 'string' ? $event : undefined)"
             />
           </label>
           <label
@@ -603,25 +624,25 @@ const getKindLabel = (kind: PgmlDetailMetadataDraftKind) => {
         <label class="grid gap-1">
           <span :class="studioCompactFieldKickerClass">Value type</span>
           <USelect
-            :model-value="modelValue.known.sequenceAs"
+            :model-value="getSelectModelValue(modelValue.known.sequenceAs)"
             :items="sequenceTypeItems"
             color="neutral"
             variant="outline"
             size="sm"
             :ui="studioSelectUi"
-            @update:model-value="updateKnownScalar('sequenceAs', String($event || ''))"
+            @update:model-value="updateKnownScalarSelect('sequenceAs', typeof $event === 'string' ? $event : undefined)"
           />
         </label>
         <label class="grid gap-1">
           <span :class="studioCompactFieldKickerClass">Cycle</span>
           <USelect
-            :model-value="modelValue.known.sequenceCycle"
+            :model-value="getSelectModelValue(modelValue.known.sequenceCycle)"
             :items="cycleItems"
             color="neutral"
             variant="outline"
             size="sm"
             :ui="studioSelectUi"
-            @update:model-value="updateKnownScalar('sequenceCycle', String($event || ''))"
+            @update:model-value="updateKnownScalarSelect('sequenceCycle', typeof $event === 'string' ? $event : undefined)"
           />
         </label>
         <label class="grid gap-1">

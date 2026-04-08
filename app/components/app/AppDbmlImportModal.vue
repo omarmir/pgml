@@ -158,7 +158,7 @@ const handleTextInput = (event: Event) => {
             placeholder="No file selected"
             color="neutral"
             variant="outline"
-            size="sm"
+            size="md"
             readonly
             :ui="studioFieldUi"
           />

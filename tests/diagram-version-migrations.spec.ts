@@ -545,6 +545,85 @@ Ref: public.orders.user_id > public.users.id`)
   await expect(comparePanel.locator('[data-compare-entry]').filter({ hasText: 'public.audit_log' })).toHaveCount(0)
 })
 
+test('compare panel stat cards filter the visible entries and keep the panel within its container', async ({ goto, page }) => {
+  await goto('/diagram')
+  const editor = getPgmlEditor(page)
+
+  await setPgmlEditorValue(editor, `Table public.users {
+  id uuid [pk]
+  email text
+}
+
+Table public.legacy {
+  id uuid [pk]
+}`)
+  await createCheckpoint(page, 'Filter baseline')
+
+  await setPgmlEditorValue(editor, `Table public.users {
+  id uuid [pk]
+  email varchar [not null]
+}
+
+Table public.orders {
+  id uuid [pk]
+}`)
+  await expect.poll(async () => readPgmlEditorValue(editor)).toContain('Table public.orders')
+
+  await compareFromVersion(page, 'Filter baseline')
+
+  const comparePanel = getComparePanel(page)
+  const addedStat = comparePanel.locator('[data-compare-stat-filter="added"]')
+  const modifiedStat = comparePanel.locator('[data-compare-stat-filter="modified"]')
+  const removedStat = comparePanel.locator('[data-compare-stat-filter="removed"]')
+  const addedTableEntry = comparePanel.locator('[data-compare-entry="table:public.orders"]')
+  const modifiedColumnEntry = comparePanel.locator('[data-compare-entry="column:public.users::email"]')
+  const removedTableEntry = comparePanel.locator('[data-compare-entry="table:public.legacy"]')
+
+  await expect(addedTableEntry).toBeVisible()
+  await expect(modifiedColumnEntry).toBeVisible()
+  await expect(removedTableEntry).toBeVisible()
+  await expect.poll(async () => {
+    return comparePanel.evaluate((element) => {
+      const toolPanel = element.closest('[data-diagram-tool-panel="true"]')
+
+      if (!(toolPanel instanceof HTMLElement)) {
+        return false
+      }
+
+      const compareRect = element.getBoundingClientRect()
+      const toolRect = toolPanel.getBoundingClientRect()
+
+      return element.scrollWidth - element.clientWidth <= 1
+        && compareRect.bottom <= toolRect.bottom + 1
+        && element.clientHeight < element.scrollHeight
+    })
+  }).toBe(true)
+
+  await addedStat.click()
+  await expect(addedStat).toHaveAttribute('aria-pressed', 'true')
+  await expect(addedTableEntry).toBeVisible()
+  await expect(modifiedColumnEntry).toHaveCount(0)
+  await expect(removedTableEntry).toHaveCount(0)
+
+  await modifiedStat.click()
+  await expect(modifiedStat).toHaveAttribute('aria-pressed', 'true')
+  await expect(addedTableEntry).toHaveCount(0)
+  await expect(modifiedColumnEntry).toBeVisible()
+  await expect(removedTableEntry).toHaveCount(0)
+
+  await removedStat.click()
+  await expect(removedStat).toHaveAttribute('aria-pressed', 'true')
+  await expect(addedTableEntry).toHaveCount(0)
+  await expect(modifiedColumnEntry).toHaveCount(0)
+  await expect(removedTableEntry).toBeVisible()
+
+  await removedStat.click()
+  await expect(removedStat).toHaveAttribute('aria-pressed', 'false')
+  await expect(addedTableEntry).toBeVisible()
+  await expect(modifiedColumnEntry).toBeVisible()
+  await expect(removedTableEntry).toBeVisible()
+})
+
 test('versions overview controls render inline instead of as a sticky floating card', async ({ goto, page }) => {
   await goto('/diagram')
   await openVersionsPanel(page)
@@ -652,6 +731,7 @@ Ref: public.orders.user_id > public.users.id`)
 
   await expect(comparePanel.locator('[data-compare-context-entry]').filter({ hasText: 'public.users.email' })).toBeVisible()
   await expect(detail).toContainText('public.users.email')
+  await expect(detail).toContainText('Changed column public.users.email: modifiers and type.')
   await expect(detail).toContainText('Before snapshot')
   await expect(detail).toContainText('"type": "text"')
   await expect(detail).toContainText('"type": "varchar"')
@@ -725,6 +805,67 @@ ALTER TABLE ONLY public.orders ADD CONSTRAINT orders_user_id_fkey FOREIGN KEY (u
   await expect(migrationArtifact).toContainText('ALTER TABLE "public"."orders" ADD FOREIGN KEY ("user_id") REFERENCES "public"."users" ("id");')
   await expect(migrationArtifact).not.toContainText('Users and teams')
   await expect(migrationArtifact).not.toContainText('DROP TABLE IF EXISTS "public"."teams";')
+})
+
+test('importing a pg_dump onto a selected base version can retain matching table groups from that base', async ({ goto, page }) => {
+  await goto('/diagram')
+  const editor = getPgmlEditor(page)
+
+  await setPgmlEditorValue(editor, `Table public.users in Core {
+  id uuid [pk]
+}
+
+Table public.orders in Core {
+  id uuid [pk]
+  user_id uuid [ref: > public.users.id]
+}
+
+TableGroup Core {
+  public.users
+  public.orders
+  Note: Shared transactional tables
+}`)
+  await createCheckpoint(page, 'Grouped base')
+
+  await setPgmlEditorValue(editor, `Table public.scratch_entries {
+  id uuid [pk]
+}`)
+  await expect.poll(async () => readPgmlEditorValue(editor)).toContain('Table public.scratch_entries')
+
+  await openVersionsPanel(page)
+  await page.locator('[data-version-import-dump="true"]').click()
+
+  const importDialog = page.locator('[data-studio-modal-surface="pg-dump-import"]')
+
+  await expect(importDialog).toBeVisible()
+  await expect(importDialog).toContainText('Retain matching table groups from base version')
+  await importDialog.getByLabel('Increment from version').click()
+  await page.getByRole('option', { name: /Grouped base/i }).click()
+  await importDialog.locator('textarea').fill(`CREATE TABLE public.users (
+  id uuid NOT NULL
+);
+ALTER TABLE ONLY public.users ADD CONSTRAINT users_pkey PRIMARY KEY (id);
+CREATE TABLE public.orders (
+  id uuid NOT NULL,
+  user_id uuid NOT NULL
+);
+ALTER TABLE ONLY public.orders ADD CONSTRAINT orders_pkey PRIMARY KEY (id);
+ALTER TABLE ONLY public.orders ADD CONSTRAINT orders_user_id_fkey FOREIGN KEY (user_id) REFERENCES public.users(id);
+CREATE TABLE public.invoices (
+  id uuid NOT NULL
+);
+ALTER TABLE ONLY public.invoices ADD CONSTRAINT invoices_pkey PRIMARY KEY (id);`)
+  await importDialog.getByRole('button', { name: 'Replace workspace with import' }).click()
+  await expect(importDialog).toHaveCount(0)
+
+  const importedSource = await readPgmlEditorValue(editor)
+
+  expect(importedSource).toContain('Table public.users in Core {')
+  expect(importedSource).toContain('Table public.orders in Core {')
+  expect(importedSource).toContain('Table public.invoices {')
+  expect(importedSource).toContain('TableGroup Core {')
+  expect(importedSource).toContain('Note: Shared transactional tables')
+  expect(importedSource).not.toContain('Table public.scratch_entries')
 })
 
 test('importing DBML onto a selected base version replaces the workspace and generates direct history-aware migrations from that base', async ({ goto, page }) => {

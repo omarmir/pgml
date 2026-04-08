@@ -41,4 +41,13 @@ describe('diagram GPU light mode source', () => {
     expect(shellFile).toContain('buildSvgPaintAttributes(\'fill\', exportTheme.background, diagramBackgroundColor)')
     expect(shellFile).toContain('buildSvgPaintAttributes(\'fill\', exportTheme.tableSurface, diagramTableSurfaceColor)')
   })
+
+  it('skins inspector view action buttons with the shared studio button theme', () => {
+    const shellFile = readSourceFile('app/components/pgml/PgmlDiagramCanvasGpuShell.vue')
+
+    expect(shellFile).toContain('data-diagram-view-create="mobile"')
+    expect(shellFile).toContain('data-diagram-view-rename="mobile"')
+    expect(shellFile).toContain('data-diagram-view-delete="mobile"')
+    expect(shellFile).toContain(':class="sidePanelActionButtonClass"')
+  })
 })

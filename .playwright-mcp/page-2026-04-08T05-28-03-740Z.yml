@@ -1,0 +1,176 @@
+- generic [active] [ref=e1]:
+  - generic [ref=e3]:
+    - banner [ref=e4]:
+      - generic [ref=e5]:
+        - generic [ref=e6]:
+          - link "DB PGML" [ref=e7] [cursor=pointer]:
+            - /url: /
+            - generic [ref=e8]: DB
+            - generic [ref=e9]: PGML
+          - navigation "Primary" [ref=e10]:
+            - link "Home" [ref=e11] [cursor=pointer]:
+              - /url: /
+            - link "Spec" [ref=e12] [cursor=pointer]:
+              - /url: /spec
+          - generic [ref=e13]:
+            - button "Schema" [ref=e14]:
+              - generic [ref=e17]: Schema
+            - button "Export" [ref=e18]:
+              - generic [ref=e21]: Export
+        - generic:
+          - generic:
+            - paragraph: Storage probe schema
+            - paragraph: Local PGML workspace
+        - button "Switch to dark mode" [ref=e23]
+    - main [ref=e26]:
+      - generic [ref=e28]:
+        - complementary [ref=e29]:
+          - generic [ref=e30]:
+            - generic [ref=e32]:
+              - button "Workspace draft" [ref=e33]
+              - button "Versioned document" [ref=e34]
+            - paragraph [ref=e35]: Editing the current workspace snapshot. Checkpoint it when you want to lock a version into the history.
+          - generic [ref=e39]:
+            - generic [ref=e41]:
+              - generic [ref=e42]: "1"
+              - generic [ref=e43]: "2"
+              - generic [ref=e44]: "3"
+              - generic [ref=e45]: "4"
+              - generic [ref=e46]: "5"
+              - generic [ref=e47]: "6"
+              - generic [ref=e48]: "7"
+              - generic [ref=e49]: "8"
+              - generic [ref=e50]: "9"
+              - generic [ref=e51]: "10"
+              - generic [ref=e52]: "11"
+              - generic [ref=e53]: "12"
+              - generic [ref=e54]: "13"
+              - generic [ref=e55]: "14"
+              - generic [ref=e56]: "15"
+              - generic [ref=e57]: "16"
+              - generic [ref=e58]: "17"
+              - generic [ref=e59]: "18"
+              - generic [ref=e60]: "19"
+            - textbox "PGML editor" [ref=e63]:
+              - generic [ref=e64]: "Table public.Common_Additional_Reviewers {"
+              - generic [ref=e65]: egcs_cn_user integer
+              - generic [ref=e66]: egcs_cn_completedat timestamp
+              - generic [ref=e67]: "}"
+              - generic [ref=e69]: "Trigger trg_fn_routingslip_forward_status on public.Common_Additional_Reviewers {"
+              - generic [ref=e70]: "source: $sql$"
+              - generic [ref=e71]: CREATE FUNCTION trg_fn_routingslip_forward_status()
+              - generic [ref=e72]: RETURNS trigger
+              - generic [ref=e73]: LANGUAGE plpgsql
+              - generic [ref=e74]: AS $body$
+              - generic [ref=e75]: BEGIN
+              - generic [ref=e76]: NEW.egcs_cn_user IS DISTINCT FROM OLD.egcs_cn_user;
+              - generic [ref=e77]: NEW.egcs_cn_completedat := NULL;
+              - generic [ref=e78]: RETURN NEW;
+              - generic [ref=e79]: END;
+              - generic [ref=e80]: $body$;
+              - generic [ref=e81]: $sql$
+              - generic [ref=e82]: "}"
+          - generic [ref=e83]: No diagnostics
+        - separator "Resize PGML editor" [ref=e84]
+        - generic [ref=e89]:
+          - button "Hide PGML editor" [ref=e90]:
+            - generic [ref=e92]: Hide PGML editor
+          - generic [ref=e93]:
+            - generic [ref=e96]:
+              - button "Zoom out" [ref=e97]
+              - generic [ref=e99]: 195%
+              - button "Zoom in" [ref=e100]
+              - button "Fit view" [ref=e102]:
+                - generic [ref=e103]: Fit view
+              - generic [ref=e105]:
+                - generic [ref=e106]: View
+                - combobox "View" [ref=e107]:
+                  - generic: Default
+              - button "Create view" [ref=e110]
+              - button "Rename active view" [ref=e112]
+              - button "Delete active view" [disabled] [ref=e114]
+              - button "Lines" [pressed] [ref=e116]: Lines
+              - button "Execs" [pressed] [ref=e118]: Execs
+              - button "Fields" [pressed] [ref=e120]: Fields
+              - button "Snap" [pressed] [ref=e122]: Snap
+              - generic [ref=e125]:
+                - generic [ref=e126]: Renderer
+                - combobox "Renderer" [ref=e127]:
+                  - generic: Auto
+              - generic "WebGPU active" [ref=e130]
+            - generic:
+              - button "Versions" [ref=e131]:
+                - generic [ref=e133]: Versions
+              - button "Compare" [ref=e134]:
+                - generic [ref=e136]: Compare
+              - button "Migrations" [ref=e137]:
+                - generic [ref=e139]: Migrations
+              - button "Hide panel" [ref=e140]:
+                - generic [ref=e142]: Hide panel
+            - complementary [ref=e143]:
+              - generic [ref=e145]:
+                - generic [ref=e146]:
+                  - generic [ref=e147]:
+                    - generic [ref=e148]: Diagram panel
+                    - heading "Inspector" [level=3] [ref=e149]
+                    - paragraph [ref=e150]: Select a group, table, row, or object.
+                  - button "Hide panel" [ref=e152]
+                - generic [ref=e154]:
+                  - button "Add table" [ref=e155]:
+                    - generic [ref=e157]: Add table
+                  - button "Add group" [ref=e158]:
+                    - generic [ref=e160]: Add group
+                - generic [ref=e161]:
+                  - generic [ref=e162]:
+                    - generic [ref=e163]: View
+                    - generic [ref=e164]:
+                      - combobox "View Create view Rename active view Delete active view" [ref=e165]:
+                        - generic: Default
+                      - button "Create view" [ref=e168]
+                      - button "Rename active view" [ref=e170]
+                      - button "Delete active view" [disabled] [ref=e172]
+                  - generic [ref=e174]:
+                    - generic [ref=e175]: Renderer
+                    - combobox "Renderer" [ref=e176]:
+                      - generic: Auto
+                  - paragraph [ref=e179]: WebGPU active
+              - generic [ref=e180]:
+                - button "Inspector" [ref=e181]
+                - button "Entities" [ref=e182]
+                - button "Export" [ref=e183]
+              - generic [ref=e185]:
+                - generic [ref=e186]:
+                  - generic [ref=e187]: Schema overview
+                  - paragraph [ref=e188]: Click a group, table, column, attachment, or object to inspect it.
+                - generic [ref=e189]:
+                  - generic [ref=e190]:
+                    - generic [ref=e191]: Groups
+                    - generic [ref=e192]: "0"
+                  - generic [ref=e193]:
+                    - generic [ref=e194]: Tables
+                    - generic [ref=e195]: "1"
+                  - generic [ref=e196]:
+                    - generic [ref=e197]: Objects
+                    - generic [ref=e198]: "0"
+                  - generic [ref=e199]:
+                    - generic [ref=e200]: Lines
+                    - generic [ref=e201]: "0"
+                - generic [ref=e202]:
+                  - button "Browse entities" [ref=e203]:
+                    - generic [ref=e205]: Browse entities
+                  - button "Fit diagram" [ref=e206]:
+                    - generic [ref=e208]: Fit diagram
+  - generic:
+    - img
+  - generic:
+    - img
+  - generic [ref=e209]:
+    - button "Toggle Nuxt DevTools" [ref=e210] [cursor=pointer]:
+      - img [ref=e211]
+    - generic "Page load time" [ref=e214]:
+      - generic [ref=e215]: "117"
+      - generic [ref=e216]: ms
+    - button "Toggle Component Inspector" [ref=e218] [cursor=pointer]:
+      - img [ref=e219]
+  - region "Notifications (F8)":
+    - list

@@ -4824,6 +4824,26 @@ const shouldShowDetailPopover = computed(() => {
   return selectedDetailPopover.value !== null && !isMobilePanelView.value
 })
 
+const detailPopoverViewportInsetTop = computed(() => {
+  if (isMobileCanvasShell.value) {
+    return 12
+  }
+
+  return isEditingDetailSource.value || isEditingDetailMetadata.value ? 56 : 12
+})
+
+const detailPopoverViewportInsetBottom = computed(() => {
+  if (isMobileCanvasShell.value) {
+    return 12
+  }
+
+  if (!isEditingDetailSource.value && !isEditingDetailMetadata.value) {
+    return 12
+  }
+
+  return shouldShowZoomToolbar.value ? 56 : 12
+})
+
 const detailPopoverViewportInsetRight = computed(() => {
   if (isMobilePanelView.value) {
     return 0
@@ -4917,8 +4937,10 @@ const detailPopoverPlacement = computed<DetailPopoverPlacement | null>(() => {
   const left = shouldPlaceRight
     ? clamp(anchorBounds.right + gap, margin, maxLeft)
     : clamp(anchorBounds.left - gap - popoverWidth, margin, maxLeft)
-  const maxTop = Math.max(margin, safeViewportHeight - popoverHeight - margin)
-  const top = clamp(anchorBounds.top - 12, margin, maxTop)
+  const topInset = detailPopoverViewportInsetTop.value
+  const bottomInset = detailPopoverViewportInsetBottom.value
+  const maxTop = Math.max(topInset, safeViewportHeight - popoverHeight - bottomInset)
+  const top = clamp(anchorBounds.top - 12, topInset, maxTop)
 
   return {
     left,
@@ -4930,7 +4952,7 @@ const detailPopoverPlacement = computed<DetailPopoverPlacement | null>(() => {
 const detailPopoverContainerClass = computed(() => {
   return isMobileCanvasShell.value
     ? 'pointer-events-none absolute inset-x-3 top-3 z-[4] flex'
-    : 'pointer-events-none absolute z-[4] flex'
+    : 'pointer-events-none absolute z-[4] flex min-h-0'
 })
 
 const detailPopoverContainerStyle = computed<CSSProperties | undefined>(() => {
@@ -4938,18 +4960,23 @@ const detailPopoverContainerStyle = computed<CSSProperties | undefined>(() => {
     return undefined
   }
 
+  const fallbackTop = detailPopoverViewportInsetTop.value
+  const bottomInset = detailPopoverViewportInsetBottom.value
+
   if (!detailPopoverPlacement.value) {
     return {
       left: '12px',
-      top: '12px',
-      width: '24rem'
+      top: `${fallbackTop}px`,
+      width: '24rem',
+      maxHeight: `calc(100% - ${fallbackTop + bottomInset}px)`
     }
   }
 
   return {
     left: `${Math.round(detailPopoverPlacement.value.left)}px`,
     top: `${Math.round(detailPopoverPlacement.value.top)}px`,
-    width: `${Math.round(detailPopoverPlacement.value.width)}px`
+    width: `${Math.round(detailPopoverPlacement.value.width)}px`,
+    maxHeight: `calc(100% - ${Math.round(detailPopoverPlacement.value.top) + bottomInset}px)`
   }
 })
 
@@ -6899,7 +6926,7 @@ defineExpose<{
         data-diagram-detail-popover="true"
         :data-attachment-popover="selectedDetailPopover.kind === 'attachment' ? selectedDetailPopover.id : undefined"
         :data-object-popover="selectedDetailPopover.kind === 'object' ? selectedDetailPopover.id : undefined"
-        class="pointer-events-auto grid w-full gap-3 border px-3 py-3"
+        class="pointer-events-auto grid max-h-full min-h-0 w-full grid-rows-[auto_minmax(0,1fr)_auto] gap-3 overflow-hidden border px-3 py-3"
         :style="floatingPanelStyle"
       >
         <div class="flex items-start justify-between gap-3">
@@ -6948,37 +6975,42 @@ defineExpose<{
           </div>
         </div>
 
-        <PgmlDetailPopoverSourceEditor
-          v-if="isEditingDetailSource"
-          v-model="detailPopoverEditorSource"
-          :description="selectedDetailEditorSpec?.description"
-          :language-mode="selectedDetailEditorSpec?.languageMode || 'pgml'"
-          :original-value="selectedDetailEditorSpec?.source || ''"
-          :title="selectedDetailEditorSpec?.title || 'Editing PGML block'"
-        />
-
-        <PgmlDetailPopoverMetadataEditor
-          v-else-if="isEditingDetailMetadata && detailPopoverMetadataDraft"
-          :model-value="detailPopoverMetadataDraft"
-          :description="selectedDetailMetadataEditorSpec?.description"
-          :original-value="selectedDetailMetadataEditorSpec?.draft || detailPopoverMetadataDraft"
-          :routine-items="routineMetadataSelectItems"
-          :title="selectedDetailMetadataEditorSpec?.title || 'Editing metadata'"
-          @update:model-value="updateDetailPopoverMetadataDraft"
-        />
-
         <div
-          v-else
-          class="grid max-h-64 gap-1 overflow-auto border border-[color:var(--studio-rail)] bg-[color:var(--studio-input-bg)] px-2 py-2"
+          data-detail-popover-body="true"
+          class="min-h-0 overflow-auto pr-1"
         >
-          <p
-            v-for="detail in selectedDetailPopover.details"
-            :key="detail"
-            data-detail-popover-detail="true"
-            :class="detailPopoverDetailTextClass"
+          <PgmlDetailPopoverSourceEditor
+            v-if="isEditingDetailSource"
+            v-model="detailPopoverEditorSource"
+            :description="selectedDetailEditorSpec?.description"
+            :language-mode="selectedDetailEditorSpec?.languageMode || 'pgml'"
+            :original-value="selectedDetailEditorSpec?.source || ''"
+            :title="selectedDetailEditorSpec?.title || 'Editing PGML block'"
+          />
+
+          <PgmlDetailPopoverMetadataEditor
+            v-else-if="isEditingDetailMetadata && detailPopoverMetadataDraft"
+            :model-value="detailPopoverMetadataDraft"
+            :description="selectedDetailMetadataEditorSpec?.description"
+            :original-value="selectedDetailMetadataEditorSpec?.draft || detailPopoverMetadataDraft"
+            :routine-items="routineMetadataSelectItems"
+            :title="selectedDetailMetadataEditorSpec?.title || 'Editing metadata'"
+            @update:model-value="updateDetailPopoverMetadataDraft"
+          />
+
+          <div
+            v-else
+            class="grid max-h-64 gap-1 overflow-auto border border-[color:var(--studio-rail)] bg-[color:var(--studio-input-bg)] px-2 py-2"
           >
-            {{ detail }}
-          </p>
+            <p
+              v-for="detail in selectedDetailPopover.details"
+              :key="detail"
+              data-detail-popover-detail="true"
+              :class="detailPopoverDetailTextClass"
+            >
+              {{ detail }}
+            </p>
+          </div>
         </div>
 
         <div
@@ -7389,6 +7421,7 @@ defineExpose<{
                   color="neutral"
                   variant="outline"
                   size="sm"
+                  :class="sidePanelActionButtonClass"
                   @click="emit('createDiagramView')"
                 />
                 <UButton
@@ -7398,6 +7431,7 @@ defineExpose<{
                   color="neutral"
                   variant="outline"
                   size="sm"
+                  :class="sidePanelActionButtonClass"
                   :disabled="!activeDiagramViewId"
                   @click="emit('renameDiagramView')"
                 />
@@ -7408,6 +7442,7 @@ defineExpose<{
                   color="neutral"
                   variant="outline"
                   size="sm"
+                  :class="sidePanelActionButtonClass"
                   :disabled="!canDeleteDiagramView"
                   @click="emit('deleteDiagramView')"
                 />
@@ -8421,7 +8456,7 @@ defineExpose<{
       <div
         v-if="activeToolPanelTab === 'compare'"
         data-studio-scrollable="true"
-        class="min-h-0 overflow-auto"
+        class="grid min-h-0 min-w-0 overflow-hidden"
       >
         <PgmlDiagramComparePanel
           :base-label="compareBaseLabel"

@@ -11,6 +11,8 @@ describe('DBML import modal source', () => {
     expect(file).toContain('Paste DBML text')
     expect(file).toContain('<USwitch')
     expect(file).toContain('accept=".dbml,.dbdiagram,.txt"')
+    expect(file).toContain('placeholder="No file selected"')
+    expect(file).toContain('size="md"')
     expect(file).toContain('<slot name="before-inputs" />')
     expect(file).toContain('parseExecutableComments')
     expect(file).toContain('emit(\'update:parseExecutableComments\'')

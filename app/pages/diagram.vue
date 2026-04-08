@@ -50,6 +50,7 @@ import {
   type PgmlImportExecutableAttachmentCandidate,
   type PgmlImportExecutableAttachmentTableOption
 } from '~/utils/pgml-import-attachments'
+import { retainPgmlTableGroupsFromBaseSource } from '~/utils/pgml-import-groups'
 import { analyzePgmlDocument } from '~/utils/pgml-language'
 import {
   hasBlockingPgmlDiagnostics,
@@ -305,6 +306,7 @@ const isSubmittingImportDbml: Ref<boolean> = ref(false)
 const importDumpDialogOpen: Ref<boolean> = ref(false)
 const importDumpBaseVersionId: Ref<string | null> = ref(null)
 const importDumpError: Ref<string | null> = ref(null)
+const importDumpRetainMatchingTableGroups: Ref<boolean> = ref(true)
 const importDumpSelectedFile: Ref<File | null> = ref(null)
 const importDumpText: Ref<string> = ref('')
 const isSubmittingImportDump: Ref<boolean> = ref(false)
@@ -1314,6 +1316,9 @@ const selectedImportDumpBaseVersion = computed(() => {
     ? versions.value.find(version => version.id === importDumpBaseVersionId.value) || null
     : null
 })
+const selectedImportDumpBaseVersionSource = computed(() => {
+  return selectedImportDumpBaseVersion.value?.snapshot.source || null
+})
 const selectedImportDbmlBaseVersion = computed(() => {
   return importDbmlBaseVersionId.value
     ? versions.value.find(version => version.id === importDbmlBaseVersionId.value) || null
@@ -1595,6 +1600,7 @@ const syncImportDumpConflictError = () => {
 const resetImportDumpDialog = () => {
   importDumpDialogOpen.value = false
   importDumpError.value = null
+  importDumpRetainMatchingTableGroups.value = true
   importDumpSelectedFile.value = null
   importDumpText.value = ''
   importDumpBaseVersionId.value = null
@@ -1789,6 +1795,7 @@ const openImportDumpDialog = () => {
 
   importDumpDialogOpen.value = true
   importDumpError.value = null
+  importDumpRetainMatchingTableGroups.value = true
   importDumpSelectedFile.value = null
   importDumpText.value = ''
   importDumpBaseVersionId.value = getPreferredImportBaseVersionId()
@@ -1886,7 +1893,19 @@ const submitImportDump = async () => {
       preferredName: selectedFile?.name,
       sql: importedSql
     })
-    const preparedImport = prepareImportedExecutableAttachments(importedSchema.pgml)
+    const importedPgml = importDumpRetainMatchingTableGroups.value
+      ? (() => {
+          if (!selectedImportDumpBaseVersionSource.value) {
+            throw new Error('The selected base version no longer exists.')
+          }
+
+          return retainPgmlTableGroupsFromBaseSource({
+            baseSource: selectedImportDumpBaseVersionSource.value,
+            importedSource: importedSchema.pgml
+          })
+        })()
+      : importedSchema.pgml
+    const preparedImport = prepareImportedExecutableAttachments(importedPgml)
 
     if (preparedImport.candidates.length > 0) {
       openImportExecutableAttachmentResolution({
@@ -3283,6 +3302,26 @@ onBeforeUnmount(() => {
                 }}
               </p>
             </div>
+
+            <label class="grid gap-2 border border-[color:var(--studio-shell-border)] bg-[color:var(--studio-control-bg)] px-3 py-3">
+              <div class="flex items-start justify-between gap-3">
+                <div class="grid gap-1">
+                  <span :class="studioFieldKickerClass">
+                    Retain matching table groups from base version
+                  </span>
+                  <p class="text-[0.72rem] leading-6 text-[color:var(--studio-shell-muted)]">
+                    Keep TableGroup assignments from the selected base when the imported dump contains the same tables.
+                  </p>
+                </div>
+
+                <USwitch
+                  :model-value="importDumpRetainMatchingTableGroups"
+                  color="neutral"
+                  :ui="studioSwitchUi"
+                  @update:model-value="importDumpRetainMatchingTableGroups = $event === true"
+                />
+              </div>
+            </label>
           </div>
         </template>
       </AppPgDumpImportModal>
@@ -3335,7 +3374,10 @@ onBeforeUnmount(() => {
 
                 <button
                   type="button"
-                  :class="secondaryModalButtonClass"
+                  :class="getStudioToggleChipClass({
+                    active: candidate.selectedTableIds.length === 0,
+                    extraClass: 'px-2 py-1 font-mono text-[0.58rem] uppercase tracking-[0.08em]'
+                  })"
                   :disabled="candidate.selectedTableIds.length === 0 || isSubmittingImportExecutableAttachmentResolution"
                   @click="clearImportExecutableAttachmentCandidateTables(candidate.id)"
                 >

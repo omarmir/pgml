@@ -1,0 +1,176 @@
+- generic [active] [ref=e1]:
+  - generic [ref=e3]:
+    - banner [ref=e4]:
+      - generic [ref=e5]:
+        - generic [ref=e6]:
+          - link "DB PGML" [ref=e7] [cursor=pointer]:
+            - /url: /
+            - generic [ref=e8]: DB
+            - generic [ref=e9]: PGML
+          - navigation "Primary" [ref=e10]:
+            - link "Home" [ref=e11] [cursor=pointer]:
+              - /url: /
+            - link "Spec" [ref=e12] [cursor=pointer]:
+              - /url: /spec
+        - generic:
+          - generic:
+            - paragraph: PGML
+            - paragraph: Postgres-first markup language
+        - button "Switch to dark mode" [ref=e14]
+    - generic [ref=e16]:
+      - main [ref=e17]:
+        - generic [ref=e18]:
+          - generic [ref=e19]:
+            - generic [ref=e20]:
+              - generic [ref=e21]:
+                - generic [ref=e22]:
+                  - generic [ref=e23]: Available now
+                  - heading "Browser local storage" [level=2] [ref=e24]
+                  - paragraph [ref=e25]: Resume a versioned PGML document saved in this browser, start a blank workspace, or open the bundled multi-version example before entering the studio.
+                - generic [ref=e26]:
+                  - paragraph [ref=e27]: Inventory
+                  - paragraph [ref=e28]: 2 saved schemas
+              - generic [ref=e29]:
+                - generic [ref=e30]:
+                  - generic [ref=e32]:
+                    - paragraph [ref=e33]: Open existing
+                    - paragraph [ref=e34]: Open a schema already saved in this browser and continue editing it in the studio.
+                  - generic [ref=e36]:
+                    - generic [ref=e37]:
+                      - link "Storage probe schema Saved Mar 18, 2026, 5:35 p.m." [ref=e38] [cursor=pointer]:
+                        - /url: /diagram?launch=saved&schema=bTCw7xOurE39227j3ruF3&source=browser
+                        - generic [ref=e39]:
+                          - paragraph [ref=e40]: Storage probe schema
+                          - paragraph [ref=e41]: Saved Mar 18, 2026, 5:35 p.m.
+                      - button "Delete Storage probe schema" [ref=e43]:
+                        - generic [ref=e45]: Delete Storage probe schema
+                    - generic [ref=e46]:
+                      - link "Browser regression schema Saved Mar 18, 2026, 5:34 p.m." [ref=e47] [cursor=pointer]:
+                        - /url: /diagram?launch=saved&schema=WPxC1IHSwrSn9__np_Be2&source=browser
+                        - generic [ref=e48]:
+                          - paragraph [ref=e49]: Browser regression schema
+                          - paragraph [ref=e50]: Saved Mar 18, 2026, 5:34 p.m.
+                      - button "Delete Browser regression schema" [ref=e52]:
+                        - generic [ref=e54]: Delete Browser regression schema
+                - link "Start new Open a blank versioned PGML document and begin a schema directly in browser storage." [ref=e55] [cursor=pointer]:
+                  - /url: /diagram?launch=new&source=browser
+                  - generic [ref=e56]:
+                    - paragraph [ref=e57]: Start new
+                    - paragraph [ref=e58]: Open a blank versioned PGML document and begin a schema directly in browser storage.
+                - link "Open bundled example Load the bundled PGML example so you can explore checkpoints, compare, migrations, and rich Postgres objects from a known starting point." [ref=e60] [cursor=pointer]:
+                  - /url: /diagram?launch=example&source=browser
+                  - generic [ref=e61]:
+                    - paragraph [ref=e62]: Open bundled example
+                    - paragraph [ref=e63]: Load the bundled PGML example so you can explore checkpoints, compare, migrations, and rich Postgres objects from a known starting point.
+              - generic [ref=e65]:
+                - generic [ref=e66]: Imports
+                - button "Import into browser storage Convert a text pg_dump into a browser-backed versioned PGML document, show progress while the import is prepared, and review executable placement only when a table attachment is ambiguous. pg_dump" [ref=e67]:
+                  - generic [ref=e68]:
+                    - paragraph [ref=e69]: Import into browser storage
+                    - paragraph [ref=e70]: Convert a text pg_dump into a browser-backed versioned PGML document, show progress while the import is prepared, and review executable placement only when a table attachment is ambiguous.
+                    - paragraph [ref=e71]: pg_dump
+                - button "Import DBML into browser storage Validate DBML-compatible schema blocks, extract supported executable objects, and open the result as a browser-backed versioned PGML document with attachment review only when placement is ambiguous. DBML" [ref=e73]:
+                  - generic [ref=e74]:
+                    - paragraph [ref=e75]: Import DBML into browser storage
+                    - paragraph [ref=e76]: Validate DBML-compatible schema blocks, extract supported executable objects, and open the result as a browser-backed versioned PGML document with attachment review only when placement is ambiguous.
+                    - paragraph [ref=e77]: DBML
+            - generic [ref=e79]:
+              - generic [ref=e80]:
+                - generic [ref=e81]:
+                  - generic [ref=e82]: Available now
+                  - heading "Computer saved file" [level=2] [ref=e83]
+                  - paragraph [ref=e84]: "Use this lane for local versioned `.pgml` files, whether that means reopening a recent file, starting blank, or saving the bundled example."
+                - generic [ref=e85]:
+                  - paragraph [ref=e86]: Inventory
+                  - paragraph [ref=e87]: 0 recent files
+              - generic [ref=e88]:
+                - generic [ref=e89]:
+                  - generic [ref=e91]:
+                    - paragraph [ref=e92]: Open existing
+                    - paragraph [ref=e93]: "Choose a `.pgml` file from your computer or reopen one from the recent list below."
+                  - generic [ref=e95]:
+                    - 'button "Choose a .pgml file from your computer Choose an existing `.pgml` file from your computer and add it to the recent list." [ref=e97]':
+                      - generic [ref=e98]:
+                        - paragraph [ref=e99]: Choose a .pgml file from your computer
+                        - paragraph [ref=e100]: "Choose an existing `.pgml` file from your computer and add it to the recent list."
+                    - generic [ref=e103]:
+                      - paragraph [ref=e104]: No recent computer files yet.
+                      - paragraph [ref=e105]: "Create a new file or choose an existing `.pgml` file to start a recent list."
+                - 'button "Start new Create a blank versioned `.pgml` file first, then open it in the studio with that file as the active target." [ref=e106]':
+                  - generic [ref=e107]:
+                    - paragraph [ref=e108]: Start new
+                    - paragraph [ref=e109]: "Create a blank versioned `.pgml` file first, then open it in the studio with that file as the active target."
+                - 'button "Save example to a new file Save the bundled multi-version PGML example to a new `.pgml` file first, then continue editing that file in the studio." [ref=e111]':
+                  - generic [ref=e112]:
+                    - paragraph [ref=e113]: Save example to a new file
+                    - paragraph [ref=e114]: "Save the bundled multi-version PGML example to a new `.pgml` file first, then continue editing that file in the studio."
+              - generic [ref=e116]:
+                - generic [ref=e117]: Imports
+                - 'button "Import into a new file Convert a text pg_dump into a new computer-backed versioned `.pgml` file, show progress while the import is prepared, and review executable placement only when a table attachment is ambiguous. pg_dump" [ref=e118]':
+                  - generic [ref=e119]:
+                    - paragraph [ref=e120]: Import into a new file
+                    - paragraph [ref=e121]: "Convert a text pg_dump into a new computer-backed versioned `.pgml` file, show progress while the import is prepared, and review executable placement only when a table attachment is ambiguous."
+                    - paragraph [ref=e122]: pg_dump
+                - button "Import DBML into a new file Validate a DBML file, extract supported executable objects, and save the resulting versioned PGML with attachment review only when placement is ambiguous. DBML" [ref=e124]:
+                  - generic [ref=e125]:
+                    - paragraph [ref=e126]: Import DBML into a new file
+                    - paragraph [ref=e127]: Validate a DBML file, extract supported executable objects, and save the resulting versioned PGML with attachment review only when placement is ambiguous.
+                    - paragraph [ref=e128]: DBML
+            - generic [ref=e130]:
+              - generic [ref=e131]:
+                - generic [ref=e132]:
+                  - generic [ref=e133]: Placeholder
+                  - heading "Hosted database" [level=2] [ref=e134]
+                  - paragraph [ref=e135]: Use this lane for hosted database sources, whether that means resuming an import, starting blank, or opening a hosted example once the hosted workflow is wired in.
+                - generic [ref=e136]:
+                  - paragraph [ref=e137]: Inventory
+                  - paragraph [ref=e138]: Placeholder
+              - generic [ref=e139]:
+                - generic [ref=e140]:
+                  - generic [ref=e142]:
+                    - paragraph [ref=e143]: Open existing
+                    - paragraph [ref=e144]: Saved hosted connections and imported schemas will appear here once the hosted workflow is implemented.
+                  - generic [ref=e148]:
+                    - paragraph [ref=e149]: Hosted database sources will be listed here.
+                    - paragraph [ref=e150]: Placeholder only.
+                - generic [ref=e153]:
+                  - paragraph [ref=e154]: Start new
+                  - paragraph [ref=e155]: Open a blank PGML document for a hosted workflow once database connection support is wired in.
+                - generic [ref=e159]:
+                  - paragraph [ref=e160]: Preview hosted example
+                  - paragraph [ref=e161]: Load a bundled example for the hosted workflow once database connection support is wired in.
+              - generic [ref=e163]:
+                - generic [ref=e164]: Imports
+                - button "Import from hosted lane Convert a text pg_dump from this lane now, show progress while it is prepared, and open it in browser storage as a versioned PGML document while hosted persistence stays in progress. pg_dump" [ref=e165]:
+                  - generic [ref=e166]:
+                    - paragraph [ref=e167]: Import from hosted lane
+                    - paragraph [ref=e168]: Convert a text pg_dump from this lane now, show progress while it is prepared, and open it in browser storage as a versioned PGML document while hosted persistence stays in progress.
+                    - paragraph [ref=e169]: pg_dump
+                - button "Import DBML from hosted lane Import DBML from this lane now, extract supported executable objects, and open it in browser storage as a versioned PGML document while hosted persistence stays in progress. DBML" [ref=e171]:
+                  - generic [ref=e172]:
+                    - paragraph [ref=e173]: Import DBML from hosted lane
+                    - paragraph [ref=e174]: Import DBML from this lane now, extract supported executable objects, and open it in browser storage as a versioned PGML document while hosted persistence stays in progress.
+                    - paragraph [ref=e175]: DBML
+          - generic [ref=e178]:
+            - generic [ref=e179]:
+              - generic [ref=e180]: Spec guide
+              - heading "Need the PGML spec before you open versioning, compare, and migrations?" [level=2] [ref=e181]
+              - paragraph [ref=e182]: "Jump straight to the PGML spec for `VersionSet`, named `View` blocks, checkpoints, `SchemaMetadata`, DBML and pg_dump imports, executable placement, and history-aware SQL or Kysely migrations."
+            - link "Jump to spec" [ref=e184] [cursor=pointer]:
+              - /url: /spec
+              - generic [ref=e185]: Jump to spec
+      - contentinfo [ref=e186]: PGML extends DBML toward Postgres-native schema design and visual documentation.
+  - generic:
+    - img
+  - generic:
+    - img
+  - generic [ref=e187]:
+    - button "Toggle Nuxt DevTools" [ref=e188] [cursor=pointer]:
+      - img [ref=e189]
+    - generic "Page load time" [ref=e192]:
+      - generic [ref=e193]: "195"
+      - generic [ref=e194]: ms
+    - button "Toggle Component Inspector" [ref=e196] [cursor=pointer]:
+      - img [ref=e197]
+  - region "Notifications (F8)":
+    - list

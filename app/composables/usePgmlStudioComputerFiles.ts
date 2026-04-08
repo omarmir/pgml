@@ -20,6 +20,18 @@ const computerFileMissingErrorMessage = 'The selected file is no longer availabl
 const computerFilePermissionRestoreMessage = 'File access needs to be restored before PGML can save again. Use Save to grant permission again.'
 const computerFilePermissionDeniedMessage = 'PGML could not get permission to save to the selected file.'
 
+const getComputerFileActionErrorMessage = (error: unknown, fallbackMessage: string) => {
+  if (error instanceof Error && error.message.trim().length > 0) {
+    return error.message
+  }
+
+  if (typeof error === 'string' && error.trim().length > 0) {
+    return error
+  }
+
+  return fallbackMessage
+}
+
 type ComputerFileOperations = {
   listRecentComputerFiles: typeof listRecentComputerPgmlFiles
   loadRecentComputerFile: typeof loadRecentComputerPgmlFile
@@ -168,44 +180,51 @@ export const usePgmlStudioComputerFiles = ({
     text: string,
     options: PersistCurrentComputerFileOptions
   ) => {
-    if (!currentComputerFileId.value) {
-      computerFileSaveError.value = computerFileSaveErrorMessage
+    try {
+      if (!currentComputerFileId.value) {
+        computerFileSaveError.value = computerFileSaveErrorMessage
+        return false
+      }
+
+      const updatedFile = await operations.writeRecentComputerFile({
+        recentFileId: currentComputerFileId.value,
+        text
+      }, {
+        permissionMode: options.interactive ? 'interactive' : 'passive'
+      })
+
+      if (!updatedFile.ok) {
+        computerFileSaveError.value = getComputerFileSaveFailureMessage(updatedFile, options)
+        return false
+      }
+
+      currentComputerFileName.value = updatedFile.entry.name
+      currentComputerFileUpdatedAt.value = updatedFile.entry.updatedAt
+      hasSavedComputerFileInSession.value = true
+      lastPersistedSnapshot.value = getSnapshot(text)
+      computerFileSaveError.value = null
+      await refreshRecentComputerFiles()
+
+      return true
+    } catch (error) {
+      computerFileSaveError.value = getComputerFileActionErrorMessage(error, computerFileSaveErrorMessage)
       return false
     }
-
-    const updatedFile = await operations.writeRecentComputerFile({
-      recentFileId: currentComputerFileId.value,
-      text
-    }, {
-      permissionMode: options.interactive ? 'interactive' : 'passive'
-    })
-
-    if (!updatedFile.ok) {
-      computerFileSaveError.value = getComputerFileSaveFailureMessage(updatedFile, options)
-      return false
-    }
-
-    currentComputerFileName.value = updatedFile.entry.name
-    currentComputerFileUpdatedAt.value = updatedFile.entry.updatedAt
-    hasSavedComputerFileInSession.value = true
-    lastPersistedSnapshot.value = getSnapshot(text)
-    computerFileSaveError.value = null
-    await refreshRecentComputerFiles()
-
-    return true
   }
 
   const saveSchemaToComputerFile = async (includeLayout: boolean) => {
     const text = buildSchemaText(includeLayout)
 
     isSavingToComputerFile.value = true
-    const didSave = await persistCurrentComputerFile(text, {
-      interactive: true
-    })
-    await nextTick()
-    isSavingToComputerFile.value = false
 
-    return didSave
+    try {
+      return await persistCurrentComputerFile(text, {
+        interactive: true
+      })
+    } finally {
+      await nextTick()
+      isSavingToComputerFile.value = false
+    }
   }
 
   const formatSavedAt = (value: string) => formatSavedPgmlSchemaTime(value)
@@ -230,11 +249,15 @@ export const usePgmlStudioComputerFiles = ({
     }
 
     isSavingToComputerFile.value = true
-    await persistCurrentComputerFile(buildSchemaText(true), {
-      interactive: false
-    })
-    await nextTick()
-    isSavingToComputerFile.value = false
+
+    try {
+      await persistCurrentComputerFile(buildSchemaText(true), {
+        interactive: false
+      })
+    } finally {
+      await nextTick()
+      isSavingToComputerFile.value = false
+    }
   }, {
     debounce: computerFileAutosaveDebounceMs,
     maxWait: computerFileAutosaveDebounceMs
