@@ -24,6 +24,31 @@ const getComparePanel = (page: Page) => {
   return page.locator('[data-diagram-compare-panel="true"]')
 }
 
+const expectComparePanelWithinContainer = async (page: Page) => {
+  const comparePanel = getComparePanel(page)
+
+  await expect.poll(async () => {
+    return comparePanel.evaluate((element) => {
+      const toolPanel = element.closest('[data-diagram-tool-panel="true"]')
+      const scrollRegion = element.querySelector('[data-studio-scrollable="true"]')
+
+      if (!(toolPanel instanceof HTMLElement) || !(scrollRegion instanceof HTMLElement)) {
+        return false
+      }
+
+      const compareRect = element.getBoundingClientRect()
+      const toolRect = toolPanel.getBoundingClientRect()
+      const scrollRect = scrollRegion.getBoundingClientRect()
+
+      return scrollRegion.scrollWidth - scrollRegion.clientWidth <= 1
+        && compareRect.bottom <= toolRect.bottom + 1
+        && compareRect.right <= toolRect.right + 1
+        && scrollRect.bottom <= compareRect.bottom + 1
+        && scrollRegion.clientHeight < scrollRegion.scrollHeight
+    })
+  }).toBe(true)
+}
+
 const getMigrationsPanel = (page: Page) => {
   return page.locator('[data-diagram-migrations-panel="true"]')
 }
@@ -548,15 +573,21 @@ Ref: public.orders.user_id > public.users.id`)
 test('compare panel stat cards filter the visible entries and keep the panel within its container', async ({ goto, page }) => {
   await goto('/diagram')
   const editor = getPgmlEditor(page)
+  const removedTableNames = Array.from({ length: 10 }, (_, index) => {
+    return `public.removed_agency_funding_case_agreement_history_${index + 1}`
+  })
+  const removedTableDefinitions = removedTableNames.map((tableName) => {
+    return `Table ${tableName} {
+  id uuid [pk]
+}`
+  }).join('\n\n')
 
   await setPgmlEditorValue(editor, `Table public.users {
   id uuid [pk]
   email text
 }
 
-Table public.legacy {
-  id uuid [pk]
-}`)
+${removedTableDefinitions}`)
   await createCheckpoint(page, 'Filter baseline')
 
   await setPgmlEditorValue(editor, `Table public.users {
@@ -577,27 +608,12 @@ Table public.orders {
   const removedStat = comparePanel.locator('[data-compare-stat-filter="removed"]')
   const addedTableEntry = comparePanel.locator('[data-compare-entry="table:public.orders"]')
   const modifiedColumnEntry = comparePanel.locator('[data-compare-entry="column:public.users::email"]')
-  const removedTableEntry = comparePanel.locator('[data-compare-entry="table:public.legacy"]')
+  const removedTableEntry = comparePanel.locator(`[data-compare-entry="table:${removedTableNames[0]!}"]`)
 
   await expect(addedTableEntry).toBeVisible()
   await expect(modifiedColumnEntry).toBeVisible()
   await expect(removedTableEntry).toBeVisible()
-  await expect.poll(async () => {
-    return comparePanel.evaluate((element) => {
-      const toolPanel = element.closest('[data-diagram-tool-panel="true"]')
-
-      if (!(toolPanel instanceof HTMLElement)) {
-        return false
-      }
-
-      const compareRect = element.getBoundingClientRect()
-      const toolRect = toolPanel.getBoundingClientRect()
-
-      return element.scrollWidth - element.clientWidth <= 1
-        && compareRect.bottom <= toolRect.bottom + 1
-        && element.clientHeight < element.scrollHeight
-    })
-  }).toBe(true)
+  await expectComparePanelWithinContainer(page)
 
   await addedStat.click()
   await expect(addedStat).toHaveAttribute('aria-pressed', 'true')
@@ -616,12 +632,112 @@ Table public.orders {
   await expect(addedTableEntry).toHaveCount(0)
   await expect(modifiedColumnEntry).toHaveCount(0)
   await expect(removedTableEntry).toBeVisible()
+  await expectComparePanelWithinContainer(page)
 
   await removedStat.click()
   await expect(removedStat).toHaveAttribute('aria-pressed', 'false')
   await expect(addedTableEntry).toBeVisible()
   await expect(modifiedColumnEntry).toBeVisible()
   await expect(removedTableEntry).toBeVisible()
+  await expectComparePanelWithinContainer(page)
+})
+
+test('compare panel exclusions hide selected groups and tables and carry forward into new checkpoints', async ({ goto, page }) => {
+  await goto('/diagram')
+  const editor = getPgmlEditor(page)
+
+  await setPgmlEditorValue(editor, `Table public.users in Core {
+  id uuid [pk]
+}
+
+Table public.orders in Core {
+  id uuid [pk]
+  user_id uuid [ref: > public.users.id]
+}
+
+Table public.audit_log {
+  id uuid [pk]
+}
+
+Table public.kysely_migration {
+  id bigint [pk]
+}
+
+TableGroup Core {
+  public.users
+  public.orders
+}`)
+  await createCheckpoint(page, 'Baseline')
+
+  await setPgmlEditorValue(editor, `Table public.users in Core {
+  id uuid [pk]
+  email text
+}
+
+Table public.orders in Core {
+  id uuid [pk]
+  user_id uuid [ref: > public.users.id]
+  status text
+}
+
+Table public.audit_log {
+  id uuid [pk]
+  action text
+}
+
+Table public.kysely_migration {
+  id bigint [pk]
+  name text
+}
+
+TableGroup Core {
+  public.users
+  public.orders
+}`)
+
+  await compareFromVersion(page, 'Baseline')
+
+  const comparePanel = getComparePanel(page)
+  const usersColumnEntry = comparePanel.locator('[data-compare-entry="column:public.users::email"]')
+  const ordersColumnEntry = comparePanel.locator('[data-compare-entry="column:public.orders::status"]')
+  const auditLogColumnEntry = comparePanel.locator('[data-compare-entry="column:public.audit_log::action"]')
+  const migrationColumnEntry = comparePanel.locator('[data-compare-entry="column:public.kysely_migration::name"]')
+
+  await expect(usersColumnEntry).toBeVisible()
+  await expect(ordersColumnEntry).toBeVisible()
+  await expect(auditLogColumnEntry).toBeVisible()
+  await expect(migrationColumnEntry).toBeVisible()
+
+  await comparePanel.locator('[data-compare-edit-exclusions="true"]').click()
+
+  const exclusionsDialog = page.locator('[data-studio-modal-surface="compare-exclusions"]')
+
+  await expect(exclusionsDialog).toBeVisible()
+  await exclusionsDialog.locator('[data-compare-exclusion-group="Core"]').click()
+  await exclusionsDialog.locator('[data-compare-exclusion-table="public.kysely_migration"]').click()
+  await exclusionsDialog.locator('[data-compare-exclusions-save="true"]').click()
+  await expect(exclusionsDialog).toHaveCount(0)
+
+  await expect(comparePanel).toContainText('Group Core')
+  await expect(comparePanel).toContainText('Table public.kysely_migration')
+  await expect(usersColumnEntry).toHaveCount(0)
+  await expect(ordersColumnEntry).toHaveCount(0)
+  await expect(migrationColumnEntry).toHaveCount(0)
+  await expect(auditLogColumnEntry).toBeVisible()
+
+  await createCheckpoint(page, 'App-only')
+  await openComparator(page)
+  await getComparePanel(page).locator('[data-compare-base-select="true"]').click()
+  await page.getByRole('option', { name: 'Baseline' }).click()
+  await getComparePanel(page).locator('[data-compare-target-select="true"]').click()
+  await page.getByRole('option', { name: 'App-only' }).click()
+
+  await expect(comparePanel).toContainText('Group Core')
+  await expect(comparePanel).toContainText('Table public.kysely_migration')
+  await expect(usersColumnEntry).toHaveCount(0)
+  await expect(ordersColumnEntry).toHaveCount(0)
+  await expect(migrationColumnEntry).toHaveCount(0)
+  await expect(auditLogColumnEntry).toBeVisible()
 })
 
 test('versions overview controls render inline instead of as a sticky floating card', async ({ goto, page }) => {
@@ -638,6 +754,30 @@ test('versions overview controls render inline instead of as a sticky floating c
   await expect.poll(async () => {
     return overview.evaluate(element => getComputedStyle(element).position)
   }).toBe('static')
+})
+
+test('versions panel renames the initial locked version directly from its card actions', async ({ goto, page }) => {
+  await goto('/diagram')
+  const editor = getPgmlEditor(page)
+
+  await setPgmlEditorValue(editor, `Table public.users {
+  id uuid [pk]
+}`)
+  await createCheckpoint(page, 'Initial implementation')
+
+  await openVersionsPanel(page)
+  await clickVersionCardAction(page, 'Initial implementation', '[data-version-rename]')
+
+  const renameDialog = page.locator('[data-studio-modal-surface="rename-version"]')
+
+  await expect(renameDialog).toBeVisible()
+  await renameDialog.getByPlaceholder('Version name').fill('Foundation baseline')
+  await renameDialog.locator('[data-rename-version-save="true"]').click()
+  await expect(renameDialog).toHaveCount(0)
+
+  await expect(getVersionCardByLabel(page, 'Foundation baseline')).toBeVisible()
+  await expect(getVersionCardByLabel(page, 'Initial implementation')).toHaveCount(0)
+  await expect(getVersionsPanel(page)).toContainText('Incrementing from Foundation baseline.')
 })
 
 test('versions panel keeps warning-only history steps visible in SQL and Kysely previews', async ({ goto, page }) => {
@@ -794,6 +934,24 @@ ALTER TABLE ONLY public.orders ADD CONSTRAINT orders_user_id_fkey FOREIGN KEY (u
   expect(importedSource).toContain('Table public.orders')
   expect(importedSource).not.toContain('Table public.scratch_entries')
 
+  await expect(page.locator('[data-studio-schema-status]')).toHaveAttribute('data-studio-schema-status', 'pending')
+  await expect.poll(async () => {
+    return page.evaluate(() => {
+      const savedSchemas = JSON.parse(window.localStorage.getItem('pgml-studio-schemas-v1') || '[]')
+      const schemaStatus = document.querySelector('[data-studio-schema-status]')?.getAttribute('data-studio-schema-status')
+
+      return {
+        status: schemaStatus,
+        text: savedSchemas[0]?.text || ''
+      }
+    })
+  }, {
+    timeout: 8000
+  }).toEqual({
+    status: 'saved',
+    text: expect.stringContaining('Table public.orders')
+  })
+
   await compareFromVersion(page, 'Users baseline')
 
   await openMigrationsPanel(page)
@@ -805,6 +963,70 @@ ALTER TABLE ONLY public.orders ADD CONSTRAINT orders_user_id_fkey FOREIGN KEY (u
   await expect(migrationArtifact).toContainText('ALTER TABLE "public"."orders" ADD FOREIGN KEY ("user_id") REFERENCES "public"."users" ("id");')
   await expect(migrationArtifact).not.toContainText('Users and teams')
   await expect(migrationArtifact).not.toContainText('DROP TABLE IF EXISTS "public"."teams";')
+})
+
+test('version import modals keep their text inputs above the footer actions', async ({ goto, page }) => {
+  await goto('/diagram')
+  const editor = getPgmlEditor(page)
+
+  await setPgmlEditorValue(editor, `Table public.users {
+  id uuid [pk]
+}`)
+  await createCheckpoint(page, 'Initial implementation')
+
+  await openVersionsPanel(page)
+
+  const assertModalTextareaClearsFooter = async (payload: {
+    dialogSurfaceId: 'dbml-import' | 'pg-dump-import'
+    openButtonSelector: '[data-version-import-dbml="true"]' | '[data-version-import-dump="true"]'
+  }) => {
+    await page.locator(payload.openButtonSelector).click()
+
+    const importDialog = page.locator(`[data-studio-modal-surface="${payload.dialogSurfaceId}"]`)
+    const textarea = importDialog.locator('textarea')
+    const confirmButton = importDialog.getByRole('button', { name: 'Replace workspace with import' })
+
+    await expect(importDialog).toBeVisible()
+    await expect(textarea).toBeVisible()
+    await expect(confirmButton).toBeVisible()
+
+    const layout = await importDialog.evaluate((modal) => {
+      const body = modal.children[1]
+      const footer = modal.children[2]
+
+      if (!(body instanceof HTMLElement) || !(footer instanceof HTMLElement)) {
+        return null
+      }
+
+      return {
+        bodyBottom: Math.round(body.getBoundingClientRect().bottom),
+        bodyClientHeight: body.clientHeight,
+        bodyOverflowY: getComputedStyle(body).overflowY,
+        bodyScrollHeight: body.scrollHeight,
+        footerTop: Math.round(footer.getBoundingClientRect().top)
+      }
+    })
+
+    if (!layout) {
+      throw new Error('Expected the import dialog body and footer to be measurable.')
+    }
+
+    expect(layout.bodyBottom).toBeLessThanOrEqual(layout.footerTop)
+    expect(layout.bodyOverflowY).toBe('auto')
+    expect(layout.bodyScrollHeight).toBeGreaterThan(layout.bodyClientHeight)
+
+    await importDialog.getByRole('button', { name: 'Cancel' }).click()
+    await expect(importDialog).toHaveCount(0)
+  }
+
+  await assertModalTextareaClearsFooter({
+    dialogSurfaceId: 'pg-dump-import',
+    openButtonSelector: '[data-version-import-dump="true"]'
+  })
+  await assertModalTextareaClearsFooter({
+    dialogSurfaceId: 'dbml-import',
+    openButtonSelector: '[data-version-import-dbml="true"]'
+  })
 })
 
 test('importing a pg_dump onto a selected base version can retain matching table groups from that base', async ({ goto, page }) => {

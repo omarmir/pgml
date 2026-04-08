@@ -11,6 +11,9 @@ describe('Shared button theming source', () => {
     expect(file).toContain('.studio-button--ghost')
     expect(file).toContain('.studio-choice-button')
     expect(file).toContain('.studio-toggle-chip')
+    expect(file).toContain('.studio-select-item[data-highlighted] {')
+    expect(file).toContain('background-color: color-mix(in srgb, var(--studio-input-bg) 74%, var(--studio-shell-label) 26%) !important;')
+    expect(file).toContain('inset 0 0 0 1px color-mix(in srgb, var(--studio-shell-label) 34%, var(--studio-divider) 66%)')
   })
 
   it('uses the shared button classes in the app shell and diagram page controls', () => {

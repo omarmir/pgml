@@ -260,6 +260,57 @@ Table public.orders {
     expect(serialized).toContain('active_view: version_compact')
   })
 
+  it('serializes and parses compare exclusions for workspace and locked versions', () => {
+    const parsed = parsePgmlDocument(`VersionSet "Billing" {
+  Workspace {
+    based_on: v1
+
+    CompareExclusions {
+      group: "Core"
+      table: "public.audit_log"
+    }
+
+    Snapshot {
+      Table public.users in Core {
+        id uuid [pk]
+      }
+    }
+  }
+
+  Version v1 {
+    name: "Initial implementation"
+    role: implementation
+    created_at: "2026-03-29T12:00:00.000Z"
+
+    CompareExclusions {
+      group: "Legacy"
+      table: "public.kysely_migration"
+    }
+
+    Snapshot {
+      Table public.users {
+        id uuid [pk]
+      }
+    }
+  }
+}`)
+
+    const serialized = serializePgmlDocument(parsed)
+
+    expect(parsed.workspace.compareExclusions).toEqual({
+      groupNames: ['Core'],
+      tableIds: ['public.audit_log']
+    })
+    expect(parsed.versions[0]?.compareExclusions).toEqual({
+      groupNames: ['Legacy'],
+      tableIds: ['public.kysely_migration']
+    })
+    expect(serialized).toContain('CompareExclusions {')
+    expect(serialized).toContain('group: "Core"')
+    expect(serialized).toContain('table: "public.audit_log"')
+    expect(serialized).toContain('group: "Legacy"')
+  })
+
   it('migrates legacy snapshot Properties blocks into the default workspace view', () => {
     const parsed = parsePgmlDocument(`VersionSet "Billing" {
   Workspace {
@@ -309,7 +360,15 @@ Table public.orders {
       name: 'Billing',
       workspaceSource: baseSnapshotSource
     })
-    const withFirstVersion = createPgmlVersionFromWorkspace(initialDocument, {
+    const configuredWorkspace = replacePgmlWorkspaceFromSnapshot(initialDocument, {
+      basedOnVersionId: initialDocument.workspace.basedOnVersionId,
+      compareExclusions: {
+        groupNames: ['Core'],
+        tableIds: ['public.audit_log']
+      },
+      source: baseSnapshotSource
+    })
+    const withFirstVersion = createPgmlVersionFromWorkspace(configuredWorkspace, {
       createdAt: '2026-03-29T12:00:00.000Z',
       name: 'Initial design',
       role: 'design'
@@ -331,6 +390,10 @@ Table public.memberships {
 
     expect(withFirstVersion.versions[0]?.parentVersionId).toBeNull()
     expect(withFirstVersion.versions[0]?.id.startsWith('v_')).toBe(true)
+    expect(withFirstVersion.versions[0]?.compareExclusions).toEqual({
+      groupNames: ['Core'],
+      tableIds: ['public.audit_log']
+    })
     expect(withSecondVersion.versions[1]?.parentVersionId).toBe(withFirstVersion.versions[0]?.id)
     expect(withSecondVersion.versions[1]?.id.startsWith('v_')).toBe(true)
     expect(withSecondVersion.workspace.basedOnVersionId).toBe(withSecondVersion.versions[1]?.id)

@@ -78,7 +78,7 @@ const handleOpenChange = (nextValue: boolean) => {
           />
         </div>
 
-        <div :class="joinStudioClasses('min-h-0', bodyClass)">
+        <div :class="joinStudioClasses('min-h-0 flex-1 overflow-y-auto', bodyClass)">
           <slot />
         </div>
 

@@ -26,4 +26,11 @@ describe('diagram GPU shell group layout source', () => {
     expect(shellFile).toContain('tableWidthScale: group.tableWidthScale')
     expect(sceneUtilsFile).toContain('masonry: typeof entry.masonry === \'boolean\' ? entry.masonry : previousEntry.masonry')
   })
+
+  it('resets collapsed floating object heights back to the shared collapsed size', () => {
+    const shellFile = readSourceFile('app/components/pgml/PgmlDiagramCanvasGpuShell.vue')
+
+    expect(shellFile).toContain('height: collapsed ? diagramObjectCollapsedHeight : expandedHeight')
+    expect(shellFile).toContain('height: diagramObjectCollapsedHeight')
+  })
 })

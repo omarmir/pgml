@@ -299,6 +299,44 @@ describe('usePgmlStudioSchemas', () => {
     expect(api.hasPendingLocalChanges.value).toBe(false)
   })
 
+  it('autosaves serialized document changes even when the raw editor source stays the same', async () => {
+    vi.useFakeTimers()
+
+    const source = ref('Table public.users {\n  id uuid [pk]\n}')
+    const serializedDocumentSuffix = ref('')
+    let api!: ReturnType<typeof usePgmlStudioSchemas>
+
+    await mountSuspended(defineComponent({
+      setup() {
+        api = usePgmlStudioSchemas({
+          buildSchemaText: () => `${source.value}${serializedDocumentSuffix.value}`,
+          canEmbedLayout: computed(() => true),
+          initialSource: 'Table public.example {\n  id uuid [pk]\n}',
+          source
+        })
+
+        return () => null
+      }
+    }))
+
+    expect(api.hasPendingLocalChanges.value).toBe(false)
+
+    serializedDocumentSuffix.value = '\n\nVersion v_autosave_test {\n  name: "Checkpoint from workspace"\n}'
+
+    expect(api.hasPendingLocalChanges.value).toBe(true)
+    expect(api.isSavedToLocalStorage.value).toBe(false)
+
+    await vi.advanceTimersByTimeAsync(5000)
+
+    const persisted = JSON.parse(window.localStorage.getItem('pgml-studio-schemas-v1') || '[]')
+
+    expect(persisted).toHaveLength(1)
+    expect(persisted[0]?.text).toContain('Checkpoint from workspace')
+    expect(api.hasSavedSchemaInSession.value).toBe(true)
+    expect(api.isSavedToLocalStorage.value).toBe(true)
+    expect(api.hasPendingLocalChanges.value).toBe(false)
+  })
+
   it('keeps pending changes and exposes an error when local storage saving fails', async () => {
     vi.useFakeTimers()
 

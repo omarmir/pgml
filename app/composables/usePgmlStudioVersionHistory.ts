@@ -62,8 +62,8 @@ import {
   type PgmlVersionRole,
   type PgmlVersionSetDocument
 } from '~/utils/pgml-document'
-import { stripPgmlPropertiesBlocks } from '~/utils/pgml'
-import type { PgmlNodeProperties } from '~/utils/pgml'
+import { clonePgmlCompareExclusions, stripPgmlPropertiesBlocks } from '~/utils/pgml'
+import type { PgmlCompareExclusions, PgmlNodeProperties } from '~/utils/pgml'
 import {
   clonePgmlDocumentSchemaMetadata,
   type PgmlDocumentSchemaMetadata
@@ -414,6 +414,10 @@ const normalizeDiagramViewName = (value: string | null | undefined) => {
   return value?.trim() || ''
 }
 
+const normalizeVersionName = (value: string | null | undefined) => {
+  return value?.trim() || ''
+}
+
 const hasDiagramViewName = (
   views: PgmlDocumentDiagramView[],
   name: string,
@@ -478,6 +482,7 @@ export const usePgmlStudioVersionHistory = (
       versions: nextDocument.versions.map((version) => {
         return {
           ...version,
+          compareExclusions: clonePgmlCompareExclusions(version.compareExclusions),
           snapshot: {
             source: normalizeSnapshotSource(version.snapshot.source, true)
           },
@@ -486,6 +491,7 @@ export const usePgmlStudioVersionHistory = (
       }),
       workspace: {
         ...nextDocument.workspace,
+        compareExclusions: clonePgmlCompareExclusions(nextDocument.workspace.compareExclusions),
         snapshot: {
           source: normalizeSnapshotSource(nextDocument.workspace.snapshot.source, true)
         },
@@ -884,6 +890,59 @@ export const usePgmlStudioVersionHistory = (
 
     return nextDocument.versions.at(-1) || null
   }
+  const renameVersion = (
+    versionId: string,
+    name: string
+  ) => {
+    const normalizedName = normalizeVersionName(name)
+
+    if (normalizedName.length === 0) {
+      return false
+    }
+
+    const nextDocument = clonePgmlVersionSetDocument(
+      buildWorkspaceSyncedDocument(documentState.value, input.source.value)
+    )
+    const targetVersion = nextDocument.versions.find(version => version.id === versionId)
+
+    if (!targetVersion) {
+      return false
+    }
+
+    targetVersion.name = normalizedName
+    documentState.value = nextDocument
+    normalizeSelectionState()
+
+    return true
+  }
+  const setCompareExclusions = (
+    targetId: PgmlVersionPreviewTarget,
+    compareExclusions: PgmlCompareExclusions
+  ) => {
+    const nextDocument = clonePgmlVersionSetDocument(
+      buildWorkspaceSyncedDocument(documentState.value, input.source.value)
+    )
+
+    if (targetId === 'workspace') {
+      nextDocument.workspace.compareExclusions = clonePgmlCompareExclusions(compareExclusions)
+      documentState.value = nextDocument
+      normalizeSelectionState()
+
+      return true
+    }
+
+    const targetVersion = nextDocument.versions.find(version => version.id === targetId)
+
+    if (!targetVersion) {
+      return false
+    }
+
+    targetVersion.compareExclusions = clonePgmlCompareExclusions(compareExclusions)
+    documentState.value = nextDocument
+    normalizeSelectionState()
+
+    return true
+  }
   // Restores and imports both replace the live workspace, so they should land
   // back on the editable draft with a compare pair anchored to that new base.
   const resetWorkspaceSelectionState = (baseId: string | null) => {
@@ -894,6 +953,7 @@ export const usePgmlStudioVersionHistory = (
   const replaceWorkspaceSnapshotAndResetSelection = (inputOptions: {
     activeViewId?: string | null
     basedOnVersionId: string | null
+    compareExclusions?: PgmlCompareExclusions
     selectionBaseId: string | null
     source: string
     updatedAt: string
@@ -904,6 +964,7 @@ export const usePgmlStudioVersionHistory = (
     const nextDocument = replacePgmlWorkspaceFromSnapshot(documentState.value, {
       activeViewId: inputOptions.activeViewId,
       basedOnVersionId: inputOptions.basedOnVersionId,
+      compareExclusions: inputOptions.compareExclusions,
       source: inputOptions.source,
       updatedAt: inputOptions.updatedAt,
       views: inputOptions.views
@@ -923,6 +984,7 @@ export const usePgmlStudioVersionHistory = (
     replaceWorkspaceSnapshotAndResetSelection({
       activeViewId: targetVersion.activeViewId,
       basedOnVersionId: targetVersion.id,
+      compareExclusions: targetVersion.compareExclusions,
       selectionBaseId: targetVersion.parentVersionId,
       source: targetVersion.snapshot.source,
       updatedAt: new Date().toISOString(),
@@ -940,13 +1002,16 @@ export const usePgmlStudioVersionHistory = (
     // Imported snapshots intentionally replace the draft and anchor it to the
     // chosen locked base version so compare and migrations start from the same
     // predecessor the user selected during the import flow.
-    if (!getPgmlVersionById(documentState.value, inputOptions.basedOnVersionId)) {
+    const baseVersion = getPgmlVersionById(documentState.value, inputOptions.basedOnVersionId)
+
+    if (!baseVersion) {
       return false
     }
 
     replaceWorkspaceSnapshotAndResetSelection({
       activeViewId: null,
       basedOnVersionId: inputOptions.basedOnVersionId,
+      compareExclusions: baseVersion.compareExclusions,
       selectionBaseId: inputOptions.basedOnVersionId,
       source: normalizeSnapshotSource(inputOptions.source, inputOptions.includeLayout),
       updatedAt: new Date().toISOString(),
@@ -1010,12 +1075,14 @@ export const usePgmlStudioVersionHistory = (
     replaceWorkspaceFromImportedSnapshot,
     replaceWorkspaceFromVersion,
     renameActiveDiagramView,
+    renameVersion,
     resetDocument,
     rootVersions,
     selectDiagramView,
     serializeCurrentDocument,
     setSchemaMetadata,
     setCompareTargets,
+    setCompareExclusions,
     setDocumentEditorScope,
     setPreviewTarget,
     latestDesignVersion,

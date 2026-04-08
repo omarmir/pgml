@@ -66,6 +66,7 @@ import {
 } from '~/utils/pgml-version-summary'
 import {
   buildPgmlCheckpointName,
+  getPgmlCompareExclusionsForTarget,
   getPgmlVersionDisplayLabel,
   getLatestPgmlVersion,
   serializePgmlDocumentScope
@@ -103,10 +104,14 @@ import {
   buildPgmlVersionCompareOptions
 } from '~/utils/pgml-version-options'
 import {
+  clonePgmlCompareExclusions,
+  createEmptyPgmlCompareExclusions,
+  filterPgmlSchemaModelForCompareExclusions,
   parsePgml,
   pgmlExample,
   pgmlVersionedExample,
   replacePgmlSourceRange,
+  type PgmlCompareExclusions,
   type PgmlNodeProperties,
   type PgmlMetadataEntry,
   type PgmlSchemaModel,
@@ -315,6 +320,12 @@ const importExecutableAttachmentError: Ref<string | null> = ref(null)
 const isSubmittingImportExecutableAttachmentResolution: Ref<boolean> = ref(false)
 const restoreVersionDialogOpen: Ref<boolean> = ref(false)
 const restoreVersionId: Ref<string | null> = ref(null)
+const compareExclusionsDialogOpen: Ref<boolean> = ref(false)
+const compareExclusionsDraft: Ref<PgmlCompareExclusions | null> = ref(null)
+const compareExclusionsSearchQuery: Ref<string> = ref('')
+const renameVersionDialogOpen: Ref<boolean> = ref(false)
+const renameVersionDraftName: Ref<string> = ref('')
+const renameVersionId: Ref<string | null> = ref(null)
 const tableEditorDraft: Ref<PgmlEditableTableDraft | null> = ref(null)
 const tableEditorOpen: Ref<boolean> = ref(false)
 const groupEditorDraft: Ref<PgmlEditableGroupDraft | null> = ref(null)
@@ -368,6 +379,8 @@ const {
   replaceWorkspaceFromImportedSnapshot,
   replaceWorkspaceFromVersion,
   renameActiveDiagramView,
+  renameVersion,
+  setCompareExclusions,
   selectDiagramView,
   serializeCurrentDocument,
   setCompareTargets,
@@ -1093,6 +1106,7 @@ const getVersionLabel = (input: {
 }) => {
   return getPgmlVersionDisplayLabel({
     activeViewId: null,
+    compareExclusions: createEmptyPgmlCompareExclusions(),
     createdAt: '',
     id: input.id,
     name: input.name,
@@ -1182,19 +1196,32 @@ const shouldBuildMigrationArtifacts = computed(() => {
 const shouldBuildVersionArtifacts = computed(() => {
   return shouldBuildCompareArtifacts.value || shouldBuildMigrationArtifacts.value
 })
-const compareBaseModel = computed<PgmlSchemaModel | null>(() => {
+const compareTargetExclusions = computed<PgmlCompareExclusions>(() => {
+  return getPgmlCompareExclusionsForTarget(versionDocument.value, versionCompareTargetId.value)
+})
+const compareBaseRawModel = computed<PgmlSchemaModel | null>(() => {
   if (!shouldBuildVersionArtifacts.value) {
     return null
   }
 
   return parsePgml(compareBaseSource.value)
 })
-const compareTargetModel = computed<PgmlSchemaModel | null>(() => {
+const compareTargetRawModel = computed<PgmlSchemaModel | null>(() => {
   if (!shouldBuildVersionArtifacts.value) {
     return null
   }
 
   return parsePgml(compareTargetSource.value)
+})
+const compareBaseModel = computed<PgmlSchemaModel | null>(() => {
+  return compareBaseRawModel.value
+    ? filterPgmlSchemaModelForCompareExclusions(compareBaseRawModel.value, compareTargetExclusions.value)
+    : null
+})
+const compareTargetModel = computed<PgmlSchemaModel | null>(() => {
+  return compareTargetRawModel.value
+    ? filterPgmlSchemaModelForCompareExclusions(compareTargetRawModel.value, compareTargetExclusions.value)
+    : null
 })
 const compareDiff = computed(() => {
   if (!compareBaseModel.value || !compareTargetModel.value) {
@@ -1322,6 +1349,52 @@ const selectedImportDumpBaseVersionSource = computed(() => {
 const selectedImportDbmlBaseVersion = computed(() => {
   return importDbmlBaseVersionId.value
     ? versions.value.find(version => version.id === importDbmlBaseVersionId.value) || null
+    : null
+})
+const compareExclusionsTargetVersion = computed(() => {
+  return versionCompareTargetId.value === 'workspace'
+    ? null
+    : versions.value.find(version => version.id === versionCompareTargetId.value) || null
+})
+const compareExclusionsTargetLabel = computed(() => {
+  return versionCompareTargetId.value === 'workspace'
+    ? 'Current workspace'
+    : (compareExclusionsTargetVersion.value ? getVersionLabel(compareExclusionsTargetVersion.value) : 'Selected version')
+})
+const compareExclusionGroupOptions = computed(() => {
+  return (compareTargetRawModel.value?.groups || [])
+    .map(group => group.name)
+    .sort((left, right) => left.localeCompare(right))
+})
+const compareExclusionTableOptions = computed(() => {
+  return (compareTargetRawModel.value?.tables || [])
+    .map(table => table.fullName)
+    .sort((left, right) => left.localeCompare(right))
+})
+const normalizedCompareExclusionsSearchQuery = computed(() => {
+  return compareExclusionsSearchQuery.value.trim().toLowerCase()
+})
+const filteredCompareExclusionGroupOptions = computed(() => {
+  if (normalizedCompareExclusionsSearchQuery.value.length === 0) {
+    return compareExclusionGroupOptions.value
+  }
+
+  return compareExclusionGroupOptions.value.filter((groupName) => {
+    return groupName.toLowerCase().includes(normalizedCompareExclusionsSearchQuery.value)
+  })
+})
+const filteredCompareExclusionTableOptions = computed(() => {
+  if (normalizedCompareExclusionsSearchQuery.value.length === 0) {
+    return compareExclusionTableOptions.value
+  }
+
+  return compareExclusionTableOptions.value.filter((tableId) => {
+    return tableId.toLowerCase().includes(normalizedCompareExclusionsSearchQuery.value)
+  })
+})
+const renameVersionCandidate = computed(() => {
+  return renameVersionId.value
+    ? versions.value.find(version => version.id === renameVersionId.value) || null
     : null
 })
 const restoreVersionCandidate = computed(() => {
@@ -1469,6 +1542,104 @@ const closeRestoreVersionDialog = () => {
   restoreVersionDialogOpen.value = false
   restoreVersionId.value = null
 }
+const compareExclusionsDialogDescription = computed(() => {
+  return `Choose the groups and tables to hide whenever ${compareExclusionsTargetLabel.value} is used as the compare target. New checkpoints keep the workspace exclusions, and imports or restores inherit the selected base version exclusions.`
+})
+const hasCompareExclusionGroup = (groupName: string) => {
+  return compareExclusionsDraft.value?.groupNames.includes(groupName) || false
+}
+const hasCompareExclusionTable = (tableId: string) => {
+  return compareExclusionsDraft.value?.tableIds.includes(tableId) || false
+}
+const openCompareExclusionsDialog = () => {
+  compareExclusionsDraft.value = clonePgmlCompareExclusions(compareTargetExclusions.value)
+  compareExclusionsSearchQuery.value = ''
+  compareExclusionsDialogOpen.value = true
+}
+const closeCompareExclusionsDialog = () => {
+  compareExclusionsDialogOpen.value = false
+  compareExclusionsDraft.value = null
+  compareExclusionsSearchQuery.value = ''
+}
+const toggleCompareExclusionGroup = (groupName: string) => {
+  if (!compareExclusionsDraft.value) {
+    return
+  }
+
+  compareExclusionsDraft.value = clonePgmlCompareExclusions({
+    ...compareExclusionsDraft.value,
+    groupNames: hasCompareExclusionGroup(groupName)
+      ? compareExclusionsDraft.value.groupNames.filter(value => value !== groupName)
+      : [...compareExclusionsDraft.value.groupNames, groupName]
+  })
+}
+const toggleCompareExclusionTable = (tableId: string) => {
+  if (!compareExclusionsDraft.value) {
+    return
+  }
+
+  compareExclusionsDraft.value = clonePgmlCompareExclusions({
+    ...compareExclusionsDraft.value,
+    tableIds: hasCompareExclusionTable(tableId)
+      ? compareExclusionsDraft.value.tableIds.filter(value => value !== tableId)
+      : [...compareExclusionsDraft.value.tableIds, tableId]
+  })
+}
+const clearCompareExclusionsDraft = () => {
+  compareExclusionsDraft.value = createEmptyPgmlCompareExclusions()
+}
+const saveCompareExclusionsDialog = () => {
+  if (!compareExclusionsDraft.value) {
+    return
+  }
+
+  const didSave = setCompareExclusions(
+    versionCompareTargetId.value,
+    compareExclusionsDraft.value
+  )
+
+  if (!didSave) {
+    return
+  }
+
+  markBrowserSchemaStatusEligible()
+  closeCompareExclusionsDialog()
+  toast.add({
+    title: 'Compare exclusions updated',
+    description: `${compareExclusionsTargetLabel.value} now keeps its selected compare exclusions.`,
+    color: 'success',
+    icon: 'i-lucide-check'
+  })
+}
+const normalizedRenameVersionDraftName = computed(() => {
+  return renameVersionDraftName.value.trim()
+})
+const renameVersionDialogDescription = computed(() => {
+  return 'Update the display name of this locked version checkpoint.'
+})
+const renameVersionNameError = computed(() => {
+  if (normalizedRenameVersionDraftName.value.length === 0) {
+    return 'Version name is required.'
+  }
+
+  return null
+})
+const openRenameVersionDialog = (versionId: string) => {
+  const version = versions.value.find(entry => entry.id === versionId) || null
+
+  if (!version) {
+    return
+  }
+
+  renameVersionId.value = versionId
+  renameVersionDraftName.value = getVersionLabel(version)
+  renameVersionDialogOpen.value = true
+}
+const closeRenameVersionDialog = () => {
+  renameVersionDialogOpen.value = false
+  renameVersionDraftName.value = ''
+  renameVersionId.value = null
+}
 const saveCheckpoint = async () => {
   await flushPendingEditorChanges()
   const normalizedName = checkpointName.value.trim()
@@ -1559,6 +1730,26 @@ const closeDiagramViewDialog = () => {
   diagramViewDialogOpen.value = false
   diagramViewDialogMode.value = 'create'
   diagramViewDraftName.value = ''
+}
+const saveRenameVersionDialog = () => {
+  if (renameVersionNameError.value !== null || !renameVersionId.value) {
+    return
+  }
+
+  const didRename = renameVersion(renameVersionId.value, normalizedRenameVersionDraftName.value)
+
+  if (!didRename) {
+    return
+  }
+
+  markBrowserSchemaStatusEligible()
+  closeRenameVersionDialog()
+  toast.add({
+    title: 'Version renamed',
+    description: `Locked version renamed to ${normalizedRenameVersionDraftName.value}.`,
+    color: 'success',
+    icon: 'i-lucide-check'
+  })
 }
 const revealPreviewTargetDocumentSource = () => {
   setDocumentEditorScope(getPreviewTargetDocumentScope())
@@ -2843,6 +3034,8 @@ onBeforeUnmount(() => {
           :compare-base-label="compareBaseLabel"
           :compare-base-model="compareBaseModel"
           :compare-entries="compareEntries"
+          :compare-excluded-group-names="compareTargetExclusions.groupNames"
+          :compare-excluded-table-ids="compareTargetExclusions.tableIds"
           :compare-relationship-summary="compareRelationshipSummary"
           :compare-target-label="compareTargetLabel"
           :diagram-view-items="diagramViewItems"
@@ -2882,8 +3075,10 @@ onBeforeUnmount(() => {
           @delete-diagram-view="deleteSelectedDiagramView"
           @edit-group="openGroupEditor"
           @edit-table="openTableEditor"
+          @edit-compare-target-exclusions="openCompareExclusionsDialog"
           @node-properties-change="syncSourceWithNodeProperties"
           @rename-diagram-view="renameSelectedDiagramView"
+          @rename-version="openRenameVersionDialog"
           @restore-version="restoreVersionToWorkspace"
           @select-diagram-view="selectActiveDiagramView"
           @update-diagram-view-settings="updateDiagramViewSettings"
@@ -2962,6 +3157,8 @@ onBeforeUnmount(() => {
           :compare-base-label="compareBaseLabel"
           :compare-base-model="compareBaseModel"
           :compare-entries="compareEntries"
+          :compare-excluded-group-names="compareTargetExclusions.groupNames"
+          :compare-excluded-table-ids="compareTargetExclusions.tableIds"
           :compare-relationship-summary="compareRelationshipSummary"
           :compare-target-label="compareTargetLabel"
           :diagram-view-items="diagramViewItems"
@@ -2998,8 +3195,10 @@ onBeforeUnmount(() => {
           @delete-diagram-view="deleteSelectedDiagramView"
           @edit-group="openGroupEditor"
           @edit-table="openTableEditor"
+          @edit-compare-target-exclusions="openCompareExclusionsDialog"
           @node-properties-change="syncSourceWithNodeProperties"
           @rename-diagram-view="renameSelectedDiagramView"
+          @rename-version="openRenameVersionDialog"
           @restore-version="restoreVersionToWorkspace"
           @select-diagram-view="selectActiveDiagramView"
           @update-diagram-view-settings="updateDiagramViewSettings"
@@ -3183,6 +3382,217 @@ onBeforeUnmount(() => {
             :class="primaryModalButtonClass"
             :disabled="diagramViewNameError !== null"
             @click="saveDiagramViewDialog"
+          />
+        </template>
+      </StudioModalFrame>
+
+      <StudioModalFrame
+        v-model:open="compareExclusionsDialogOpen"
+        title="Edit compare exclusions"
+        :description="compareExclusionsDialogDescription"
+        surface-id="compare-exclusions"
+        body-class="grid gap-4 px-4 py-3"
+        @close="closeCompareExclusionsDialog"
+      >
+        <div class="grid gap-4">
+          <div class="border border-[color:var(--studio-shell-border)] bg-[color:var(--studio-control-bg)] px-3 py-3">
+            <div :class="studioFieldKickerClass">
+              Target snapshot
+            </div>
+            <div class="mt-2 text-[0.85rem] font-semibold text-[color:var(--studio-shell-text)]">
+              {{ compareExclusionsTargetLabel }}
+            </div>
+            <p class="mt-2 text-[0.74rem] leading-6 text-[color:var(--studio-shell-muted)]">
+              {{
+                compareExclusionsDraft
+                  ? `${compareExclusionsDraft.groupNames.length} excluded group${compareExclusionsDraft.groupNames.length === 1 ? '' : 's'} · ${compareExclusionsDraft.tableIds.length} excluded table${compareExclusionsDraft.tableIds.length === 1 ? '' : 's'}`
+                  : 'No exclusions loaded.'
+              }}
+            </p>
+          </div>
+
+          <label class="grid gap-1">
+            <span :class="studioFieldKickerClass">
+              Search exclusions
+            </span>
+            <input
+              v-model="compareExclusionsSearchQuery"
+              data-compare-exclusions-search="true"
+              type="search"
+              placeholder="Filter groups and tables"
+              :class="joinStudioClasses(studioCompactInputClass, 'w-full')"
+            >
+          </label>
+
+          <div class="grid gap-4 lg:grid-cols-2">
+            <div class="grid gap-2">
+              <div :class="studioFieldKickerClass">
+                Excluded groups
+              </div>
+              <div
+                v-if="filteredCompareExclusionGroupOptions.length > 0"
+                class="grid gap-2"
+              >
+                <button
+                  v-for="groupName in filteredCompareExclusionGroupOptions"
+                  :key="groupName"
+                  type="button"
+                  :data-compare-exclusion-group="groupName"
+                  class="flex items-center justify-between gap-3 border px-3 py-2 text-left transition-colors duration-150"
+                  :class="hasCompareExclusionGroup(groupName)
+                    ? 'border-[color:var(--studio-ring)] bg-[color:var(--studio-input-bg)] text-[color:var(--studio-shell-text)]'
+                    : 'border-[color:var(--studio-divider)] bg-[color:var(--studio-control-bg)] text-[color:var(--studio-shell-muted)]'"
+                  :aria-pressed="hasCompareExclusionGroup(groupName)"
+                  @click="toggleCompareExclusionGroup(groupName)"
+                >
+                  <span class="min-w-0 break-words text-[0.74rem] font-semibold [overflow-wrap:anywhere]">
+                    {{ groupName }}
+                  </span>
+                  <span class="font-mono text-[0.54rem] uppercase tracking-[0.08em]">
+                    {{ hasCompareExclusionGroup(groupName) ? 'Excluded' : 'Included' }}
+                  </span>
+                </button>
+              </div>
+              <div
+                v-else
+                :class="studioEmptyStateClass"
+              >
+                No table groups match the current filter.
+              </div>
+            </div>
+
+            <div class="grid gap-2">
+              <div :class="studioFieldKickerClass">
+                Excluded tables
+              </div>
+              <div
+                v-if="filteredCompareExclusionTableOptions.length > 0"
+                class="grid gap-2"
+              >
+                <button
+                  v-for="tableId in filteredCompareExclusionTableOptions"
+                  :key="tableId"
+                  type="button"
+                  :data-compare-exclusion-table="tableId"
+                  class="flex items-center justify-between gap-3 border px-3 py-2 text-left transition-colors duration-150"
+                  :class="hasCompareExclusionTable(tableId)
+                    ? 'border-[color:var(--studio-ring)] bg-[color:var(--studio-input-bg)] text-[color:var(--studio-shell-text)]'
+                    : 'border-[color:var(--studio-divider)] bg-[color:var(--studio-control-bg)] text-[color:var(--studio-shell-muted)]'"
+                  :aria-pressed="hasCompareExclusionTable(tableId)"
+                  @click="toggleCompareExclusionTable(tableId)"
+                >
+                  <span class="min-w-0 break-words text-[0.74rem] font-semibold [overflow-wrap:anywhere]">
+                    {{ tableId }}
+                  </span>
+                  <span class="font-mono text-[0.54rem] uppercase tracking-[0.08em]">
+                    {{ hasCompareExclusionTable(tableId) ? 'Excluded' : 'Included' }}
+                  </span>
+                </button>
+              </div>
+              <div
+                v-else
+                :class="studioEmptyStateClass"
+              >
+                No tables match the current filter.
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <template #footer>
+          <UButton
+            label="Cancel"
+            color="neutral"
+            variant="outline"
+            :class="secondaryModalButtonClass"
+            @click="closeCompareExclusionsDialog"
+          />
+          <UButton
+            label="Clear exclusions"
+            color="neutral"
+            variant="outline"
+            :class="secondaryModalButtonClass"
+            :disabled="!compareExclusionsDraft || (compareExclusionsDraft.groupNames.length === 0 && compareExclusionsDraft.tableIds.length === 0)"
+            @click="clearCompareExclusionsDraft"
+          />
+          <UButton
+            label="Save exclusions"
+            data-compare-exclusions-save="true"
+            color="neutral"
+            variant="soft"
+            :class="primaryModalButtonClass"
+            :disabled="!compareExclusionsDraft"
+            @click="saveCompareExclusionsDialog"
+          />
+        </template>
+      </StudioModalFrame>
+
+      <StudioModalFrame
+        v-model:open="renameVersionDialogOpen"
+        title="Rename version"
+        :description="renameVersionDialogDescription"
+        surface-id="rename-version"
+        body-class="grid gap-4 px-4 py-3"
+        @close="closeRenameVersionDialog"
+      >
+        <div class="grid gap-3">
+          <div class="border border-[color:var(--studio-shell-border)] bg-[color:var(--studio-control-bg)] px-3 py-3">
+            <div :class="studioFieldKickerClass">
+              Selected version
+            </div>
+            <div class="mt-2 text-[0.85rem] font-semibold text-[color:var(--studio-shell-text)]">
+              {{ renameVersionCandidate ? getVersionLabel(renameVersionCandidate) : 'Unknown version' }}
+            </div>
+            <p class="mt-2 text-[0.74rem] leading-6 text-[color:var(--studio-shell-muted)]">
+              Rename the locked checkpoint without changing its position in the history tree.
+            </p>
+          </div>
+
+          <label class="grid gap-1">
+            <span :class="studioFieldKickerClass">
+              Version name
+            </span>
+            <UInput
+              v-model="renameVersionDraftName"
+              data-rename-version-name-input="true"
+              placeholder="Version name"
+              color="neutral"
+              variant="outline"
+              size="sm"
+              :ui="studioFieldUi"
+            />
+          </label>
+
+          <div
+            v-if="renameVersionNameError"
+            data-rename-version-name-error="true"
+            class="grid gap-1 border border-[color:var(--studio-shell-error)]/40 bg-[color:var(--studio-shell-error)]/8 px-3 py-3 text-[0.74rem] text-[color:var(--studio-shell-error)]"
+          >
+            <div class="font-mono text-[0.58rem] uppercase tracking-[0.08em]">
+              Version name
+            </div>
+            <div>
+              {{ renameVersionNameError }}
+            </div>
+          </div>
+        </div>
+
+        <template #footer>
+          <UButton
+            label="Cancel"
+            color="neutral"
+            variant="outline"
+            :class="secondaryModalButtonClass"
+            @click="closeRenameVersionDialog"
+          />
+          <UButton
+            label="Rename version"
+            data-rename-version-save="true"
+            color="neutral"
+            variant="soft"
+            :class="primaryModalButtonClass"
+            :disabled="renameVersionNameError !== null || !renameVersionCandidate"
+            @click="saveRenameVersionDialog"
           />
         </template>
       </StudioModalFrame>

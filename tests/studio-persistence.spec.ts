@@ -239,6 +239,48 @@ test('studio autosaves changes to local storage and updates the header status ic
   })
 })
 
+test('browser-backed checkpoint creation autosaves version history changes', async ({ goto, page }) => {
+  await goto('/diagram')
+
+  const editor = getPgmlEditor(page)
+
+  await setPgmlEditorValue(editor, `Table public.users {
+  id uuid [pk]
+  email text
+}`)
+
+  await page.locator('[data-diagram-tool-toggle="versions"]').click()
+  await page.locator('[data-version-create-checkpoint="true"]').click()
+
+  const checkpointDialog = page.locator('[data-studio-modal-surface="checkpoint"]')
+
+  await expect(checkpointDialog).toBeVisible()
+  await checkpointDialog.getByPlaceholder('Checkpoint name').fill('Autosaved browser checkpoint')
+  await checkpointDialog.getByRole('button', { name: 'Create design checkpoint' }).click()
+  await expect(checkpointDialog).toHaveCount(0)
+
+  await expect(page.locator('[data-studio-schema-status]')).toHaveAttribute('data-studio-schema-status', 'pending')
+
+  await expect.poll(async () => {
+    return page.evaluate(() => {
+      const savedSchemas = JSON.parse(window.localStorage.getItem('pgml-studio-schemas-v1') || '[]')
+      const schemaStatus = document.querySelector('[data-studio-schema-status]')?.getAttribute('data-studio-schema-status')
+
+      return {
+        count: savedSchemas.length,
+        status: schemaStatus,
+        text: savedSchemas[0]?.text || ''
+      }
+    })
+  }, {
+    timeout: 8000
+  }).toEqual({
+    count: 1,
+    status: 'saved',
+    text: expect.stringContaining('Autosaved browser checkpoint')
+  })
+})
+
 test('studio reloads malformed workspace indentation as normalized PGML in the raw editor', async ({ goto, page }) => {
   await goto('/diagram')
 
@@ -644,5 +686,34 @@ test('light mode keeps modal secondary actions and select highlights readable', 
     && highlightedItemStyles?.beforeBackgroundColor === 'rgba(0, 0, 0, 0)'
     && highlightedItemStyles?.boxShadow === 'none'
   ).toBe(false)
+  expect(highlightedItemStyles?.color).not.toBe(highlightedItemStyles?.backgroundColor)
+})
+
+test('dark mode keeps select highlights readable', async ({ goto, page }) => {
+  await goto('/diagram')
+
+  await page.locator('[data-table-edit-button="public.users"]').dispatchEvent('click')
+  await page.getByLabel('Table schema').click()
+  await page.keyboard.press('ArrowDown')
+
+  const highlightedItemStyles = await page.evaluate(() => {
+    const highlightedItem = document.querySelector('.studio-select-item[data-highlighted]')
+
+    if (!(highlightedItem instanceof HTMLElement)) {
+      return null
+    }
+
+    const styles = window.getComputedStyle(highlightedItem)
+
+    return {
+      backgroundColor: styles.backgroundColor,
+      boxShadow: styles.boxShadow,
+      color: styles.color
+    }
+  })
+
+  expect(highlightedItemStyles).not.toBeNull()
+  expect(highlightedItemStyles?.backgroundColor).not.toBe('rgba(0, 0, 0, 0)')
+  expect(highlightedItemStyles?.boxShadow).not.toBe('none')
   expect(highlightedItemStyles?.color).not.toBe(highlightedItemStyles?.backgroundColor)
 })

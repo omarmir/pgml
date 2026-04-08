@@ -384,6 +384,8 @@ const {
   compareBaseLabel = 'Base',
   compareBaseModel = null,
   compareEntries = [],
+  compareExcludedGroupNames = [],
+  compareExcludedTableIds = [],
   compareRelationshipSummary = '',
   compareTargetLabel = 'Target',
   diagramViewItems = [],
@@ -419,6 +421,8 @@ const {
   compareBaseLabel?: string
   compareBaseModel?: PgmlSchemaModel | null
   compareEntries?: PgmlDiagramCompareEntry[]
+  compareExcludedGroupNames?: string[]
+  compareExcludedTableIds?: string[]
   compareRelationshipSummary?: string
   compareTargetLabel?: string
   diagramViewItems?: DiagramViewItem[]
@@ -447,7 +451,9 @@ const emit = defineEmits<{
   createDiagramView: []
   deleteDiagramView: []
   editGroup: [groupName: string]
+  editCompareTargetExclusions: []
   renameDiagramView: []
+  renameVersion: [versionId: string]
   editTable: [tableId: string]
   focusSource: [sourceRange: PgmlSourceRange]
   mobileCanvasViewChange: [view: StudioMobileCanvasView]
@@ -1968,7 +1974,7 @@ const syncLayoutStates = () => {
       compareHighlightColor: compareNodeHighlightById.value[item.id]?.color || null,
       details: item.details,
       expandedHeight,
-      height: collapsed ? previousState?.height ?? diagramObjectCollapsedHeight : expandedHeight,
+      height: collapsed ? diagramObjectCollapsedHeight : expandedHeight,
       id: item.id,
       impactTargets: item.impactTargets,
       kindLabel: item.kindLabel,
@@ -8463,11 +8469,14 @@ defineExpose<{
           :compare-base-id="versionCompareBaseId"
           :compare-options="versionCompareOptions"
           :compare-target-id="versionCompareTargetId"
+          :excluded-group-names="compareExcludedGroupNames"
+          :excluded-table-ids="compareExcludedTableIds"
           :entries="compareEntries"
           :relationship-summary="compareRelationshipSummary"
           :selected-diagram-context-ids="selectedDiagramCompareEntryIds"
           :selected-entry-id="selectedCompareEntryId"
           :target-label="compareTargetLabel"
+          @edit-target-exclusions="emit('editCompareTargetExclusions')"
           @focus-source="focusSourceRange"
           @focus-target="focusCompareEntry"
           @select-entry="selectedCompareEntryId = $event"
@@ -8486,6 +8495,7 @@ defineExpose<{
         @create-checkpoint="emit('versionCheckpoint')"
         @import-dbml="emit('versionImportDbml')"
         @import-dump="emit('versionImportDump')"
+        @rename-version="emit('renameVersion', $event)"
         @restore-version="emit('restoreVersion', $event)"
         @view-target="emit('viewVersionTarget', $event)"
       />

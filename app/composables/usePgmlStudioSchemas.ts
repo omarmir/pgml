@@ -84,11 +84,14 @@ export const usePgmlStudioSchemas = ({
   const getCurrentSnapshot = () => {
     return getSnapshot(getAutosaveName(), getAutosaveText())
   }
+  const currentSnapshot = computed(() => {
+    return getCurrentSnapshot()
+  })
   const syncSchemaSnapshot = (name: string, text: string) => {
     lastPersistedSnapshot.value = getSnapshot(name, text)
   }
   const syncCurrentSnapshot = () => {
-    lastPersistedSnapshot.value = getCurrentSnapshot()
+    lastPersistedSnapshot.value = currentSnapshot.value
   }
   const clearPersistedSelection = () => {
     currentSchemaId.value = null
@@ -110,7 +113,7 @@ export const usePgmlStudioSchemas = ({
     syncSchemaSnapshot(nextSchema.name, nextSchema.text)
   }
   const hasPendingLocalChanges = computed(() => {
-    return lastPersistedSnapshot.value !== getCurrentSnapshot()
+    return lastPersistedSnapshot.value !== currentSnapshot.value
   })
   const isSavedToLocalStorage = computed(() => {
     return currentSchemaId.value !== null && !hasPendingLocalChanges.value
@@ -229,18 +232,30 @@ export const usePgmlStudioSchemas = ({
     return true
   }
 
-  const saveSchemaToBrowser = async () => {
+  const persistCurrentSchemaToBrowser = async (options: PersistSchemaOptions) => {
     const name = normalizeSchemaName(currentSchemaName.value)
     const text = buildSchemaText(includeLayoutInSchema.value)
 
     isSavingToLocalStorage.value = true
-    const didSave = persistSchemaToBrowser(name, text, {
+    try {
+      const didSave = persistSchemaToBrowser(name, text, options)
+
+      await nextTick()
+
+      return didSave
+    } catch {
+      localStorageSaveError.value = localStorageSaveErrorMessage
+
+      return false
+    } finally {
+      isSavingToLocalStorage.value = false
+    }
+  }
+
+  const saveSchemaToBrowser = async () => {
+    return persistCurrentSchemaToBrowser({
       closeDialog: true
     })
-    await nextTick()
-    isSavingToLocalStorage.value = false
-
-    return didSave
   }
 
   const downloadSchema = () => {
@@ -312,25 +327,18 @@ export const usePgmlStudioSchemas = ({
     }
   }
 
-  watchDebounced([source, currentSchemaName], async () => {
+  watchDebounced(currentSnapshot, async (nextSnapshot) => {
     if (!import.meta.client || !isAutosaveEnabled.value) {
       return
     }
-
-    const name = getAutosaveName()
-    const text = getAutosaveText()
-    const nextSnapshot = getSnapshot(name, text)
 
     if (nextSnapshot === lastPersistedSnapshot.value) {
       return
     }
 
-    isSavingToLocalStorage.value = true
-    persistSchemaToBrowser(name, text, {
+    await persistCurrentSchemaToBrowser({
       closeDialog: false
     })
-    await nextTick()
-    isSavingToLocalStorage.value = false
   }, {
     debounce: schemaAutosaveDebounceMs,
     maxWait: schemaAutosaveDebounceMs

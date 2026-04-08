@@ -85,6 +85,11 @@ export type PgmlNodeProperties = {
   masonry?: boolean
 }
 
+export type PgmlCompareExclusions = {
+  groupNames: string[]
+  tableIds: string[]
+}
+
 export type PgmlMetadataEntry = {
   key: string
   value: string
@@ -241,6 +246,29 @@ const readMatch = (value: string | undefined) => value || ''
 const trimMultiline = (value: string) => value.replace(/^\n+|\n+$/g, '')
 const splitNormalizedLines = (value: string) => value.replaceAll('\r\n', '\n').split('\n')
 const pgmlEmbeddedSourceDelimiterPattern = /^\s*(?:source|definition):\s*(\$(?:[A-Za-z0-9_]+)?\$)(.*)$/
+const normalizeCompareExclusionValue = (value: string) => cleanName(value)
+const sortValues = (left: string, right: string) => left.localeCompare(right)
+
+export const createEmptyPgmlCompareExclusions = (): PgmlCompareExclusions => {
+  return {
+    groupNames: [],
+    tableIds: []
+  }
+}
+
+export const clonePgmlCompareExclusions = (
+  exclusions?: PgmlCompareExclusions | null
+): PgmlCompareExclusions => {
+  const normalizeValues = (values: string[]) => {
+    return Array.from(new Set(values.map(normalizeCompareExclusionValue).filter(value => value.length > 0))).sort(sortValues)
+  }
+
+  return {
+    groupNames: normalizeValues(exclusions?.groupNames || []),
+    tableIds: normalizeValues(exclusions?.tableIds || [])
+  }
+}
+
 const getLeadingWhitespaceWidth = (value: string) => {
   const match = value.match(/^[\t ]+/)
 
@@ -684,6 +712,139 @@ export const getSequenceAttachedTableIds = (
     sequence
   )
 }
+
+export const filterPgmlSchemaModelForCompareExclusions = (
+  model: PgmlSchemaModel,
+  exclusions: PgmlCompareExclusions
+) => {
+  const normalizedExclusions = clonePgmlCompareExclusions(exclusions)
+
+  if (
+    normalizedExclusions.groupNames.length === 0
+    && normalizedExclusions.tableIds.length === 0
+  ) {
+    return {
+      ...model,
+      groups: model.groups.map(group => ({
+        ...group,
+        tableNames: [...group.tableNames]
+      })),
+      nodeProperties: {
+        ...model.nodeProperties
+      },
+      tables: model.tables.map(table => ({
+        ...table,
+        columns: table.columns.map(column => ({
+          ...column,
+          customMetadata: [...column.customMetadata],
+          modifiers: [...column.modifiers],
+          reference: column.reference
+            ? {
+                ...column.reference
+              }
+            : null
+        })),
+        constraints: table.constraints.map(constraint => ({
+          ...constraint
+        })),
+        customMetadata: [...table.customMetadata],
+        indexes: table.indexes.map(index => ({
+          ...index
+        }))
+      })),
+      references: model.references.map(reference => ({
+        ...reference
+      }))
+    } satisfies PgmlSchemaModel
+  }
+
+  const excludedGroupNames = new Set(normalizedExclusions.groupNames)
+  const excludedTableIds = new Set(normalizedExclusions.tableIds)
+  const includedTables = model.tables.filter((table) => {
+    if (excludedTableIds.has(table.fullName)) {
+      return false
+    }
+
+    if (table.groupName && excludedGroupNames.has(table.groupName)) {
+      return false
+    }
+
+    return true
+  })
+  const includedTableIds = new Set(includedTables.map(table => table.fullName))
+  const allTableIds = new Set(model.tables.map(table => table.fullName))
+  const originalReferenceLookup = buildGroupTableReferenceLookup(model.tables)
+
+  const groups = model.groups.flatMap((group) => {
+    if (excludedGroupNames.has(group.name)) {
+      return []
+    }
+
+    return [{
+      ...group,
+      tableNames: group.tableNames.filter((tableName) => {
+        const resolvedTableId = originalReferenceLookup.get(resolveGroupTableReferenceKey(tableName))
+
+        if (!resolvedTableId) {
+          return true
+        }
+
+        return includedTableIds.has(resolvedTableId)
+      })
+    }]
+  })
+
+  const routinesReferenceLookup = buildGroupTableReferenceLookup(model.tables)
+  const shouldKeepRoutine = (routine: PgmlRoutine) => {
+    const attachedTableIds = getRoutinePrimaryTableIds(model.tables, routinesReferenceLookup, routine)
+
+    return attachedTableIds.length === 0 || attachedTableIds.some(tableId => includedTableIds.has(tableId))
+  }
+  const functions = model.functions.filter(shouldKeepRoutine)
+  const procedures = model.procedures.filter(shouldKeepRoutine)
+  const triggers = model.triggers.filter((trigger) => {
+    const resolvedTableId = resolveTableIdentifier(model.tables, originalReferenceLookup, trigger.tableName)
+
+    return !resolvedTableId || includedTableIds.has(resolvedTableId)
+  })
+  const sequences = model.sequences.filter((sequence) => {
+    const attachedTableIds = getSequenceAttachedTableIds(model.tables, sequence)
+
+    return attachedTableIds.length === 0 || attachedTableIds.some(tableId => includedTableIds.has(tableId))
+  })
+  const references = model.references.filter((reference) => {
+    return includedTableIds.has(reference.fromTable) && includedTableIds.has(reference.toTable)
+  })
+  const filteredModelWithoutNodeProperties = {
+    ...model,
+    functions,
+    groups,
+    nodeProperties: {},
+    procedures,
+    references,
+    sequences,
+    tables: includedTables,
+    triggers
+  } satisfies PgmlSchemaModel
+  const allowedStandaloneNodeIds = new Set(getPersistableStandaloneObjectPropertyTargetIds(filteredModelWithoutNodeProperties))
+  const nodeProperties = Object.fromEntries(Object.entries(model.nodeProperties).filter(([nodeId]) => {
+    if (nodeId.startsWith('group:')) {
+      return !excludedGroupNames.has(nodeId.replace(/^group:/, ''))
+    }
+
+    if (allTableIds.has(nodeId)) {
+      return !excludedTableIds.has(nodeId) && includedTableIds.has(nodeId)
+    }
+
+    return allowedStandaloneNodeIds.has(nodeId)
+  }))
+
+  return {
+    ...filteredModelWithoutNodeProperties,
+    nodeProperties
+  } satisfies PgmlSchemaModel
+}
+
 const getPersistableStandaloneObjectPropertyTargetIds = (model: PgmlSchemaModel) => {
   const referenceLookup = buildGroupTableReferenceLookup(model.tables)
   const triggerTableIdsByRoutineName = buildTriggerTableIdsByRoutineName(model, referenceLookup)

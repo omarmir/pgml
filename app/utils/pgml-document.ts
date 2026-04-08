@@ -1,7 +1,10 @@
 import { nanoid } from 'nanoid'
 import {
   buildPgmlWithNodeProperties,
+  clonePgmlCompareExclusions,
+  createEmptyPgmlCompareExclusions,
   dedentPgmlSourceForEditor,
+  type PgmlCompareExclusions,
   normalizePgmlSourceIndentation,
   parsePgml,
   stripPgmlPropertiesBlocks,
@@ -34,6 +37,7 @@ export type PgmlDocumentDiagramView = {
 export type PgmlWorkspaceDocumentBlock = {
   activeViewId: string | null
   basedOnVersionId: string | null
+  compareExclusions: PgmlCompareExclusions
   snapshot: PgmlDocumentSnapshot
   updatedAt: string | null
   views: PgmlDocumentDiagramView[]
@@ -41,6 +45,7 @@ export type PgmlWorkspaceDocumentBlock = {
 
 export type PgmlVersionDocumentBlock = {
   activeViewId: string | null
+  compareExclusions: PgmlCompareExclusions
   createdAt: string
   id: string
   name: string | null
@@ -77,6 +82,7 @@ type PgmlViewOwnerBlock = {
 const workspaceKeyword = 'Workspace'
 const snapshotKeyword = 'Snapshot'
 const schemaMetadataKeyword = 'SchemaMetadata'
+const compareExclusionsKeyword = 'CompareExclusions'
 const viewKeyword = 'View'
 const defaultPgmlDocumentViewName = 'Default'
 
@@ -867,6 +873,60 @@ const parseSchemaMetadataBlock = (block: PgmlNamedBlock): PgmlDocumentSchemaMeta
   })
 }
 
+const parseRepeatedMetadataEntries = (
+  lines: string[],
+  context: string
+) => {
+  const entries = lines.reduce<Array<{ key: string, value: string }>>((nextEntries, line) => {
+    const entry = parseMetadataEntry(line)
+
+    if (entry) {
+      nextEntries.push(entry)
+    }
+
+    return nextEntries
+  }, [])
+
+  assertNoUnexpectedTopLevelLines(
+    lines.filter(line => parseMetadataEntry(line) === null),
+    context
+  )
+
+  return entries
+}
+
+const parseCompareExclusionsBlock = (
+  block: PgmlNamedBlock,
+  context: string
+) => {
+  if (block.header !== compareExclusionsKeyword) {
+    throw new Error(`${context} CompareExclusions blocks must use \`CompareExclusions {\`.`)
+  }
+
+  const nested = collectBlocks(block.body.join('\n'))
+
+  if (nested.blocks.length > 0) {
+    throw new Error(`${context} CompareExclusions only allows table and group metadata entries.`)
+  }
+
+  const entries = parseRepeatedMetadataEntries(nested.topLevel, `${context} CompareExclusions`)
+  const compareExclusions = entries.reduce<PgmlCompareExclusions>((nextExclusions, entry) => {
+    if (entry.key === 'group') {
+      nextExclusions.groupNames.push(entry.value)
+      return nextExclusions
+    }
+
+    if (entry.key === 'table') {
+      nextExclusions.tableIds.push(entry.value)
+      return nextExclusions
+    }
+
+    throw new Error(`${context} CompareExclusions only allows group and table entries.`)
+  }, createEmptyPgmlCompareExclusions())
+
+  return clonePgmlCompareExclusions(compareExclusions)
+}
+
 const parseSnapshotBlock = (block: PgmlNamedBlock, context: string) => {
   if (block.header !== snapshotKeyword) {
     throw new Error(`${context} requires a Snapshot block.`)
@@ -946,14 +1006,19 @@ const parseWorkspaceBlock = (block: PgmlNamedBlock): PgmlWorkspaceDocumentBlock 
   const metadata = collectBlockMetadata(nested.topLevel, 'Workspace')
 
   const snapshotBlocks = nested.blocks.filter(nestedBlock => nestedBlock.header === snapshotKeyword)
+  const compareExclusionBlocks = nested.blocks.filter(nestedBlock => nestedBlock.header === compareExclusionsKeyword)
   const viewBlocks = nested.blocks.filter(nestedBlock => getViewName(nestedBlock.header) !== null)
 
   if (snapshotBlocks.length !== 1) {
     throw new Error('Workspace requires exactly one Snapshot block.')
   }
 
-  if (snapshotBlocks.length + viewBlocks.length !== nested.blocks.length) {
-    throw new Error('Workspace only allows Snapshot and View blocks.')
+  if (compareExclusionBlocks.length > 1) {
+    throw new Error('Workspace only allows one CompareExclusions block.')
+  }
+
+  if (snapshotBlocks.length + viewBlocks.length + compareExclusionBlocks.length !== nested.blocks.length) {
+    throw new Error('Workspace only allows Snapshot, View, and CompareExclusions blocks.')
   }
 
   const normalizedWorkspace = normalizeViewOwnerBlock({
@@ -965,6 +1030,9 @@ const parseWorkspaceBlock = (block: PgmlNamedBlock): PgmlWorkspaceDocumentBlock 
   return {
     activeViewId: normalizedWorkspace.activeViewId,
     basedOnVersionId: metadata.based_on || null,
+    compareExclusions: compareExclusionBlocks[0]
+      ? parseCompareExclusionsBlock(compareExclusionBlocks[0]!, 'Workspace')
+      : createEmptyPgmlCompareExclusions(),
     snapshot: normalizedWorkspace.snapshot,
     updatedAt: metadata.updated_at ? normalizePgmlTimestamp(metadata.updated_at, 'Workspace updated_at') : null,
     views: normalizedWorkspace.views
@@ -981,6 +1049,7 @@ const parseVersionBlock = (block: PgmlNamedBlock): PgmlVersionDocumentBlock => {
   const nested = collectBlocks(block.body.join('\n'))
   const metadata = collectBlockMetadata(nested.topLevel, `Version ${versionId}`)
   const snapshotBlocks = nested.blocks.filter(nestedBlock => nestedBlock.header === snapshotKeyword)
+  const compareExclusionBlocks = nested.blocks.filter(nestedBlock => nestedBlock.header === compareExclusionsKeyword)
   const viewBlocks = nested.blocks.filter(nestedBlock => getViewName(nestedBlock.header) !== null)
 
   const role = metadata.role
@@ -993,8 +1062,12 @@ const parseVersionBlock = (block: PgmlNamedBlock): PgmlVersionDocumentBlock => {
     throw new Error(`Version ${versionId} requires exactly one Snapshot block.`)
   }
 
-  if (snapshotBlocks.length + viewBlocks.length !== nested.blocks.length) {
-    throw new Error(`Version ${versionId} only allows Snapshot and View blocks.`)
+  if (compareExclusionBlocks.length > 1) {
+    throw new Error(`Version ${versionId} only allows one CompareExclusions block.`)
+  }
+
+  if (snapshotBlocks.length + viewBlocks.length + compareExclusionBlocks.length !== nested.blocks.length) {
+    throw new Error(`Version ${versionId} only allows Snapshot, View, and CompareExclusions blocks.`)
   }
 
   const normalizedVersion = normalizeViewOwnerBlock({
@@ -1005,6 +1078,9 @@ const parseVersionBlock = (block: PgmlNamedBlock): PgmlVersionDocumentBlock => {
 
   return {
     activeViewId: normalizedVersion.activeViewId,
+    compareExclusions: compareExclusionBlocks[0]
+      ? parseCompareExclusionsBlock(compareExclusionBlocks[0]!, `Version ${versionId}`)
+      : createEmptyPgmlCompareExclusions(),
     createdAt: normalizePgmlTimestamp(
       getRequiredMetadataValue(metadata, 'created_at', `Version ${versionId}`),
       `Version ${versionId} created_at`
@@ -1277,6 +1353,13 @@ const buildWorkspaceBlock = (
   }
 
   pushMetadataSpacer(lines)
+  const compareExclusionsBlock = buildCompareExclusionsBlock(workspace.compareExclusions, level + 1)
+
+  if (compareExclusionsBlock) {
+    lines.push(compareExclusionsBlock)
+    lines.push('')
+  }
+
   lines.push(buildSnapshotBlock(workspace.snapshot, level + 1))
 
   if (workspace.views.length > 0) {
@@ -1312,6 +1395,13 @@ const buildVersionBlock = (
   }
 
   lines.push('')
+  const compareExclusionsBlock = buildCompareExclusionsBlock(version.compareExclusions, level + 1)
+
+  if (compareExclusionsBlock) {
+    lines.push(compareExclusionsBlock)
+    lines.push('')
+  }
+
   lines.push(buildSnapshotBlock(version.snapshot, level + 1))
 
   if (version.views.length > 0) {
@@ -1337,6 +1427,33 @@ const buildSchemaMetadataTargetBlock = (input: {
   })
 
   lines.push(`${'  '.repeat(input.level)}}`)
+
+  return lines.join('\n')
+}
+
+const buildCompareExclusionsBlock = (
+  compareExclusions: PgmlCompareExclusions,
+  level: number
+) => {
+  const normalizedCompareExclusions = clonePgmlCompareExclusions(compareExclusions)
+
+  if (
+    normalizedCompareExclusions.groupNames.length === 0
+    && normalizedCompareExclusions.tableIds.length === 0
+  ) {
+    return null
+  }
+
+  const lines = [`${'  '.repeat(level)}${compareExclusionsKeyword} {`]
+
+  normalizedCompareExclusions.groupNames.forEach((groupName) => {
+    lines.push(buildMetadataLine('group', groupName, level + 1, true))
+  })
+  normalizedCompareExclusions.tableIds.forEach((tableId) => {
+    lines.push(buildMetadataLine('table', tableId, level + 1, true))
+  })
+
+  lines.push(`${'  '.repeat(level)}}`)
 
   return lines.join('\n')
 }
@@ -1452,12 +1569,14 @@ export const clonePgmlVersionSetDocument = (document: PgmlVersionSetDocument) =>
     versions: document.versions.map((version) => {
       return {
         ...version,
+        compareExclusions: clonePgmlCompareExclusions(version.compareExclusions),
         snapshot: cloneDocumentSnapshot(version.snapshot),
         views: version.views.map(clonePgmlDocumentView)
       }
     }),
     workspace: {
       ...document.workspace,
+      compareExclusions: clonePgmlCompareExclusions(document.workspace.compareExclusions),
       snapshot: cloneDocumentSnapshot(document.workspace.snapshot),
       views: document.workspace.views.map(clonePgmlDocumentView)
     }
@@ -1477,6 +1596,19 @@ export const getPgmlVersionById = (
 
 export const getPgmlWorkspaceBaseVersion = (document: PgmlVersionSetDocument) => {
   return getPgmlVersionById(document, document.workspace.basedOnVersionId)
+}
+
+export const getPgmlCompareExclusionsForTarget = (
+  document: PgmlVersionSetDocument,
+  targetId: 'workspace' | string
+) => {
+  if (targetId === 'workspace') {
+    return clonePgmlCompareExclusions(document.workspace.compareExclusions)
+  }
+
+  return clonePgmlCompareExclusions(
+    getPgmlVersionById(document, targetId)?.compareExclusions || createEmptyPgmlCompareExclusions()
+  )
 }
 
 export const hasPgmlWorkspaceBaseVersion = (document: PgmlVersionSetDocument) => {
@@ -1802,8 +1934,9 @@ export const serializePgmlDocumentScope = (
 
 export const createInitialPgmlDocument = (input?: {
   basedOnVersionId?: string | null
-  initialVersion?: Omit<PgmlVersionDocumentBlock, 'id' | 'views' | 'activeViewId'> & {
+  initialVersion?: Omit<PgmlVersionDocumentBlock, 'id' | 'views' | 'activeViewId' | 'compareExclusions'> & {
     activeViewId?: string | null
+    compareExclusions?: PgmlCompareExclusions
     views?: PgmlDocumentDiagramView[]
   }
   name?: string
@@ -1823,6 +1956,7 @@ export const createInitialPgmlDocument = (input?: {
     versions.push({
       ...initialVersion,
       activeViewId: normalizedInitialVersion.activeViewId,
+      compareExclusions: clonePgmlCompareExclusions(initialVersion.compareExclusions || createEmptyPgmlCompareExclusions()),
       createdAt: normalizePgmlTimestamp(initialVersion.createdAt, 'Initial version created_at'),
       id: createPgmlVersionId(),
       snapshot: normalizedInitialVersion.snapshot,
@@ -1848,6 +1982,9 @@ export const createInitialPgmlDocument = (input?: {
     workspace: {
       activeViewId: normalizedWorkspace.activeViewId,
       basedOnVersionId: initialVersion ? versions[0]!.id : input?.basedOnVersionId || null,
+      compareExclusions: input?.workspaceSource === undefined
+        ? clonePgmlCompareExclusions(initialVersion?.compareExclusions || createEmptyPgmlCompareExclusions())
+        : createEmptyPgmlCompareExclusions(),
       snapshot: normalizedWorkspace.snapshot,
       updatedAt: null,
       views: normalizedWorkspace.views
@@ -1868,6 +2005,7 @@ export const createPgmlVersionFromWorkspace = (
   // already-recorded history by reference.
   const nextVersion: PgmlVersionDocumentBlock = {
     activeViewId: document.workspace.activeViewId,
+    compareExclusions: clonePgmlCompareExclusions(document.workspace.compareExclusions),
     createdAt: normalizePgmlTimestamp(input.createdAt, 'Version created_at'),
     id: createPgmlVersionId(),
     name: input.name,
@@ -1892,6 +2030,7 @@ export const replacePgmlWorkspaceFromSnapshot = (
   input: {
     activeViewId?: string | null
     basedOnVersionId: string | null
+    compareExclusions?: PgmlCompareExclusions
     source: string
     updatedAt?: string | null
     views?: PgmlDocumentDiagramView[]
@@ -1914,6 +2053,9 @@ export const replacePgmlWorkspaceFromSnapshot = (
     workspace: {
       activeViewId: normalizedWorkspace.activeViewId,
       basedOnVersionId: input.basedOnVersionId,
+      compareExclusions: input.compareExclusions === undefined
+        ? clonePgmlCompareExclusions(document.workspace.compareExclusions)
+        : clonePgmlCompareExclusions(input.compareExclusions),
       snapshot: normalizedWorkspace.snapshot,
       updatedAt: input.updatedAt === undefined || input.updatedAt === null
         ? document.workspace.updatedAt

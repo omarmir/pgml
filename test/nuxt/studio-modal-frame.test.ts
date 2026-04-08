@@ -12,6 +12,7 @@ describe('StudioModalFrame source', () => {
     expect(file).toContain('min-w-0 grid gap-1')
     expect(file).toContain('self-start shrink-0')
     expect(file).toContain('aria-label="Close"')
+    expect(file).toContain('min-h-0 flex-1 overflow-y-auto')
     expect(file).toContain('@update:open="handleOpenChange"')
     expect(file).toContain('emit(\'update:open\', nextValue)')
     expect(file).toContain('emit(\'close\')')

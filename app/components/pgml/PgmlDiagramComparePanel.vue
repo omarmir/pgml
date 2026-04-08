@@ -23,6 +23,8 @@ const {
   compareBaseId = null,
   compareOptions,
   compareTargetId,
+  excludedGroupNames = [],
+  excludedTableIds = [],
   entries,
   relationshipSummary = '',
   selectedDiagramContextIds = [],
@@ -36,6 +38,8 @@ const {
     value: string
   }>
   compareTargetId: string
+  excludedGroupNames?: string[]
+  excludedTableIds?: string[]
   entries: PgmlDiagramCompareEntry[]
   relationshipSummary?: string
   selectedDiagramContextIds?: string[]
@@ -46,6 +50,7 @@ const {
 const emit = defineEmits<{
   'focus-source': [sourceRange: PgmlSourceRange]
   'focus-target': [entryId: string]
+  'edit-target-exclusions': []
   'select-entry': [entryId: string]
   'update:compareBaseId': [value: string | null]
   'update:compareTargetId': [value: string]
@@ -64,6 +69,7 @@ const filterKind: Ref<PgmlCompareFilterKind> = ref('all')
 const filterButtonClass = joinStudioClasses(studioButtonClasses.secondary, 'text-[0.62rem]')
 const activeFilterButtonClass = joinStudioClasses(studioButtonClasses.primary, 'text-[0.62rem]')
 const compareStatLabelClass = 'font-mono text-[0.58rem] uppercase tracking-[0.08em]'
+const exclusionChipClass = 'border border-[color:var(--studio-divider)] px-1.5 py-0.5 font-mono text-[0.52rem] uppercase tracking-[0.08em] text-[color:var(--studio-shell-muted)]'
 const compareStatKinds: PgmlCompareStatKind[] = ['added', 'modified', 'removed']
 const compareStatLabelByKind: Readonly<Record<PgmlCompareStatKind, string>> = Object.freeze({
   added: 'Added',
@@ -88,6 +94,21 @@ const compareFilterOptions: PgmlCompareFilterOption[] = [
     value: 'removed'
   }
 ]
+const hasExcludedEntities = computed(() => {
+  return excludedGroupNames.length > 0 || excludedTableIds.length > 0
+})
+const exclusionSummary = computed(() => {
+  return `${excludedGroupNames.length} excluded group${excludedGroupNames.length === 1 ? '' : 's'} · ${excludedTableIds.length} excluded table${excludedTableIds.length === 1 ? '' : 's'}`
+})
+const visibleExcludedLabels = computed(() => {
+  return [
+    ...excludedGroupNames.map(groupName => `Group ${groupName}`),
+    ...excludedTableIds.map(tableId => `Table ${tableId}`)
+  ].slice(0, 6)
+})
+const hiddenExcludedLabelCount = computed(() => {
+  return excludedGroupNames.length + excludedTableIds.length - visibleExcludedLabels.value.length
+})
 const buildEntrySearchHaystack = (entry: PgmlDiagramCompareEntry) => {
   return [
     entry.label,
@@ -242,311 +263,362 @@ const clearFilters = () => {
 <template>
   <div
     data-diagram-compare-panel="true"
-    class="grid h-full min-h-0 min-w-0 content-start gap-3 overflow-y-auto overflow-x-hidden px-3 py-3"
+    class="flex h-full min-h-0 min-w-0 flex-col overflow-hidden"
   >
-    <div :class="joinStudioClasses(studioPanelSurfaceClass, 'grid min-w-0 gap-3 px-3 py-3')">
-      <div class="flex flex-wrap items-center gap-2">
-        <span class="border border-[color:var(--studio-divider)] px-1.5 py-0.5 font-mono text-[0.52rem] uppercase tracking-[0.08em] text-[color:var(--studio-shell-muted)]">
-          {{ baseLabel }}
-        </span>
-        <span class="font-mono text-[0.56rem] uppercase tracking-[0.08em] text-[color:var(--studio-shell-muted)]">
-          to
-        </span>
-        <span class="border border-[color:var(--studio-ring)] px-1.5 py-0.5 font-mono text-[0.52rem] uppercase tracking-[0.08em] text-[color:var(--studio-shell-text)]">
-          {{ targetLabel }}
-        </span>
-      </div>
-
-      <p :class="studioCompactBodyCopyClass">
-        Changed entities are highlighted directly on the diagram. Click a highlighted node or row to inspect its delta here.
-      </p>
-
-      <p
-        v-if="relationshipSummary.length > 0"
-        class="text-[0.66rem] leading-5 text-[color:var(--studio-shell-muted)]"
-      >
-        {{ relationshipSummary }}
-      </p>
-
-      <div class="grid gap-2 md:grid-cols-2">
-        <label class="grid gap-1">
-          <span class="text-[0.68rem] text-[color:var(--studio-shell-muted)]">Base version</span>
-          <USelect
-            data-compare-base-select="true"
-            :items="compareOptions"
-            :model-value="compareBaseId || undefined"
-            value-key="value"
-            label-key="label"
-            color="neutral"
-            variant="outline"
-            size="sm"
-            :ui="studioSelectUi"
-            @update:model-value="updateCompareBaseId"
-          />
-        </label>
-
-        <label class="grid gap-1">
-          <span class="text-[0.68rem] text-[color:var(--studio-shell-muted)]">Target</span>
-          <USelect
-            data-compare-target-select="true"
-            :items="compareOptions"
-            :model-value="compareTargetId"
-            value-key="value"
-            label-key="label"
-            color="neutral"
-            variant="outline"
-            size="sm"
-            :ui="studioSelectUi"
-            @update:model-value="updateCompareTargetId"
-          />
-        </label>
-      </div>
-
-      <div class="grid min-w-0 gap-2 sm:grid-cols-3">
-        <button
-          v-for="statKind in compareStatKinds"
-          :key="statKind"
-          type="button"
-          :data-compare-stat-filter="statKind"
-          class="grid min-w-0 gap-1 border px-3 py-2.5 text-left transition-colors duration-150 cursor-default"
-          :aria-pressed="isCompareFilterActive(statKind)"
-          :style="getCompareStatButtonStyle(statKind)"
-          @click="toggleCompareStatFilter(statKind)"
-        >
-          <div
-            :class="[
-              compareStatLabelClass,
-              isCompareFilterActive(statKind) ? 'text-[color:var(--studio-shell-text)]' : 'text-[color:var(--studio-shell-label)]'
-            ]"
-          >
-            {{ compareStatLabelByKind[statKind] }}
-          </div>
-          <div class="mt-1 text-[0.84rem] font-semibold text-[color:var(--studio-shell-text)]">
-            {{ compareStats[statKind] }}
-          </div>
-        </button>
-      </div>
-    </div>
-
     <div
-      v-if="contextEntries.length > 0"
-      :class="joinStudioClasses(studioPanelSurfaceClass, 'grid min-w-0 gap-2 px-3 py-3')"
+      data-studio-scrollable="true"
+      class="grid min-h-0 min-w-0 content-start gap-3 overflow-y-auto overflow-x-hidden px-3 py-3"
     >
-      <div class="font-mono text-[0.58rem] uppercase tracking-[0.08em] text-[color:var(--studio-shell-label)]">
-        Selected On Diagram
-      </div>
+      <div :class="joinStudioClasses(studioPanelSurfaceClass, 'grid min-w-0 gap-3 px-3 py-3')">
+        <div class="flex flex-wrap items-center gap-2">
+          <span class="border border-[color:var(--studio-divider)] px-1.5 py-0.5 font-mono text-[0.52rem] uppercase tracking-[0.08em] text-[color:var(--studio-shell-muted)]">
+            {{ baseLabel }}
+          </span>
+          <span class="font-mono text-[0.56rem] uppercase tracking-[0.08em] text-[color:var(--studio-shell-muted)]">
+            to
+          </span>
+          <span class="border border-[color:var(--studio-ring)] px-1.5 py-0.5 font-mono text-[0.52rem] uppercase tracking-[0.08em] text-[color:var(--studio-shell-text)]">
+            {{ targetLabel }}
+          </span>
+        </div>
 
-      <div class="grid gap-2">
-        <button
-          v-for="entry in contextEntries"
-          :key="entry.id"
-          type="button"
-          :data-compare-context-entry="entry.id"
-          class="grid gap-1 border px-3 py-2 text-left transition-colors duration-150"
-          :class="selectedEntry?.id === entry.id ? 'border-[color:var(--studio-ring)] bg-[color:var(--studio-input-bg)]' : 'border-[color:var(--studio-divider)] bg-[color:var(--studio-control-bg)]'"
-          @click="emit('select-entry', entry.id)"
+        <p :class="studioCompactBodyCopyClass">
+          Changed entities are highlighted directly on the diagram. Click a highlighted node or row to inspect its delta here.
+        </p>
+
+        <p
+          v-if="relationshipSummary.length > 0"
+          class="text-[0.66rem] leading-5 text-[color:var(--studio-shell-muted)]"
         >
-          <div class="flex flex-wrap items-center gap-2">
-            <span
-              class="border px-1.5 py-0.5 font-mono text-[0.5rem] uppercase tracking-[0.08em]"
-              :style="getChangeBadgeStyle(entry)"
+          {{ relationshipSummary }}
+        </p>
+
+        <div class="grid gap-2 md:grid-cols-2">
+          <label class="grid gap-1">
+            <span class="text-[0.68rem] text-[color:var(--studio-shell-muted)]">Base version</span>
+            <USelect
+              data-compare-base-select="true"
+              :items="compareOptions"
+              :model-value="compareBaseId || undefined"
+              value-key="value"
+              label-key="label"
+              color="neutral"
+              variant="outline"
+              size="sm"
+              :ui="studioSelectUi"
+              @update:model-value="updateCompareBaseId"
+            />
+          </label>
+
+          <label class="grid gap-1">
+            <span class="text-[0.68rem] text-[color:var(--studio-shell-muted)]">Target</span>
+            <USelect
+              data-compare-target-select="true"
+              :items="compareOptions"
+              :model-value="compareTargetId"
+              value-key="value"
+              label-key="label"
+              color="neutral"
+              variant="outline"
+              size="sm"
+              :ui="studioSelectUi"
+              @update:model-value="updateCompareTargetId"
+            />
+          </label>
+        </div>
+
+        <div class="grid min-w-0 gap-2 sm:grid-cols-3">
+          <button
+            v-for="statKind in compareStatKinds"
+            :key="statKind"
+            type="button"
+            :data-compare-stat-filter="statKind"
+            class="grid min-w-0 gap-1 border px-3 py-2.5 text-left transition-colors duration-150 cursor-default"
+            :aria-pressed="isCompareFilterActive(statKind)"
+            :style="getCompareStatButtonStyle(statKind)"
+            @click="toggleCompareStatFilter(statKind)"
+          >
+            <div
+              :class="[
+                compareStatLabelClass,
+                isCompareFilterActive(statKind) ? 'text-[color:var(--studio-shell-text)]' : 'text-[color:var(--studio-shell-label)]'
+              ]"
             >
-              {{ getPgmlDiagramCompareChangeVerb(entry.changeKind) }}
-            </span>
-            <span class="font-mono text-[0.52rem] uppercase tracking-[0.08em] text-[color:var(--studio-shell-label)]">
-              {{ getPgmlDiagramCompareEntityKindLabel(entry.entityKind) }}
-            </span>
-          </div>
-          <div class="text-[0.76rem] font-semibold text-[color:var(--studio-shell-text)]">
-            {{ entry.label }}
-          </div>
-          <div class="text-[0.66rem] leading-5 text-[color:var(--studio-shell-muted)]">
-            {{ entry.description }}
-          </div>
-        </button>
-      </div>
-    </div>
+              {{ compareStatLabelByKind[statKind] }}
+            </div>
+            <div class="mt-1 text-[0.84rem] font-semibold text-[color:var(--studio-shell-text)]">
+              {{ compareStats[statKind] }}
+            </div>
+          </button>
+        </div>
 
-    <div :class="joinStudioClasses(studioPanelSurfaceClass, 'grid min-w-0 gap-3 px-3 py-3')">
-      <div class="flex flex-wrap items-center gap-2">
-        <input
-          v-model="searchQuery"
-          data-compare-search="true"
-          type="search"
-          placeholder="Filter changed entities"
-          :class="joinStudioClasses(studioCompactInputClass, 'min-w-[12rem] flex-1')"
-        >
-        <UButton
-          v-for="option in compareFilterOptions"
-          :key="option.value"
-          :label="option.label"
-          color="neutral"
-          :variant="filterKind === option.value ? 'soft' : 'outline'"
-          size="xs"
-          :class="filterKind === option.value ? activeFilterButtonClass : filterButtonClass"
-          @click="filterKind = option.value"
-        />
+        <div class="grid gap-2 border border-[color:var(--studio-divider)] bg-[color:var(--studio-control-bg)] px-3 py-3">
+          <div class="flex flex-wrap items-center justify-between gap-2">
+            <div class="grid gap-1">
+              <div class="font-mono text-[0.58rem] uppercase tracking-[0.08em] text-[color:var(--studio-shell-label)]">
+                Target exclusions
+              </div>
+              <div class="text-[0.68rem] leading-5 text-[color:var(--studio-shell-muted)]">
+                {{
+                  hasExcludedEntities
+                    ? `${exclusionSummary}. These exclusions hide matching tables and grouped members from compare results for ${targetLabel}.`
+                    : `No groups or tables are excluded for ${targetLabel}.`
+                }}
+              </div>
+            </div>
+
+            <UButton
+              label="Manage exclusions"
+              data-compare-edit-exclusions="true"
+              color="neutral"
+              variant="outline"
+              size="xs"
+              :class="filterButtonClass"
+              @click="emit('edit-target-exclusions')"
+            />
+          </div>
+
+          <div
+            v-if="hasExcludedEntities"
+            class="flex flex-wrap gap-2"
+          >
+            <span
+              v-for="label in visibleExcludedLabels"
+              :key="label"
+              :class="exclusionChipClass"
+            >
+              {{ label }}
+            </span>
+            <span
+              v-if="hiddenExcludedLabelCount > 0"
+              :class="exclusionChipClass"
+            >
+              +{{ hiddenExcludedLabelCount }} more
+            </span>
+          </div>
+        </div>
       </div>
 
       <div
-        v-if="filteredEntries.length > 0"
-        class="grid gap-2"
+        v-if="contextEntries.length > 0"
+        :class="joinStudioClasses(studioPanelSurfaceClass, 'grid min-w-0 gap-2 px-3 py-3')"
       >
-        <button
-          v-for="entry in filteredEntries"
-          :key="entry.id"
-          type="button"
-          :data-compare-entry="entry.id"
-          class="grid gap-1 border px-3 py-2 text-left transition-colors duration-150"
-          :class="selectedEntry?.id === entry.id ? 'border-[color:var(--studio-ring)] bg-[color:var(--studio-input-bg)]' : 'border-[color:var(--studio-divider)] bg-[color:var(--studio-control-bg)]'"
-          @click="emit('select-entry', entry.id)"
+        <div class="font-mono text-[0.58rem] uppercase tracking-[0.08em] text-[color:var(--studio-shell-label)]">
+          Selected On Diagram
+        </div>
+
+        <div class="grid min-w-0 gap-2">
+          <button
+            v-for="entry in contextEntries"
+            :key="entry.id"
+            type="button"
+            :data-compare-context-entry="entry.id"
+            class="grid min-w-0 gap-1 border px-3 py-2 text-left transition-colors duration-150"
+            :class="selectedEntry?.id === entry.id ? 'border-[color:var(--studio-ring)] bg-[color:var(--studio-input-bg)]' : 'border-[color:var(--studio-divider)] bg-[color:var(--studio-control-bg)]'"
+            @click="emit('select-entry', entry.id)"
+          >
+            <div class="flex flex-wrap items-center gap-2">
+              <span
+                class="border px-1.5 py-0.5 font-mono text-[0.5rem] uppercase tracking-[0.08em]"
+                :style="getChangeBadgeStyle(entry)"
+              >
+                {{ getPgmlDiagramCompareChangeVerb(entry.changeKind) }}
+              </span>
+              <span class="font-mono text-[0.52rem] uppercase tracking-[0.08em] text-[color:var(--studio-shell-label)]">
+                {{ getPgmlDiagramCompareEntityKindLabel(entry.entityKind) }}
+              </span>
+            </div>
+            <div class="min-w-0 break-words text-[0.76rem] font-semibold text-[color:var(--studio-shell-text)] [overflow-wrap:anywhere]">
+              {{ entry.label }}
+            </div>
+            <div class="min-w-0 break-words text-[0.66rem] leading-5 text-[color:var(--studio-shell-muted)] [overflow-wrap:anywhere]">
+              {{ entry.description }}
+            </div>
+          </button>
+        </div>
+      </div>
+
+      <div :class="joinStudioClasses(studioPanelSurfaceClass, 'grid min-w-0 gap-3 px-3 py-3')">
+        <div class="flex flex-wrap items-center gap-2">
+          <input
+            v-model="searchQuery"
+            data-compare-search="true"
+            type="search"
+            placeholder="Filter changed entities"
+            :class="joinStudioClasses(studioCompactInputClass, 'min-w-[12rem] flex-1')"
+          >
+          <UButton
+            v-for="option in compareFilterOptions"
+            :key="option.value"
+            :label="option.label"
+            color="neutral"
+            :variant="filterKind === option.value ? 'soft' : 'outline'"
+            size="xs"
+            :class="filterKind === option.value ? activeFilterButtonClass : filterButtonClass"
+            @click="filterKind = option.value"
+          />
+        </div>
+
+        <div
+          v-if="filteredEntries.length > 0"
+          class="grid min-w-0 gap-2"
         >
-          <div class="flex flex-wrap items-center gap-2">
-            <span
-              class="border px-1.5 py-0.5 font-mono text-[0.5rem] uppercase tracking-[0.08em]"
-              :style="getChangeBadgeStyle(entry)"
+          <button
+            v-for="entry in filteredEntries"
+            :key="entry.id"
+            type="button"
+            :data-compare-entry="entry.id"
+            class="grid min-w-0 gap-1 border px-3 py-2 text-left transition-colors duration-150"
+            :class="selectedEntry?.id === entry.id ? 'border-[color:var(--studio-ring)] bg-[color:var(--studio-input-bg)]' : 'border-[color:var(--studio-divider)] bg-[color:var(--studio-control-bg)]'"
+            @click="emit('select-entry', entry.id)"
+          >
+            <div class="flex flex-wrap items-center gap-2">
+              <span
+                class="border px-1.5 py-0.5 font-mono text-[0.5rem] uppercase tracking-[0.08em]"
+                :style="getChangeBadgeStyle(entry)"
+              >
+                {{ getPgmlDiagramCompareChangeVerb(entry.changeKind) }}
+              </span>
+              <span class="font-mono text-[0.52rem] uppercase tracking-[0.08em] text-[color:var(--studio-shell-label)]">
+                {{ getPgmlDiagramCompareEntityKindLabel(entry.entityKind) }}
+              </span>
+              <span
+                v-if="selectedDiagramContextIds.includes(entry.id)"
+                class="border border-[color:var(--studio-ring)] px-1.5 py-0.5 font-mono text-[0.5rem] uppercase tracking-[0.08em] text-[color:var(--studio-shell-text)]"
+              >
+                On diagram
+              </span>
+            </div>
+            <div class="min-w-0 break-words text-[0.76rem] font-semibold text-[color:var(--studio-shell-text)] [overflow-wrap:anywhere]">
+              {{ entry.label }}
+            </div>
+            <div class="min-w-0 break-words text-[0.66rem] leading-5 text-[color:var(--studio-shell-muted)] [overflow-wrap:anywhere]">
+              {{ entry.description }}
+            </div>
+          </button>
+        </div>
+
+        <div
+          v-else
+          :class="studioEmptyStateClass"
+        >
+          <p>No diff entries match the current filter.</p>
+          <UButton
+            v-if="searchQuery.trim().length > 0 || filterKind !== 'all'"
+            label="Clear filters"
+            color="neutral"
+            variant="outline"
+            size="xs"
+            :class="filterButtonClass"
+            @click="clearFilters"
+          />
+        </div>
+      </div>
+
+      <div
+        v-if="selectedEntry"
+        data-compare-entry-detail="true"
+        :class="joinStudioClasses(studioPanelSurfaceClass, 'grid min-w-0 gap-3 px-3 py-3')"
+      >
+        <div class="flex flex-wrap items-start justify-between gap-3">
+          <div class="min-w-0 flex-1">
+            <div class="flex flex-wrap items-center gap-2">
+              <span
+                class="border px-1.5 py-0.5 font-mono text-[0.5rem] uppercase tracking-[0.08em]"
+                :style="getChangeBadgeStyle(selectedEntry)"
+              >
+                {{ getPgmlDiagramCompareChangeVerb(selectedEntry.changeKind) }}
+              </span>
+              <span class="font-mono text-[0.52rem] uppercase tracking-[0.08em] text-[color:var(--studio-shell-label)]">
+                {{ getPgmlDiagramCompareEntityKindLabel(selectedEntry.entityKind) }}
+              </span>
+            </div>
+            <h4 class="mt-2 min-w-0 break-words text-[0.84rem] font-semibold text-[color:var(--studio-shell-text)] [overflow-wrap:anywhere]">
+              {{ selectedEntry.label }}
+            </h4>
+            <p class="mt-1 min-w-0 break-words text-[0.68rem] leading-5 text-[color:var(--studio-shell-muted)] [overflow-wrap:anywhere]">
+              {{ selectedEntry.description }}
+            </p>
+          </div>
+
+          <div class="flex shrink-0 flex-wrap gap-2">
+            <UButton
+              label="Show on diagram"
+              color="neutral"
+              variant="soft"
+              size="xs"
+              :class="activeFilterButtonClass"
+              @click="emit('focus-target', selectedEntry.id)"
+            />
+            <UButton
+              v-if="selectedEntry.sourceRange"
+              label="Focus source"
+              color="neutral"
+              variant="outline"
+              size="xs"
+              :class="filterButtonClass"
+              @click="emit('focus-source', selectedEntry.sourceRange)"
+            />
+          </div>
+        </div>
+
+        <div
+          v-if="selectedEntry.fields.length > 0"
+          class="grid gap-2"
+        >
+          <div class="font-mono text-[0.58rem] uppercase tracking-[0.08em] text-[color:var(--studio-shell-label)]">
+            Changed Fields
+          </div>
+
+          <div class="grid gap-2">
+            <div
+              v-for="field in selectedEntry.fields"
+              :key="field.id"
+              class="grid gap-2 border border-[color:var(--studio-divider)] bg-[color:var(--studio-input-bg)] px-3 py-3"
             >
-              {{ getPgmlDiagramCompareChangeVerb(entry.changeKind) }}
-            </span>
-            <span class="font-mono text-[0.52rem] uppercase tracking-[0.08em] text-[color:var(--studio-shell-label)]">
-              {{ getPgmlDiagramCompareEntityKindLabel(entry.entityKind) }}
-            </span>
-            <span
-              v-if="selectedDiagramContextIds.includes(entry.id)"
-              class="border border-[color:var(--studio-ring)] px-1.5 py-0.5 font-mono text-[0.5rem] uppercase tracking-[0.08em] text-[color:var(--studio-shell-text)]"
-            >
-              On diagram
-            </span>
+              <div class="font-mono text-[0.56rem] uppercase tracking-[0.08em] text-[color:var(--studio-shell-label)]">
+                {{ field.label }}
+              </div>
+              <div class="grid gap-2 text-[0.66rem] text-[color:var(--studio-shell-muted)] sm:grid-cols-2">
+                <div class="min-w-0">
+                  <div class="font-mono uppercase tracking-[0.08em] text-[color:var(--studio-shell-label)]">
+                    Before
+                  </div>
+                  <pre class="mt-1 min-w-0 whitespace-pre-wrap break-words font-mono text-[0.62rem] leading-5 text-[color:var(--studio-shell-text)] [overflow-wrap:anywhere]">{{ field.before || 'Not present' }}</pre>
+                </div>
+                <div class="min-w-0">
+                  <div class="font-mono uppercase tracking-[0.08em] text-[color:var(--studio-shell-label)]">
+                    After
+                  </div>
+                  <pre class="mt-1 min-w-0 whitespace-pre-wrap break-words font-mono text-[0.62rem] leading-5 text-[color:var(--studio-shell-text)] [overflow-wrap:anywhere]">{{ field.after || 'Not present' }}</pre>
+                </div>
+              </div>
+            </div>
           </div>
-          <div class="text-[0.76rem] font-semibold text-[color:var(--studio-shell-text)]">
-            {{ entry.label }}
+        </div>
+
+        <div class="grid min-w-0 gap-2 md:grid-cols-2">
+          <div class="grid min-w-0 gap-1">
+            <div class="font-mono text-[0.58rem] uppercase tracking-[0.08em] text-[color:var(--studio-shell-label)]">
+              Before snapshot
+            </div>
+            <pre class="max-h-64 min-w-0 overflow-auto whitespace-pre-wrap break-words border border-[color:var(--studio-divider)] bg-[color:var(--studio-input-bg)] px-3 py-3 text-[0.62rem] leading-5 text-[color:var(--studio-shell-text)] [overflow-wrap:anywhere]">{{ selectedEntry.beforeSnapshot || 'Not present in base snapshot.' }}</pre>
           </div>
-          <div class="text-[0.66rem] leading-5 text-[color:var(--studio-shell-muted)]">
-            {{ entry.description }}
+          <div class="grid min-w-0 gap-1">
+            <div class="font-mono text-[0.58rem] uppercase tracking-[0.08em] text-[color:var(--studio-shell-label)]">
+              After snapshot
+            </div>
+            <pre class="max-h-64 min-w-0 overflow-auto whitespace-pre-wrap break-words border border-[color:var(--studio-divider)] bg-[color:var(--studio-input-bg)] px-3 py-3 text-[0.62rem] leading-5 text-[color:var(--studio-shell-text)] [overflow-wrap:anywhere]">{{ selectedEntry.afterSnapshot || 'Not present in target snapshot.' }}</pre>
           </div>
-        </button>
+        </div>
       </div>
 
       <div
         v-else
         :class="studioEmptyStateClass"
       >
-        <p>No diff entries match the current filter.</p>
-        <UButton
-          v-if="searchQuery.trim().length > 0 || filterKind !== 'all'"
-          label="Clear filters"
-          color="neutral"
-          variant="outline"
-          size="xs"
-          :class="filterButtonClass"
-          @click="clearFilters"
-        />
+        Pick a changed entity from the list or click a highlighted entity in the diagram to inspect its delta.
       </div>
-    </div>
-
-    <div
-      v-if="selectedEntry"
-      data-compare-entry-detail="true"
-      :class="joinStudioClasses(studioPanelSurfaceClass, 'grid min-w-0 gap-3 px-3 py-3')"
-    >
-      <div class="flex flex-wrap items-start justify-between gap-3">
-        <div class="min-w-0 flex-1">
-          <div class="flex flex-wrap items-center gap-2">
-            <span
-              class="border px-1.5 py-0.5 font-mono text-[0.5rem] uppercase tracking-[0.08em]"
-              :style="getChangeBadgeStyle(selectedEntry)"
-            >
-              {{ getPgmlDiagramCompareChangeVerb(selectedEntry.changeKind) }}
-            </span>
-            <span class="font-mono text-[0.52rem] uppercase tracking-[0.08em] text-[color:var(--studio-shell-label)]">
-              {{ getPgmlDiagramCompareEntityKindLabel(selectedEntry.entityKind) }}
-            </span>
-          </div>
-          <h4 class="mt-2 text-[0.84rem] font-semibold text-[color:var(--studio-shell-text)]">
-            {{ selectedEntry.label }}
-          </h4>
-          <p class="mt-1 text-[0.68rem] leading-5 text-[color:var(--studio-shell-muted)]">
-            {{ selectedEntry.description }}
-          </p>
-        </div>
-
-        <div class="flex shrink-0 flex-wrap gap-2">
-          <UButton
-            label="Show on diagram"
-            color="neutral"
-            variant="soft"
-            size="xs"
-            :class="activeFilterButtonClass"
-            @click="emit('focus-target', selectedEntry.id)"
-          />
-          <UButton
-            v-if="selectedEntry.sourceRange"
-            label="Focus source"
-            color="neutral"
-            variant="outline"
-            size="xs"
-            :class="filterButtonClass"
-            @click="emit('focus-source', selectedEntry.sourceRange)"
-          />
-        </div>
-      </div>
-
-      <div
-        v-if="selectedEntry.fields.length > 0"
-        class="grid gap-2"
-      >
-        <div class="font-mono text-[0.58rem] uppercase tracking-[0.08em] text-[color:var(--studio-shell-label)]">
-          Changed Fields
-        </div>
-
-        <div class="grid gap-2">
-          <div
-            v-for="field in selectedEntry.fields"
-            :key="field.id"
-            class="grid gap-2 border border-[color:var(--studio-divider)] bg-[color:var(--studio-input-bg)] px-3 py-3"
-          >
-            <div class="font-mono text-[0.56rem] uppercase tracking-[0.08em] text-[color:var(--studio-shell-label)]">
-              {{ field.label }}
-            </div>
-            <div class="grid gap-2 text-[0.66rem] text-[color:var(--studio-shell-muted)] sm:grid-cols-2">
-              <div class="min-w-0">
-                <div class="font-mono uppercase tracking-[0.08em] text-[color:var(--studio-shell-label)]">
-                  Before
-                </div>
-                <pre class="mt-1 min-w-0 whitespace-pre-wrap break-words font-mono text-[0.62rem] leading-5 text-[color:var(--studio-shell-text)] [overflow-wrap:anywhere]">{{ field.before || 'Not present' }}</pre>
-              </div>
-              <div class="min-w-0">
-                <div class="font-mono uppercase tracking-[0.08em] text-[color:var(--studio-shell-label)]">
-                  After
-                </div>
-                <pre class="mt-1 min-w-0 whitespace-pre-wrap break-words font-mono text-[0.62rem] leading-5 text-[color:var(--studio-shell-text)] [overflow-wrap:anywhere]">{{ field.after || 'Not present' }}</pre>
-              </div>
-            </div>
-          </div>
-        </div>
-      </div>
-
-      <div class="grid min-w-0 gap-2 md:grid-cols-2">
-        <div class="grid min-w-0 gap-1">
-          <div class="font-mono text-[0.58rem] uppercase tracking-[0.08em] text-[color:var(--studio-shell-label)]">
-            Before snapshot
-          </div>
-          <pre class="max-h-64 min-w-0 overflow-auto whitespace-pre-wrap break-words border border-[color:var(--studio-divider)] bg-[color:var(--studio-input-bg)] px-3 py-3 text-[0.62rem] leading-5 text-[color:var(--studio-shell-text)] [overflow-wrap:anywhere]">{{ selectedEntry.beforeSnapshot || 'Not present in base snapshot.' }}</pre>
-        </div>
-        <div class="grid min-w-0 gap-1">
-          <div class="font-mono text-[0.58rem] uppercase tracking-[0.08em] text-[color:var(--studio-shell-label)]">
-            After snapshot
-          </div>
-          <pre class="max-h-64 min-w-0 overflow-auto whitespace-pre-wrap break-words border border-[color:var(--studio-divider)] bg-[color:var(--studio-input-bg)] px-3 py-3 text-[0.62rem] leading-5 text-[color:var(--studio-shell-text)] [overflow-wrap:anywhere]">{{ selectedEntry.afterSnapshot || 'Not present in target snapshot.' }}</pre>
-        </div>
-      </div>
-    </div>
-
-    <div
-      v-else
-      :class="studioEmptyStateClass"
-    >
-      Pick a changed entity from the list or click a highlighted entity in the diagram to inspect its delta.
     </div>
   </div>
 </template>

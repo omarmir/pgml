@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest'
 import {
   dedentPgmlSourceForEditor,
   extractPgmlRoutineBodyFromExecutableSource,
+  filterPgmlSchemaModelForCompareExclusions,
   getOrderedGroupTables,
   getPgmlSourceScrollTop,
   getPgmlSourceSelectionRange,
@@ -87,6 +88,52 @@ describe('PGML model parsing', () => {
     expect(document.workspace.snapshot.source).toContain('Composite address_record')
     expect(document.workspace.snapshot.source).toContain('Procedure archive_orders(retention_days integer) [replace]')
     expect(getPgmlDocumentBlockPreviewSource(document.workspace)).toContain('Properties "group:Analytics"')
+  })
+
+  it('filters compare models by excluded groups and tables', () => {
+    const model = parsePgml(`Sequence public.user_id_seq {
+  source: $sql$
+    CREATE SEQUENCE public.user_id_seq;
+  $sql$
+}
+
+Table public.users in Core {
+  id bigint [pk, default: nextval('public.user_id_seq')]
+}
+
+Table public.orders in Core {
+  id uuid [pk]
+  user_id bigint [ref: > public.users.id]
+}
+
+Table public.audit_log {
+  id uuid [pk]
+}
+
+TableGroup Core {
+  public.users
+  public.orders
+}
+
+Trigger trg_touch_users on public.users {
+  source: $sql$
+    CREATE TRIGGER trg_touch_users
+      BEFORE UPDATE ON public.users
+      FOR EACH ROW
+      EXECUTE FUNCTION public.touch_users();
+  $sql$
+}`)
+
+    const filteredModel = filterPgmlSchemaModelForCompareExclusions(model, {
+      groupNames: ['Core'],
+      tableIds: ['public.audit_log']
+    })
+
+    expect(filteredModel.tables).toEqual([])
+    expect(filteredModel.groups).toEqual([])
+    expect(filteredModel.references).toEqual([])
+    expect(filteredModel.sequences).toEqual([])
+    expect(filteredModel.triggers).toEqual([])
   })
 
   it('derives sequence ownership and routine metadata from source blocks', () => {

@@ -51,6 +51,7 @@ const emit = defineEmits<{
   'create-checkpoint': []
   'import-dbml': []
   'import-dump': []
+  'rename-version': [versionId: string]
   'restore-version': [versionId: string]
   'view-target': [targetId: string]
 }>()
@@ -253,6 +254,15 @@ const previewLabel = computed(() => {
                 :class="joinStudioClasses(secondaryButtonClass, stackedActionButtonClass)"
                 :disabled="previewTargetId === version.id"
                 @click="emit('view-target', version.id)"
+              />
+              <UButton
+                :data-version-rename="version.id"
+                label="Rename"
+                color="neutral"
+                variant="outline"
+                size="xs"
+                :class="joinStudioClasses(secondaryButtonClass, stackedActionButtonClass)"
+                @click="emit('rename-version', version.id)"
               />
               <UButton
                 :data-version-restore="version.id"

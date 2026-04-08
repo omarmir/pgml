@@ -74,6 +74,8 @@ const {
   compareBaseLabel = 'Base',
   compareBaseModel = null,
   compareEntries = [],
+  compareExcludedGroupNames = [],
+  compareExcludedTableIds = [],
   compareRelationshipSummary = '',
   compareTargetLabel = 'Target',
   exportBaseName = 'pgml-schema',
@@ -107,6 +109,8 @@ const {
   compareBaseLabel?: string
   compareBaseModel?: PgmlSchemaModel | null
   compareEntries?: PgmlDiagramCompareEntry[]
+  compareExcludedGroupNames?: string[]
+  compareExcludedTableIds?: string[]
   compareRelationshipSummary?: string
   compareTargetLabel?: string
   diagramViewItems?: DiagramViewItem[]
@@ -135,7 +139,9 @@ const emit = defineEmits<{
   createDiagramView: []
   deleteDiagramView: []
   editGroup: [groupName: string]
+  editCompareTargetExclusions: []
   renameDiagramView: []
+  renameVersion: [versionId: string]
   editTable: [tableId: string]
   focusSource: [sourceRange: PgmlSourceRange]
   mobileCanvasViewChange: [view: StudioMobileCanvasView]
@@ -183,6 +189,8 @@ defineExpose<CanvasHandle>({
     :compare-base-label="compareBaseLabel"
     :compare-base-model="compareBaseModel"
     :compare-entries="compareEntries"
+    :compare-excluded-group-names="compareExcludedGroupNames"
+    :compare-excluded-table-ids="compareExcludedTableIds"
     :compare-relationship-summary="compareRelationshipSummary"
     :compare-target-label="compareTargetLabel"
     :diagram-view-items="diagramViewItems"
@@ -215,7 +223,9 @@ defineExpose<CanvasHandle>({
     @create-diagram-view="emit('createDiagramView')"
     @delete-diagram-view="emit('deleteDiagramView')"
     @edit-group="emit('editGroup', $event)"
+    @edit-compare-target-exclusions="emit('editCompareTargetExclusions')"
     @rename-diagram-view="emit('renameDiagramView')"
+    @rename-version="emit('renameVersion', $event)"
     @edit-table="emit('editTable', $event)"
     @focus-source="emit('focusSource', $event)"
     @mobile-canvas-view-change="emit('mobileCanvasViewChange', $event)"

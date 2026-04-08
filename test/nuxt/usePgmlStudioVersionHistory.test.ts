@@ -208,6 +208,28 @@ describe('usePgmlStudioVersionHistory', () => {
     expect(api.compareTargetId.value).toBe('workspace')
   })
 
+  it('renames locked versions and updates their serialized labels', async () => {
+    const { api } = await mountVersionHistoryComposable({
+      source: ''
+    })
+
+    api.loadDocument(createSerializedImplementationDocument())
+
+    const initialVersion = api.versions.value[0]
+
+    if (!initialVersion) {
+      throw new Error('Expected the initial implementation version to load.')
+    }
+
+    expect(api.renameVersion(initialVersion.id, 'Agency foundation')).toBe(true)
+    expect(api.versions.value[0]?.name).toBe('Agency foundation')
+    expect(api.versionedDocumentScopeItems.value.some((item) => {
+      return item.label.includes('Agency foundation')
+    })).toBe(true)
+    expect(api.versionedDocumentSource.value).toContain('name: "Agency foundation"')
+    expect(api.renameVersion(initialVersion.id, '   ')).toBe(false)
+  })
+
   it('persists multiple diagram views per workspace and version preview target', async () => {
     const { api, source } = await mountVersionHistoryComposable()
     const defaultViewId = api.activeDiagramViewId.value
@@ -552,6 +574,47 @@ Properties "public.users" {
     expect(api.versionedDocumentSource.value).toContain('SchemaMetadata {')
     expect(api.versionedDocumentSource.value).toContain('owner: "identity"')
     expect(api.versionedDocumentSource.value).toContain('classification: "identifier"')
+  })
+
+  it('persists compare exclusions across checkpoints, restores, and imports from a selected base version', async () => {
+    const { api, source } = await mountVersionHistoryComposable({
+      source: groupedWorkspaceSource
+    })
+
+    expect(api.setCompareExclusions('workspace', {
+      groupNames: ['Core'],
+      tableIds: ['public.audit_log']
+    })).toBe(true)
+
+    const initialVersion = createDesignCheckpoint(api, 'Initial design')
+
+    expect(initialVersion.compareExclusions).toEqual({
+      groupNames: ['Core'],
+      tableIds: ['public.audit_log']
+    })
+
+    expect(api.setCompareExclusions('workspace', {
+      groupNames: [],
+      tableIds: []
+    })).toBe(true)
+
+    expect(api.replaceWorkspaceFromVersion(initialVersion.id)).toBe(true)
+    expect(api.document.value.workspace.compareExclusions).toEqual({
+      groupNames: ['Core'],
+      tableIds: ['public.audit_log']
+    })
+
+    source.value = importedWorkspaceSource
+
+    expect(api.replaceWorkspaceFromImportedSnapshot({
+      basedOnVersionId: initialVersion.id,
+      includeLayout: true,
+      source: importedWorkspaceSource
+    })).toBe(true)
+    expect(api.document.value.workspace.compareExclusions).toEqual({
+      groupNames: ['Core'],
+      tableIds: ['public.audit_log']
+    })
   })
 
   it('returns false when restoring a missing version id and keeps compare targets editable', async () => {

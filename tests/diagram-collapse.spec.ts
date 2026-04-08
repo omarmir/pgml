@@ -32,13 +32,13 @@ test('studio attaches table-scoped rows to tables and still lets floating nodes 
   await expect(page.locator('[data-attachment-row="constraint:chk_orders_total"]')).toBeVisible()
 
   await page.locator('[data-attachment-row="index:idx_products_search"]').click()
-  await expect(page.locator('[data-attachment-popover="index:idx_products_search"]')).toContainText('Columns: search')
+  await expect(page.locator('[data-attachment-popover="index:idx_products_search"]').first()).toContainText('Columns: search')
   await page.locator('[data-table-anchor="public.orders"] [data-attachment-row="procedure:archive_orders"]').click()
-  await expect(page.locator('[data-attachment-popover="procedure:archive_orders"]')).toContainText('writes: public.orders_archive, public.order_item_archive')
+  await expect(page.locator('[data-attachment-popover="procedure:archive_orders"]').first()).toContainText('writes: public.orders_archive, public.order_item_archive')
   await page.locator('[data-attachment-row="trigger:trg_register_fundingopportunity"]').click()
-  await expect(page.locator('[data-attachment-popover="trigger:trg_register_fundingopportunity"]')).toContainText('Registers a Common_Entity id')
+  await expect(page.locator('[data-attachment-popover="trigger:trg_register_fundingopportunity"]').first()).toContainText('Registers a Common_Entity id')
   await page.locator('[data-attachment-row="constraint:chk_orders_total"]').click()
-  await expect(page.locator('[data-attachment-popover="constraint:chk_orders_total"]')).toContainText('total_cents >= 0')
+  await expect(page.locator('[data-attachment-popover="constraint:chk_orders_total"]').first()).toContainText('total_cents >= 0')
 
   const customTypeNode = page.locator('[data-node-anchor="custom-type:Domain:email_address"]')
   const initialHeight = await customTypeNode.evaluate((element) => {
@@ -61,7 +61,7 @@ test('studio attaches table-scoped rows to tables and still lets floating nodes 
     return Math.round(element.offsetHeight)
   })
 
-  expect(collapsedHeight).toBeLessThan(expandedHeight)
+  expect(collapsedHeight).toBe(initialHeight)
 })
 
 test('studio only scrolls the editor on double click for floating cards, grouped tables, and attachment rows', async ({ goto, page }) => {

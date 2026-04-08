@@ -64,7 +64,9 @@ describe('diagram versions panel source', () => {
       'md:grid-cols-[minmax(0,1fr)_auto]',
       ':disabled="previewTargetId === version.id"',
       ':data-version-view="version.id"',
+      ':data-version-rename="version.id"',
       ':data-version-restore="version.id"',
+      'label="Rename"',
       'Preview target: {{ previewLabel }}.'
     ]
 
