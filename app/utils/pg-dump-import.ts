@@ -1,5 +1,6 @@
 import { normalizeSchemaName } from './studio-browser-schemas'
 import { canonicalizeImportedPgmlSource } from './pgml-import-normalization'
+import { extractPgmlSequenceSourceDefinition } from './pgml-sequence-metadata'
 
 type PgDumpImportColumn = {
   modifiers: string[]
@@ -74,6 +75,10 @@ type PgDumpImportReferenceActions = {
   remainder: string
 }
 
+type PgDumpImportIdentifierNormalizationOptions = {
+  foldIdentifiersToLowercase?: boolean
+}
+
 export type PgDumpImportResult = {
   pgml: string
   schemaName: string
@@ -120,6 +125,13 @@ const normalizeSqlWhitespace = (value: string) => {
 
 const trimSqlIdentifier = (value: string) => {
   return value.trim().replaceAll('"', '')
+}
+
+const applyImportedIdentifierCase = (
+  value: string,
+  options: PgDumpImportIdentifierNormalizationOptions
+) => {
+  return options.foldIdentifiersToLowercase ? value.toLowerCase() : value
 }
 
 const isWordCharacter = (value: string) => {
@@ -641,8 +653,31 @@ const normalizeQualifiedName = (value: string) => {
   return `public.${parts[0] || trimSqlIdentifier(value)}`
 }
 
+const normalizeQualifiedNameForImportedSource = (
+  value: string,
+  options: PgDumpImportIdentifierNormalizationOptions
+) => {
+  const parts = splitIdentifierParts(value)
+    .map(trimSqlIdentifier)
+    .map(part => applyImportedIdentifierCase(part, options))
+
+  if (parts.length >= 2) {
+    return `${parts[parts.length - 2]}.${parts[parts.length - 1]}`
+  }
+
+  return `public.${parts[0] || applyImportedIdentifierCase(trimSqlIdentifier(value), options)}`
+}
+
 const normalizeReferenceTarget = (tableName: string, columnName: string) => {
   return `${normalizeQualifiedName(tableName)}.${trimSqlIdentifier(columnName)}`
+}
+
+const normalizeReferenceTargetForImportedSource = (
+  tableName: string,
+  columnName: string,
+  options: PgDumpImportIdentifierNormalizationOptions
+) => {
+  return `${normalizeQualifiedNameForImportedSource(tableName, options)}.${applyImportedIdentifierCase(trimSqlIdentifier(columnName), options)}`
 }
 
 const readSqlIdentifier = (value: string) => {
@@ -1430,27 +1465,44 @@ const parseCreateDomainStatement = (statement: string, domains: Map<string, PgDu
   })
 }
 
-const parseCreateSequenceStatement = (statement: string, sequences: Map<string, PgDumpImportSequence>) => {
+const parseCreateSequenceStatement = (
+  statement: string,
+  sequences: Map<string, PgDumpImportSequence>,
+  options: PgDumpImportIdentifierNormalizationOptions
+) => {
   const normalized = normalizeSqlWhitespace(statement)
-  const sequenceMatch = normalized.match(/^create sequence\s+([^\s]+)\b/iu)
+  const keywordMatch = normalized.match(/^create sequence\s+/iu)
 
-  if (!sequenceMatch) {
+  if (!keywordMatch) {
     return
   }
 
-  const normalizedName = normalizeQualifiedName(sequenceMatch[1] || '')
+  const afterKeyword = normalized.slice(keywordMatch[0].length)
+  const identifier = readSqlIdentifier(afterKeyword)
+
+  if (!identifier?.raw) {
+    return
+  }
+
+  const normalizedName = normalizeQualifiedName(identifier.raw)
+  const remainder = afterKeyword.slice(identifier.nextIndex).trim()
+  const normalizedSourceStatement = `CREATE SEQUENCE ${normalizeQualifiedNameForImportedSource(identifier.raw, options)}${remainder.length > 0 ? ` ${remainder}` : ''}`
 
   sequences.set(normalizedName, {
     name: normalizedName,
-    statements: [statement.trim()]
+    statements: [normalizedSourceStatement.trim()]
   })
 }
 
-const appendSequenceStatement = (statement: string, sequences: Map<string, PgDumpImportSequence>) => {
+const appendSequenceStatement = (
+  statement: string,
+  sequences: Map<string, PgDumpImportSequence>,
+  options: PgDumpImportIdentifierNormalizationOptions
+) => {
   const normalized = normalizeSqlWhitespace(statement)
-  const sequenceMatch = normalized.match(/^alter sequence\s+([^\s]+)\s+owned by\s+.+$/iu)
+  const sequenceMatch = normalized.match(/^alter sequence\s+([^\s]+)\s+owned by\s+([^\s]+)\.([^\s;]+)$/iu)
 
-  if (!sequenceMatch) {
+  if (!sequenceMatch?.[1] || !sequenceMatch[2] || !sequenceMatch[3]) {
     return false
   }
 
@@ -1461,7 +1513,9 @@ const appendSequenceStatement = (statement: string, sequences: Map<string, PgDum
     return false
   }
 
-  sequence.statements.push(statement.trim())
+  sequence.statements.push(
+    `ALTER SEQUENCE ${normalizeQualifiedNameForImportedSource(sequenceMatch[1] || '', options)} OWNED BY ${normalizeReferenceTargetForImportedSource(sequenceMatch[2], sequenceMatch[3], options)}`
+  )
 
   return true
 }
@@ -1604,6 +1658,10 @@ const renderSqlSourceBlock = (header: string, source: string) => {
   return `${header} {\n  source: $sql$\n${indentSqlSource(source)}\n  $sql$\n}`
 }
 
+const renderSequenceBlock = (name: string, metadata: Array<{ key: string, value: string }>) => {
+  return `Sequence ${name} {\n${metadata.map(entry => `  ${entry.key}: ${entry.value}`).join('\n')}\n}`
+}
+
 const renderImportedPgml = (accumulator: PgDumpImportAccumulator) => {
   const sections: string[] = [pgDumpCommentLines.join('\n')]
 
@@ -1620,7 +1678,15 @@ const renderImportedPgml = (accumulator: PgDumpImportAccumulator) => {
   })
 
   accumulator.sequences.forEach((entry) => {
-    sections.push(renderSqlSourceBlock(`Sequence ${entry.name}`, entry.statements.join(';\n\n') + ';'))
+    const source = `${entry.statements.join(';\n\n')};`
+    const extractedDefinition = extractPgmlSequenceSourceDefinition(source)
+
+    if (extractedDefinition.isFullyStructured && extractedDefinition.metadata.length > 0) {
+      sections.push(renderSequenceBlock(entry.name, extractedDefinition.metadata))
+      return
+    }
+
+    sections.push(renderSqlSourceBlock(`Sequence ${entry.name}`, source))
   })
 
   accumulator.tables.forEach((entry) => {
@@ -1698,12 +1764,12 @@ export const convertPgDumpToPgml = (input: {
     }
 
     if (normalized.startsWith('create sequence ')) {
-      parseCreateSequenceStatement(statement, accumulator.sequences)
+      parseCreateSequenceStatement(statement, accumulator.sequences, input)
       return
     }
 
     if (normalized.startsWith('alter sequence ') && normalized.includes(' owned by ')) {
-      appendSequenceStatement(statement, accumulator.sequences)
+      appendSequenceStatement(statement, accumulator.sequences, input)
       return
     }
 

@@ -186,4 +186,66 @@ ALTER TABLE ONLY public."Agency_Cost_Category_Line_Item"
   id bigint [pk, not null, default: nextval('public.Agency_Cost_Category_Line_Item_id_seq')]
 }`)
   })
+
+  it('canonicalizes quoted sequence ownership identifiers derived from pg_dump source', () => {
+    const sql = `CREATE TABLE public."Transfer_Payment_Stream_Area_of_Expertise" (
+  id bigint NOT NULL
+);
+ALTER TABLE ONLY public."Transfer_Payment_Stream_Area_of_Expertise"
+  ADD CONSTRAINT "Transfer_Payment_Stream_Area_of_Expertise_pkey" PRIMARY KEY (id);
+CREATE SEQUENCE public."Transfer_Payment_Stream_Area_of_Expertise_id_seq";
+ALTER SEQUENCE public."Transfer_Payment_Stream_Area_of_Expertise_id_seq"
+  OWNED BY public."Transfer_Payment_Stream_Area_of_Expertise".id;`
+    const result = convertPgDumpToPgml({
+      foldIdentifiersToLowercase: true,
+      sql
+    })
+    const model = parsePgml(result.pgml)
+
+    expect(model.sequences).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        metadata: expect.arrayContaining([
+          expect.objectContaining({
+            key: 'owned_by',
+            value: 'public.transfer_payment_stream_area_of_expertise.id'
+          })
+        ]),
+        name: 'public.transfer_payment_stream_area_of_expertise_id_seq'
+      })
+    ]))
+  })
+
+  it('renders serial-style pg_dump sequences as structured PGML without default-only sequence clauses', () => {
+    const sql = `CREATE TABLE public."Common_Review_Set" (
+  id bigint DEFAULT nextval('public."Common_Review_Set_id_seq"'::regclass) NOT NULL
+);
+ALTER TABLE ONLY public."Common_Review_Set"
+  ADD CONSTRAINT "Common_Review_Set_pkey" PRIMARY KEY (id);
+CREATE SEQUENCE public."Common_Review_Set_id_seq" AS bigint START WITH 1 INCREMENT BY 1 NO MINVALUE NO MAXVALUE CACHE 1;
+ALTER SEQUENCE public."Common_Review_Set_id_seq"
+  OWNED BY public."Common_Review_Set".id;`
+    const result = convertPgDumpToPgml({ sql })
+    const model = parsePgml(result.pgml)
+
+    expect(result.pgml).toContain(`Sequence public.Common_Review_Set_id_seq {
+  as: bigint
+  owned_by: public.Common_Review_Set.id
+}`)
+    expect(result.pgml).not.toContain('source: $sql$')
+    expect(result.pgml).not.toContain('start:')
+    expect(result.pgml).not.toContain('increment:')
+    expect(result.pgml).not.toContain('min:')
+    expect(result.pgml).not.toContain('max:')
+    expect(result.pgml).not.toContain('cache:')
+    expect(model.sequences).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        metadata: [
+          { key: 'as', value: 'bigint' },
+          { key: 'owned_by', value: 'public.Common_Review_Set.id' }
+        ],
+        name: 'public.Common_Review_Set_id_seq',
+        source: null
+      })
+    ]))
+  })
 })

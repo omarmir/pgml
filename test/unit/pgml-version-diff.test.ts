@@ -1,7 +1,9 @@
 import { describe, expect, it } from 'vitest'
 
 import { buildPgmlWithNodeProperties, parsePgml } from '../../app/utils/pgml'
+import { convertDbmlToPgml } from '../../app/utils/dbml-import'
 import { diffPgmlSchemaModels } from '../../app/utils/pgml-diff'
+import { convertPgDumpToPgml } from '../../app/utils/pg-dump-import'
 import { buildPgmlMigrationDiffBundle } from '../../app/utils/pgml-migration-diff'
 
 const baseSnapshotSource = `Table public.users {
@@ -92,6 +94,92 @@ describe('PGML version diffing', () => {
     expect(migrationBundle.sql.migration.content).not.toContain('SET DEFAULT')
   })
 
+  it('ignores equivalent sequence ownership metadata when pg_dump source only differs by quoted identifiers', () => {
+    const beforeModel = parsePgml(convertPgDumpToPgml({
+      foldIdentifiersToLowercase: true,
+      sql: `CREATE TABLE public.transfer_payment_stream_area_of_expertise (
+  id bigint NOT NULL
+);
+ALTER TABLE ONLY public.transfer_payment_stream_area_of_expertise
+  ADD CONSTRAINT transfer_payment_stream_area_of_expertise_pkey PRIMARY KEY (id);
+CREATE SEQUENCE public.transfer_payment_stream_area_of_expertise_id_seq;
+ALTER SEQUENCE public.transfer_payment_stream_area_of_expertise_id_seq
+  OWNED BY public.transfer_payment_stream_area_of_expertise.id;`
+    }).pgml)
+    const afterModel = parsePgml(convertPgDumpToPgml({
+      foldIdentifiersToLowercase: true,
+      sql: `CREATE TABLE public."Transfer_Payment_Stream_Area_of_Expertise" (
+  id bigint NOT NULL
+);
+ALTER TABLE ONLY public."Transfer_Payment_Stream_Area_of_Expertise"
+  ADD CONSTRAINT "Transfer_Payment_Stream_Area_of_Expertise_pkey" PRIMARY KEY (id);
+CREATE SEQUENCE public."Transfer_Payment_Stream_Area_of_Expertise_id_seq";
+ALTER SEQUENCE public."Transfer_Payment_Stream_Area_of_Expertise_id_seq"
+  OWNED BY public."Transfer_Payment_Stream_Area_of_Expertise".id;`
+    }).pgml)
+    const diff = diffPgmlSchemaModels(beforeModel, afterModel)
+    const migrationBundle = buildPgmlMigrationDiffBundle(beforeModel, afterModel)
+
+    expect(diff.sequences).toEqual([])
+    expect(diff.summary.modified).toBe(0)
+    expect(migrationBundle.meta.hasChanges).toBe(false)
+    expect(migrationBundle.meta.statementCount).toBe(0)
+  })
+
+  it('ignores equivalent serial sequences between DBML and pg_dump imports when pg_dump only adds default sequence clauses', () => {
+    const beforeModel = parsePgml(convertDbmlToPgml({
+      dbml: `Table Common_Review_Set {
+  id bigserial [pk, not null]
+}`
+    }).pgml)
+    const afterModel = parsePgml(convertPgDumpToPgml({
+      sql: `CREATE TABLE public."Common_Review_Set" (
+  id bigint DEFAULT nextval('public."Common_Review_Set_id_seq"'::regclass) NOT NULL
+);
+ALTER TABLE ONLY public."Common_Review_Set"
+  ADD CONSTRAINT "Common_Review_Set_pkey" PRIMARY KEY (id);
+CREATE SEQUENCE public."Common_Review_Set_id_seq" AS bigint START WITH 1 INCREMENT BY 1 NO MINVALUE NO MAXVALUE CACHE 1;
+ALTER SEQUENCE public."Common_Review_Set_id_seq"
+  OWNED BY public."Common_Review_Set".id;`
+    }).pgml)
+    const diff = diffPgmlSchemaModels(beforeModel, afterModel)
+    const migrationBundle = buildPgmlMigrationDiffBundle(beforeModel, afterModel)
+
+    expect(diff.sequences).toEqual([])
+    expect(diff.columns).toEqual([])
+    expect(diff.summary.modified).toBe(0)
+    expect(migrationBundle.meta.hasChanges).toBe(false)
+    expect(migrationBundle.meta.statementCount).toBe(0)
+  })
+
+  it('ignores source-backed sequence blocks when they only restate canonical serial sequence metadata', () => {
+    const beforeModel = parsePgml(`Table public.common_review_set {
+  id bigint [pk, not null, default: nextval('public.common_review_set_id_seq')]
+}
+
+Sequence public.common_review_set_id_seq {
+  as: bigint
+  owned_by: public.common_review_set.id
+}`)
+    const afterModel = parsePgml(`Table public.common_review_set {
+  id bigint [pk, not null, default: nextval('public.common_review_set_id_seq')]
+}
+
+Sequence public.common_review_set_id_seq {
+  source: $sql$
+    CREATE SEQUENCE public."common_review_set_id_seq" AS bigint START WITH 1 INCREMENT BY 1 NO MINVALUE NO MAXVALUE CACHE 1;
+    ALTER SEQUENCE public."common_review_set_id_seq" OWNED BY public."common_review_set".id;
+  $sql$
+}`)
+    const diff = diffPgmlSchemaModels(beforeModel, afterModel)
+    const migrationBundle = buildPgmlMigrationDiffBundle(beforeModel, afterModel)
+
+    expect(diff.sequences).toEqual([])
+    expect(diff.summary.modified).toBe(0)
+    expect(migrationBundle.meta.hasChanges).toBe(false)
+    expect(migrationBundle.meta.statementCount).toBe(0)
+  })
+
   it('ignores equivalent built-in type aliases when diffing and generating migrations', () => {
     const beforeModel = parsePgml(`Table public.agency_profile {
   legal_name varchar(255) [not null]
@@ -161,6 +249,77 @@ describe('PGML version diffing', () => {
       id: 'public.users::email',
       kind: 'modified'
     }))
+  })
+
+  it('ignores source-range-only custom type movement and omits sourceRange from change keys', () => {
+    const movedOnlyDiff = diffPgmlSchemaModels(
+      parsePgml(`Enum public.order_status {
+  draft
+  approved
+}`),
+      parsePgml(`
+
+
+Enum public.order_status {
+  draft
+  approved
+}`)
+    )
+
+    expect(movedOnlyDiff.customTypes).toEqual([])
+    expect(movedOnlyDiff.summary.modified).toBe(0)
+
+    const changedEnumDiff = diffPgmlSchemaModels(
+      parsePgml(`Enum public.order_status {
+  draft
+}`),
+      parsePgml(`
+
+Enum public.order_status {
+  draft
+  approved
+}`)
+    )
+
+    expect(changedEnumDiff.customTypes).toEqual([
+      expect.objectContaining({
+        changes: expect.arrayContaining(['values']),
+        id: 'Enum::public.order_status',
+        kind: 'modified'
+      })
+    ])
+    expect(changedEnumDiff.customTypes[0]?.changes).not.toContain('sourceRange')
+  })
+
+  it('suppresses column modifications when the only change is an inline reference projection', () => {
+    const diff = diffPgmlSchemaModels(
+      parsePgml(`Table public.common_entity {
+  id uuid [pk]
+}
+
+Table public.common_review {
+  id uuid [pk]
+  entity_id uuid [not null]
+}`),
+      parsePgml(`Table public.common_entity {
+  id uuid [pk]
+}
+
+Table public.common_review {
+  id uuid [pk]
+  entity_id uuid [not null, ref: > public.common_entity.id, delete: restrict]
+}`)
+    )
+
+    expect(diff.columns).toEqual([])
+    expect(diff.references).toEqual([
+      expect.objectContaining({
+        id: '>::public.common_review::entity_id::public.common_entity::id',
+        kind: 'added'
+      })
+    ])
+    expect(diff.summary.added).toBe(1)
+    expect(diff.summary.modified).toBe(0)
   })
 
   it('ignores group changes when table members only differ by implicit public schema qualification', () => {

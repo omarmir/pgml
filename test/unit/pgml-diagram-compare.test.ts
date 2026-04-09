@@ -74,6 +74,9 @@ Properties "public.users" {
       entityKind: 'column',
       label: 'public.users.email',
       rowKey: 'public.users.email',
+      scopeId: 'table:public.users',
+      scopeKind: 'table',
+      scopeLabel: 'public.users',
       targetNodeIds: ['public.users']
     })
     expect(modifiedColumn?.beforeSnapshot).toContain('"type": "text"')
@@ -89,6 +92,8 @@ Properties "public.users" {
     expect(addedTable).toMatchObject({
       changeKind: 'added',
       entityKind: 'table',
+      scopeId: 'table:public.audit_log',
+      scopeKind: 'table',
       targetNodeIds: ['public.audit_log']
     })
     expect(addedTable?.selectionCandidates).toContainEqual({
@@ -100,6 +105,7 @@ Properties "public.users" {
       baseNodeIds: ['function:public.legacy_cleanup'],
       changeKind: 'removed',
       entityKind: 'function',
+      scopeKind: 'standalone',
       targetNodeIds: []
     })
     expect(removedFunction?.beforeSnapshot).toContain('legacy_cleanup')
@@ -201,7 +207,7 @@ Table public.orders {
     })
   })
 
-  it('describes modified columns with concrete reference changes', () => {
+  it('surfaces inline reference additions as references without a duplicate modified column entry', () => {
     const baseModel = parseSnapshotModel(`Table public.agencies {
   id uuid [pk]
 }
@@ -223,19 +229,23 @@ Table public.accounts {
       baseModel,
       targetModel
     )
-    const modifiedColumn = entries.find(entry => entry.id === 'column:public.accounts::agency_id') || null
+    const modifiedColumn = entries.find(entry => entry.id === 'column:public.accounts::agency_id')
+    const addedReference = entries.find(entry => entry.id === 'reference:>::public.accounts::agency_id::public.agencies::id') || null
 
-    expect(modifiedColumn).toMatchObject({
-      changeKind: 'modified',
-      description: 'Changed column public.accounts.agency_id: modifiers none -> [ref: > public.agencies.id]; reference none -> > public.agencies.id.',
-      entityKind: 'column',
-      label: 'public.accounts.agency_id'
+    expect(modifiedColumn).toBeUndefined()
+    expect(addedReference).toMatchObject({
+      changeKind: 'added',
+      description: 'Added reference public.accounts.agency_id -> public.agencies.id.',
+      entityKind: 'reference',
+      label: 'public.accounts.agency_id -> public.agencies.id',
+      rowKey: 'public.accounts.agency_id'
     })
-    expect(modifiedColumn?.fields).toContainEqual({
-      after: expect.stringContaining('"toTable": "public.agencies"'),
-      before: null,
-      id: 'reference',
-      label: 'reference'
+    expect(addedReference?.afterSnapshot).toContain('"toTable": "public.agencies"')
+    expect(addedReference?.beforeSnapshot).toBeNull()
+    expect(addedReference?.selectionCandidates).toContainEqual({
+      columnName: 'agency_id',
+      kind: 'column',
+      tableId: 'public.accounts'
     })
   })
 

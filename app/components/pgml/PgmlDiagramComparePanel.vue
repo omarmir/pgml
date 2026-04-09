@@ -2,11 +2,9 @@
 import type { Ref } from 'vue'
 import { computed, ref } from 'vue'
 import { studioSelectUi } from '~/constants/ui'
-import PgmlDiagramCompareEntryExpansion from '~/components/pgml/PgmlDiagramCompareEntryExpansion.vue'
+import PgmlDiagramCompareEntryList from '~/components/pgml/PgmlDiagramCompareEntryList.vue'
 import {
   getPgmlDiagramCompareChangeColor,
-  getPgmlDiagramCompareChangeVerb,
-  getPgmlDiagramCompareEntityKindLabel,
   type PgmlDiagramCompareEntityKind,
   type PgmlDiagramCompareEntry
 } from '~/utils/pgml-diagram-compare'
@@ -86,6 +84,13 @@ type PgmlCompareEntityFilterOption = {
   value: PgmlDiagramCompareEntityKind
 }
 
+type PgmlCompareDetailViewMode = 'both' | 'snapshot' | 'structured'
+
+type PgmlCompareDetailViewOption = {
+  label: string
+  value: PgmlCompareDetailViewMode
+}
+
 const compareEntityKindOrder: PgmlDiagramCompareEntityKind[] = [
   'table',
   'group',
@@ -119,9 +124,12 @@ const compareEntityFilterLabelByKind: Readonly<Record<PgmlDiagramCompareEntityKi
 const searchQuery: Ref<string> = ref('')
 const filterKind: Ref<PgmlCompareFilterKind> = ref('all')
 const selectedEntityKinds: Ref<PgmlDiagramCompareEntityKind[]> = ref([])
+const detailViewMode: Ref<PgmlCompareDetailViewMode> = ref('structured')
 const filterButtonClass = joinStudioClasses(studioButtonClasses.secondary, 'text-[0.62rem]')
 const activeFilterButtonClass = joinStudioClasses(studioButtonClasses.primary, 'text-[0.62rem]')
 const compareStatLabelClass = 'font-mono text-[0.58rem] uppercase tracking-[0.08em]'
+const compareEntityFilterButtonClass = 'inline-flex items-center gap-1.5 border px-2 py-1 font-mono text-[0.56rem] uppercase tracking-[0.08em] transition-colors duration-150 cursor-default'
+const compareEntityFilterCountClass = 'border px-1 py-0.5 text-[0.48rem] leading-none transition-colors duration-150'
 const compareOverviewSectionClass = 'grid min-w-0 gap-3 border-b border-[color:var(--studio-divider)] pb-3'
 const compareDividerSectionClass = 'grid min-w-0 gap-3 border-t border-[color:var(--studio-divider)] pt-3'
 const exclusionChipClass = 'border border-[color:var(--studio-divider)] px-1.5 py-0.5 font-mono text-[0.52rem] uppercase tracking-[0.08em] text-[color:var(--studio-shell-muted)]'
@@ -148,6 +156,20 @@ const compareFilterOptions: PgmlCompareFilterOption[] = [
   {
     label: 'Removed',
     value: 'removed'
+  }
+]
+const compareDetailViewOptions: PgmlCompareDetailViewOption[] = [
+  {
+    label: 'Structured',
+    value: 'structured'
+  },
+  {
+    label: 'Snapshot',
+    value: 'snapshot'
+  },
+  {
+    label: 'Both',
+    value: 'both'
   }
 ]
 const hasExcludedEntities = computed(() => {
@@ -178,6 +200,12 @@ const detailBaseLabel = computed(() => {
 })
 const detailTargetLabel = computed(() => {
   return resolveCompareVersionLabel(compareTargetId, targetLabel)
+})
+const showFieldDiffs = computed(() => {
+  return detailViewMode.value !== 'snapshot'
+})
+const showSnapshotDiff = computed(() => {
+  return detailViewMode.value !== 'structured'
 })
 const buildEntrySearchHaystack = (entry: PgmlDiagramCompareEntry) => {
   return [
@@ -313,16 +341,6 @@ const updateSelectedComparisonId = (value: unknown) => {
   emit('select-comparison', nextValue === currentComparisonOptionValue ? null : nextValue)
 }
 
-const getChangeBadgeStyle = (entry: PgmlDiagramCompareEntry) => {
-  const color = getPgmlDiagramCompareChangeColor(entry.changeKind)
-
-  return {
-    backgroundColor: `color-mix(in srgb, ${color} 14%, transparent)`,
-    borderColor: `color-mix(in srgb, ${color} 58%, var(--studio-divider) 42%)`,
-    color: `color-mix(in srgb, ${color} 80%, var(--studio-shell-text) 20%)`
-  }
-}
-
 const isCompareFilterActive = (kind: PgmlCompareStatKind) => {
   return filterKind.value === kind
 }
@@ -364,21 +382,55 @@ const toggleCompareEntityKindFilter = (kind: PgmlDiagramCompareEntityKind) => {
     : [...selectedEntityKinds.value, kind]
 }
 
-const toggleEntrySelection = (entryId: string) => {
-  emit('select-entry', selectedEntryId === entryId ? null : entryId)
+const getCompareEntityFilterButtonStyle = (kind: PgmlDiagramCompareEntityKind) => {
+  const isActive = isEntityKindFilterActive(kind)
+  const accent = 'var(--studio-ring)'
+
+  return {
+    backgroundColor: isActive
+      ? `color-mix(in srgb, ${accent} 24%, var(--studio-input-bg) 76%)`
+      : 'var(--studio-input-bg)',
+    borderColor: isActive
+      ? `color-mix(in srgb, ${accent} 74%, var(--studio-divider) 26%)`
+      : 'var(--studio-divider)',
+    boxShadow: isActive
+      ? `inset 0 0 0 1px color-mix(in srgb, ${accent} 44%, transparent), 0 0 0 1px color-mix(in srgb, ${accent} 18%, transparent)`
+      : 'none',
+    color: isActive
+      ? `color-mix(in srgb, ${accent} 78%, white 22%)`
+      : 'var(--studio-shell-label)'
+  }
 }
 
-const isEntryExpanded = (
-  entryId: string,
-  section: 'context' | 'results'
-) => {
-  if (selectedEntry.value?.id !== entryId) {
-    return false
+const getCompareEntityFilterMarkerStyle = (kind: PgmlDiagramCompareEntityKind) => {
+  const isActive = isEntityKindFilterActive(kind)
+
+  return {
+    backgroundColor: isActive
+      ? 'var(--studio-ring)'
+      : 'color-mix(in srgb, var(--studio-shell-muted) 56%, transparent)',
+    opacity: isActive ? '1' : '0.72'
   }
+}
 
-  const isVisibleContextEntry = visibleContextEntries.value.some(entry => entry.id === entryId)
+const getCompareEntityFilterCountStyle = (kind: PgmlDiagramCompareEntityKind) => {
+  const isActive = isEntityKindFilterActive(kind)
 
-  return section === 'context' ? isVisibleContextEntry : !isVisibleContextEntry
+  return {
+    backgroundColor: isActive
+      ? 'color-mix(in srgb, var(--studio-ring) 18%, transparent)'
+      : 'transparent',
+    borderColor: isActive
+      ? 'color-mix(in srgb, var(--studio-ring) 64%, var(--studio-divider) 36%)'
+      : 'var(--studio-divider)',
+    color: isActive
+      ? 'color-mix(in srgb, var(--studio-ring) 74%, white 26%)'
+      : 'var(--studio-shell-label)'
+  }
+}
+
+const isDetailViewModeActive = (mode: PgmlCompareDetailViewMode) => {
+  return detailViewMode.value === mode
 }
 </script>
 
@@ -402,6 +454,23 @@ const isEntryExpanded = (
           <span class="border border-[color:var(--studio-ring)] px-1.5 py-0.5 font-mono text-[0.52rem] uppercase tracking-[0.08em] text-[color:var(--studio-shell-text)]">
             {{ targetLabel }}
           </span>
+        </div>
+
+        <div class="flex flex-wrap items-center gap-2">
+          <span class="font-mono text-[0.58rem] uppercase tracking-[0.08em] text-[color:var(--studio-shell-label)]">
+            Detail view
+          </span>
+          <UButton
+            v-for="option in compareDetailViewOptions"
+            :key="option.value"
+            :label="option.label"
+            :data-compare-detail-view="option.value"
+            color="neutral"
+            :variant="isDetailViewModeActive(option.value) ? 'soft' : 'outline'"
+            size="xs"
+            :class="isDetailViewModeActive(option.value) ? activeFilterButtonClass : filterButtonClass"
+            @click="detailViewMode = option.value"
+          />
         </div>
 
         <p :class="studioCompactBodyCopyClass">
@@ -579,51 +648,19 @@ const isEntryExpanded = (
           Selected On Diagram
         </div>
 
-        <div class="grid min-w-0 gap-2">
-          <div
-            v-for="entry in visibleContextEntries"
-            :key="entry.id"
-            :data-compare-context-entry-row="entry.id"
-            class="overflow-hidden border transition-colors duration-150"
-            :class="selectedEntry?.id === entry.id ? 'border-[color:var(--studio-ring)] bg-[color:var(--studio-input-bg)]' : 'border-[color:var(--studio-divider)] bg-[color:var(--studio-control-bg)]'"
-          >
-            <button
-              type="button"
-              :data-compare-context-entry="entry.id"
-              class="grid min-w-0 w-full gap-1 px-3 py-2 text-left transition-colors duration-150"
-              :class="selectedEntry?.id === entry.id ? 'bg-transparent' : 'hover:bg-[color:var(--studio-surface-hover)]'"
-              :aria-expanded="isEntryExpanded(entry.id, 'context')"
-              @click="toggleEntrySelection(entry.id)"
-            >
-              <div class="flex flex-wrap items-center gap-2">
-                <span
-                  class="border px-1.5 py-0.5 font-mono text-[0.5rem] uppercase tracking-[0.08em]"
-                  :style="getChangeBadgeStyle(entry)"
-                >
-                  {{ getPgmlDiagramCompareChangeVerb(entry.changeKind) }}
-                </span>
-                <span class="font-mono text-[0.52rem] uppercase tracking-[0.08em] text-[color:var(--studio-shell-label)]">
-                  {{ getPgmlDiagramCompareEntityKindLabel(entry.entityKind) }}
-                </span>
-              </div>
-              <div class="min-w-0 break-words text-[0.76rem] font-semibold text-[color:var(--studio-shell-text)] [overflow-wrap:anywhere]">
-                {{ entry.label }}
-              </div>
-              <div class="min-w-0 break-words text-[0.66rem] leading-5 text-[color:var(--studio-shell-muted)] [overflow-wrap:anywhere]">
-                {{ entry.description }}
-              </div>
-            </button>
-
-            <PgmlDiagramCompareEntryExpansion
-              v-if="isEntryExpanded(entry.id, 'context')"
-              :base-label="detailBaseLabel"
-              :entry="entry"
-              :target-label="detailTargetLabel"
-              @focus-source="emit('focus-source', $event)"
-              @focus-target="emit('focus-target', $event)"
-            />
-          </div>
-        </div>
+        <PgmlDiagramCompareEntryList
+          :base-label="detailBaseLabel"
+          :entries="visibleContextEntries"
+          section="context"
+          :selected-diagram-context-ids="selectedDiagramContextIds"
+          :selected-entry-id="selectedEntryId"
+          :show-field-diffs="showFieldDiffs"
+          :show-snapshot-diff="showSnapshotDiff"
+          :target-label="detailTargetLabel"
+          @focus-source="emit('focus-source', $event)"
+          @focus-target="emit('focus-target', $event)"
+          @select-entry="emit('select-entry', $event)"
+        />
       </div>
 
       <div :class="compareDividerSectionClass">
@@ -669,69 +706,42 @@ const isEntryExpanded = (
               :key="option.value"
               type="button"
               :data-compare-entity-filter="option.value"
-              :class="isEntityKindFilterActive(option.value) ? activeFilterButtonClass : filterButtonClass"
+              :class="compareEntityFilterButtonClass"
               :aria-pressed="isEntityKindFilterActive(option.value)"
+              :style="getCompareEntityFilterButtonStyle(option.value)"
               @click="toggleCompareEntityKindFilter(option.value)"
             >
-              {{ option.label }} {{ option.count }}
+              <span
+                :data-compare-entity-filter-marker="option.value"
+                class="h-1.5 w-1.5 shrink-0 rounded-full transition-colors duration-150"
+                :style="getCompareEntityFilterMarkerStyle(option.value)"
+              />
+              <span>{{ option.label }}</span>
+              <span
+                :data-compare-entity-filter-count="option.value"
+                :class="compareEntityFilterCountClass"
+                :style="getCompareEntityFilterCountStyle(option.value)"
+              >
+                {{ option.count }}
+              </span>
             </button>
           </div>
         </div>
 
-        <div
+        <PgmlDiagramCompareEntryList
           v-if="filteredEntries.length > 0"
-          class="grid min-w-0 gap-2"
-        >
-          <div
-            v-for="entry in filteredEntries"
-            :key="entry.id"
-            :data-compare-entry-row="entry.id"
-            class="overflow-hidden border transition-colors duration-150"
-            :class="selectedEntry?.id === entry.id ? 'border-[color:var(--studio-ring)] bg-[color:var(--studio-input-bg)]' : 'border-[color:var(--studio-divider)] bg-[color:var(--studio-control-bg)]'"
-          >
-            <button
-              type="button"
-              :data-compare-entry="entry.id"
-              class="grid min-w-0 w-full gap-1 px-3 py-2 text-left transition-colors duration-150"
-              :class="selectedEntry?.id === entry.id ? 'bg-transparent' : 'hover:bg-[color:var(--studio-surface-hover)]'"
-              :aria-expanded="isEntryExpanded(entry.id, 'results')"
-              @click="toggleEntrySelection(entry.id)"
-            >
-              <div class="flex flex-wrap items-center gap-2">
-                <span
-                  class="border px-1.5 py-0.5 font-mono text-[0.5rem] uppercase tracking-[0.08em]"
-                  :style="getChangeBadgeStyle(entry)"
-                >
-                  {{ getPgmlDiagramCompareChangeVerb(entry.changeKind) }}
-                </span>
-                <span class="font-mono text-[0.52rem] uppercase tracking-[0.08em] text-[color:var(--studio-shell-label)]">
-                  {{ getPgmlDiagramCompareEntityKindLabel(entry.entityKind) }}
-                </span>
-                <span
-                  v-if="selectedDiagramContextIds.includes(entry.id)"
-                  class="border border-[color:var(--studio-ring)] px-1.5 py-0.5 font-mono text-[0.5rem] uppercase tracking-[0.08em] text-[color:var(--studio-shell-text)]"
-                >
-                  On diagram
-                </span>
-              </div>
-              <div class="min-w-0 break-words text-[0.76rem] font-semibold text-[color:var(--studio-shell-text)] [overflow-wrap:anywhere]">
-                {{ entry.label }}
-              </div>
-              <div class="min-w-0 break-words text-[0.66rem] leading-5 text-[color:var(--studio-shell-muted)] [overflow-wrap:anywhere]">
-                {{ entry.description }}
-              </div>
-            </button>
-
-            <PgmlDiagramCompareEntryExpansion
-              v-if="isEntryExpanded(entry.id, 'results')"
-              :base-label="detailBaseLabel"
-              :entry="entry"
-              :target-label="detailTargetLabel"
-              @focus-source="emit('focus-source', $event)"
-              @focus-target="emit('focus-target', $event)"
-            />
-          </div>
-        </div>
+          :base-label="detailBaseLabel"
+          :entries="filteredEntries"
+          section="results"
+          :selected-diagram-context-ids="selectedDiagramContextIds"
+          :selected-entry-id="selectedEntryId"
+          :show-field-diffs="showFieldDiffs"
+          :show-snapshot-diff="showSnapshotDiff"
+          :target-label="detailTargetLabel"
+          @focus-source="emit('focus-source', $event)"
+          @focus-target="emit('focus-target', $event)"
+          @select-entry="emit('select-entry', $event)"
+        />
 
         <div
           v-else

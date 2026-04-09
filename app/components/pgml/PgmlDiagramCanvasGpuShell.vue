@@ -127,6 +127,7 @@ import {
   createPgmlDetailMetadataDraftFromSequence,
   createPgmlDetailMetadataDraftFromTrigger
 } from '~/utils/pgml-detail-popover-metadata'
+import { normalizePgmlSequenceMetadataEntries } from '~/utils/pgml-sequence-metadata'
 import type { PgmlVersionMigrationStepBundle } from '~/utils/pgml-version-migration'
 import { normalizeSvgPaint } from '~/utils/svg-paint'
 import {
@@ -4507,6 +4508,9 @@ const buildExecutableMetadataSectionsFromDraft = (draft: PgmlDetailPopoverMetada
   }
 
   metadata.push(...getDraftKeyValueEntries(draft.customMetadata))
+  const normalizedMetadata = draft.kind === 'sequence'
+    ? normalizePgmlSequenceMetadataEntries(metadata)
+    : metadata
 
   return {
     affects: {
@@ -4528,7 +4532,7 @@ const buildExecutableMetadataSectionsFromDraft = (draft: PgmlDetailPopoverMetada
     },
     docsEntries: getDraftKeyValueEntries(draft.docsEntries),
     docsSummary: draft.docsSummary.trim(),
-    metadata
+    metadata: normalizedMetadata
   }
 }
 
@@ -5479,7 +5483,7 @@ const diagramPanelDescription = computed(() => {
 
 const toolPanelTitle = computed(() => {
   if (activeToolPanelTab.value === 'compare') {
-    return selectedCompareEntry.value ? selectedCompareEntry.value.label : 'Compare changes'
+    return 'Compare changes'
   }
 
   if (activeToolPanelTab.value === 'migrations') {
@@ -5491,10 +5495,6 @@ const toolPanelTitle = computed(() => {
 
 const toolPanelDescription = computed(() => {
   if (activeToolPanelTab.value === 'compare') {
-    if (selectedCompareEntry.value) {
-      return selectedCompareEntry.value.description
-    }
-
     return `${compareEntries.length} highlighted change${compareEntries.length === 1 ? '' : 's'} between ${compareBaseLabel} and ${compareTargetLabel}.`
   }
 

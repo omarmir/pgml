@@ -34,6 +34,8 @@ export type PgmlDiagramCompareField = {
   label: string
 }
 
+export type PgmlDiagramCompareScopeKind = 'group' | 'standalone' | 'table'
+
 export type PgmlDiagramCompareEntry = {
   afterSnapshot: string | null
   baseNodeIds: string[]
@@ -46,6 +48,9 @@ export type PgmlDiagramCompareEntry = {
   id: string
   label: string
   rowKey: string | null
+  scopeId: string
+  scopeKind: PgmlDiagramCompareScopeKind
+  scopeLabel: string
   selectionCandidates: DiagramGpuSelection[]
   sourceRange: PgmlSourceRange | null
   targetNodeIds: string[]
@@ -136,6 +141,10 @@ const hasNodeId = (value: string | null | undefined): value is string => {
   return typeof value === 'string' && value.length > 0
 }
 
+const isTransientCompareFieldName = (fieldName: string) => {
+  return fieldName === 'sourceRange'
+}
+
 const formatCompareFieldLabel = (fieldName: string) => {
   const explicitLabel = compareFieldLabelByValue[fieldName]
 
@@ -173,11 +182,13 @@ const buildChangedFieldNames = (
   changedFields: string[]
 ) => {
   return changedFields.length > 0
-    ? changedFields
+    ? changedFields.filter(fieldName => !isTransientCompareFieldName(fieldName))
     : Array.from(new Set([
         ...Object.keys((beforeValue as Record<string, unknown>) || {}),
         ...Object.keys((afterValue as Record<string, unknown>) || {})
-      ])).sort((left, right) => left.localeCompare(right))
+      ]))
+        .filter(fieldName => !isTransientCompareFieldName(fieldName))
+        .sort((left, right) => left.localeCompare(right))
 }
 
 // Snapshot text feeds the compare inspector, so it should stay stable across runs.
@@ -561,6 +572,9 @@ const buildStandaloneObjectEntry = <T>(input: {
     id: `${input.idPrefix}:${input.entry.id}`,
     label: input.entry.label,
     rowKey: input.entry.after && input.buildRowKey ? input.buildRowKey(input.entry.after) : null,
+    scopeId: `standalone:${input.idPrefix}:${input.entry.id}`,
+    scopeKind: 'standalone',
+    scopeLabel: input.entry.label,
     selectionCandidates: buildObjectSelectionCandidates(afterObjectId, Boolean(input.entry.after)),
     sourceRange: pickSourceRange(
       input.entry.after ? input.sourceRange(input.entry.after) : null,
@@ -633,6 +647,9 @@ export const buildPgmlDiagramCompareEntries = (
         id: `table:${entry.id}`,
         label: entry.label,
         rowKey: null,
+        scopeId: `table:${entry.id}`,
+        scopeKind: 'table',
+        scopeLabel: entry.label,
         selectionCandidates: targetTable
           ? [{
               kind: 'table',
@@ -664,6 +681,9 @@ export const buildPgmlDiagramCompareEntries = (
         id: `group:${entry.id}`,
         label: entry.label,
         rowKey: null,
+        scopeId: `group:${entry.id}`,
+        scopeKind: 'group',
+        scopeLabel: entry.label,
         selectionCandidates: targetGroup && groupId
           ? [{
               id: groupId,
@@ -702,6 +722,9 @@ export const buildPgmlDiagramCompareEntries = (
         id: `column:${entry.id}`,
         label: entry.label,
         rowKey: entry.after ? `${entry.after.tableId}.${entry.after.column.name}` : null,
+        scopeId: tableId ? `table:${tableId}` : `standalone:column:${entry.id}`,
+        scopeKind: tableId ? 'table' : 'standalone',
+        scopeLabel: tableId || entry.label,
         selectionCandidates: buildTableSelectionCandidates({
           childSelection: targetTable && columnName && entry.after
             ? {
@@ -744,6 +767,9 @@ export const buildPgmlDiagramCompareEntries = (
         id: `index:${entry.id}`,
         label: entry.label,
         rowKey: entry.after && attachmentId ? `index:${attachmentId}` : null,
+        scopeId: tableId ? `table:${tableId}` : `standalone:index:${entry.id}`,
+        scopeKind: tableId ? 'table' : 'standalone',
+        scopeLabel: tableId || entry.label,
         selectionCandidates: buildTableSelectionCandidates({
           childSelection: targetTable && attachmentId && entry.after
             ? {
@@ -786,6 +812,9 @@ export const buildPgmlDiagramCompareEntries = (
         id: `constraint:${entry.id}`,
         label: entry.label,
         rowKey: entry.after && attachmentId ? `constraint:${attachmentId}` : null,
+        scopeId: tableId ? `table:${tableId}` : `standalone:constraint:${entry.id}`,
+        scopeKind: tableId ? 'table' : 'standalone',
+        scopeLabel: tableId || entry.label,
         selectionCandidates: buildTableSelectionCandidates({
           childSelection: targetTable && attachmentId && entry.after
             ? {
@@ -809,6 +838,7 @@ export const buildPgmlDiagramCompareEntries = (
       const baseFromTable = findTableById(baseModel, reference?.fromTable || null)
       const targetFromTable = findTableById(targetModel, reference?.fromTable || null)
       const targetToTable = findTableById(targetModel, reference?.toTable || null)
+      const scopeTableId = reference?.fromTable || reference?.toTable || null
 
       return {
         afterSnapshot: formatCompareSnapshot(entry.after),
@@ -822,6 +852,9 @@ export const buildPgmlDiagramCompareEntries = (
         id: `reference:${entry.id}`,
         label: entry.label,
         rowKey: entry.after ? `${entry.after.fromTable}.${entry.after.fromColumn}` : null,
+        scopeId: scopeTableId ? `table:${scopeTableId}` : `standalone:reference:${entry.id}`,
+        scopeKind: scopeTableId ? 'table' : 'standalone',
+        scopeLabel: scopeTableId || entry.label,
         selectionCandidates: buildTableSelectionCandidates({
           childSelection: targetFromTable && entry.after
             ? {
@@ -896,6 +929,9 @@ export const buildPgmlDiagramCompareEntries = (
         id: `trigger:${entry.id}`,
         label: entry.label,
         rowKey: entry.after && trigger ? buildRoutineObjectId('trigger', trigger.name) : null,
+        scopeId: tableId ? `table:${tableId}` : `standalone:trigger:${entry.id}`,
+        scopeKind: tableId ? 'table' : 'standalone',
+        scopeLabel: tableId || entry.label,
         selectionCandidates: buildTableSelectionCandidates({
           childSelection: targetTable && trigger && entry.after
             ? {
@@ -954,6 +990,19 @@ export const buildPgmlDiagramCompareEntries = (
       id: `layout:${entry.id}`,
       label: entry.label,
       rowKey: null,
+      scopeId: entry.id.startsWith('group:')
+        ? `group:${entry.id.replace(/^group:/, '')}`
+        : findTableById(targetModel, entry.id) || findTableById(baseModel, entry.id)
+          ? `table:${entry.id}`
+          : `standalone:layout:${entry.id}`,
+      scopeKind: entry.id.startsWith('group:')
+        ? 'group'
+        : findTableById(targetModel, entry.id) || findTableById(baseModel, entry.id)
+          ? 'table'
+          : 'standalone',
+      scopeLabel: entry.id.startsWith('group:')
+        ? entry.id.replace(/^group:/, '')
+        : entry.id,
       selectionCandidates: buildLayoutSelectionCandidates(entry.id, baseModel, targetModel),
       sourceRange: null,
       targetNodeIds: buildNodeIds(entry.after ? entry.id : null)

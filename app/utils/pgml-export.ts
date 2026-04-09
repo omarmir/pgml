@@ -202,12 +202,15 @@ const buildCreateSequenceStatement = (sequence: PgmlSequence) => {
     parts.push(`INCREMENT BY ${metadataByKey.increment}`)
   }
 
-  if (metadataByKey.minvalue) {
-    parts.push(`MINVALUE ${metadataByKey.minvalue}`)
+  const minValue = metadataByKey.min || metadataByKey.minvalue
+  const maxValue = metadataByKey.max || metadataByKey.maxvalue
+
+  if (minValue) {
+    parts.push(`MINVALUE ${minValue}`)
   }
 
-  if (metadataByKey.maxvalue) {
-    parts.push(`MAXVALUE ${metadataByKey.maxvalue}`)
+  if (maxValue) {
+    parts.push(`MAXVALUE ${maxValue}`)
   }
 
   if (metadataByKey.cache) {

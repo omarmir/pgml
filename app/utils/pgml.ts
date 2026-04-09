@@ -9,6 +9,11 @@ import {
   parseDbmlCompatibleIndexDefinition,
   parsePgmlCompatibleReference
 } from './pgml-dbml-compat'
+import { normalizeImportedTableColumnReference } from './pgml-import-normalization'
+import {
+  extractPgmlSequenceSourceDefinition,
+  normalizePgmlSequenceMetadataEntries
+} from './pgml-sequence-metadata'
 import { normalizePgmlTypeExpression } from './pgml-types'
 
 export type PgmlColumn = {
@@ -237,11 +242,6 @@ type DerivedRoutineSource = {
 type DerivedTriggerSource = {
   name: string | null
   tableName: string | null
-  metadata: PgmlMetadataEntry[]
-}
-
-type DerivedSequenceSource = {
-  name: string | null
   metadata: PgmlMetadataEntry[]
 }
 
@@ -674,6 +674,61 @@ const getTableIdsFromValues = (
 ) => {
   return uniqueValues(values.flatMap(value => resolveTableIdsFromValue(tables, referenceLookup, value, defaultTableId)))
 }
+
+const normalizeTableColumnReferenceValueForModel = (
+  tables: PgmlTable[],
+  referenceLookup: Map<string, string>,
+  value: string
+) => {
+  const normalizedValue = sanitizeReferenceValue(value).replaceAll('\\"', '"')
+  const parts = normalizedValue
+    .split('.')
+    .map(part => cleanName(part))
+    .filter(part => part.length > 0)
+
+  if (parts.length < 2) {
+    return normalizeImportedTableColumnReference(normalizedValue)
+  }
+
+  const columnToken = readMatch(parts.at(-1))
+  const tableLookupValue = parts.length >= 3
+    ? `${readMatch(parts.at(-3))}.${readMatch(parts.at(-2))}`
+    : readMatch(parts[0])
+  const tableId = resolveTableIdentifier(tables, referenceLookup, tableLookupValue)
+  const table = tableId ? tables.find(entry => entry.fullName === tableId) : null
+  const column = table?.columns.find(entry => lower(entry.name) === lower(columnToken))
+
+  if (table && column) {
+    return `${table.fullName}.${column.name}`
+  }
+
+  if (table) {
+    return `${table.fullName}.${columnToken}`
+  }
+
+  return normalizeImportedTableColumnReference(normalizedValue)
+}
+
+const normalizeSequenceMetadataEntriesForModel = (
+  tables: PgmlTable[],
+  sequences: PgmlSequence[]
+) => {
+  const referenceLookup = buildGroupTableReferenceLookup(tables)
+
+  return sequences.map((sequence) => {
+    const metadata = normalizePgmlSequenceMetadataEntries(sequence.metadata, {
+      normalizeOwnedBy: value => normalizeTableColumnReferenceValueForModel(tables, referenceLookup, value),
+      normalizeType: normalizePgmlTypeExpression
+    })
+
+    return {
+      ...sequence,
+      details: buildExecutableDetails(metadata, sequence.docs, sequence.affects, sequence.source),
+      metadata
+    }
+  })
+}
+
 const inferSourceTableIds = (
   tables: PgmlTable[],
   referenceLookup: Map<string, string>,
@@ -1260,63 +1315,12 @@ const extractTriggerSource = (source: string | null): DerivedTriggerSource => {
   }
 }
 
-const extractSequenceSource = (source: string | null): DerivedSequenceSource => {
-  if (!source) {
-    return {
-      name: null,
-      metadata: []
-    }
-  }
-
-  const normalized = normalizeSource(source)
-  const metadata: PgmlMetadataEntry[] = []
-  const nameMatch = normalized.match(/create\s+sequence\s+([^\s;]+)/i)
-  const typeMatch = normalized.match(/\bas\s+([^\s;]+)/i)
-  const startMatch = normalized.match(/\bstart\s+with\s+([^\s;]+)/i)
-  const incrementMatch = normalized.match(/\bincrement\s+by\s+([^\s;]+)/i)
-  const minMatch = normalized.match(/\bminvalue\s+([^\s;]+)/i)
-  const maxMatch = normalized.match(/\bmaxvalue\s+([^\s;]+)/i)
-  const cacheMatch = normalized.match(/\bcache\s+([^\s;]+)/i)
-  const ownedByMatch = normalized.match(/\bowned\s+by\s+([^\s;]+)/i)
-
-  if (typeMatch) {
-    metadata.push({ key: 'as', value: cleanText(readMatch(typeMatch[1])) })
-  }
-
-  if (startMatch) {
-    metadata.push({ key: 'start', value: cleanText(readMatch(startMatch[1])) })
-  }
-
-  if (incrementMatch) {
-    metadata.push({ key: 'increment', value: cleanText(readMatch(incrementMatch[1])) })
-  }
-
-  if (minMatch) {
-    metadata.push({ key: 'min', value: cleanText(readMatch(minMatch[1])) })
-  }
-
-  if (maxMatch) {
-    metadata.push({ key: 'max', value: cleanText(readMatch(maxMatch[1])) })
-  }
-
-  if (cacheMatch) {
-    metadata.push({ key: 'cache', value: cleanText(readMatch(cacheMatch[1])) })
-  }
-
-  if (/\bno\s+cycle\b/i.test(normalized)) {
-    metadata.push({ key: 'cycle', value: 'false' })
-  } else if (/\bcycle\b/i.test(normalized)) {
-    metadata.push({ key: 'cycle', value: 'true' })
-  }
-
-  if (ownedByMatch) {
-    metadata.push({ key: 'owned_by', value: cleanText(readMatch(ownedByMatch[1])) })
-  }
-
-  return {
-    name: nameMatch ? cleanName(readMatch(nameMatch[1])) : null,
-    metadata
-  }
+const extractSequenceSource = (source: string | null) => {
+  return extractPgmlSequenceSourceDefinition(source, {
+    normalizeName: cleanName,
+    normalizeOwnedBy: normalizeImportedTableColumnReference,
+    normalizeType: normalizePgmlTypeExpression
+  })
 }
 
 const parseTableName = (value: string) => {
@@ -3032,7 +3036,13 @@ const parseSequence = (block: NamedBlock) => {
 
   const executable = parseExecutableBody(block.body)
   const derived = extractSequenceSource(executable.source)
-  const mergedMetadata = mergeMetadataEntries(executable.metadata, derived.metadata)
+  const mergedMetadata = normalizePgmlSequenceMetadataEntries(
+    mergeMetadataEntries(executable.metadata, derived.metadata),
+    {
+      normalizeOwnedBy: normalizeImportedTableColumnReference,
+      normalizeType: normalizePgmlTypeExpression
+    }
+  )
 
   return {
     name: cleanName(readMatch(headerMatch[1]) || derived.name || ''),
@@ -3553,7 +3563,7 @@ export const parsePgml = (source: string) => {
     functions,
     procedures,
     triggers,
-    sequences,
+    sequences: normalizeSequenceMetadataEntriesForModel(normalizedTables, sequences),
     customTypes,
     schemas: Array.from(schemaSet),
     nodeProperties

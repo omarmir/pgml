@@ -83,7 +83,7 @@ Sequence public.order_number_seq {
     expect(triggerDraft.known.triggerFunction).toBe('recalc_order_total')
 
     expect(sequenceDraft.known.sequenceStart).toBe('1000')
-    expect(sequenceDraft.known.sequenceCycle).toBe('false')
+    expect(sequenceDraft.known.sequenceCycle).toBe('')
     expect(sequenceDraft.known.sequenceOwnedBy).toBe('public.orders.id')
 
     expect(indexDraft.known.indexType).toBe('gin')

@@ -12,6 +12,11 @@ import type {
   PgmlTrigger
 } from './pgml'
 import { normalizePgmlColumnModifiers } from './pgml-column-modifiers'
+import { normalizeImportedTableColumnReference } from './pgml-import-normalization'
+import {
+  extractPgmlSequenceSourceDefinition,
+  normalizePgmlSequenceMetadataEntries
+} from './pgml-sequence-metadata'
 import { normalizePgmlTypeExpression } from './pgml-types'
 
 export type PgmlDiffChangeKind = 'added' | 'modified' | 'removed'
@@ -62,6 +67,10 @@ export type PgmlSchemaDiff = {
 // We compare normalized objects via stable JSON so different field ordering does
 // not create false-positive diffs. That keeps formatting noise out of compare
 // views and migration planning.
+const isTransientDiffMetadataKey = (key: string) => {
+  return key === 'sourceRange'
+}
+
 const toStableJson = (value: unknown): string => {
   if (Array.isArray(value)) {
     return `[${value.map(entry => toStableJson(entry)).join(',')}]`
@@ -69,7 +78,7 @@ const toStableJson = (value: unknown): string => {
 
   if (value && typeof value === 'object') {
     const entries = Object.entries(value as Record<string, unknown>)
-      .filter(([, entry]) => entry !== undefined)
+      .filter(([key, entry]) => !isTransientDiffMetadataKey(key) && entry !== undefined)
       .sort(([left], [right]) => left.localeCompare(right))
       .map(([key, entry]) => `"${key}":${toStableJson(entry)}`)
 
@@ -115,7 +124,9 @@ const buildChangedFields = (beforeValue: unknown, afterValue: unknown) => {
   const fieldNames = Array.from(new Set([
     ...Object.keys(beforeRecord),
     ...Object.keys(afterRecord)
-  ])).sort((left, right) => left.localeCompare(right))
+  ]))
+    .filter(fieldName => !isTransientDiffMetadataKey(fieldName))
+    .sort((left, right) => left.localeCompare(right))
 
   return fieldNames.filter((fieldName) => {
     return toStableJson(beforeRecord[fieldName]) !== toStableJson(afterRecord[fieldName])
@@ -239,12 +250,23 @@ const normalizeTriggerValue = (trigger: PgmlTrigger) => {
 }
 
 const normalizeSequenceValue = (sequence: PgmlSequence) => {
+  const extractedSourceDefinition = extractPgmlSequenceSourceDefinition(sequence.source, {
+    normalizeOwnedBy: normalizeImportedTableColumnReference,
+    normalizeType: normalizePgmlTypeExpression
+  })
+  const metadata = normalizePgmlSequenceMetadataEntries(sequence.metadata, {
+    normalizeOwnedBy: normalizeImportedTableColumnReference,
+    normalizeType: normalizePgmlTypeExpression
+  })
+  const shouldOmitSource = extractedSourceDefinition.isFullyStructured
+    && toStableJson(extractedSourceDefinition.metadata) === toStableJson(metadata)
+
   return {
     affects: normalizeAffectsValue(sequence.affects),
     docs: normalizeDocumentationValue(sequence.docs),
-    metadata: normalizeMetadataEntries(sequence.metadata),
+    metadata,
     name: sequence.name,
-    source: sequence.source?.trim() || null
+    source: shouldOmitSource ? null : (sequence.source?.trim() || null)
   }
 }
 
@@ -279,6 +301,34 @@ const normalizeColumnValue = (column: PgmlTable['columns'][number]) => {
     reference: column.reference,
     type: normalizePgmlTypeExpression(column.type)
   }
+}
+
+const isReferenceProjectionModifier = (modifier: string) => {
+  return modifier.startsWith('ref:') || modifier.startsWith('delete:') || modifier.startsWith('update:')
+}
+
+const normalizeColumnValueWithoutReferenceProjection = (column: PgmlTable['columns'][number]) => {
+  return {
+    modifiers: normalizePgmlColumnModifiers(column.modifiers).filter(modifier => !isReferenceProjectionModifier(modifier)),
+    name: column.name,
+    note: column.note,
+    reference: null,
+    type: normalizePgmlTypeExpression(column.type)
+  }
+}
+
+const isReferenceOnlyColumnDiff = (
+  entry: PgmlDiffEntry<{
+    column: PgmlTable['columns'][number]
+    tableId: string
+  }>
+) => {
+  if (entry.kind !== 'modified' || !entry.before || !entry.after) {
+    return false
+  }
+
+  return toStableJson(normalizeColumnValueWithoutReferenceProjection(entry.before.column))
+    === toStableJson(normalizeColumnValueWithoutReferenceProjection(entry.after.column))
 }
 
 const normalizeIndexValue = (index: PgmlIndex) => {
@@ -528,7 +578,7 @@ export const diffPgmlSchemaModels = (
     buildColumnMap(afterModel.tables),
     (_id, value) => `${value.tableId}.${value.column.name}`,
     value => normalizeColumnValue(value.column)
-  )
+  ).filter(entry => !isReferenceOnlyColumnDiff(entry))
   const indexes = buildDiffEntries(
     buildIndexMap(beforeModel.tables),
     buildIndexMap(afterModel.tables),
