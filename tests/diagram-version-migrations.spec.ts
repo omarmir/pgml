@@ -959,13 +959,38 @@ TableGroup Core {
   const exclusionsDialog = page.locator('[data-studio-modal-surface="compare-exclusions"]')
 
   await expect(exclusionsDialog).toBeVisible()
+  await expect(exclusionsDialog.locator('[data-compare-exclusions-type-filters="true"]')).toContainText('All')
+  await expect(exclusionsDialog.locator('[data-compare-exclusions-type-filters="true"]')).toContainText('Groups')
+  await expect(exclusionsDialog.locator('[data-compare-exclusions-type-filters="true"]')).toContainText('Tables')
+  await expect(exclusionsDialog.locator('[data-compare-exclusions-type-filters="true"]')).toContainText('Functions')
   await expect(exclusionsDialog.locator('[data-compare-exclusion-groups-section="true"]')).toContainText('Groups')
   await expect(exclusionsDialog.locator('[data-compare-exclusion-group-section="Core"]')).toContainText('public.users')
   await expect(exclusionsDialog.locator('[data-compare-exclusion-group-section="Core"]')).toContainText('public.orders')
   await expect(exclusionsDialog.locator('[data-compare-exclusion-ungrouped-section="true"]')).toContainText('Ungrouped tables')
   await expect(exclusionsDialog.locator('[data-compare-exclusion-entities-section="true"]')).toContainText('Other compare entities')
+  await expect(exclusionsDialog.locator('[data-compare-exclusion-option="column:public.users::email"]')).toHaveCount(0)
   await expect(exclusionsDialog.locator('[data-compare-exclusion-entity-section="custom-type"]')).toContainText('public.review_status')
   await expect(exclusionsDialog.locator('[data-compare-exclusion-entity-section="function"]')).toContainText('public.refresh_users')
+  await exclusionsDialog.locator('[data-compare-exclusions-type-filter="function"]').click()
+  await expect(exclusionsDialog.locator('[data-compare-exclusions-type-filter="function"]')).toHaveAttribute('aria-pressed', 'true')
+  await expect(exclusionsDialog.locator('[data-compare-exclusion-groups-section="true"]')).toHaveCount(0)
+  await expect(exclusionsDialog.locator('[data-compare-exclusion-ungrouped-section="true"]')).toHaveCount(0)
+  await expect(exclusionsDialog.locator('[data-compare-exclusion-entity-section="custom-type"]')).toHaveCount(0)
+  await expect(exclusionsDialog.locator('[data-compare-exclusion-entity-section="function"]')).toContainText('public.refresh_users')
+  await exclusionsDialog.locator('[data-compare-exclusions-type-filter="all"]').click()
+  await expect(exclusionsDialog.locator('[data-compare-exclusions-type-filter="all"]')).toHaveAttribute('aria-pressed', 'true')
+  await expect.poll(async () => {
+    return exclusionsDialog.locator('[data-compare-exclusion-options="true"]').evaluate((element) => {
+      return getComputedStyle(element).overflowY
+    })
+  }).toBe('visible')
+  await expect.poll(async () => {
+    return exclusionsDialog.locator('[data-compare-exclusion-groups-section="true"]').evaluate((element) => {
+      const scrollContainer = element.parentElement
+
+      return scrollContainer ? scrollContainer.scrollWidth - scrollContainer.clientWidth : Number.POSITIVE_INFINITY
+    })
+  }).toBeLessThanOrEqual(1)
   await exclusionsDialog.locator('[data-compare-exclusion-group-section="Core"] [data-compare-exclusion-option="group:Core"]').click()
   await exclusionsDialog.locator('[data-compare-exclusion-ungrouped-section="true"] [data-compare-exclusion-option="table:public.kysely_migration"]').click()
   await exclusionsDialog.locator('[data-compare-exclusion-entity-section="custom-type"] [data-compare-exclusion-option="custom-type:Enum::public.review_status"]').click()

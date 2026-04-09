@@ -330,6 +330,7 @@ const restoreVersionId: Ref<string | null> = ref(null)
 const compareExclusionsDialogOpen: Ref<boolean> = ref(false)
 const compareExclusionsDraft: Ref<PgmlCompareExclusions | null> = ref(null)
 const compareExclusionsSearchQuery: Ref<string> = ref('')
+const compareExclusionsTypeFilter: Ref<CompareExclusionTypeFilterValue> = ref('all')
 const comparisonDialogOpen: Ref<boolean> = ref(false)
 const comparisonDialogMode: Ref<'create' | 'rename'> = ref('create')
 const comparisonDraftName: Ref<string> = ref('')
@@ -1215,6 +1216,7 @@ const shouldBuildVersionArtifacts = computed(() => {
   return shouldBuildCompareArtifacts.value || shouldBuildMigrationArtifacts.value
 })
 type CompareExclusionOptionKind = 'entity' | 'group' | 'table'
+type CompareExclusionTypeFilterValue = 'all' | 'group' | 'table' | PgmlDiagramCompareEntityKind
 
 type CompareExclusionOption = {
   entityKind?: PgmlDiagramCompareEntityKind | null
@@ -1235,9 +1237,13 @@ type CompareExclusionEntitySection = {
   options: CompareExclusionOption[]
   title: string
 }
+type CompareExclusionTypeFilterItem = {
+  count: number
+  label: string
+  value: CompareExclusionTypeFilterValue
+}
 
 const compareExclusionEntityKindOrder: PgmlDiagramCompareEntityKind[] = [
-  'column',
   'index',
   'constraint',
   'reference',
@@ -1263,6 +1269,34 @@ const compareExclusionEntitySectionTitleByKind: Readonly<Record<PgmlDiagramCompa
   'table': 'Tables',
   'trigger': 'Triggers'
 })
+const compareExclusionChipExtraClass = [
+  'max-w-full',
+  'min-w-0',
+  'px-2',
+  'py-1',
+  'font-mono',
+  'text-[0.58rem]',
+  'uppercase',
+  'tracking-[0.08em]',
+  'whitespace-normal',
+  'break-all',
+  'text-left',
+  'leading-4'
+].join(' ')
+const compareExclusionTypeFilterChipExtraClass = [
+  'px-2',
+  'py-1',
+  'font-mono',
+  'text-[0.58rem]',
+  'uppercase',
+  'tracking-[0.08em]'
+].join(' ')
+const compareExclusionTypeFilterOrder: CompareExclusionTypeFilterValue[] = [
+  'all',
+  'group',
+  'table',
+  ...compareExclusionEntityKindOrder
+]
 
 const compareBaseRawModel = computed<PgmlSchemaModel | null>(() => {
   if (!shouldBuildVersionArtifacts.value) {
@@ -1709,11 +1743,87 @@ const compareExclusionEntitySections = computed<CompareExclusionEntitySection[]>
     } satisfies CompareExclusionEntitySection]
   })
 })
+const compareExclusionTypeFilterItems = computed<CompareExclusionTypeFilterItem[]>(() => {
+  const groupCount = compareExclusionGroupSections.value.length
+  const tableCount = compareExclusionGroupSections.value.reduce((count, section) => {
+    return count + section.tableOptions.length
+  }, 0) + compareExclusionUngroupedTableOptions.value.length
+  const entityCountByKind = new Map<PgmlDiagramCompareEntityKind, number>(
+    compareExclusionEntitySections.value.map(section => [section.entityKind, section.options.length])
+  )
+  const totalCount = groupCount + tableCount + Array.from(entityCountByKind.values()).reduce((sum, count) => {
+    return sum + count
+  }, 0)
+
+  return compareExclusionTypeFilterOrder.flatMap((value) => {
+    const count = value === 'all'
+      ? totalCount
+      : value === 'group'
+        ? groupCount
+        : value === 'table'
+          ? tableCount
+          : entityCountByKind.get(value) || 0
+
+    if (value !== 'all' && count === 0) {
+      return []
+    }
+
+    const label = value === 'all'
+      ? 'All'
+      : value === 'group'
+        ? 'Groups'
+        : value === 'table'
+          ? 'Tables'
+          : compareExclusionEntitySectionTitleByKind[value]
+
+    return [{
+      count,
+      label,
+      value
+    }]
+  })
+})
 const normalizedCompareExclusionsSearchQuery = computed(() => {
   return compareExclusionsSearchQuery.value.trim().toLowerCase()
 })
 const filteredCompareExclusionGroupSections = computed(() => {
   const searchQuery = normalizedCompareExclusionsSearchQuery.value
+  const typeFilter = compareExclusionsTypeFilter.value
+
+  if (typeFilter !== 'all' && typeFilter !== 'group' && typeFilter !== 'table') {
+    return []
+  }
+
+  if (typeFilter === 'group') {
+    if (searchQuery.length === 0) {
+      return compareExclusionGroupSections.value
+    }
+
+    return compareExclusionGroupSections.value.filter((section) => {
+      return section.groupOption.searchText.includes(searchQuery)
+    })
+  }
+
+  if (typeFilter === 'table') {
+    if (searchQuery.length === 0) {
+      return compareExclusionGroupSections.value
+    }
+
+    return compareExclusionGroupSections.value.flatMap((section) => {
+      const visibleTableOptions = section.tableOptions.filter((tableOption) => {
+        return tableOption.searchText.includes(searchQuery)
+      })
+
+      if (visibleTableOptions.length === 0) {
+        return []
+      }
+
+      return [{
+        ...section,
+        tableOptions: visibleTableOptions
+      }]
+    })
+  }
 
   if (searchQuery.length === 0) {
     return compareExclusionGroupSections.value
@@ -1740,6 +1850,10 @@ const filteredCompareExclusionGroupSections = computed(() => {
   })
 })
 const filteredCompareExclusionUngroupedTableOptions = computed(() => {
+  if (compareExclusionsTypeFilter.value !== 'all' && compareExclusionsTypeFilter.value !== 'table') {
+    return []
+  }
+
   if (normalizedCompareExclusionsSearchQuery.value.length === 0) {
     return compareExclusionUngroupedTableOptions.value
   }
@@ -1750,6 +1864,35 @@ const filteredCompareExclusionUngroupedTableOptions = computed(() => {
 })
 const filteredCompareExclusionEntitySections = computed(() => {
   const searchQuery = normalizedCompareExclusionsSearchQuery.value
+  const typeFilter = compareExclusionsTypeFilter.value
+
+  if (typeFilter !== 'all' && typeFilter !== 'group' && typeFilter !== 'table') {
+    const matchingSection = compareExclusionEntitySections.value.find((section) => {
+      return section.entityKind === typeFilter
+    }) || null
+
+    if (!matchingSection) {
+      return []
+    }
+
+    if (searchQuery.length === 0) {
+      return [matchingSection]
+    }
+
+    const titleMatches = matchingSection.title.toLowerCase().includes(searchQuery)
+    const options = titleMatches
+      ? matchingSection.options
+      : matchingSection.options.filter((option) => {
+          return option.searchText.includes(searchQuery)
+        })
+
+    return options.length > 0 || titleMatches
+      ? [{
+          ...matchingSection,
+          options
+        }]
+      : []
+  }
 
   if (searchQuery.length === 0) {
     return compareExclusionEntitySections.value
@@ -1772,6 +1915,21 @@ const filteredCompareExclusionEntitySections = computed(() => {
       options
     }]
   })
+})
+const compareExclusionsShowsGroupedTableOptions = computed(() => {
+  return compareExclusionsTypeFilter.value === 'all' || compareExclusionsTypeFilter.value === 'table'
+})
+const compareExclusionsShowsGroupSections = computed(() => {
+  return compareExclusionsTypeFilter.value === 'all'
+    || compareExclusionsTypeFilter.value === 'group'
+    || compareExclusionsTypeFilter.value === 'table'
+})
+const compareExclusionsShowsUngroupedTableSection = computed(() => {
+  return compareExclusionsTypeFilter.value === 'all' || compareExclusionsTypeFilter.value === 'table'
+})
+const compareExclusionsShowsEntitySections = computed(() => {
+  return compareExclusionsTypeFilter.value === 'all'
+    || (compareExclusionsTypeFilter.value !== 'group' && compareExclusionsTypeFilter.value !== 'table')
 })
 const hasVisibleCompareExclusionOptions = computed(() => {
   return filteredCompareExclusionGroupSections.value.length > 0
@@ -1977,12 +2135,20 @@ const isCompareExclusionOptionSelected = (option: CompareExclusionOption) => {
 const openCompareExclusionsDialog = () => {
   compareExclusionsDraft.value = clonePgmlCompareExclusions(activeCompareExclusions.value)
   compareExclusionsSearchQuery.value = ''
+  compareExclusionsTypeFilter.value = 'all'
   compareExclusionsDialogOpen.value = true
 }
 const closeCompareExclusionsDialog = () => {
   compareExclusionsDialogOpen.value = false
   compareExclusionsDraft.value = null
   compareExclusionsSearchQuery.value = ''
+  compareExclusionsTypeFilter.value = 'all'
+}
+const setCompareExclusionsTypeFilter = (value: CompareExclusionTypeFilterValue) => {
+  compareExclusionsTypeFilter.value = value
+}
+const isCompareExclusionsTypeFilterActive = (value: CompareExclusionTypeFilterValue) => {
+  return compareExclusionsTypeFilter.value === value
 }
 const toggleCompareExclusionOption = (option: CompareExclusionOption) => {
   if (!compareExclusionsDraft.value) {
@@ -4019,20 +4185,50 @@ onBeforeUnmount(() => {
             >
           </label>
 
+          <div class="grid gap-1">
+            <span :class="studioFieldKickerClass">
+              Filter by type
+            </span>
+            <div
+              data-compare-exclusions-type-filters="true"
+              class="flex min-w-0 flex-wrap gap-2"
+            >
+              <button
+                v-for="item in compareExclusionTypeFilterItems"
+                :key="item.value"
+                type="button"
+                :data-compare-exclusions-type-filter="item.value"
+                :class="getStudioToggleChipClass({
+                  active: isCompareExclusionsTypeFilterActive(item.value),
+                  extraClass: joinStudioClasses(compareExclusionTypeFilterChipExtraClass, 'items-center gap-2')
+                })"
+                :aria-pressed="isCompareExclusionsTypeFilterActive(item.value)"
+                @click="setCompareExclusionsTypeFilter(item.value)"
+              >
+                <span>{{ item.label }}</span>
+                <span class="text-[color:var(--studio-shell-muted)]">
+                  {{ item.count }}
+                </span>
+              </button>
+            </div>
+          </div>
+
           <div class="grid gap-2">
             <div :class="studioFieldKickerClass">
               Exclude from compare
             </div>
             <p :class="studioCompactBodyCopyClass">
-              Select a group to exclude its full cluster, pick individual tables inside it, or exclude any other comparable entity kind directly.
+              Select a group to exclude its full cluster, pick individual tables inside it, or exclude other comparable entities like indexes, references, types, and executables.
             </p>
             <div
               v-if="hasVisibleCompareExclusionOptions"
-              class="grid max-h-[50vh] gap-4 overflow-y-auto pr-1"
+              data-compare-exclusion-options="true"
+              class="grid min-w-0 gap-4 pr-1"
             >
               <section
+                v-if="compareExclusionsShowsGroupSections"
                 data-compare-exclusion-groups-section="true"
-                class="grid gap-2"
+                class="grid min-w-0 gap-2"
               >
                 <div :class="studioFieldKickerClass">
                   Groups
@@ -4045,7 +4241,7 @@ onBeforeUnmount(() => {
                     v-for="section in filteredCompareExclusionGroupSections"
                     :key="section.id"
                     :data-compare-exclusion-group-section="section.groupOption.value"
-                    class="grid gap-2 border border-[color:var(--studio-shell-border)]/70 px-3 py-3"
+                    class="grid min-w-0 gap-2 border border-[color:var(--studio-shell-border)]/70 px-3 py-3"
                   >
                     <div class="flex flex-wrap items-center gap-2">
                       <button
@@ -4053,7 +4249,7 @@ onBeforeUnmount(() => {
                         :data-compare-exclusion-option="section.groupOption.id"
                         :class="getStudioToggleChipClass({
                           active: isCompareExclusionOptionSelected(section.groupOption),
-                          extraClass: 'px-2 py-1 font-mono text-[0.58rem] uppercase tracking-[0.08em]'
+                          extraClass: compareExclusionChipExtraClass
                         })"
                         :aria-pressed="isCompareExclusionOptionSelected(section.groupOption)"
                         @click="toggleCompareExclusionOption(section.groupOption)"
@@ -4066,14 +4262,14 @@ onBeforeUnmount(() => {
                     </div>
 
                     <div
-                      v-if="section.tableOptions.length > 0"
+                      v-if="compareExclusionsShowsGroupedTableOptions && section.tableOptions.length > 0"
                       :data-compare-exclusion-group-tables="section.groupOption.value"
-                      class="grid gap-2 border-l border-[color:var(--studio-divider)] pl-3"
+                      class="grid min-w-0 gap-2 border-l border-[color:var(--studio-divider)] pl-3"
                     >
                       <div class="font-mono text-[0.58rem] uppercase tracking-[0.08em] text-[color:var(--studio-shell-muted)]">
                         Tables
                       </div>
-                      <div class="flex flex-wrap gap-2">
+                      <div class="flex min-w-0 flex-wrap gap-2">
                         <button
                           v-for="option in section.tableOptions"
                           :key="`${section.groupOption.value}:${option.id}`"
@@ -4081,7 +4277,7 @@ onBeforeUnmount(() => {
                           :data-compare-exclusion-option="option.id"
                           :class="getStudioToggleChipClass({
                             active: isCompareExclusionOptionSelected(option),
-                            extraClass: 'px-2 py-1 font-mono text-[0.58rem] uppercase tracking-[0.08em]'
+                            extraClass: compareExclusionChipExtraClass
                           })"
                           :aria-pressed="isCompareExclusionOptionSelected(option)"
                           @click="toggleCompareExclusionOption(option)"
@@ -4101,15 +4297,16 @@ onBeforeUnmount(() => {
               </section>
 
               <section
+                v-if="compareExclusionsShowsUngroupedTableSection"
                 data-compare-exclusion-ungrouped-section="true"
-                class="grid gap-2"
+                class="grid min-w-0 gap-2"
               >
                 <div :class="studioFieldKickerClass">
                   Ungrouped tables
                 </div>
                 <div
                   v-if="filteredCompareExclusionUngroupedTableOptions.length > 0"
-                  class="flex flex-wrap gap-2"
+                  class="flex min-w-0 flex-wrap gap-2"
                 >
                   <button
                     v-for="option in filteredCompareExclusionUngroupedTableOptions"
@@ -4118,7 +4315,7 @@ onBeforeUnmount(() => {
                     :data-compare-exclusion-option="option.id"
                     :class="getStudioToggleChipClass({
                       active: isCompareExclusionOptionSelected(option),
-                      extraClass: 'px-2 py-1 font-mono text-[0.58rem] uppercase tracking-[0.08em]'
+                      extraClass: compareExclusionChipExtraClass
                     })"
                     :aria-pressed="isCompareExclusionOptionSelected(option)"
                     @click="toggleCompareExclusionOption(option)"
@@ -4135,26 +4332,27 @@ onBeforeUnmount(() => {
               </section>
 
               <section
+                v-if="compareExclusionsShowsEntitySections"
                 data-compare-exclusion-entities-section="true"
-                class="grid gap-2"
+                class="grid min-w-0 gap-2"
               >
                 <div :class="studioFieldKickerClass">
                   Other compare entities
                 </div>
                 <div
                   v-if="filteredCompareExclusionEntitySections.length > 0"
-                  class="grid gap-3"
+                  class="grid min-w-0 gap-3"
                 >
                   <section
                     v-for="section in filteredCompareExclusionEntitySections"
                     :key="section.id"
                     :data-compare-exclusion-entity-section="section.entityKind"
-                    class="grid gap-2"
+                    class="grid min-w-0 gap-2"
                   >
                     <div class="font-mono text-[0.58rem] uppercase tracking-[0.08em] text-[color:var(--studio-shell-muted)]">
                       {{ section.title }}
                     </div>
-                    <div class="flex flex-wrap gap-2">
+                    <div class="flex min-w-0 flex-wrap gap-2">
                       <button
                         v-for="option in section.options"
                         :key="option.id"
@@ -4162,7 +4360,7 @@ onBeforeUnmount(() => {
                         :data-compare-exclusion-option="option.id"
                         :class="getStudioToggleChipClass({
                           active: isCompareExclusionOptionSelected(option),
-                          extraClass: 'px-2 py-1 font-mono text-[0.58rem] uppercase tracking-[0.08em]'
+                          extraClass: compareExclusionChipExtraClass
                         })"
                         :aria-pressed="isCompareExclusionOptionSelected(option)"
                         @click="toggleCompareExclusionOption(option)"

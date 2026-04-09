@@ -288,6 +288,7 @@ Table public.orders {
     target: workspace
 
     CompareExclusions {
+      entity: "column:public.users::id"
       entity: "function:public.refresh_users"
       group: "Core"
       table: "public.audit_log"
@@ -330,6 +331,7 @@ Table public.orders {
     expect(serialized).toContain('base: v1')
     expect(serialized).toContain('target: workspace')
     expect(serialized).toContain('CompareExclusions {')
+    expect(serialized).not.toContain('entity: "column:public.users::id"')
     expect(serialized).toContain('entity: "function:public.refresh_users"')
     expect(serialized).toContain('group: "Core"')
     expect(serialized).toContain('table: "public.audit_log"')

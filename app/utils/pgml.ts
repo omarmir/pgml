@@ -251,7 +251,13 @@ const readMatch = (value: string | undefined) => value || ''
 const trimMultiline = (value: string) => value.replace(/^\n+|\n+$/g, '')
 const splitNormalizedLines = (value: string) => value.replaceAll('\r\n', '\n').split('\n')
 const pgmlEmbeddedSourceDelimiterPattern = /^\s*(?:source|definition):\s*(\$(?:[A-Za-z0-9_]+)?\$)(.*)$/
+const nonExcludableCompareEntityPrefixes = new Set(['column'])
 const normalizeCompareExclusionValue = (value: string) => cleanName(value)
+const isExcludableCompareEntityId = (value: string) => {
+  const [prefix] = value.split(':')
+
+  return prefix ? !nonExcludableCompareEntityPrefixes.has(prefix) : true
+}
 const sortValues = (left: string, right: string) => left.localeCompare(right)
 
 export const createEmptyPgmlCompareExclusions = (): PgmlCompareExclusions => {
@@ -268,14 +274,22 @@ export const createEmptyPgmlCompareExclusions = (): PgmlCompareExclusions => {
 export const clonePgmlCompareExclusions = (
   exclusions?: Partial<PgmlCompareExclusions> | null
 ): PgmlCompareExclusions => {
-  const normalizeValues = (values: string[]) => {
-    return Array.from(new Set(values.map(normalizeCompareExclusionValue).filter(value => value.length > 0))).sort(sortValues)
+  const normalizeValues = (
+    values: string[],
+    predicate?: (value: string) => boolean
+  ) => {
+    return Array.from(new Set(
+      values
+        .map(normalizeCompareExclusionValue)
+        .filter(value => value.length > 0)
+        .filter(value => predicate ? predicate(value) : true)
+    )).sort(sortValues)
   }
 
   return {
-    entityIds: normalizeValues(exclusions?.entityIds || []),
+    entityIds: normalizeValues(exclusions?.entityIds || [], isExcludableCompareEntityId),
     groupNames: normalizeValues(exclusions?.groupNames || []),
-    includedEntityIds: normalizeValues(exclusions?.includedEntityIds || []),
+    includedEntityIds: normalizeValues(exclusions?.includedEntityIds || [], isExcludableCompareEntityId),
     includedGroupNames: normalizeValues(exclusions?.includedGroupNames || []),
     includedTableIds: normalizeValues(exclusions?.includedTableIds || []),
     tableIds: normalizeValues(exclusions?.tableIds || [])
