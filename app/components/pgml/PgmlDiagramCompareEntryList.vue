@@ -4,10 +4,12 @@ import { computed, ref } from 'vue'
 import PgmlDiagramCompareEntryExpansion from '~/components/pgml/PgmlDiagramCompareEntryExpansion.vue'
 import type { PgmlSourceRange } from '~/utils/pgml'
 import {
+  buildPgmlDiagramCompareScopeChangeCountLabel,
+  buildPgmlDiagramCompareScopeSummary,
   getPgmlDiagramCompareChangeColor,
   getPgmlDiagramCompareChangeVerb,
   getPgmlDiagramCompareEntityKindLabel,
-  type PgmlDiagramCompareEntityKind,
+  getPgmlDiagramCompareGroupedScopeKindLabel,
   type PgmlDiagramCompareEntry
 } from '~/utils/pgml-diagram-compare'
 
@@ -45,40 +47,12 @@ type PgmlDiagramCompareEntryListItem = {
   entries: PgmlDiagramCompareEntry[]
   key: string
   kind: 'scope'
+  scopeChangeCountLabel: string
+  scopeKindLabel: string
   scopeId: string
   scopeLabel: string
   summary: string
 }
-
-const compareScopeEntityLabelByKind: Readonly<Record<PgmlDiagramCompareEntityKind, [string, string]>> = Object.freeze({
-  'column': ['column', 'columns'],
-  'constraint': ['constraint', 'constraints'],
-  'custom-type': ['type', 'types'],
-  'function': ['function', 'functions'],
-  'group': ['group', 'groups'],
-  'index': ['index', 'indexes'],
-  'layout': ['layout change', 'layout changes'],
-  'procedure': ['procedure', 'procedures'],
-  'reference': ['reference', 'references'],
-  'sequence': ['sequence', 'sequences'],
-  'table': ['table', 'tables'],
-  'trigger': ['trigger', 'triggers']
-})
-
-const compareEntityKindOrder: PgmlDiagramCompareEntityKind[] = [
-  'table',
-  'column',
-  'reference',
-  'index',
-  'constraint',
-  'trigger',
-  'function',
-  'procedure',
-  'sequence',
-  'custom-type',
-  'group',
-  'layout'
-]
 
 const expandedScopeIds: Ref<string[]> = ref([])
 
@@ -114,47 +88,6 @@ const getChangeBadgeStyle = (entry: PgmlDiagramCompareEntry) => {
     borderColor: `color-mix(in srgb, ${color} 58%, var(--studio-divider) 42%)`,
     color: `color-mix(in srgb, ${color} 80%, var(--studio-shell-text) 20%)`
   }
-}
-
-const buildScopeSummary = (scopeEntries: PgmlDiagramCompareEntry[]) => {
-  const countsByKind = scopeEntries.reduce<Record<PgmlDiagramCompareEntityKind, number>>((counts, entry) => {
-    counts[entry.entityKind] = (counts[entry.entityKind] || 0) + 1
-    return counts
-  }, {
-    'column': 0,
-    'constraint': 0,
-    'custom-type': 0,
-    'function': 0,
-    'group': 0,
-    'index': 0,
-    'layout': 0,
-    'procedure': 0,
-    'reference': 0,
-    'sequence': 0,
-    'table': 0,
-    'trigger': 0
-  })
-
-  const kindSummary = compareEntityKindOrder.flatMap((entityKind) => {
-    const count = countsByKind[entityKind]
-
-    if (count === 0) {
-      return []
-    }
-
-    const [singularLabel, pluralLabel] = compareScopeEntityLabelByKind[entityKind]
-    const label = count === 1 ? singularLabel : pluralLabel
-
-    return `${count} ${label}`
-  })
-
-  const changeLabel = scopeEntries.length === 1 ? 'change' : 'changes'
-
-  if (kindSummary.length === 0) {
-    return `${scopeEntries.length} ${changeLabel}`
-  }
-
-  return `${scopeEntries.length} ${changeLabel} · ${kindSummary.join(', ')}`
 }
 
 const listItems = computed<PgmlDiagramCompareEntryListItem[]>(() => {
@@ -194,9 +127,11 @@ const listItems = computed<PgmlDiagramCompareEntryListItem[]>(() => {
       entries: scopeEntries,
       key: entry.scopeId,
       kind: 'scope',
+      scopeChangeCountLabel: buildPgmlDiagramCompareScopeChangeCountLabel(scopeEntries.length),
+      scopeKindLabel: getPgmlDiagramCompareGroupedScopeKindLabel('table'),
       scopeId: entry.scopeId,
       scopeLabel: scopeEntries.find(scopeEntry => scopeEntry.entityKind === 'table')?.label || entry.scopeLabel,
-      summary: buildScopeSummary(scopeEntries)
+      summary: buildPgmlDiagramCompareScopeSummary(scopeEntries)
     })
 
     return items
@@ -323,10 +258,10 @@ const toggleScopeExpansion = (
         >
           <div class="flex flex-wrap items-center gap-2">
             <span class="font-mono text-[0.52rem] uppercase tracking-[0.08em] text-[color:var(--studio-shell-label)]">
-              Table
+              {{ item.scopeKindLabel }}
             </span>
             <span class="border border-[color:var(--studio-divider)] px-1.5 py-0.5 font-mono text-[0.5rem] uppercase tracking-[0.08em] text-[color:var(--studio-shell-muted)]">
-              {{ item.entries.length }} {{ item.entries.length === 1 ? 'change' : 'changes' }}
+              {{ item.scopeChangeCountLabel }}
             </span>
             <span
               v-if="isScopeOnDiagram(item.entries)"

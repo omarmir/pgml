@@ -1285,6 +1285,36 @@ Ref: public.orders.user_id > public.users.id`)
   await expect(detail).toContainText('modifiers')
 })
 
+test('compare panel labels grouped table scopes separately from actual table entries', async ({ goto, page }) => {
+  await goto('/diagram')
+  const editor = getPgmlEditor(page)
+
+  await setPgmlEditorValue(editor, `Table public.users {
+  email text
+  name text
+}`)
+  await createCheckpoint(page, 'Users baseline')
+
+  await setPgmlEditorValue(editor, '')
+  await expect.poll(async () => readPgmlEditorValue(editor)).toBe('')
+
+  await compareFromVersion(page, 'Users baseline')
+
+  const comparePanel = getComparePanel(page)
+  const scopeEntry = comparePanel.locator('[data-compare-scope-entry="table:public.users"]')
+  const tableEntry = comparePanel.locator('[data-compare-entry="table:public.users"]')
+
+  await expect(scopeEntry).toContainText('Table scope')
+  await expect(scopeEntry).toContainText('3 scoped changes')
+  await expect(scopeEntry).toContainText('Includes 1 table change and 2 column changes.')
+
+  await scopeEntry.click()
+
+  await expect(tableEntry).toContainText('Table')
+  await expect(tableEntry).toContainText('Removed table public.users.')
+  await expect(tableEntry).not.toContainText('Table scope')
+})
+
 test('compare panel reports inline reference additions once as references instead of duplicate modified columns', async ({ goto, page }) => {
   await goto('/diagram')
   const editor = getPgmlEditor(page)

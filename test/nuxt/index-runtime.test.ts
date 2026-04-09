@@ -18,6 +18,7 @@ describe('Index page source', () => {
     expect(file).toContain('buildFileStudioRecentQuery')
     expect(file).toContain('convertDbmlToPgml')
     expect(file).toContain('convertPgDumpToPgml')
+    expect(file).toContain('prepareImportedExecutableAttachments')
     expect(file).toContain('createInitialPgmlDocument')
     expect(file).toContain('serializePgmlDocument')
     expect(file).toContain('buildVersionedPgmlText')

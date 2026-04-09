@@ -155,6 +155,34 @@ ALTER TABLE ONLY public.users ADD CONSTRAINT users_pkey PRIMARY KEY (id);`)
   }).toBe(1)
 })
 
+test('home page pg_dump import auto-populates trigger-linked function owned_by attachments', async ({ goto, page }) => {
+  await goto('/')
+
+  const browserCard = page.locator('[data-source-card="browser-local-storage"]')
+
+  await browserCard.getByRole('button', { name: 'Import into browser storage' }).click()
+
+  const importDialog = getPgDumpImportDialog(page)
+
+  await expect(importDialog).toContainText('Import pg_dump into browser storage')
+  await importDialog.locator('textarea').fill(`CREATE TABLE public.users (
+  id uuid NOT NULL
+);
+ALTER TABLE ONLY public.users ADD CONSTRAINT users_pkey PRIMARY KEY (id);
+CREATE FUNCTION public.touch_users() RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+  RETURN NEW;
+END;
+$$;
+CREATE TRIGGER trg_touch_users BEFORE INSERT ON public.users FOR EACH ROW EXECUTE FUNCTION public.touch_users();`)
+  await page.getByRole('button', { name: 'Import into browser storage' }).click()
+
+  await expect.poll(async () => readPgmlEditorValue(getPgmlEditor(page))).toContain(`Function public.touch_users() returns trigger {
+  affects {
+    owned_by: [public.users]
+  }`)
+})
+
 test('home page can import pasted DBML into the browser lane', async ({ goto, page }) => {
   await goto('/')
 

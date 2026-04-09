@@ -71,6 +71,40 @@ const compareEntityKindLabelByValue: Readonly<Record<PgmlDiagramCompareEntityKin
   'trigger': 'Trigger'
 })
 
+const compareGroupedScopeKindLabelByValue: Readonly<Record<'table', string>> = Object.freeze({
+  table: 'Table scope'
+})
+
+const compareScopeEntityLabelByKind: Readonly<Record<PgmlDiagramCompareEntityKind, [string, string]>> = Object.freeze({
+  'column': ['column change', 'column changes'],
+  'constraint': ['constraint change', 'constraint changes'],
+  'custom-type': ['type change', 'type changes'],
+  'function': ['function change', 'function changes'],
+  'group': ['group change', 'group changes'],
+  'index': ['index change', 'index changes'],
+  'layout': ['layout change', 'layout changes'],
+  'procedure': ['procedure change', 'procedure changes'],
+  'reference': ['reference change', 'reference changes'],
+  'sequence': ['sequence change', 'sequence changes'],
+  'table': ['table change', 'table changes'],
+  'trigger': ['trigger change', 'trigger changes']
+})
+
+const compareScopeEntityKindOrder: PgmlDiagramCompareEntityKind[] = [
+  'table',
+  'column',
+  'reference',
+  'index',
+  'constraint',
+  'trigger',
+  'function',
+  'procedure',
+  'sequence',
+  'custom-type',
+  'group',
+  'layout'
+]
+
 const compareEntryIdPrefixKindMap: Readonly<Record<string, PgmlDiagramCompareEntityKind>> = Object.freeze({
   'column': 'column',
   'constraint': 'constraint',
@@ -586,6 +620,73 @@ const buildStandaloneObjectEntry = <T>(input: {
 
 export const getPgmlDiagramCompareEntityKindLabel = (kind: PgmlDiagramCompareEntityKind) => {
   return compareEntityKindLabelByValue[kind]
+}
+
+export const getPgmlDiagramCompareGroupedScopeKindLabel = (kind: 'table') => {
+  return compareGroupedScopeKindLabelByValue[kind]
+}
+
+export const buildPgmlDiagramCompareScopeChangeCountLabel = (count: number) => {
+  return `${count} scoped ${count === 1 ? 'change' : 'changes'}`
+}
+
+const formatCompareCountSummary = (items: string[]) => {
+  if (items.length === 0) {
+    return null
+  }
+
+  if (items.length === 1) {
+    return items[0] || null
+  }
+
+  if (items.length === 2) {
+    return `${items[0]} and ${items[1]}`
+  }
+
+  return `${items.slice(0, -1).join(', ')}, and ${items[items.length - 1]}`
+}
+
+export const buildPgmlDiagramCompareScopeSummary = (scopeEntries: PgmlDiagramCompareEntry[]) => {
+  const countsByKind = scopeEntries.reduce<Record<PgmlDiagramCompareEntityKind, number>>((counts, entry) => {
+    counts[entry.entityKind] = (counts[entry.entityKind] || 0) + 1
+    return counts
+  }, {
+    'column': 0,
+    'constraint': 0,
+    'custom-type': 0,
+    'function': 0,
+    'group': 0,
+    'index': 0,
+    'layout': 0,
+    'procedure': 0,
+    'reference': 0,
+    'sequence': 0,
+    'table': 0,
+    'trigger': 0
+  })
+
+  const kindSummary = compareScopeEntityKindOrder.flatMap((entityKind) => {
+    const count = countsByKind[entityKind]
+
+    if (count === 0) {
+      return []
+    }
+
+    const [singularLabel, pluralLabel] = compareScopeEntityLabelByKind[entityKind]
+    const label = count === 1 ? singularLabel : pluralLabel
+
+    return `${count} ${label}`
+  })
+
+  if (kindSummary.length === 0) {
+    return `Includes ${buildPgmlDiagramCompareScopeChangeCountLabel(scopeEntries.length)}.`
+  }
+
+  const summary = formatCompareCountSummary(kindSummary)
+
+  return summary
+    ? `Includes ${summary}.`
+    : `Includes ${buildPgmlDiagramCompareScopeChangeCountLabel(scopeEntries.length)}.`
 }
 
 export const getPgmlDiagramCompareEntityKindFromEntryId = (

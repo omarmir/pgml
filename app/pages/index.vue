@@ -20,6 +20,7 @@ import {
   createInitialPgmlDocument,
   serializePgmlDocument
 } from '~/utils/pgml-document'
+import { prepareImportedExecutableAttachments } from '~/utils/pgml-import-attachments'
 import { useStudioSessionStore } from '~/stores/studio-session'
 import { useStudioSourcesStore } from '~/stores/studio-sources'
 import { pgmlVersionedExample } from '~/utils/pgml'
@@ -326,12 +327,13 @@ const submitImportedSchema = async (input: {
       preferredName: selectedFile?.name,
       sourceText: importedSource
     })
+    const preparedImport = prepareImportedExecutableAttachments(importedSchema.pgml)
 
     resetImportDialogState(input.state)
     await finishImportedSchemaLaunch({
       importTarget,
       schemaName: importedSchema.schemaName,
-      snapshotSource: importedSchema.pgml
+      snapshotSource: preparedImport.pgml
     })
   } catch (error) {
     input.state.error.value = getActionErrorMessage(error, input.fallbackErrorMessage)
