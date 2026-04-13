@@ -241,6 +241,9 @@ const comparisonMetadataKeywordTemplates = [
   { label: 'id', detail: 'Persist the stable id for this comparison.', apply: 'id: ' },
   { label: 'base', detail: 'Choose the base version, workspace, or empty state.', apply: 'base: ' },
   { label: 'target', detail: 'Choose the comparison target version or workspace.', apply: 'target: ' },
+  { label: 'hide_defaults', detail: 'Hide default-only compare noise by default.', apply: 'hide_defaults: false' },
+  { label: 'hide_metadata', detail: 'Hide metadata-only compare noise by default.', apply: 'hide_metadata: false' },
+  { label: 'hide_order_only', detail: 'Hide order-only compare noise by default.', apply: 'hide_order_only: false' },
   { label: 'CompareExclusions', detail: 'Store excluded compare entities for this comparison.', apply: 'CompareExclusions {' }
 ] as const
 
@@ -259,7 +262,14 @@ const versionRoleValueTemplates = [
 
 const workspaceMetadataKeys = new Set(['based_on', 'updated_at', 'active_view'])
 const versionMetadataKeys = new Set(['name', 'role', 'parent', 'created_at', 'active_view', 'default_view'])
-const comparisonMetadataKeys = new Set(['id', 'base', 'target'])
+const comparisonMetadataKeys = new Set([
+  'id',
+  'base',
+  'target',
+  'hide_defaults',
+  'hide_metadata',
+  'hide_order_only'
+])
 const compareExclusionsMetadataKeys = new Set(['entity', 'group', 'table', 'include_entity', 'include_group', 'include_table'])
 const viewMetadataKeys = new Set(['id', 'show_lines', 'lines', 'snap_to_grid', 'snap', 'show_execs', 'execs', 'show_fields', 'fields'])
 
@@ -2522,7 +2532,7 @@ const analyzeComparisonBlock = (
     entryCode: 'pgml/comparison-entry',
     entryMessage: 'Comparison only allows metadata entries plus nested CompareExclusions blocks.',
     keyCode: 'pgml/comparison-key',
-    keyMessage: 'Comparison only supports `id`, `base`, and `target` metadata.'
+    keyMessage: 'Comparison only supports `id`, `base`, `target`, `hide_defaults`, `hide_metadata`, and `hide_order_only` metadata.'
   })
 
   nested.blocks.forEach((nestedBlock) => {

@@ -94,6 +94,7 @@ import {
 } from '~/utils/diagram-gpu-scene'
 import type {
   PgmlColumn,
+  PgmlCompareNoiseFilters,
   PgmlCustomType,
   PgmlNodeProperties,
   PgmlRoutine,
@@ -392,6 +393,11 @@ const {
   compareExcludedLabels = [],
   compareExcludedSummary = null,
   compareHiddenExcludedLabelCount = 0,
+  compareNoiseFilters = {
+    hideDefaults: true,
+    hideMetadata: true,
+    hideOrderOnly: true
+  },
   compareRelationshipSummary = '',
   compareSelectedComparisonId = null,
   compareTargetLabel = 'Target',
@@ -435,6 +441,7 @@ const {
   compareExcludedLabels?: string[]
   compareExcludedSummary?: string | null
   compareHiddenExcludedLabelCount?: number
+  compareNoiseFilters?: PgmlCompareNoiseFilters
   compareRelationshipSummary?: string
   compareSelectedComparisonId?: string | null
   compareTargetLabel?: string
@@ -483,6 +490,7 @@ const emit = defineEmits<{
   selectDiagramView: [viewId: string]
   updateDiagramViewSettings: [settings: Partial<DiagramViewSettings>]
   updateVersionCompareBaseId: [value: string | null]
+  updateCompareNoiseFilters: [value: PgmlCompareNoiseFilters]
   updateVersionCompareTargetId: [value: string]
   versionCheckpoint: []
   versionImportDbml: []
@@ -8513,6 +8521,7 @@ defineExpose<{
           :comparison-items="compareComparisonItems"
           :comparison-label="compareSelectedComparisonId ? compareComparisonItems.find(item => item.value === compareSelectedComparisonId)?.label || 'Saved comparison' : 'Current comparison'"
           :compare-base-id="versionCompareBaseId"
+          :compare-noise-filters="compareNoiseFilters"
           :compare-options="versionCompareOptions"
           :compare-target-id="versionCompareTargetId"
           :excluded-labels="compareExcludedLabels"
@@ -8533,6 +8542,7 @@ defineExpose<{
           @select-comparison="emit('selectCompareComparison', $event)"
           @select-entry="selectedCompareEntryId = $event"
           @update:compare-base-id="emit('updateVersionCompareBaseId', $event)"
+          @update:compare-noise-filters="emit('updateCompareNoiseFilters', $event)"
           @update:compare-target-id="emit('updateVersionCompareTargetId', $event)"
         />
       </div>

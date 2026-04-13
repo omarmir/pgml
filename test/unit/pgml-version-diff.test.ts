@@ -200,6 +200,128 @@ Sequence public.common_review_set_id_seq {
     expect(migrationBundle.sql.migration.content).not.toContain('ALTER COLUMN "submitted_at" TYPE')
   })
 
+  it('treats unqualified public custom type references as equivalent to explicit public schema references', () => {
+    const beforeModel = parsePgml(`Enum public.review_status {
+  draft
+  approved
+}
+
+Table public.reviews {
+  id uuid [pk]
+  status review_status
+}`)
+    const afterModel = parsePgml(`Enum public.review_status {
+  draft
+  approved
+}
+
+Table public.reviews {
+  id uuid [pk]
+  status public.review_status
+}`)
+    const diff = diffPgmlSchemaModels(beforeModel, afterModel)
+    const migrationBundle = buildPgmlMigrationDiffBundle(beforeModel, afterModel)
+
+    expect(diff.columns).toEqual([])
+    expect(diff.customTypes).toEqual([])
+    expect(diff.summary.modified).toBe(0)
+    expect(migrationBundle.meta.hasChanges).toBe(false)
+    expect(migrationBundle.sql.migration.content).not.toContain('ALTER COLUMN "status" TYPE')
+  })
+
+  it('treats equivalent NOT IN and <> ALL array check expressions as the same constraint', () => {
+    const beforeModel = parsePgml(`Table public.common_entity {
+  id uuid [pk]
+  entity_type public.Entity_Type
+  Constraint chk_common_entity_type: entity_type NOT IN ('fundingopportunity', 'transferpaymentstream', 'fundingcaseintake', 'fundingcaseagreement', 'applicantrecipient')
+}
+
+Enum public.Entity_Type {
+  fundingopportunity
+  transferpaymentstream
+  fundingcaseintake
+  fundingcaseagreement
+  applicantrecipient
+}`)
+    const afterModel = parsePgml(`Table public.common_entity {
+  id uuid [pk]
+  entity_type public.Entity_Type
+  Constraint chk_common_entity_type: entity_type <> ALL (ARRAY['fundingopportunity'::public."Entity_Type", 'fundingcaseintake'::public."Entity_Type", 'fundingcaseagreement'::public."Entity_Type", 'applicantrecipient'::public."Entity_Type", 'transferpaymentstream'::public."Entity_Type"])
+}
+
+Enum public.Entity_Type {
+  fundingopportunity
+  transferpaymentstream
+  fundingcaseintake
+  fundingcaseagreement
+  applicantrecipient
+}`)
+    const diff = diffPgmlSchemaModels(beforeModel, afterModel)
+    const migrationBundle = buildPgmlMigrationDiffBundle(beforeModel, afterModel)
+
+    expect(diff.constraints).toEqual([])
+    expect(diff.summary.modified).toBe(0)
+    expect(migrationBundle.meta.hasChanges).toBe(false)
+    expect(migrationBundle.sql.migration.content).not.toContain('DROP CONSTRAINT')
+  })
+
+  it('ignores explicit bigint sequence metadata when it only restates the default sequence type', () => {
+    const beforeModel = parsePgml(`Sequence public.agency_address_type_id_seq {
+  owned_by: public.agency_address_type.id
+}`)
+    const afterModel = parsePgml(`Sequence public.agency_address_type_id_seq {
+  as: bigint
+  owned_by: public.agency_address_type.id
+}`)
+    const diff = diffPgmlSchemaModels(beforeModel, afterModel)
+    const migrationBundle = buildPgmlMigrationDiffBundle(beforeModel, afterModel)
+
+    expect(diff.sequences).toEqual([])
+    expect(diff.summary.modified).toBe(0)
+    expect(migrationBundle.meta.hasChanges).toBe(false)
+  })
+
+  it('ignores group membership reordering when the set of tables stays the same', () => {
+    const beforeModel = parsePgml(`TableGroup Core {
+  public.users
+  public.orders
+  public.audit_log
+}
+
+Table public.users {
+  id uuid [pk]
+}
+
+Table public.orders {
+  id uuid [pk]
+}
+
+Table public.audit_log {
+  id uuid [pk]
+}`)
+    const afterModel = parsePgml(`TableGroup Core {
+  public.audit_log
+  public.users
+  public.orders
+}
+
+Table public.users {
+  id uuid [pk]
+}
+
+Table public.orders {
+  id uuid [pk]
+}
+
+Table public.audit_log {
+  id uuid [pk]
+}`)
+    const diff = diffPgmlSchemaModels(beforeModel, afterModel)
+
+    expect(diff.groups).toEqual([])
+    expect(diff.summary.modified).toBe(0)
+  })
+
   it('ignores metadata ordering for routines when semantic content is unchanged', () => {
     const diff = diffPgmlSchemaModels(
       parsePgml(`Function public.refresh_orders() returns void {

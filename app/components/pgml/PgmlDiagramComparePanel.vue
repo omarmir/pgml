@@ -8,7 +8,10 @@ import {
   type PgmlDiagramCompareEntityKind,
   type PgmlDiagramCompareEntry
 } from '~/utils/pgml-diagram-compare'
-import type { PgmlSourceRange } from '~/utils/pgml'
+import type {
+  PgmlCompareNoiseFilters,
+  PgmlSourceRange
+} from '~/utils/pgml'
 import {
   joinStudioClasses,
   studioButtonClasses,
@@ -22,6 +25,11 @@ const {
   comparisonItems = [],
   comparisonLabel = 'Current comparison',
   compareBaseId = null,
+  compareNoiseFilters = {
+    hideDefaults: true,
+    hideMetadata: true,
+    hideOrderOnly: true
+  },
   compareOptions,
   compareTargetId,
   excludedLabels = [],
@@ -41,6 +49,7 @@ const {
   }>
   comparisonLabel?: string
   compareBaseId?: string | null
+  compareNoiseFilters?: PgmlCompareNoiseFilters
   compareOptions: Array<{
     label: string
     value: string
@@ -67,11 +76,13 @@ const emit = defineEmits<{
   'select-comparison': [comparisonId: string | null]
   'select-entry': [entryId: string | null]
   'update:compareBaseId': [value: string | null]
+  'update:compare-noise-filters': [value: PgmlCompareNoiseFilters]
   'update:compareTargetId': [value: string]
 }>()
 
 type PgmlCompareFilterKind = 'all' | 'added' | 'modified' | 'removed'
 type PgmlCompareStatKind = Exclude<PgmlCompareFilterKind, 'all'>
+type PgmlCompareNoiseFilterKey = keyof PgmlCompareNoiseFilters
 
 type PgmlCompareFilterOption = {
   label: string
@@ -89,6 +100,12 @@ type PgmlCompareDetailViewMode = 'both' | 'snapshot' | 'structured'
 type PgmlCompareDetailViewOption = {
   label: string
   value: PgmlCompareDetailViewMode
+}
+
+type PgmlCompareNoiseFilterOption = {
+  description: string
+  key: PgmlCompareNoiseFilterKey
+  label: string
 }
 
 const compareEntityKindOrder: PgmlDiagramCompareEntityKind[] = [
@@ -133,6 +150,7 @@ const compareEntityFilterCountClass = 'border px-1 py-0.5 text-[0.48rem] leading
 const compareOverviewSectionClass = 'grid min-w-0 gap-3 border-b border-[color:var(--studio-divider)] pb-3'
 const compareDividerSectionClass = 'grid min-w-0 gap-3 border-t border-[color:var(--studio-divider)] pt-3'
 const exclusionChipClass = 'border border-[color:var(--studio-divider)] px-1.5 py-0.5 font-mono text-[0.52rem] uppercase tracking-[0.08em] text-[color:var(--studio-shell-muted)]'
+const compareNoiseFilterButtonClass = 'inline-flex items-center gap-2 border px-2 py-1 font-mono text-[0.56rem] uppercase tracking-[0.08em] transition-colors duration-150 cursor-default'
 const currentComparisonOptionValue = '__current__'
 const compareStatKinds: PgmlCompareStatKind[] = ['added', 'modified', 'removed']
 const compareStatLabelByKind: Readonly<Record<PgmlCompareStatKind, string>> = Object.freeze({
@@ -170,6 +188,23 @@ const compareDetailViewOptions: PgmlCompareDetailViewOption[] = [
   {
     label: 'Both',
     value: 'both'
+  }
+]
+const compareNoiseFilterOptions: PgmlCompareNoiseFilterOption[] = [
+  {
+    description: 'Hide changes where only the column default differs.',
+    key: 'hideDefaults',
+    label: 'Hide defaults'
+  },
+  {
+    description: 'Hide docs, affects, and metadata-only changes.',
+    key: 'hideMetadata',
+    label: 'Hide metadata'
+  },
+  {
+    description: 'Hide list-order-only changes that remain in compare results.',
+    key: 'hideOrderOnly',
+    label: 'Hide order only'
   }
 ]
 const hasExcludedEntities = computed(() => {
@@ -264,6 +299,9 @@ const isEntityKindFilterActive = (kind: PgmlDiagramCompareEntityKind) => {
 const hasActiveCompareFilters = computed(() => {
   return normalizedSearchQuery.value.length > 0 || filterKind.value !== 'all' || hasEntityKindFilter.value
 })
+const isCompareNoiseFilterActive = (key: PgmlCompareNoiseFilterKey) => {
+  return compareNoiseFilters[key]
+}
 const entryMatchesCurrentFilters = (
   entry: PgmlDiagramCompareEntry,
   normalizedQuery: string
@@ -429,8 +467,32 @@ const getCompareEntityFilterCountStyle = (kind: PgmlDiagramCompareEntityKind) =>
   }
 }
 
+const getCompareNoiseFilterButtonStyle = (key: PgmlCompareNoiseFilterKey) => {
+  const isActive = isCompareNoiseFilterActive(key)
+  const accent = 'var(--studio-shell-label)'
+
+  return {
+    backgroundColor: isActive
+      ? `color-mix(in srgb, ${accent} 16%, var(--studio-input-bg) 84%)`
+      : 'var(--studio-input-bg)',
+    borderColor: isActive
+      ? `color-mix(in srgb, ${accent} 52%, var(--studio-divider) 48%)`
+      : 'var(--studio-divider)',
+    color: isActive
+      ? 'var(--studio-shell-text)'
+      : 'var(--studio-shell-muted)'
+  }
+}
+
 const isDetailViewModeActive = (mode: PgmlCompareDetailViewMode) => {
   return detailViewMode.value === mode
+}
+
+const toggleCompareNoiseFilter = (key: PgmlCompareNoiseFilterKey) => {
+  emit('update:compare-noise-filters', {
+    ...compareNoiseFilters,
+    [key]: !compareNoiseFilters[key]
+  })
 }
 </script>
 
@@ -591,6 +653,31 @@ const isDetailViewModeActive = (mode: PgmlCompareDetailViewMode) => {
               {{ compareStats[statKind] }}
             </div>
           </button>
+        </div>
+
+        <div class="grid gap-2 border-t border-[color:var(--studio-divider)] pt-3">
+          <div class="flex flex-wrap items-center gap-2">
+            <div class="font-mono text-[0.58rem] uppercase tracking-[0.08em] text-[color:var(--studio-shell-label)]">
+              Noise filters
+            </div>
+            <button
+              v-for="option in compareNoiseFilterOptions"
+              :key="option.key"
+              type="button"
+              :data-compare-noise-filter="option.key"
+              :class="compareNoiseFilterButtonClass"
+              :aria-pressed="isCompareNoiseFilterActive(option.key)"
+              :style="getCompareNoiseFilterButtonStyle(option.key)"
+              :title="option.description"
+              @click="toggleCompareNoiseFilter(option.key)"
+            >
+              {{ option.label }}
+            </button>
+          </div>
+
+          <p class="text-[0.68rem] leading-5 text-[color:var(--studio-shell-muted)]">
+            Hide compare-only noise without changing migration output. These settings stay with the selected comparison.
+          </p>
         </div>
 
         <div class="grid gap-2 border-t border-[color:var(--studio-divider)] pt-3">

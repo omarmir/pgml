@@ -3,7 +3,15 @@ import {
   getNormalizedPgmlColumnDefaultModifierValue,
   normalizePgmlColumnModifiers
 } from './pgml-column-modifiers'
-import { normalizePgmlTypeExpression } from './pgml-types'
+import {
+  buildPgmlImplicitSerialSequenceName,
+  createPgmlCompareTypeExpressionNormalizer,
+  normalizePgmlCompareColumnValue,
+  normalizePgmlCompareConstraintExpression,
+  normalizePgmlCompareCustomTypeName,
+  normalizePgmlCompareSequenceMetadataEntries,
+  normalizePgmlCompareSequenceValue
+} from './pgml-compare-normalization'
 import type {
   PgmlColumn,
   PgmlCompositeType,
@@ -265,10 +273,6 @@ const getColumnDefaultValue = (column: PgmlColumn) => {
   return column.modifiers.find(modifier => modifier.startsWith('default:'))?.replace('default:', '').trim() || null
 }
 
-const getNormalizedColumnDefaultValue = (column: PgmlColumn) => {
-  return getNormalizedPgmlColumnDefaultModifierValue(column.modifiers)
-}
-
 const buildColumnDefinition = (column: PgmlColumn) => {
   const columnParts = [`${quoteSqlIdentifier(column.name)} ${column.type}`]
 
@@ -410,8 +414,16 @@ const buildSequenceMap = (sequences: PgmlSequence[]) => {
   return new Map(sequences.map(sequence => [sequence.name, sequence] as const))
 }
 
-const buildCustomTypeMap = (customTypes: PgmlCustomType[]) => {
-  return new Map(customTypes.map(customType => [`${customType.kind}::${customType.name}`, customType] as const))
+const buildCustomTypeMap = (
+  customTypes: PgmlCustomType[],
+  normalizeType: (value: string) => string
+) => {
+  return new Map(customTypes.map((customType) => {
+    return [
+      `${customType.kind}::${normalizePgmlCompareCustomTypeName(customType.name, normalizeType)}`,
+      customType
+    ] as const
+  }))
 }
 
 const buildTableMap = (tables: PgmlTable[]) => {
@@ -438,6 +450,154 @@ const buildConstraintMap = (table: PgmlTable) => {
 
 const buildColumnMap = (table: PgmlTable) => {
   return new Map(table.columns.map(column => [column.name, column] as const))
+}
+
+const buildOwnedByColumnId = (value: string) => {
+  const separatorIndex = value.lastIndexOf('.')
+
+  if (separatorIndex < 0) {
+    return null
+  }
+
+  return {
+    columnName: value.slice(separatorIndex + 1),
+    tableId: value.slice(0, separatorIndex)
+  }
+}
+
+const isSerialPseudoType = (value: string) => {
+  return ['bigserial', 'serial', 'serial2', 'serial4', 'serial8', 'smallserial'].includes(value.trim().toLowerCase())
+}
+
+const isImplicitSerialSequenceValue = (input: {
+  column: {
+    column: PgmlColumn
+    tableId: string
+  }
+  normalizeType: (value: string) => string
+  sequence: PgmlSequence
+}) => {
+  if (
+    input.sequence.docs
+    || input.sequence.affects
+    || (input.sequence.source?.trim().length || 0) > 0
+  ) {
+    return false
+  }
+
+  const expectedSequenceName = buildPgmlImplicitSerialSequenceName(
+    input.column.tableId,
+    input.column.column.name
+  )
+
+  if (input.sequence.name !== expectedSequenceName) {
+    return false
+  }
+
+  const normalizedColumn = normalizePgmlCompareColumnValue({
+    column: input.column.column,
+    normalizeType: input.normalizeType,
+    tableId: input.column.tableId
+  })
+  const normalizedDefault = normalizedColumn.modifiers.find(modifier => modifier.startsWith('default:'))
+    ?.replace(/^default:\s*/u, '')
+    .trim()
+
+  if (normalizedDefault !== `nextval('${expectedSequenceName}')`) {
+    return false
+  }
+
+  const normalizedSequenceMetadata = normalizePgmlCompareSequenceMetadataEntries(
+    input.sequence.metadata,
+    input.normalizeType
+  )
+  const expectedMetadata = normalizePgmlCompareSequenceMetadataEntries([
+    {
+      key: 'as',
+      value: normalizedColumn.type
+    },
+    {
+      key: 'owned_by',
+      value: `${input.column.tableId}.${input.column.column.name}`
+    }
+  ], input.normalizeType)
+
+  return toStableJson(normalizedSequenceMetadata) === toStableJson(expectedMetadata)
+}
+
+const isImplicitSerialSequenceOnlyDiff = (input: {
+  afterTables: Map<string, PgmlTable>
+  beforeTables: Map<string, PgmlTable>
+  normalizeType: (value: string) => string
+  sequence: PgmlSequence
+  type: 'added' | 'removed'
+}) => {
+  const normalizedMetadata = normalizePgmlCompareSequenceMetadataEntries(
+    input.sequence.metadata,
+    input.normalizeType
+  )
+  const ownedBy = normalizedMetadata.find(entry => entry.key === 'owned_by')?.value || null
+
+  if (!ownedBy) {
+    return false
+  }
+
+  const ownedByColumn = buildOwnedByColumnId(ownedBy)
+
+  if (!ownedByColumn) {
+    return false
+  }
+
+  const beforeTable = input.beforeTables.get(ownedByColumn.tableId) || null
+  const afterTable = input.afterTables.get(ownedByColumn.tableId) || null
+
+  if (!beforeTable || !afterTable) {
+    return false
+  }
+
+  const beforeColumn = buildColumnMap(beforeTable).get(ownedByColumn.columnName) || null
+  const afterColumn = buildColumnMap(afterTable).get(ownedByColumn.columnName) || null
+
+  if (!beforeColumn || !afterColumn) {
+    return false
+  }
+
+  const normalizedBeforeColumn = normalizePgmlCompareColumnValue({
+    column: beforeColumn,
+    normalizeType: input.normalizeType,
+    tableId: beforeTable.fullName
+  })
+  const normalizedAfterColumn = normalizePgmlCompareColumnValue({
+    column: afterColumn,
+    normalizeType: input.normalizeType,
+    tableId: afterTable.fullName
+  })
+
+  if (toStableJson(normalizedBeforeColumn) !== toStableJson(normalizedAfterColumn)) {
+    return false
+  }
+
+  if (input.type === 'added' && !isSerialPseudoType(beforeColumn.type)) {
+    return false
+  }
+
+  if (input.type === 'removed' && !isSerialPseudoType(afterColumn.type)) {
+    return false
+  }
+
+  return isImplicitSerialSequenceValue({
+    column: input.type === 'added'
+      ? {
+          column: afterColumn,
+          tableId: afterTable.fullName
+        }
+      : {
+          column: beforeColumn,
+          tableId: beforeTable.fullName
+        },
+    normalizeType: input.normalizeType,
+    sequence: input.sequence
+  })
 }
 
 const normalizeMetadataEntries = (
@@ -506,7 +666,7 @@ const normalizeIndexForCompare = (index: PgmlIndex) => {
 
 const normalizeConstraintForCompare = (constraint: PgmlConstraint) => {
   return {
-    expression: constraint.expression,
+    expression: normalizePgmlCompareConstraintExpression(constraint.expression),
     name: constraint.name
   }
 }
@@ -547,38 +707,43 @@ const normalizeTriggerForCompare = (trigger: PgmlTrigger) => {
   }
 }
 
-const normalizeSequenceForCompare = (sequence: PgmlSequence) => {
-  return {
-    affects: normalizeAffectsValue(sequence.affects),
-    docs: normalizeDocumentationValue(sequence.docs),
-    metadata: normalizeMetadataEntries(sequence.metadata),
-    name: sequence.name,
-    source: sequence.source?.trim() || null
-  }
+const normalizeSequenceForCompare = (
+  sequence: PgmlSequence,
+  normalizeType: (value: string) => string
+) => {
+  return normalizePgmlCompareSequenceValue(sequence, normalizeType)
 }
 
-const normalizeCustomTypeForCompare = (customType: PgmlCustomType) => {
+const normalizeCustomTypeForCompare = (
+  customType: PgmlCustomType,
+  normalizeType: (value: string) => string
+) => {
   if (customType.kind === 'Enum') {
     return {
       kind: customType.kind,
-      name: customType.name,
+      name: normalizePgmlCompareCustomTypeName(customType.name, normalizeType),
       values: customType.values
     }
   }
 
   if (customType.kind === 'Domain') {
     return {
-      baseType: customType.baseType,
+      baseType: customType.baseType ? normalizeType(customType.baseType) : null,
       check: customType.check,
       kind: customType.kind,
-      name: customType.name
+      name: normalizePgmlCompareCustomTypeName(customType.name, normalizeType)
     }
   }
 
   return {
-    fields: customType.fields,
+    fields: customType.fields.map((field) => {
+      return {
+        ...field,
+        type: normalizeType(field.type)
+      }
+    }),
     kind: customType.kind,
-    name: customType.name
+    name: normalizePgmlCompareCustomTypeName(customType.name, normalizeType)
   }
 }
 
@@ -797,7 +962,8 @@ const buildConstraintDropStatement = (tableId: string, constraint: PgmlConstrain
 const buildTableAlterStatements = (
   beforeTable: PgmlTable,
   afterTable: PgmlTable,
-  warnings: Set<string>
+  warnings: Set<string>,
+  normalizeType: (value: string) => string
 ): PgmlTableAlterPlan => {
   const preAlterStatements: string[] = []
   const tableStatements: string[] = []
@@ -870,12 +1036,23 @@ const buildTableAlterStatements = (
       return
     }
 
-    if (normalizePgmlTypeExpression(beforeColumn.type) !== normalizePgmlTypeExpression(afterColumn.type)) {
+    const normalizedBeforeColumn = normalizePgmlCompareColumnValue({
+      column: beforeColumn,
+      normalizeType,
+      tableId: beforeTable.fullName
+    })
+    const normalizedAfterColumn = normalizePgmlCompareColumnValue({
+      column: afterColumn,
+      normalizeType,
+      tableId: afterTable.fullName
+    })
+
+    if (normalizedBeforeColumn.type !== normalizedAfterColumn.type) {
       tableStatements.push(`ALTER TABLE ${formatQualifiedSqlName(afterTable.fullName)} ALTER COLUMN ${quoteSqlIdentifier(afterColumn.name)} TYPE ${afterColumn.type};`)
     }
 
-    const beforeDefault = getNormalizedColumnDefaultValue(beforeColumn)
-    const afterDefault = getNormalizedColumnDefaultValue(afterColumn)
+    const beforeDefault = getNormalizedPgmlColumnDefaultModifierValue(normalizedBeforeColumn.modifiers)
+    const afterDefault = getNormalizedPgmlColumnDefaultModifierValue(normalizedAfterColumn.modifiers)
 
     if (beforeDefault !== afterDefault) {
       if (afterDefault) {
@@ -885,8 +1062,8 @@ const buildTableAlterStatements = (
       }
     }
 
-    const normalizedBeforeModifiers = normalizePgmlColumnModifiers(beforeColumn.modifiers)
-    const normalizedAfterModifiers = normalizePgmlColumnModifiers(afterColumn.modifiers)
+    const normalizedBeforeModifiers = normalizePgmlColumnModifiers(normalizedBeforeColumn.modifiers)
+    const normalizedAfterModifiers = normalizePgmlColumnModifiers(normalizedAfterColumn.modifiers)
     const beforeNotNull = normalizedBeforeModifiers.includes('not null')
     const afterNotNull = normalizedAfterModifiers.includes('not null')
 
@@ -979,8 +1156,16 @@ export const buildPgmlMigrationDiffPlan = (
 ): PgmlMigrationDiffPlan => {
   const warnings = new Set<string>()
   const phases = createEmptyMigrationStatementPhases()
-  const beforeTypesByName = new Map(baseModel.customTypes.map(customType => [customType.name, customType] as const))
-  const afterTypesByName = new Map(targetModel.customTypes.map(customType => [customType.name, customType] as const))
+  const normalizeCompareTypeExpression = createPgmlCompareTypeExpressionNormalizer([
+    baseModel,
+    targetModel
+  ])
+  const beforeTypesByName = new Map(baseModel.customTypes.map((customType) => {
+    return [normalizePgmlCompareCustomTypeName(customType.name, normalizeCompareTypeExpression), customType] as const
+  }))
+  const afterTypesByName = new Map(targetModel.customTypes.map((customType) => {
+    return [normalizePgmlCompareCustomTypeName(customType.name, normalizeCompareTypeExpression), customType] as const
+  }))
   const crossKindTypeNames = new Set(
     Array.from(new Set([...beforeTypesByName.keys(), ...afterTypesByName.keys()])).filter((typeName) => {
       const beforeType = beforeTypesByName.get(typeName) || null
@@ -990,8 +1175,8 @@ export const buildPgmlMigrationDiffPlan = (
     })
   )
 
-  const beforeTypes = buildCustomTypeMap(baseModel.customTypes)
-  const afterTypes = buildCustomTypeMap(targetModel.customTypes)
+  const beforeTypes = buildCustomTypeMap(baseModel.customTypes, normalizeCompareTypeExpression)
+  const afterTypes = buildCustomTypeMap(targetModel.customTypes, normalizeCompareTypeExpression)
   const typeIds = Array.from(new Set([...beforeTypes.keys(), ...afterTypes.keys()])).sort((left, right) => left.localeCompare(right))
 
   typeIds.forEach((typeId) => {
@@ -1018,7 +1203,7 @@ export const buildPgmlMigrationDiffPlan = (
     if (
       beforeType
       && afterType
-      && toStableJson(normalizeCustomTypeForCompare(beforeType)) !== toStableJson(normalizeCustomTypeForCompare(afterType))
+      && toStableJson(normalizeCustomTypeForCompare(beforeType, normalizeCompareTypeExpression)) !== toStableJson(normalizeCustomTypeForCompare(afterType, normalizeCompareTypeExpression))
     ) {
       buildCustomTypeModificationStatements(beforeType, afterType, warnings).forEach((statement) => {
         phases.preTablePreparations.push(statement)
@@ -1026,6 +1211,8 @@ export const buildPgmlMigrationDiffPlan = (
     }
   })
 
+  const beforeTables = buildTableMap(baseModel.tables)
+  const afterTables = buildTableMap(targetModel.tables)
   const beforeSequences = buildSequenceMap(baseModel.sequences)
   const afterSequences = buildSequenceMap(targetModel.sequences)
   const sequenceIds = Array.from(new Set([...beforeSequences.keys(), ...afterSequences.keys()])).sort((left, right) => left.localeCompare(right))
@@ -1035,11 +1222,31 @@ export const buildPgmlMigrationDiffPlan = (
     const afterSequence = afterSequences.get(sequenceId) || null
 
     if (beforeSequence && !afterSequence) {
+      if (isImplicitSerialSequenceOnlyDiff({
+        afterTables,
+        beforeTables,
+        normalizeType: normalizeCompareTypeExpression,
+        sequence: beforeSequence,
+        type: 'removed'
+      })) {
+        return
+      }
+
       phases.postDependencyCleanup.push(buildDropSequenceStatement(beforeSequence))
       return
     }
 
     if (!beforeSequence && afterSequence) {
+      if (isImplicitSerialSequenceOnlyDiff({
+        afterTables,
+        beforeTables,
+        normalizeType: normalizeCompareTypeExpression,
+        sequence: afterSequence,
+        type: 'added'
+      })) {
+        return
+      }
+
       phases.preTablePreparations.push(buildCreateSequenceStatement(afterSequence))
       return
     }
@@ -1047,14 +1254,11 @@ export const buildPgmlMigrationDiffPlan = (
     if (
       beforeSequence
       && afterSequence
-      && toStableJson(normalizeSequenceForCompare(beforeSequence)) !== toStableJson(normalizeSequenceForCompare(afterSequence))
+      && toStableJson(normalizeSequenceForCompare(beforeSequence, normalizeCompareTypeExpression)) !== toStableJson(normalizeSequenceForCompare(afterSequence, normalizeCompareTypeExpression))
     ) {
       warnings.add(`Sequence ${beforeSequence.name} changed. Generate the sequence migration manually because PGML cannot infer a safe ALTER SEQUENCE sequence from the stored source.`)
     }
   })
-
-  const beforeTables = buildTableMap(baseModel.tables)
-  const afterTables = buildTableMap(targetModel.tables)
   addRenameLikeTableWarnings(beforeTables, afterTables, warnings)
   const tableIds = Array.from(new Set([...beforeTables.keys(), ...afterTables.keys()])).sort((left, right) => left.localeCompare(right))
 
@@ -1076,7 +1280,12 @@ export const buildPgmlMigrationDiffPlan = (
     }
 
     if (beforeTable && afterTable) {
-      const tableAlterPlan = buildTableAlterStatements(beforeTable, afterTable, warnings)
+      const tableAlterPlan = buildTableAlterStatements(
+        beforeTable,
+        afterTable,
+        warnings,
+        normalizeCompareTypeExpression
+      )
 
       tableAlterPlan.preAlterStatements.forEach(statement => phases.preDependencyDrops.push(statement))
       tableAlterPlan.tableStatements.forEach(statement => phases.tableStatements.push(statement))

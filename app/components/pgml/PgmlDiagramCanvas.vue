@@ -3,7 +3,12 @@ import type { Ref } from 'vue'
 import { ref } from 'vue'
 import PgmlDiagramCanvasGpuShell from '~/components/pgml/PgmlDiagramCanvasGpuShell.vue'
 import type { PgmlDiagramCompareEntry } from '~/utils/pgml-diagram-compare'
-import type { PgmlNodeProperties, PgmlSchemaModel, PgmlSourceRange } from '~/utils/pgml'
+import type {
+  PgmlCompareNoiseFilters,
+  PgmlNodeProperties,
+  PgmlSchemaModel,
+  PgmlSourceRange
+} from '~/utils/pgml'
 import type { PgmlVersionMigrationStepBundle } from '~/utils/pgml-version-migration'
 import type { DiagramPanelTab, DiagramToolPanelTab, StudioMobileCanvasView } from '~/utils/studio-workspace'
 
@@ -83,6 +88,11 @@ const {
   compareExcludedLabels = [],
   compareExcludedSummary = null,
   compareHiddenExcludedLabelCount = 0,
+  compareNoiseFilters = {
+    hideDefaults: true,
+    hideMetadata: true,
+    hideOrderOnly: true
+  },
   compareRelationshipSummary = '',
   compareSelectedComparisonId = null,
   compareTargetLabel = 'Target',
@@ -121,6 +131,7 @@ const {
   compareExcludedLabels?: string[]
   compareExcludedSummary?: string | null
   compareHiddenExcludedLabelCount?: number
+  compareNoiseFilters?: PgmlCompareNoiseFilters
   compareRelationshipSummary?: string
   compareSelectedComparisonId?: string | null
   compareTargetLabel?: string
@@ -168,6 +179,7 @@ const emit = defineEmits<{
   selectCompareComparison: [comparisonId: string | null]
   selectDiagramView: [viewId: string]
   updateDiagramViewSettings: [settings: Partial<DiagramViewSettings>]
+  updateCompareNoiseFilters: [value: PgmlCompareNoiseFilters]
   updateVersionCompareBaseId: [value: string | null]
   updateVersionCompareTargetId: [value: string]
   versionCheckpoint: []
@@ -208,6 +220,7 @@ defineExpose<CanvasHandle>({
     :compare-excluded-labels="compareExcludedLabels"
     :compare-excluded-summary="compareExcludedSummary"
     :compare-hidden-excluded-label-count="compareHiddenExcludedLabelCount"
+    :compare-noise-filters="compareNoiseFilters"
     :compare-relationship-summary="compareRelationshipSummary"
     :compare-selected-comparison-id="compareSelectedComparisonId"
     :compare-target-label="compareTargetLabel"
@@ -258,6 +271,7 @@ defineExpose<CanvasHandle>({
     @restore-version="emit('restoreVersion', $event)"
     @select-compare-comparison="emit('selectCompareComparison', $event)"
     @select-diagram-view="emit('selectDiagramView', $event)"
+    @update-compare-noise-filters="emit('updateCompareNoiseFilters', $event)"
     @update-diagram-view-settings="emit('updateDiagramViewSettings', $event)"
     @update-version-compare-base-id="emit('updateVersionCompareBaseId', $event)"
     @update-version-compare-target-id="emit('updateVersionCompareTargetId', $event)"

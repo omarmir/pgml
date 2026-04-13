@@ -1,7 +1,9 @@
 import { getStoredGroupId, type DiagramGpuSelection } from './diagram-gpu-scene'
 import {
   clonePgmlCompareExclusions,
+  clonePgmlCompareNoiseFilters,
   type PgmlCompareExclusions,
+  type PgmlCompareNoiseFilters,
   type PgmlCustomType,
   type PgmlRoutine,
   type PgmlSchemaModel,
@@ -34,6 +36,8 @@ export type PgmlDiagramCompareField = {
   label: string
 }
 
+export type PgmlDiagramCompareNoiseKind = 'defaults' | 'metadata' | 'order'
+
 export type PgmlDiagramCompareScopeKind = 'group' | 'standalone' | 'table'
 
 export type PgmlDiagramCompareEntry = {
@@ -47,6 +51,7 @@ export type PgmlDiagramCompareEntry = {
   fields: PgmlDiagramCompareField[]
   id: string
   label: string
+  noiseKinds: PgmlDiagramCompareNoiseKind[]
   rowKey: string | null
   scopeId: string
   scopeKind: PgmlDiagramCompareScopeKind
@@ -179,6 +184,13 @@ const isTransientCompareFieldName = (fieldName: string) => {
   return fieldName === 'sourceRange'
 }
 
+const compareMetadataFieldNames = new Set(['affects', 'docs', 'metadata', 'note'])
+const compareOrderNoiseDisallowedEntityKinds = new Set<PgmlDiagramCompareEntityKind>([
+  'custom-type',
+  'index',
+  'reference'
+])
+
 const formatCompareFieldLabel = (fieldName: string) => {
   const explicitLabel = compareFieldLabelByValue[fieldName]
 
@@ -244,6 +256,84 @@ const buildStableSnapshotValue = (value: unknown): unknown => {
       entries[key] = buildStableSnapshotValue(entry)
       return entries
     }, {})
+}
+
+const areFieldValuesEqualIgnoringOrder = (
+  beforeValue: unknown,
+  afterValue: unknown
+) => {
+  if (!Array.isArray(beforeValue) || !Array.isArray(afterValue) || beforeValue.length !== afterValue.length) {
+    return false
+  }
+
+  const normalizeArrayValues = (values: unknown[]) => {
+    return values.map((entry) => {
+      return typeof entry === 'string' || typeof entry === 'number' || typeof entry === 'boolean'
+        ? JSON.stringify(entry)
+        : JSON.stringify(buildStableSnapshotValue(entry))
+    }).sort((left, right) => left.localeCompare(right))
+  }
+
+  return JSON.stringify(normalizeArrayValues(beforeValue)) === JSON.stringify(normalizeArrayValues(afterValue))
+}
+
+const buildCompareNoiseKinds = (
+  entityKind: PgmlDiagramCompareEntityKind,
+  beforeValue: unknown,
+  afterValue: unknown,
+  changedFields: string[]
+): PgmlDiagramCompareNoiseKind[] => {
+  if (changedFields.length === 0) {
+    return []
+  }
+
+  const beforeRecord = beforeValue && typeof beforeValue === 'object'
+    ? beforeValue as Record<string, unknown>
+    : {}
+  const afterRecord = afterValue && typeof afterValue === 'object'
+    ? afterValue as Record<string, unknown>
+    : {}
+  const noiseKinds: PgmlDiagramCompareNoiseKind[] = []
+
+  if (
+    changedFields.length === 1
+    && changedFields[0] === 'modifiers'
+    && Array.isArray(beforeRecord.modifiers)
+    && Array.isArray(afterRecord.modifiers)
+  ) {
+    const beforeModifiers = beforeRecord.modifiers as string[]
+    const afterModifiers = afterRecord.modifiers as string[]
+    const beforeNonDefaultModifiers = beforeModifiers
+      .filter(modifier => typeof modifier === 'string' && !modifier.startsWith('default:'))
+      .sort((left, right) => left.localeCompare(right))
+    const afterNonDefaultModifiers = afterModifiers
+      .filter(modifier => typeof modifier === 'string' && !modifier.startsWith('default:'))
+      .sort((left, right) => left.localeCompare(right))
+    const beforeDefault = beforeModifiers.find(modifier => typeof modifier === 'string' && modifier.startsWith('default:')) || null
+    const afterDefault = afterModifiers.find(modifier => typeof modifier === 'string' && modifier.startsWith('default:')) || null
+
+    if (
+      JSON.stringify(beforeNonDefaultModifiers) === JSON.stringify(afterNonDefaultModifiers)
+      && beforeDefault !== afterDefault
+    ) {
+      noiseKinds.push('defaults')
+    }
+  }
+
+  if (changedFields.every(fieldName => compareMetadataFieldNames.has(fieldName))) {
+    noiseKinds.push('metadata')
+  }
+
+  if (
+    !compareOrderNoiseDisallowedEntityKinds.has(entityKind)
+    && changedFields.every((fieldName) => {
+      return areFieldValuesEqualIgnoringOrder(beforeRecord[fieldName], afterRecord[fieldName])
+    })
+  ) {
+    noiseKinds.push('order')
+  }
+
+  return noiseKinds
 }
 
 const formatCompareSnapshot = (value: unknown) => {
@@ -566,10 +656,32 @@ const buildLayoutSelectionCandidates = (
 }
 
 const buildEntryFromDiff = <T>(input: {
-  buildEntry: (entry: PgmlDiffEntry<T>) => PgmlDiagramCompareEntry
+  buildEntry: (entry: PgmlDiffEntry<T>) => Omit<PgmlDiagramCompareEntry, 'noiseKinds'>
   entries: PgmlDiffEntry<T>[]
+  getNoiseComparisonValues?: (entry: PgmlDiffEntry<T>) => {
+    after: unknown
+    before: unknown
+  }
 }) => {
-  return input.entries.map(entry => input.buildEntry(entry))
+  return input.entries.map((entry) => {
+    const builtEntry = input.buildEntry(entry)
+    const noiseComparisonValues = input.getNoiseComparisonValues
+      ? input.getNoiseComparisonValues(entry)
+      : {
+          after: entry.after || null,
+          before: entry.before || null
+        }
+
+    return {
+      ...builtEntry,
+      noiseKinds: buildCompareNoiseKinds(
+        builtEntry.entityKind,
+        noiseComparisonValues.before,
+        noiseComparisonValues.after,
+        entry.changes || []
+      )
+    } satisfies PgmlDiagramCompareEntry
+  })
 }
 
 const buildStandaloneObjectEntry = <T>(input: {
@@ -615,7 +727,7 @@ const buildStandaloneObjectEntry = <T>(input: {
       input.entry.before ? input.sourceRange(input.entry.before) : null
     ),
     targetNodeIds: buildNodeIds(afterObjectId)
-  } satisfies PgmlDiagramCompareEntry
+  } satisfies Omit<PgmlDiagramCompareEntry, 'noiseKinds'>
 }
 
 export const getPgmlDiagramCompareEntityKindLabel = (kind: PgmlDiagramCompareEntityKind) => {
@@ -722,6 +834,37 @@ export const filterPgmlDiagramCompareEntriesForExclusions = (
   return entries.filter(entry => !excludedEntityIds.has(entry.id))
 }
 
+export const filterPgmlDiagramCompareEntriesForNoise = (
+  entries: PgmlDiagramCompareEntry[],
+  noiseFilters?: Partial<PgmlCompareNoiseFilters> | null
+) => {
+  const normalizedNoiseFilters = clonePgmlCompareNoiseFilters(noiseFilters)
+
+  if (
+    !normalizedNoiseFilters.hideDefaults
+    && !normalizedNoiseFilters.hideMetadata
+    && !normalizedNoiseFilters.hideOrderOnly
+  ) {
+    return entries
+  }
+
+  return entries.filter((entry) => {
+    if (normalizedNoiseFilters.hideDefaults && entry.noiseKinds.includes('defaults')) {
+      return false
+    }
+
+    if (normalizedNoiseFilters.hideMetadata && entry.noiseKinds.includes('metadata')) {
+      return false
+    }
+
+    if (normalizedNoiseFilters.hideOrderOnly && entry.noiseKinds.includes('order')) {
+      return false
+    }
+
+    return true
+  })
+}
+
 export const buildPgmlDiagramCompareEntries = (
   diff: PgmlSchemaDiff,
   baseModel: PgmlSchemaModel,
@@ -759,7 +902,7 @@ export const buildPgmlDiagramCompareEntries = (
           : [],
         sourceRange: pickSourceRange(entry.after?.sourceRange, entry.before?.sourceRange),
         targetNodeIds: buildNodeIds(entry.after?.fullName)
-      } satisfies PgmlDiagramCompareEntry
+      } satisfies Omit<PgmlDiagramCompareEntry, 'noiseKinds'>
     },
     entries: diff.tables
   }))
@@ -793,7 +936,7 @@ export const buildPgmlDiagramCompareEntries = (
           : [],
         sourceRange: pickSourceRange(entry.after?.sourceRange, entry.before?.sourceRange),
         targetNodeIds: buildNodeIds(groupId && targetGroup ? groupId : null)
-      } satisfies PgmlDiagramCompareEntry
+      } satisfies Omit<PgmlDiagramCompareEntry, 'noiseKinds'>
     },
     entries: diff.groups
   }))
@@ -838,9 +981,13 @@ export const buildPgmlDiagramCompareEntries = (
         }),
         sourceRange: pickSourceRange(targetTable?.sourceRange, findTableById(baseModel, tableId)?.sourceRange),
         targetNodeIds: buildTargetTableNodeIds(entry.after?.tableId, targetTable)
-      } satisfies PgmlDiagramCompareEntry
+      } satisfies Omit<PgmlDiagramCompareEntry, 'noiseKinds'>
     },
-    entries: diff.columns
+    entries: diff.columns,
+    getNoiseComparisonValues: entry => ({
+      after: entry.after?.column || null,
+      before: entry.before?.column || null
+    })
   }))
 
   entries.push(...buildEntryFromDiff({
@@ -883,9 +1030,13 @@ export const buildPgmlDiagramCompareEntries = (
         }),
         sourceRange: pickSourceRange(entry.after?.index.sourceRange, entry.before?.index.sourceRange, targetTable?.sourceRange),
         targetNodeIds: buildTargetTableNodeIds(entry.after?.tableId, targetTable)
-      } satisfies PgmlDiagramCompareEntry
+      } satisfies Omit<PgmlDiagramCompareEntry, 'noiseKinds'>
     },
-    entries: diff.indexes
+    entries: diff.indexes,
+    getNoiseComparisonValues: entry => ({
+      after: entry.after?.index || null,
+      before: entry.before?.index || null
+    })
   }))
 
   entries.push(...buildEntryFromDiff({
@@ -928,9 +1079,13 @@ export const buildPgmlDiagramCompareEntries = (
         }),
         sourceRange: pickSourceRange(entry.after?.constraint.sourceRange, entry.before?.constraint.sourceRange, targetTable?.sourceRange),
         targetNodeIds: buildTargetTableNodeIds(entry.after?.tableId, targetTable)
-      } satisfies PgmlDiagramCompareEntry
+      } satisfies Omit<PgmlDiagramCompareEntry, 'noiseKinds'>
     },
-    entries: diff.constraints
+    entries: diff.constraints,
+    getNoiseComparisonValues: entry => ({
+      after: entry.after?.constraint || null,
+      before: entry.before?.constraint || null
+    })
   }))
 
   entries.push(...buildEntryFromDiff({
@@ -981,7 +1136,7 @@ export const buildPgmlDiagramCompareEntries = (
           targetFromTable?.fullName,
           targetToTable?.fullName
         )
-      } satisfies PgmlDiagramCompareEntry
+      } satisfies Omit<PgmlDiagramCompareEntry, 'noiseKinds'>
     },
     entries: diff.references
   }))
@@ -1046,7 +1201,7 @@ export const buildPgmlDiagramCompareEntries = (
         }),
         sourceRange: pickSourceRange(entry.after?.sourceRange, entry.before?.sourceRange, targetTable?.sourceRange),
         targetNodeIds: buildNodeIds(entry.after?.tableName, targetTable?.fullName, entry.after ? objectId : null)
-      } satisfies PgmlDiagramCompareEntry
+      } satisfies Omit<PgmlDiagramCompareEntry, 'noiseKinds'>
     },
     entries: diff.triggers
   }))
@@ -1090,6 +1245,7 @@ export const buildPgmlDiagramCompareEntries = (
       fields: buildFieldRecords(entry.before || null, entry.after || null, entry.changes || []),
       id: `layout:${entry.id}`,
       label: entry.label,
+      noiseKinds: buildCompareNoiseKinds('layout', entry.before || null, entry.after || null, entry.changes || []),
       rowKey: null,
       scopeId: entry.id.startsWith('group:')
         ? `group:${entry.id.replace(/^group:/, '')}`

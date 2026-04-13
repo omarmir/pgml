@@ -717,6 +717,84 @@ test('compare panel ignores equivalent built-in type aliases like varchar and ch
   await expect(comparePanel).toContainText('No diff entries match the current filter.')
 })
 
+test('compare noise filters hide optional compare-only changes and saved comparisons recall their settings', async ({ goto, page }) => {
+  await goto('/diagram')
+  const editor = getPgmlEditor(page)
+
+  await setPgmlEditorValue(editor, `Table public.orders {
+  id uuid [pk]
+  status text [default: 'draft']
+}
+
+Function public.refresh_orders() returns void {
+  cost: 100
+  source: $sql$
+    select 1;
+  $sql$
+}`)
+  await createCheckpoint(page, 'Noise baseline')
+
+  await setPgmlEditorValue(editor, `Table public.orders {
+  id uuid [pk]
+  status text [default: 'submitted']
+}
+
+Function public.refresh_orders() returns void {
+  cost: 200
+  source: $sql$
+    select 1;
+  $sql$
+}`)
+
+  await compareFromVersion(page, 'Noise baseline')
+
+  const comparePanel = getComparePanel(page)
+  const defaultEntry = comparePanel.locator('[data-compare-entry="column:public.orders::status"]')
+  const metadataEntry = comparePanel.locator('[data-compare-entry="function:public.refresh_orders"]')
+  const hideDefaultsButton = comparePanel.locator('[data-compare-noise-filter="hideDefaults"]')
+  const hideMetadataButton = comparePanel.locator('[data-compare-noise-filter="hideMetadata"]')
+
+  await expect(defaultEntry).toHaveCount(0)
+  await expect(metadataEntry).toHaveCount(0)
+  await expect(comparePanel).toContainText('No diff entries match the current filter.')
+
+  await hideDefaultsButton.click()
+  await expect(hideDefaultsButton).toHaveAttribute('aria-pressed', 'false')
+  await expect(defaultEntry).toBeVisible()
+  await expect(metadataEntry).toHaveCount(0)
+
+  await hideMetadataButton.click()
+  await expect(hideMetadataButton).toHaveAttribute('aria-pressed', 'false')
+  await expect(defaultEntry).toBeVisible()
+  await expect(metadataEntry).toBeVisible()
+
+  await openMigrationsPanel(page)
+  await expect(getMigrationArtifact(page)).toContainText(`ALTER TABLE "public"."orders" ALTER COLUMN "status" SET DEFAULT 'submitted';`)
+
+  await openComparator(page)
+  await comparePanel.locator('[data-compare-create-comparison="true"]').click()
+
+  const comparisonDialog = page.locator('[data-studio-modal-surface="compare-comparison"]')
+
+  await expect(comparisonDialog).toBeVisible()
+  await comparisonDialog.locator('[data-compare-comparison-name-input="true"]').fill('Noise settings')
+  await comparisonDialog.locator('[data-compare-comparison-save="true"]').click()
+  await expect(comparisonDialog).toHaveCount(0)
+
+  await createCheckpoint(page, 'Noise follow-up')
+  await openComparator(page)
+  await expect(comparePanel.locator('[data-compare-entry]')).toHaveCount(0)
+
+  await comparePanel.locator('[data-compare-comparison-select="true"]').click()
+  await page.getByRole('option', { name: 'Noise settings' }).click()
+
+  await expect(comparePanel.locator('[data-compare-base-select="true"]')).toContainText('Noise baseline')
+  await expect(comparePanel.locator('[data-compare-noise-filter="hideDefaults"]')).toHaveAttribute('aria-pressed', 'false')
+  await expect(comparePanel.locator('[data-compare-noise-filter="hideMetadata"]')).toHaveAttribute('aria-pressed', 'false')
+  await expect(defaultEntry).toBeVisible()
+  await expect(metadataEntry).toBeVisible()
+})
+
 test('compare panel stat cards filter the visible entries and keep the panel within its container', async ({ goto, page }) => {
   await goto('/diagram')
   const editor = getPgmlEditor(page)

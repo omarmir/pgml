@@ -256,6 +256,10 @@ Enum public.language_preference {
         kind: 'property'
       }),
       expect.objectContaining({
+        label: 'hide_defaults',
+        kind: 'property'
+      }),
+      expect.objectContaining({
         label: 'CompareExclusions',
         kind: 'property'
       })

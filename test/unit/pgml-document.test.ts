@@ -286,6 +286,8 @@ Table public.orders {
     id: cmp_implemented
     base: v1
     target: workspace
+    hide_defaults: false
+    hide_metadata: false
 
     CompareExclusions {
       entity: "column:public.users::id"
@@ -323,6 +325,11 @@ Table public.orders {
         },
         id: 'cmp_implemented',
         name: 'Implemented scope',
+        noiseFilters: {
+          hideDefaults: false,
+          hideMetadata: false,
+          hideOrderOnly: true
+        },
         targetId: 'workspace'
       }
     ])
@@ -330,6 +337,8 @@ Table public.orders {
     expect(serialized).toContain('id: cmp_implemented')
     expect(serialized).toContain('base: v1')
     expect(serialized).toContain('target: workspace')
+    expect(serialized).toContain('hide_defaults: false')
+    expect(serialized).toContain('hide_metadata: false')
     expect(serialized).toContain('CompareExclusions {')
     expect(serialized).not.toContain('entity: "column:public.users::id"')
     expect(serialized).toContain('entity: "function:public.refresh_users"')
@@ -411,6 +420,11 @@ Table public.orders {
         },
         id: expect.stringMatching(/^cmp_/),
         name: 'Current workspace comparison',
+        noiseFilters: {
+          hideDefaults: true,
+          hideMetadata: true,
+          hideOrderOnly: true
+        },
         targetId: 'workspace'
       },
       {
@@ -425,6 +439,11 @@ Table public.orders {
         },
         id: expect.stringMatching(/^cmp_/),
         name: 'Initial implementation comparison',
+        noiseFilters: {
+          hideDefaults: true,
+          hideMetadata: true,
+          hideOrderOnly: true
+        },
         targetId: 'v1'
       }
     ])

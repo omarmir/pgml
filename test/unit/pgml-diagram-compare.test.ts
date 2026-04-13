@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest'
 import {
   buildPgmlDiagramCompareEntries,
   filterPgmlDiagramCompareEntriesForExclusions,
+  filterPgmlDiagramCompareEntriesForNoise,
   getPgmlDiagramCompareChangeColor,
   getPgmlDiagramCompareChangeVerb,
   getPgmlDiagramCompareEntityKindLabel
@@ -166,6 +167,84 @@ Function public.refresh_users() returns void {
 
     expect(filteredEntries.some(entry => entry.id === 'function:public.refresh_users')).toBe(false)
     expect(filteredEntries.some(entry => entry.id === 'column:public.users::email')).toBe(true)
+  })
+
+  it('classifies default-only column diffs as optional compare noise', () => {
+    const baseModel = parseSnapshotModel(`Table public.orders {
+  id uuid [pk]
+  status text [default: 'draft']
+}`)
+    const targetModel = parseSnapshotModel(`Table public.orders {
+  id uuid [pk]
+  status text [default: 'submitted']
+}`)
+    const entries = buildPgmlDiagramCompareEntries(
+      diffPgmlSchemaModels(baseModel, targetModel),
+      baseModel,
+      targetModel
+    )
+    const defaultEntry = entries.find(entry => entry.id === 'column:public.orders::status') || null
+
+    expect(defaultEntry?.noiseKinds).toEqual(['defaults'])
+    expect(filterPgmlDiagramCompareEntriesForNoise(entries).some(entry => entry.id === 'column:public.orders::status')).toBe(false)
+    expect(filterPgmlDiagramCompareEntriesForNoise(entries, {
+      hideDefaults: false
+    }).some(entry => entry.id === 'column:public.orders::status')).toBe(true)
+  })
+
+  it('classifies metadata-only routine diffs as optional compare noise', () => {
+    const baseModel = parseSnapshotModel(`Function public.refresh_orders() returns void {
+  cost: 100
+  source: $sql$
+    select 1;
+  $sql$
+}`)
+    const targetModel = parseSnapshotModel(`Function public.refresh_orders() returns void {
+  cost: 200
+  source: $sql$
+    select 1;
+  $sql$
+}`)
+    const entries = buildPgmlDiagramCompareEntries(
+      diffPgmlSchemaModels(baseModel, targetModel),
+      baseModel,
+      targetModel
+    )
+    const metadataEntry = entries.find(entry => entry.id === 'function:public.refresh_orders') || null
+
+    expect(metadataEntry?.noiseKinds).toEqual(['metadata'])
+    expect(filterPgmlDiagramCompareEntriesForNoise(entries).some(entry => entry.id === 'function:public.refresh_orders')).toBe(false)
+    expect(filterPgmlDiagramCompareEntriesForNoise(entries, {
+      hideMetadata: false
+    }).some(entry => entry.id === 'function:public.refresh_orders')).toBe(true)
+  })
+
+  it('filters order-only compare entries independently of other noise kinds', () => {
+    const orderOnlyEntry = {
+      afterSnapshot: null,
+      baseNodeIds: [],
+      beforeSnapshot: null,
+      changeKind: 'modified' as const,
+      changedFields: ['tableNames'],
+      description: 'Changed group Core.',
+      entityKind: 'group' as const,
+      fields: [],
+      id: 'group:Core',
+      label: 'Core',
+      noiseKinds: ['order'] as const,
+      rowKey: null,
+      scopeId: 'group:Core',
+      scopeKind: 'group' as const,
+      scopeLabel: 'Core',
+      selectionCandidates: [],
+      sourceRange: null,
+      targetNodeIds: []
+    }
+
+    expect(filterPgmlDiagramCompareEntriesForNoise([orderOnlyEntry]).length).toBe(0)
+    expect(filterPgmlDiagramCompareEntriesForNoise([orderOnlyEntry], {
+      hideOrderOnly: false
+    })).toEqual([orderOnlyEntry])
   })
 
   it('describes modified references with the changed reference fields', () => {

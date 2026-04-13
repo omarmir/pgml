@@ -11,13 +11,15 @@ import type {
   PgmlTable,
   PgmlTrigger
 } from './pgml'
-import { normalizePgmlColumnModifiers } from './pgml-column-modifiers'
-import { normalizeImportedTableColumnReference } from './pgml-import-normalization'
 import {
-  extractPgmlSequenceSourceDefinition,
-  normalizePgmlSequenceMetadataEntries
-} from './pgml-sequence-metadata'
-import { normalizePgmlTypeExpression } from './pgml-types'
+  buildPgmlImplicitSerialSequenceName,
+  createPgmlCompareTypeExpressionNormalizer,
+  normalizePgmlCompareColumnValue,
+  normalizePgmlCompareConstraintExpression,
+  normalizePgmlCompareCustomTypeName,
+  normalizePgmlCompareSequenceValue,
+  normalizePgmlCompareSequenceMetadataEntries
+} from './pgml-compare-normalization'
 
 export type PgmlDiffChangeKind = 'added' | 'modified' | 'removed'
 
@@ -174,7 +176,7 @@ const normalizeGroupValue = (group: PgmlGroup) => {
   return {
     name: group.name,
     note: group.note,
-    tableNames: group.tableNames.map(normalizeGroupTableName)
+    tableNames: group.tableNames.map(normalizeGroupTableName).sort((left, right) => left.localeCompare(right))
   }
 }
 
@@ -249,32 +251,22 @@ const normalizeTriggerValue = (trigger: PgmlTrigger) => {
   }
 }
 
-const normalizeSequenceValue = (sequence: PgmlSequence) => {
-  const extractedSourceDefinition = extractPgmlSequenceSourceDefinition(sequence.source, {
-    normalizeOwnedBy: normalizeImportedTableColumnReference,
-    normalizeType: normalizePgmlTypeExpression
-  })
-  const metadata = normalizePgmlSequenceMetadataEntries(sequence.metadata, {
-    normalizeOwnedBy: normalizeImportedTableColumnReference,
-    normalizeType: normalizePgmlTypeExpression
-  })
-  const shouldOmitSource = extractedSourceDefinition.isFullyStructured
-    && toStableJson(extractedSourceDefinition.metadata) === toStableJson(metadata)
-
-  return {
-    affects: normalizeAffectsValue(sequence.affects),
-    docs: normalizeDocumentationValue(sequence.docs),
-    metadata,
-    name: sequence.name,
-    source: shouldOmitSource ? null : (sequence.source?.trim() || null)
-  }
+const normalizeSequenceValue = (
+  sequence: PgmlSequence,
+  normalizeType: (value: string) => string
+) => {
+  return normalizePgmlCompareSequenceValue(sequence, normalizeType)
 }
 
-const normalizeCustomTypeValue = (customType: PgmlCustomType) => {
+const normalizeCustomTypeValue = (
+  customType: PgmlCustomType,
+  normalizeType: (value: string) => string
+) => {
   if (customType.kind === 'Domain') {
     return {
       ...customType,
-      baseType: customType.baseType ? normalizePgmlTypeExpression(customType.baseType) : null
+      baseType: customType.baseType ? normalizeType(customType.baseType) : null,
+      name: normalizePgmlCompareCustomTypeName(customType.name, normalizeType)
     }
   }
 
@@ -284,36 +276,48 @@ const normalizeCustomTypeValue = (customType: PgmlCustomType) => {
       fields: customType.fields.map((field) => {
         return {
           ...field,
-          type: normalizePgmlTypeExpression(field.type)
+          type: normalizeType(field.type)
         }
-      })
+      }),
+      name: normalizePgmlCompareCustomTypeName(customType.name, normalizeType)
     }
   }
 
-  return customType
+  return {
+    ...customType,
+    name: normalizePgmlCompareCustomTypeName(customType.name, normalizeType)
+  }
 }
 
-const normalizeColumnValue = (column: PgmlTable['columns'][number]) => {
-  return {
-    modifiers: normalizePgmlColumnModifiers(column.modifiers),
-    name: column.name,
-    note: column.note,
-    reference: column.reference,
-    type: normalizePgmlTypeExpression(column.type)
-  }
+const normalizeColumnValue = (
+  value: {
+    column: PgmlTable['columns'][number]
+    tableId: string
+  },
+  normalizeType: (value: string) => string
+) => {
+  return normalizePgmlCompareColumnValue({
+    column: value.column,
+    normalizeType,
+    tableId: value.tableId
+  })
 }
 
 const isReferenceProjectionModifier = (modifier: string) => {
   return modifier.startsWith('ref:') || modifier.startsWith('delete:') || modifier.startsWith('update:')
 }
 
-const normalizeColumnValueWithoutReferenceProjection = (column: PgmlTable['columns'][number]) => {
+const normalizeColumnValueWithoutReferenceProjection = (
+  value: {
+    column: PgmlTable['columns'][number]
+    tableId: string
+  },
+  normalizeType: (value: string) => string
+) => {
   return {
-    modifiers: normalizePgmlColumnModifiers(column.modifiers).filter(modifier => !isReferenceProjectionModifier(modifier)),
-    name: column.name,
-    note: column.note,
-    reference: null,
-    type: normalizePgmlTypeExpression(column.type)
+    ...normalizeColumnValue(value, normalizeType),
+    modifiers: normalizeColumnValue(value, normalizeType).modifiers.filter(modifier => !isReferenceProjectionModifier(modifier)),
+    reference: null
   }
 }
 
@@ -321,14 +325,15 @@ const isReferenceOnlyColumnDiff = (
   entry: PgmlDiffEntry<{
     column: PgmlTable['columns'][number]
     tableId: string
-  }>
+  }>,
+  normalizeType: (value: string) => string
 ) => {
   if (entry.kind !== 'modified' || !entry.before || !entry.after) {
     return false
   }
 
-  return toStableJson(normalizeColumnValueWithoutReferenceProjection(entry.before.column))
-    === toStableJson(normalizeColumnValueWithoutReferenceProjection(entry.after.column))
+  return toStableJson(normalizeColumnValueWithoutReferenceProjection(entry.before, normalizeType))
+    === toStableJson(normalizeColumnValueWithoutReferenceProjection(entry.after, normalizeType))
 }
 
 const normalizeIndexValue = (index: PgmlIndex) => {
@@ -341,7 +346,7 @@ const normalizeIndexValue = (index: PgmlIndex) => {
 
 const normalizeConstraintValue = (constraint: PgmlConstraint) => {
   return {
-    expression: constraint.expression,
+    expression: normalizePgmlCompareConstraintExpression(constraint.expression),
     name: constraint.name
   }
 }
@@ -438,8 +443,13 @@ const buildSequenceMap = (sequences: PgmlSequence[]) => {
   return buildEntityMap(sequences, sequence => sequence.name)
 }
 
-const buildCustomTypeMap = (customTypes: PgmlCustomType[]) => {
-  return buildEntityMap(customTypes, customType => `${customType.kind}::${customType.name}`)
+const buildCustomTypeMap = (
+  customTypes: PgmlCustomType[],
+  normalizeType: (value: string) => string
+) => {
+  return buildEntityMap(customTypes, (customType) => {
+    return `${customType.kind}::${normalizePgmlCompareCustomTypeName(customType.name, normalizeType)}`
+  })
 }
 
 const buildReferenceMap = (references: PgmlReference[]) => {
@@ -499,6 +509,149 @@ const buildLayoutMap = (properties: Record<string, PgmlNodeProperties>) => {
   return new Map(Object.entries(properties))
 }
 
+const buildOwnedByColumnId = (value: string) => {
+  const separatorIndex = value.lastIndexOf('.')
+
+  if (separatorIndex < 0) {
+    return null
+  }
+
+  return {
+    columnName: value.slice(separatorIndex + 1),
+    tableId: value.slice(0, separatorIndex)
+  }
+}
+
+const isImplicitSerialSequenceValue = (input: {
+  column: {
+    column: PgmlTable['columns'][number]
+    tableId: string
+  }
+  normalizeType: (value: string) => string
+  sequence: PgmlSequence
+}) => {
+  if (
+    input.sequence.docs
+    || input.sequence.affects
+    || (input.sequence.source?.trim().length || 0) > 0
+  ) {
+    return false
+  }
+
+  const expectedSequenceName = buildPgmlImplicitSerialSequenceName(
+    input.column.tableId,
+    input.column.column.name
+  )
+
+  if (input.sequence.name !== expectedSequenceName) {
+    return false
+  }
+
+  const normalizedSequenceMetadata = normalizePgmlCompareSequenceMetadataEntries(
+    input.sequence.metadata,
+    input.normalizeType
+  )
+  const normalizedColumn = normalizeColumnValue(input.column, input.normalizeType)
+  const normalizedDefault = normalizedColumn.modifiers.find(modifier => modifier.startsWith('default:'))
+    ?.replace(/^default:\s*/u, '')
+    .trim()
+
+  if (normalizedDefault !== `nextval('${expectedSequenceName}')`) {
+    return false
+  }
+
+  const expectedMetadata = normalizePgmlCompareSequenceMetadataEntries([
+    {
+      key: 'as',
+      value: normalizedColumn.type
+    },
+    {
+      key: 'owned_by',
+      value: `${input.column.tableId}.${input.column.column.name}`
+    }
+  ], input.normalizeType)
+
+  return toStableJson(normalizedSequenceMetadata) === toStableJson(expectedMetadata)
+}
+
+const isImplicitSerialSequenceOnlyDiff = (input: {
+  afterColumns: Map<string, {
+    column: PgmlTable['columns'][number]
+    tableId: string
+  }>
+  beforeColumns: Map<string, {
+    column: PgmlTable['columns'][number]
+    tableId: string
+  }>
+  entry: PgmlDiffEntry<PgmlSequence>
+  normalizeType: (value: string) => string
+}) => {
+  const sequence = input.entry.after || input.entry.before
+
+  if (!sequence || input.entry.kind === 'modified') {
+    return false
+  }
+
+  const normalizedMetadata = normalizePgmlCompareSequenceMetadataEntries(sequence.metadata, input.normalizeType)
+  const ownedBy = normalizedMetadata.find(entry => entry.key === 'owned_by')?.value || null
+
+  if (!ownedBy) {
+    return false
+  }
+
+  const ownedByColumn = buildOwnedByColumnId(ownedBy)
+
+  if (!ownedByColumn) {
+    return false
+  }
+
+  const columnId = `${ownedByColumn.tableId}::${ownedByColumn.columnName}`
+  const beforeColumn = input.beforeColumns.get(columnId) || null
+  const afterColumn = input.afterColumns.get(columnId) || null
+
+  if (!beforeColumn || !afterColumn) {
+    return false
+  }
+
+  if (
+    toStableJson(normalizeColumnValue(beforeColumn, input.normalizeType))
+    !== toStableJson(normalizeColumnValue(afterColumn, input.normalizeType))
+  ) {
+    return false
+  }
+
+  const candidateColumn = input.entry.kind === 'added' ? afterColumn : beforeColumn
+  const oppositeColumn = input.entry.kind === 'added' ? beforeColumn : afterColumn
+
+  if (!getSerialBaseType(oppositeColumn.column.type)) {
+    return false
+  }
+
+  return isImplicitSerialSequenceValue({
+    column: candidateColumn,
+    normalizeType: input.normalizeType,
+    sequence
+  })
+}
+
+const getSerialBaseType = (value: string) => {
+  const normalizedValue = value.trim().toLowerCase()
+
+  if (normalizedValue === 'bigserial' || normalizedValue === 'serial8') {
+    return 'bigint'
+  }
+
+  if (normalizedValue === 'serial' || normalizedValue === 'serial4') {
+    return 'integer'
+  }
+
+  if (normalizedValue === 'smallserial' || normalizedValue === 'serial2') {
+    return 'smallint'
+  }
+
+  return null
+}
+
 const buildDiffSummary = (
   entries: PgmlDiffEntry<unknown>[],
   layoutEntries: PgmlLayoutDiffEntry[]
@@ -525,6 +678,12 @@ export const diffPgmlSchemaModels = (
   beforeModel: PgmlSchemaModel,
   afterModel: PgmlSchemaModel
 ): PgmlSchemaDiff => {
+  const normalizeCompareTypeExpression = createPgmlCompareTypeExpressionNormalizer([
+    beforeModel,
+    afterModel
+  ])
+  const beforeColumns = buildColumnMap(beforeModel.tables)
+  const afterColumns = buildColumnMap(afterModel.tables)
   const tables = buildDiffEntries(
     buildTableMap(beforeModel.tables),
     buildTableMap(afterModel.tables),
@@ -559,13 +718,20 @@ export const diffPgmlSchemaModels = (
     buildSequenceMap(beforeModel.sequences),
     buildSequenceMap(afterModel.sequences),
     (id, value) => value.name || id,
-    normalizeSequenceValue
-  )
+    value => normalizeSequenceValue(value, normalizeCompareTypeExpression)
+  ).filter((entry) => {
+    return !isImplicitSerialSequenceOnlyDiff({
+      afterColumns,
+      beforeColumns,
+      entry,
+      normalizeType: normalizeCompareTypeExpression
+    })
+  })
   const customTypes = buildDiffEntries(
-    buildCustomTypeMap(beforeModel.customTypes),
-    buildCustomTypeMap(afterModel.customTypes),
+    buildCustomTypeMap(beforeModel.customTypes, normalizeCompareTypeExpression),
+    buildCustomTypeMap(afterModel.customTypes, normalizeCompareTypeExpression),
     (id, value) => value.name || id,
-    normalizeCustomTypeValue
+    value => normalizeCustomTypeValue(value, normalizeCompareTypeExpression)
   )
   const references = buildDiffEntries(
     buildReferenceMap(beforeModel.references),
@@ -574,11 +740,11 @@ export const diffPgmlSchemaModels = (
     value => value
   )
   const columns = buildDiffEntries(
-    buildColumnMap(beforeModel.tables),
-    buildColumnMap(afterModel.tables),
+    beforeColumns,
+    afterColumns,
     (_id, value) => `${value.tableId}.${value.column.name}`,
-    value => normalizeColumnValue(value.column)
-  ).filter(entry => !isReferenceOnlyColumnDiff(entry))
+    value => normalizeColumnValue(value, normalizeCompareTypeExpression)
+  ).filter(entry => !isReferenceOnlyColumnDiff(entry, normalizeCompareTypeExpression))
   const indexes = buildDiffEntries(
     buildIndexMap(beforeModel.tables),
     buildIndexMap(afterModel.tables),

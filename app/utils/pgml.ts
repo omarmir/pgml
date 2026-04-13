@@ -100,6 +100,12 @@ export type PgmlCompareExclusions = {
   tableIds: string[]
 }
 
+export type PgmlCompareNoiseFilters = {
+  hideDefaults: boolean
+  hideMetadata: boolean
+  hideOrderOnly: boolean
+}
+
 export type PgmlMetadataEntry = {
   key: string
   value: string
@@ -268,6 +274,32 @@ export const createEmptyPgmlCompareExclusions = (): PgmlCompareExclusions => {
     includedGroupNames: [],
     includedTableIds: [],
     tableIds: []
+  }
+}
+
+export const createDefaultPgmlCompareNoiseFilters = (): PgmlCompareNoiseFilters => {
+  return {
+    hideDefaults: true,
+    hideMetadata: true,
+    hideOrderOnly: true
+  }
+}
+
+export const clonePgmlCompareNoiseFilters = (
+  filters?: Partial<PgmlCompareNoiseFilters> | null
+): PgmlCompareNoiseFilters => {
+  const defaults = createDefaultPgmlCompareNoiseFilters()
+
+  return {
+    hideDefaults: filters?.hideDefaults === undefined
+      ? defaults.hideDefaults
+      : filters.hideDefaults,
+    hideMetadata: filters?.hideMetadata === undefined
+      ? defaults.hideMetadata
+      : filters.hideMetadata,
+    hideOrderOnly: filters?.hideOrderOnly === undefined
+      ? defaults.hideOrderOnly
+      : filters.hideOrderOnly
   }
 }
 

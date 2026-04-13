@@ -2,10 +2,12 @@ import { nanoid } from 'nanoid'
 import {
   buildPgmlWithNodeProperties,
   clonePgmlCompareExclusions,
+  clonePgmlCompareNoiseFilters,
   createEmptyPgmlCompareExclusions,
   dedentPgmlSourceForEditor,
   hasPgmlCompareExclusionOverrides,
   type PgmlCompareExclusions,
+  type PgmlCompareNoiseFilters,
   normalizePgmlSourceIndentation,
   parsePgml,
   resolvePgmlCompareExclusions,
@@ -42,6 +44,7 @@ export type PgmlDocumentComparison = {
   exclusions: PgmlCompareExclusions
   id: string
   name: string
+  noiseFilters: PgmlCompareNoiseFilters
   targetId: string
 }
 
@@ -157,6 +160,7 @@ export const createPgmlDocumentComparison = (input?: {
   exclusions?: Partial<PgmlCompareExclusions>
   id?: string | null
   name?: string | null
+  noiseFilters?: Partial<PgmlCompareNoiseFilters>
   targetId?: string | null
 }) => {
   return {
@@ -166,6 +170,7 @@ export const createPgmlDocumentComparison = (input?: {
     exclusions: clonePgmlCompareExclusions(input?.exclusions),
     id: input?.id && input.id.trim().length > 0 ? input.id.trim() : createPgmlDocumentComparisonId(),
     name: input?.name && input.name.trim().length > 0 ? input.name.trim() : defaultPgmlDocumentComparisonName,
+    noiseFilters: clonePgmlCompareNoiseFilters(input?.noiseFilters),
     targetId: input?.targetId && input.targetId.trim().length > 0 ? input.targetId.trim() : 'workspace'
   } satisfies PgmlDocumentComparison
 }
@@ -1127,6 +1132,11 @@ const parseComparisonBlock = (block: PgmlNamedBlock): PgmlDocumentComparison => 
       : createEmptyPgmlCompareExclusions(),
     id: getRequiredMetadataValue(metadata, 'id', `Comparison ${comparisonName}`),
     name: comparisonName,
+    noiseFilters: {
+      hideDefaults: metadata.hide_defaults !== 'false',
+      hideMetadata: metadata.hide_metadata !== 'false',
+      hideOrderOnly: metadata.hide_order_only !== 'false'
+    },
     targetId: parseComparisonReferenceValue(
       getRequiredMetadataValue(metadata, 'target', `Comparison ${comparisonName}`),
       `Comparison ${comparisonName} target`
@@ -1742,6 +1752,18 @@ const buildComparisonBlock = (
   lines.push(buildMetadataLine('id', comparison.id, level + 1))
   lines.push(buildMetadataLine('base', buildComparisonReferenceValue(comparison.baseId), level + 1))
   lines.push(buildMetadataLine('target', comparison.targetId, level + 1))
+
+  if (!comparison.noiseFilters.hideDefaults) {
+    lines.push(buildMetadataLine('hide_defaults', 'false', level + 1))
+  }
+
+  if (!comparison.noiseFilters.hideMetadata) {
+    lines.push(buildMetadataLine('hide_metadata', 'false', level + 1))
+  }
+
+  if (!comparison.noiseFilters.hideOrderOnly) {
+    lines.push(buildMetadataLine('hide_order_only', 'false', level + 1))
+  }
 
   const compareExclusionsBlock = buildCompareExclusionsBlock(comparison.exclusions, level + 1)
 

@@ -592,6 +592,11 @@ Properties "public.users" {
       groupNames: ['Core'],
       tableIds: ['public.audit_log']
     })).toBe(true)
+    expect(api.setCurrentCompareNoiseFilters({
+      hideDefaults: false,
+      hideMetadata: false,
+      hideOrderOnly: true
+    })).toBe(true)
 
     const savedComparison = api.createComparison('Implemented scope')
 
@@ -608,9 +613,16 @@ Properties "public.users" {
       includedTableIds: [],
       tableIds: ['public.audit_log']
     })
+    expect(savedComparison?.noiseFilters).toEqual({
+      hideDefaults: false,
+      hideMetadata: false,
+      hideOrderOnly: true
+    })
     expect(api.comparisons.value).toHaveLength(1)
     expect(api.selectedComparisonId.value).toBe(savedComparison?.id || null)
     expect(api.versionedDocumentSource.value).toContain('Comparison "Implemented scope" {')
+    expect(api.versionedDocumentSource.value).toContain('hide_defaults: false')
+    expect(api.versionedDocumentSource.value).toContain('hide_metadata: false')
 
     const appOnlyVersion = createDesignCheckpoint(api, 'App-only')
 
@@ -625,6 +637,11 @@ Properties "public.users" {
       includedTableIds: [],
       tableIds: []
     })
+    expect(api.compareNoiseFilters.value).toEqual({
+      hideDefaults: true,
+      hideMetadata: true,
+      hideOrderOnly: true
+    })
     expect(api.selectComparison(savedComparison?.id || null)).toBe(true)
     expect(api.compareBaseId.value).toBe(initialVersion.id)
     expect(api.compareTargetId.value).toBe('workspace')
@@ -635,6 +652,11 @@ Properties "public.users" {
       includedGroupNames: [],
       includedTableIds: [],
       tableIds: ['public.audit_log']
+    })
+    expect(api.compareNoiseFilters.value).toEqual({
+      hideDefaults: false,
+      hideMetadata: false,
+      hideOrderOnly: true
     })
 
     expect(api.renameComparison(savedComparison?.id || '', 'Implemented today')).toBe(true)

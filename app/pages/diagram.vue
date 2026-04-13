@@ -41,6 +41,7 @@ import { diffPgmlSchemaModels } from '~/utils/pgml-diff'
 import {
   buildPgmlDiagramCompareEntries,
   filterPgmlDiagramCompareEntriesForExclusions,
+  filterPgmlDiagramCompareEntriesForNoise,
   getPgmlDiagramCompareEntityKindFromEntryId,
   getPgmlDiagramCompareEntityKindLabel,
   type PgmlDiagramCompareEntityKind,
@@ -117,6 +118,7 @@ import {
   pgmlVersionedExample,
   replacePgmlSourceRange,
   type PgmlCompareExclusions,
+  type PgmlCompareNoiseFilters,
   type PgmlNodeProperties,
   type PgmlMetadataEntry,
   type PgmlSchemaModel,
@@ -370,6 +372,7 @@ const {
   compareBaseId: versionCompareBaseId,
   compareBaseSource,
   compareExclusions: activeCompareExclusions,
+  compareNoiseFilters: activeCompareNoiseFilters,
   comparisonItems,
   compareTargetId: versionCompareTargetId,
   compareTargetSource,
@@ -403,6 +406,7 @@ const {
   serializeCurrentDocument,
   setCompareTargets,
   setCurrentCompareExclusions,
+  setCurrentCompareNoiseFilters,
   setDocumentEditorScope,
   setPreviewTarget,
   setSchemaMetadata,
@@ -1341,7 +1345,10 @@ const compareRawEntries = computed<PgmlDiagramCompareEntry[]>(() => {
   )
 })
 const compareEntries = computed<PgmlDiagramCompareEntry[]>(() => {
-  return filterPgmlDiagramCompareEntriesForExclusions(compareRawEntries.value, activeCompareExclusions.value)
+  return filterPgmlDiagramCompareEntriesForNoise(
+    filterPgmlDiagramCompareEntriesForExclusions(compareRawEntries.value, activeCompareExclusions.value),
+    activeCompareNoiseFilters.value
+  )
 })
 const compareBaseLabel = computed(() => {
   if (versionCompareBaseId.value === null) {
@@ -2913,6 +2920,13 @@ const updateVersionCompareTargetId = (value: string) => {
     targetId: value
   })
 }
+const updateVersionCompareNoiseFilters = (value: PgmlCompareNoiseFilters) => {
+  const didUpdate = setCurrentCompareNoiseFilters(value)
+
+  if (didUpdate && selectedComparisonId.value) {
+    markBrowserSchemaStatusEligible()
+  }
+}
 const normalizeVersionedEditorMode = (value: string) => {
   return value === 'document' ? 'document' : 'head'
 }
@@ -3716,6 +3730,7 @@ onBeforeUnmount(() => {
           :compare-excluded-labels="activeCompareExclusionVisibleLabels"
           :compare-excluded-summary="activeCompareExclusionSummary"
           :compare-hidden-excluded-label-count="activeCompareExclusionHiddenLabelCount"
+          :compare-noise-filters="activeCompareNoiseFilters"
           :compare-relationship-summary="compareRelationshipSummary"
           :compare-selected-comparison-id="selectedComparisonId"
           :compare-target-label="compareTargetLabel"
@@ -3766,6 +3781,7 @@ onBeforeUnmount(() => {
           @restore-version="restoreVersionToWorkspace"
           @select-compare-comparison="selectComparison"
           @select-diagram-view="selectActiveDiagramView"
+          @update-compare-noise-filters="updateVersionCompareNoiseFilters"
           @update-diagram-view-settings="updateDiagramViewSettings"
           @update-version-compare-base-id="updateVersionCompareBaseId"
           @update-version-compare-target-id="updateVersionCompareTargetId"
@@ -3846,6 +3862,7 @@ onBeforeUnmount(() => {
           :compare-excluded-labels="activeCompareExclusionVisibleLabels"
           :compare-excluded-summary="activeCompareExclusionSummary"
           :compare-hidden-excluded-label-count="activeCompareExclusionHiddenLabelCount"
+          :compare-noise-filters="activeCompareNoiseFilters"
           :compare-relationship-summary="compareRelationshipSummary"
           :compare-selected-comparison-id="selectedComparisonId"
           :compare-target-label="compareTargetLabel"
@@ -3893,6 +3910,7 @@ onBeforeUnmount(() => {
           @restore-version="restoreVersionToWorkspace"
           @select-compare-comparison="selectComparison"
           @select-diagram-view="selectActiveDiagramView"
+          @update-compare-noise-filters="updateVersionCompareNoiseFilters"
           @update-diagram-view-settings="updateDiagramViewSettings"
           @update-version-compare-base-id="updateVersionCompareBaseId"
           @update-version-compare-target-id="updateVersionCompareTargetId"

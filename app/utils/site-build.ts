@@ -65,7 +65,7 @@ export const buildPrerenderRouteRules = (routes: readonly string[]) => {
 }
 
 export const resolveViteAllowedHosts = ({ extraAllowedHosts }: ResolveViteAllowedHostsOptions = {}) => {
-  const allowedHosts = [...defaultViteAllowedHosts]
+  const allowedHosts: string[] = [...defaultViteAllowedHosts]
 
   if (typeof extraAllowedHosts !== 'string' || extraAllowedHosts.trim().length === 0) {
     return allowedHosts
