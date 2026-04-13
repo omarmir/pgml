@@ -795,6 +795,150 @@ Function public.refresh_orders() returns void {
   await expect(metadataEntry).toBeVisible()
 })
 
+test('compare panel exports the current visible compare state as HTML', async ({ goto, page }) => {
+  await goto('/diagram')
+  const editor = getPgmlEditor(page)
+
+  await setPgmlEditorValue(editor, `Table public.users {
+  id uuid [pk]
+}
+
+Table public.orders {
+  id uuid [pk]
+  status text [default: 'draft']
+}`)
+  await createCheckpoint(page, 'Export baseline')
+
+  await setPgmlEditorValue(editor, `Table public.users {
+  id uuid [pk]
+  email text
+}
+
+Table public.orders {
+  id uuid [pk]
+  status text [default: 'submitted']
+}
+
+Table public.audit_log {
+  id uuid [pk]
+}
+
+Function public.refresh_users() returns void {
+  source: $sql$
+    select 1;
+  $sql$
+}`)
+
+  await compareFromVersion(page, 'Export baseline')
+
+  const comparePanel = getComparePanel(page)
+
+  await comparePanel.locator('[data-compare-edit-exclusions="true"]').click()
+
+  const exclusionsDialog = page.locator('[data-studio-modal-surface="compare-exclusions"]')
+
+  await expect(exclusionsDialog).toBeVisible()
+  await exclusionsDialog.locator('[data-compare-exclusion-entity-section="function"] [data-compare-exclusion-option="function:public.refresh_users"]').click()
+  await exclusionsDialog.locator('[data-compare-exclusions-save="true"]').click()
+  await expect(exclusionsDialog).toHaveCount(0)
+
+  await comparePanel.locator('[data-compare-stat-filter="added"]').click()
+
+  const [download] = await Promise.all([
+    page.waitForEvent('download'),
+    comparePanel.locator('[data-compare-export-html="true"]').click()
+  ])
+  const downloadPath = await download.path()
+
+  expect(downloadPath).not.toBeNull()
+  expect(download.suggestedFilename()).toContain('pgml-compare')
+
+  const html = readFileSync(downloadPath!, 'utf8')
+
+  expect(html).toContain('Export baseline to Current workspace')
+  expect(html).toContain('1 excluded compare entity')
+  expect(html).toContain('Added only')
+  expect(html).toContain('public.audit_log')
+  expect(html).toContain('public.users.email')
+  expect(html).not.toContain('public.refresh_users')
+  expect(html).not.toContain('public.orders.status')
+})
+
+test('compare panel exports the current visible compare state as Markdown', async ({ goto, page }) => {
+  await goto('/diagram')
+  const editor = getPgmlEditor(page)
+
+  await setPgmlEditorValue(editor, `Table public.users {
+  id uuid [pk]
+}
+
+Table public.orders {
+  id uuid [pk]
+  status text [default: 'draft']
+}`)
+  await createCheckpoint(page, 'Markdown export baseline')
+
+  await setPgmlEditorValue(editor, `Table public.users {
+  id uuid [pk]
+  email text
+}
+
+Table public.orders {
+  id uuid [pk]
+  status text [default: 'submitted']
+}
+
+Table public.audit_log {
+  id uuid [pk]
+}
+
+Function public.refresh_users() returns void {
+  source: $sql$
+    select 1;
+  $sql$
+}`)
+
+  await compareFromVersion(page, 'Markdown export baseline')
+
+  const comparePanel = getComparePanel(page)
+
+  await comparePanel.locator('[data-compare-edit-exclusions="true"]').click()
+
+  const exclusionsDialog = page.locator('[data-studio-modal-surface="compare-exclusions"]')
+
+  await expect(exclusionsDialog).toBeVisible()
+  await exclusionsDialog.locator('[data-compare-exclusion-entity-section="function"] [data-compare-exclusion-option="function:public.refresh_users"]').click()
+  await exclusionsDialog.locator('[data-compare-exclusions-save="true"]').click()
+  await expect(exclusionsDialog).toHaveCount(0)
+
+  await comparePanel.locator('[data-compare-stat-filter="added"]').click()
+
+  const [download] = await Promise.all([
+    page.waitForEvent('download'),
+    comparePanel.locator('[data-compare-export-md="true"]').click()
+  ])
+  const downloadPath = await download.path()
+
+  expect(downloadPath).not.toBeNull()
+  expect(download.suggestedFilename()).toContain('.md')
+
+  const markdown = readFileSync(downloadPath!, 'utf8')
+
+  expect(markdown).toContain('# PGML Compare')
+  expect(markdown).toContain('- comparison: Current comparison')
+  expect(markdown).toContain('- base: Markdown export baseline')
+  expect(markdown).toContain('- target: Current workspace')
+  expect(markdown).toContain('- exclusions: 1 excluded compare entity')
+  expect(markdown).toContain('- change filter: Added only')
+  expect(markdown).toContain('### Table (1)')
+  expect(markdown).toContain('### Column (2)')
+  expect(markdown).toContain('- Added public.users.email')
+  expect(markdown).toContain('public.audit_log')
+  expect(markdown).toContain('public.users.email')
+  expect(markdown).not.toContain('public.refresh_users')
+  expect(markdown).not.toContain('public.orders.status')
+})
+
 test('compare panel stat cards filter the visible entries and keep the panel within its container', async ({ goto, page }) => {
   await goto('/diagram')
   const editor = getPgmlEditor(page)

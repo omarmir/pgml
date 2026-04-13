@@ -4,6 +4,12 @@ import { computed, ref } from 'vue'
 import { studioSelectUi } from '~/constants/ui'
 import PgmlDiagramCompareEntryList from '~/components/pgml/PgmlDiagramCompareEntryList.vue'
 import {
+  buildPgmlCompareMarkdownExport,
+  buildPgmlCompareHtmlExport,
+  type PgmlCompareExportDetailViewMode,
+  type PgmlCompareExportInput
+} from '~/utils/pgml-compare-export'
+import {
   getPgmlDiagramCompareChangeColor,
   type PgmlDiagramCompareEntityKind,
   type PgmlDiagramCompareEntry
@@ -354,6 +360,88 @@ const selectedEntry = computed(() => {
 const compareStats = computed(() => {
   return buildCompareStats(entries)
 })
+type PgmlCompareExportFormat = 'html' | 'md'
+
+const buildCompareExportFileName = (format: PgmlCompareExportFormat) => {
+  const slugifySegment = (value: string) => {
+    const normalizedValue = value
+      .trim()
+      .toLowerCase()
+      .replaceAll(/[^a-z0-9]+/g, '-')
+      .replaceAll(/^-+|-+$/g, '')
+
+    return normalizedValue.length > 0 ? normalizedValue : 'compare'
+  }
+  const comparisonSegment = slugifySegment(comparisonLabel)
+  const baseSegment = slugifySegment(detailBaseLabel.value)
+  const targetSegment = slugifySegment(detailTargetLabel.value)
+
+  return `pgml-compare-${comparisonSegment}-${baseSegment}-to-${targetSegment}.${format}`
+}
+const formatCompareExportTime = () => {
+  return new Intl.DateTimeFormat('en-CA', {
+    dateStyle: 'medium',
+    timeStyle: 'short'
+  }).format(new Date())
+}
+const buildCompareExportInput = (): PgmlCompareExportInput => {
+  return {
+    baseLabel: detailBaseLabel.value,
+    comparisonLabel,
+    contextEntries: visibleContextEntries.value,
+    detailViewMode: detailViewMode.value as PgmlCompareExportDetailViewMode,
+    entityKindFilters: selectedEntityKinds.value,
+    entries: filteredEntries.value,
+    excludedLabels,
+    excludedSummary,
+    exportedAtLabel: formatCompareExportTime(),
+    hiddenExcludedLabelCount,
+    noiseFilters: compareNoiseFilters,
+    relationshipSummary,
+    searchQuery: searchQuery.value,
+    targetLabel: detailTargetLabel.value,
+    visibleChangeFilter: filterKind.value
+  }
+}
+const downloadCompareExport = (content: string, format: PgmlCompareExportFormat, mimeType: string) => {
+  const blob = new Blob([content], {
+    type: mimeType
+  })
+  const objectUrl = URL.createObjectURL(blob)
+  const anchor = document.createElement('a')
+
+  anchor.href = objectUrl
+  anchor.download = buildCompareExportFileName(format)
+  document.body.appendChild(anchor)
+  anchor.click()
+  anchor.remove()
+
+  window.setTimeout(() => {
+    URL.revokeObjectURL(objectUrl)
+  }, 0)
+}
+const downloadCompareExportHtml = () => {
+  if (!import.meta.client) {
+    return
+  }
+
+  downloadCompareExport(
+    buildPgmlCompareHtmlExport(buildCompareExportInput()),
+    'html',
+    'text/html;charset=utf-8'
+  )
+}
+const downloadCompareExportMarkdown = () => {
+  if (!import.meta.client) {
+    return
+  }
+
+  downloadCompareExport(
+    buildPgmlCompareMarkdownExport(buildCompareExportInput()),
+    'md',
+    'text/markdown;charset=utf-8'
+  )
+}
 
 const normalizeCompareSelectValue = (value: unknown) => {
   return typeof value === 'string' && value.length > 0 ? value : null
@@ -656,28 +744,75 @@ const toggleCompareNoiseFilter = (key: PgmlCompareNoiseFilterKey) => {
         </div>
 
         <div class="grid gap-2 border-t border-[color:var(--studio-divider)] pt-3">
-          <div class="flex flex-wrap items-center gap-2">
-            <div class="font-mono text-[0.58rem] uppercase tracking-[0.08em] text-[color:var(--studio-shell-label)]">
-              Noise filters
+          <div class="flex flex-wrap items-center justify-between gap-2">
+            <div class="flex flex-wrap items-center gap-2">
+              <div class="font-mono text-[0.58rem] uppercase tracking-[0.08em] text-[color:var(--studio-shell-label)]">
+                Noise filters
+              </div>
+              <button
+                v-for="option in compareNoiseFilterOptions"
+                :key="option.key"
+                type="button"
+                :data-compare-noise-filter="option.key"
+                :class="compareNoiseFilterButtonClass"
+                :aria-pressed="isCompareNoiseFilterActive(option.key)"
+                :style="getCompareNoiseFilterButtonStyle(option.key)"
+                :title="option.description"
+                @click="toggleCompareNoiseFilter(option.key)"
+              >
+                {{ option.label }}
+              </button>
             </div>
-            <button
-              v-for="option in compareNoiseFilterOptions"
-              :key="option.key"
-              type="button"
-              :data-compare-noise-filter="option.key"
-              :class="compareNoiseFilterButtonClass"
-              :aria-pressed="isCompareNoiseFilterActive(option.key)"
-              :style="getCompareNoiseFilterButtonStyle(option.key)"
-              :title="option.description"
-              @click="toggleCompareNoiseFilter(option.key)"
-            >
-              {{ option.label }}
-            </button>
+
+            <div class="flex flex-wrap items-center gap-2">
+              <UButton
+                label="Export HTML"
+                data-compare-export-html="true"
+                color="neutral"
+                variant="outline"
+                size="xs"
+                :class="filterButtonClass"
+                @click="downloadCompareExportHtml"
+              />
+              <UButton
+                label="Export MD"
+                data-compare-export-md="true"
+                color="neutral"
+                variant="outline"
+                size="xs"
+                :class="filterButtonClass"
+                @click="downloadCompareExportMarkdown"
+              />
+            </div>
           </div>
 
           <p class="text-[0.68rem] leading-5 text-[color:var(--studio-shell-muted)]">
-            Hide compare-only noise without changing migration output. These settings stay with the selected comparison.
+            Export the currently visible compare results as standalone HTML or Markdown for saving, sharing, or review.
           </p>
+
+          <div class="flex flex-wrap items-center gap-2">
+            <div class="font-mono text-[0.58rem] uppercase tracking-[0.08em] text-[color:var(--studio-shell-label)]">
+              Active export state
+            </div>
+            <span :class="exclusionChipClass">
+              {{ filteredEntries.length }} visible
+            </span>
+            <span :class="exclusionChipClass">
+              {{ compareFilterOptions.find(option => option.value === filterKind)?.label || 'All' }}
+            </span>
+            <span
+              v-if="selectedEntityKinds.length > 0"
+              :class="exclusionChipClass"
+            >
+              {{ selectedEntityKinds.length }} entity filter{{ selectedEntityKinds.length === 1 ? '' : 's' }}
+            </span>
+            <span
+              v-if="normalizedSearchQuery.length > 0"
+              :class="exclusionChipClass"
+            >
+              Search active
+            </span>
+          </div>
         </div>
 
         <div class="grid gap-2 border-t border-[color:var(--studio-divider)] pt-3">
