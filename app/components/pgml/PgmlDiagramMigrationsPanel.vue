@@ -5,10 +5,11 @@ import { computed, ref, watchEffect } from 'vue'
 import type { PgmlVersionMigrationStepBundle } from '~/utils/pgml-version-migration'
 import {
   joinStudioClasses,
-  studioButtonClasses,
   studioCompactBodyCopyClass,
   studioEmptyStateClass,
-  studioPanelSurfaceClass
+  studioPanelSurfaceClass,
+  studioPanelActionButtonClass,
+  getStudioPanelToggleChipClass
 } from '~/utils/uiStyles'
 
 type PgmlMigrationFormat = 'sql' | 'kysely'
@@ -48,9 +49,7 @@ const {
 const copyState: Ref<'idle' | 'success' | 'error'> = ref('idle')
 const activeMigrationFormat: Ref<PgmlMigrationFormat> = ref('sql')
 const activeMigrationScope: Ref<PgmlMigrationSelectionScope> = ref('combined')
-const copyButtonClass = joinStudioClasses(studioButtonClasses.secondary, 'text-[0.65rem]')
-const primaryButtonClass = joinStudioClasses(studioButtonClasses.primary, 'text-[0.65rem]')
-const secondaryButtonClass = joinStudioClasses(studioButtonClasses.secondary, 'text-[0.65rem]')
+const migrationActionButtonClass = joinStudioClasses(studioPanelActionButtonClass, 'justify-center')
 
 // The migrations panel surfaces the same lineage artifacts that drive export,
 // copy, and preview. Keeping the metadata bundled avoids branching across the
@@ -255,6 +254,15 @@ const isMigrationScopeActive = (scope: PgmlMigrationSelectionScope) => {
   return activeMigrationScope.value === scope
 }
 
+const getMigrationFormatButtonClass = (format: PgmlMigrationFormat) => {
+  return joinStudioClasses(
+    getStudioPanelToggleChipClass({
+      active: activeMigrationFormat.value === format
+    }),
+    'disabled:border-[color:var(--studio-divider)] disabled:bg-[color:var(--studio-control-bg)] disabled:text-[color:var(--studio-shell-muted)] disabled:opacity-60'
+  )
+}
+
 const selectMigrationScope = (scope: PgmlMigrationSelectionScope) => {
   activeMigrationScope.value = scope
 }
@@ -377,33 +385,33 @@ watchEffect(() => {
       </div>
 
       <div class="flex flex-wrap gap-2">
-        <UButton
+        <button
           data-version-migration-format="sql"
-          label="SQL"
-          color="neutral"
-          :variant="activeMigrationFormat === 'sql' ? 'soft' : 'outline'"
-          size="xs"
-          :class="activeMigrationFormat === 'sql' ? primaryButtonClass : secondaryButtonClass"
+          type="button"
+          :class="getMigrationFormatButtonClass('sql')"
+          :aria-pressed="activeMigrationFormat === 'sql'"
           :disabled="!hasMigrationSql && activeMigrationFormat !== 'sql'"
           @click="activeMigrationFormat = 'sql'"
-        />
-        <UButton
+        >
+          SQL
+        </button>
+        <button
           data-version-migration-format="kysely"
-          label="Kysely"
-          color="neutral"
-          :variant="activeMigrationFormat === 'kysely' ? 'soft' : 'outline'"
-          size="xs"
-          :class="activeMigrationFormat === 'kysely' ? primaryButtonClass : secondaryButtonClass"
+          type="button"
+          :class="getMigrationFormatButtonClass('kysely')"
+          :aria-pressed="activeMigrationFormat === 'kysely'"
           :disabled="!hasMigrationKysely && activeMigrationFormat !== 'kysely'"
           @click="activeMigrationFormat = 'kysely'"
-        />
+        >
+          Kysely
+        </button>
         <UButton
           :data-version-migration-copy="activeMigrationFormat"
           :label="copyState === 'success' ? 'Copied' : (copyState === 'error' ? 'Copy failed' : `Copy ${activeMigrationLabel}`)"
           color="neutral"
           variant="outline"
-          size="xs"
-          :class="copyButtonClass"
+          size="sm"
+          :class="migrationActionButtonClass"
           :disabled="!hasActiveMigration"
           @click="handleCopyMigration"
         />
@@ -412,8 +420,8 @@ watchEffect(() => {
           :label="migrationDownloadLabel"
           color="neutral"
           variant="outline"
-          size="xs"
-          :class="secondaryButtonClass"
+          size="sm"
+          :class="migrationActionButtonClass"
           :disabled="!hasActiveMigration"
           @click="handleDownloadMigration"
         />

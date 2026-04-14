@@ -8,7 +8,7 @@ import {
 import type { PgmlDiagramCompareEntry } from '~/utils/pgml-diagram-compare'
 import {
   joinStudioClasses,
-  studioButtonClasses
+  studioPanelActionButtonClass
 } from '~/utils/uiStyles'
 
 const {
@@ -30,8 +30,7 @@ const emit = defineEmits<{
   'focus-target': [entryId: string]
 }>()
 
-const secondaryButtonClass = joinStudioClasses(studioButtonClasses.secondary, 'text-[0.62rem]')
-const primaryButtonClass = joinStudioClasses(studioButtonClasses.primary, 'text-[0.62rem]')
+const actionButtonClass = joinStudioClasses(studioPanelActionButtonClass, 'justify-center')
 const diffLineClassByKind: Readonly<Record<PgmlCompareDiffLineKind, string>> = Object.freeze({
   added: 'bg-emerald-500/10 text-emerald-200 sm:text-emerald-300',
   context: 'text-[color:var(--studio-shell-text)]',
@@ -97,9 +96,9 @@ const getDiffPrefixClass = (line: PgmlCompareDiffLine) => {
         <UButton
           label="Show on diagram"
           color="neutral"
-          variant="soft"
-          size="xs"
-          :class="primaryButtonClass"
+          variant="outline"
+          size="sm"
+          :class="actionButtonClass"
           @click="emit('focus-target', entry.id)"
         />
         <UButton
@@ -107,8 +106,8 @@ const getDiffPrefixClass = (line: PgmlCompareDiffLine) => {
           label="Focus source"
           color="neutral"
           variant="outline"
-          size="xs"
-          :class="secondaryButtonClass"
+          size="sm"
+          :class="actionButtonClass"
           @click="emit('focus-source', entry.sourceRange)"
         />
       </div>

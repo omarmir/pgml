@@ -19,12 +19,12 @@ import type {
   PgmlSourceRange
 } from '~/utils/pgml'
 import {
-  getStudioToggleChipClass,
   joinStudioClasses,
-  studioButtonClasses,
   studioCompactBodyCopyClass,
   studioCompactInputClass,
-  studioEmptyStateClass
+  studioEmptyStateClass,
+  studioPanelActionButtonClass,
+  getStudioPanelToggleChipClass
 } from '~/utils/uiStyles'
 
 const {
@@ -143,15 +143,14 @@ const searchQuery: Ref<string> = ref('')
 const selectedChangeKinds: Ref<PgmlCompareStatKind[]> = ref([])
 const selectedEntityKinds: Ref<PgmlDiagramCompareEntityKind[]> = ref([])
 const detailViewMode: Ref<PgmlCompareDetailViewMode> = ref('structured')
-const filterButtonClass = joinStudioClasses(studioButtonClasses.secondary, 'text-[0.62rem]')
-const activeFilterButtonClass = joinStudioClasses(studioButtonClasses.primary, 'text-[0.62rem]')
+const compareActionButtonClass = joinStudioClasses(studioPanelActionButtonClass, 'justify-center')
 const compareStatLabelClass = 'font-mono text-[0.58rem] uppercase tracking-[0.08em]'
-const compareEntityFilterButtonClass = 'inline-flex items-center gap-1.5 border px-2 py-1 font-mono text-[0.56rem] uppercase tracking-[0.08em] transition-colors duration-150 cursor-default'
-const compareEntityFilterCountClass = 'border px-1 py-0.5 text-[0.48rem] leading-none transition-colors duration-150'
+const compareDetailViewChipClass = 'gap-1.5'
+const compareEntityFilterChipClass = 'gap-1.5'
+const compareEntityFilterCountClass = 'border border-[color:var(--studio-divider)] px-1 py-0.5 text-[0.48rem] leading-none text-[color:var(--studio-shell-label)] transition-colors duration-150'
 const compareOverviewSectionClass = 'grid min-w-0 gap-3 border-b border-[color:var(--studio-divider)] pb-3'
 const compareDividerSectionClass = 'grid min-w-0 gap-3 border-t border-[color:var(--studio-divider)] pt-3'
 const exclusionChipClass = 'border border-[color:var(--studio-divider)] px-1.5 py-0.5 font-mono text-[0.52rem] uppercase tracking-[0.08em] text-[color:var(--studio-shell-muted)]'
-const compareNoiseFilterButtonClass = 'inline-flex items-center gap-2 px-2 py-1 font-mono text-[0.56rem] uppercase tracking-[0.08em] cursor-default'
 const currentComparisonOptionValue = '__current__'
 const compareStatKinds: PgmlCompareStatKind[] = ['added', 'modified', 'removed']
 const compareStatLabelByKind: Readonly<Record<PgmlCompareStatKind, string>> = Object.freeze({
@@ -513,26 +512,6 @@ const toggleCompareEntityKindFilter = (kind: PgmlDiagramCompareEntityKind) => {
     : [...selectedEntityKinds.value, kind]
 }
 
-const getCompareEntityFilterButtonStyle = (kind: PgmlDiagramCompareEntityKind) => {
-  const isActive = isEntityKindFilterActive(kind)
-  const accent = 'var(--studio-ring)'
-
-  return {
-    backgroundColor: isActive
-      ? `color-mix(in srgb, ${accent} 24%, var(--studio-input-bg) 76%)`
-      : 'var(--studio-input-bg)',
-    borderColor: isActive
-      ? `color-mix(in srgb, ${accent} 74%, var(--studio-divider) 26%)`
-      : 'var(--studio-divider)',
-    boxShadow: isActive
-      ? `inset 0 0 0 1px color-mix(in srgb, ${accent} 44%, transparent), 0 0 0 1px color-mix(in srgb, ${accent} 18%, transparent)`
-      : 'none',
-    color: isActive
-      ? `color-mix(in srgb, ${accent} 78%, white 22%)`
-      : 'var(--studio-shell-label)'
-  }
-}
-
 const getCompareEntityFilterMarkerStyle = (kind: PgmlDiagramCompareEntityKind) => {
   const isActive = isEntityKindFilterActive(kind)
 
@@ -544,26 +523,31 @@ const getCompareEntityFilterMarkerStyle = (kind: PgmlDiagramCompareEntityKind) =
   }
 }
 
-const getCompareEntityFilterCountStyle = (kind: PgmlDiagramCompareEntityKind) => {
-  const isActive = isEntityKindFilterActive(kind)
+const getCompareDetailViewButtonClass = (mode: PgmlCompareDetailViewMode) => {
+  return getStudioPanelToggleChipClass({
+    active: isDetailViewModeActive(mode),
+    extraClass: compareDetailViewChipClass
+  })
+}
 
-  return {
-    backgroundColor: isActive
-      ? 'color-mix(in srgb, var(--studio-ring) 18%, transparent)'
-      : 'transparent',
-    borderColor: isActive
-      ? 'color-mix(in srgb, var(--studio-ring) 64%, var(--studio-divider) 36%)'
-      : 'var(--studio-divider)',
-    color: isActive
-      ? 'color-mix(in srgb, var(--studio-ring) 74%, white 26%)'
-      : 'var(--studio-shell-label)'
-  }
+const getCompareEntityFilterButtonClass = (kind: PgmlDiagramCompareEntityKind) => {
+  return getStudioPanelToggleChipClass({
+    active: isEntityKindFilterActive(kind),
+    extraClass: compareEntityFilterChipClass
+  })
+}
+
+const getCompareEntityFilterCountClass = (kind: PgmlDiagramCompareEntityKind) => {
+  return joinStudioClasses(
+    compareEntityFilterCountClass,
+    isEntityKindFilterActive(kind) && 'border-[color:var(--studio-shell-label)] text-[color:var(--studio-shell-text)]'
+  )
 }
 
 const getCompareNoiseFilterButtonClass = (key: PgmlCompareNoiseFilterKey) => {
-  return getStudioToggleChipClass({
+  return getStudioPanelToggleChipClass({
     active: isCompareNoiseFilterActive(key),
-    extraClass: compareNoiseFilterButtonClass
+    extraClass: ''
   })
 }
 
@@ -605,17 +589,17 @@ const toggleCompareNoiseFilter = (key: PgmlCompareNoiseFilterKey) => {
           <span class="font-mono text-[0.58rem] uppercase tracking-[0.08em] text-[color:var(--studio-shell-label)]">
             Detail view
           </span>
-          <UButton
+          <button
             v-for="option in compareDetailViewOptions"
             :key="option.value"
-            :label="option.label"
+            type="button"
             :data-compare-detail-view="option.value"
-            color="neutral"
-            :variant="isDetailViewModeActive(option.value) ? 'soft' : 'outline'"
-            size="xs"
-            :class="isDetailViewModeActive(option.value) ? activeFilterButtonClass : filterButtonClass"
+            :class="getCompareDetailViewButtonClass(option.value)"
+            :aria-pressed="isDetailViewModeActive(option.value)"
             @click="detailViewMode = option.value"
-          />
+          >
+            {{ option.label }}
+          </button>
         </div>
 
         <p :class="studioCompactBodyCopyClass">
@@ -652,7 +636,7 @@ const toggleCompareNoiseFilter = (key: PgmlCompareNoiseFilterKey) => {
             color="neutral"
             variant="outline"
             size="sm"
-            :class="filterButtonClass"
+            :class="compareActionButtonClass"
             @click="emit('create-comparison')"
           />
 
@@ -662,7 +646,7 @@ const toggleCompareNoiseFilter = (key: PgmlCompareNoiseFilterKey) => {
             color="neutral"
             variant="outline"
             size="sm"
-            :class="filterButtonClass"
+            :class="compareActionButtonClass"
             :disabled="!hasSavedComparison"
             @click="emit('rename-comparison')"
           />
@@ -673,7 +657,7 @@ const toggleCompareNoiseFilter = (key: PgmlCompareNoiseFilterKey) => {
             color="neutral"
             variant="outline"
             size="sm"
-            :class="filterButtonClass"
+            :class="compareActionButtonClass"
             :disabled="!hasSavedComparison"
             @click="emit('delete-comparison')"
           />
@@ -764,8 +748,8 @@ const toggleCompareNoiseFilter = (key: PgmlCompareNoiseFilterKey) => {
                 data-compare-export-html="true"
                 color="neutral"
                 variant="outline"
-                size="xs"
-                :class="filterButtonClass"
+                size="sm"
+                :class="compareActionButtonClass"
                 @click="downloadCompareExportHtml"
               />
               <UButton
@@ -773,8 +757,8 @@ const toggleCompareNoiseFilter = (key: PgmlCompareNoiseFilterKey) => {
                 data-compare-export-md="true"
                 color="neutral"
                 variant="outline"
-                size="xs"
-                :class="filterButtonClass"
+                size="sm"
+                :class="compareActionButtonClass"
                 @click="downloadCompareExportMarkdown"
               />
             </div>
@@ -829,8 +813,8 @@ const toggleCompareNoiseFilter = (key: PgmlCompareNoiseFilterKey) => {
               data-compare-edit-exclusions="true"
               color="neutral"
               variant="outline"
-              size="xs"
-              :class="filterButtonClass"
+              size="sm"
+              :class="compareActionButtonClass"
               @click="emit('edit-comparison-exclusions')"
             />
           </div>
@@ -893,8 +877,8 @@ const toggleCompareNoiseFilter = (key: PgmlCompareNoiseFilterKey) => {
             label="Clear filters"
             color="neutral"
             variant="outline"
-            size="xs"
-            :class="filterButtonClass"
+            size="sm"
+            :class="compareActionButtonClass"
             @click="clearFilters"
           />
         </div>
@@ -912,9 +896,8 @@ const toggleCompareNoiseFilter = (key: PgmlCompareNoiseFilterKey) => {
               :key="option.value"
               type="button"
               :data-compare-entity-filter="option.value"
-              :class="compareEntityFilterButtonClass"
+              :class="getCompareEntityFilterButtonClass(option.value)"
               :aria-pressed="isEntityKindFilterActive(option.value)"
-              :style="getCompareEntityFilterButtonStyle(option.value)"
               @click="toggleCompareEntityKindFilter(option.value)"
             >
               <span
@@ -925,8 +908,7 @@ const toggleCompareNoiseFilter = (key: PgmlCompareNoiseFilterKey) => {
               <span>{{ option.label }}</span>
               <span
                 :data-compare-entity-filter-count="option.value"
-                :class="compareEntityFilterCountClass"
-                :style="getCompareEntityFilterCountStyle(option.value)"
+                :class="getCompareEntityFilterCountClass(option.value)"
               >
                 {{ option.count }}
               </span>
@@ -959,8 +941,8 @@ const toggleCompareNoiseFilter = (key: PgmlCompareNoiseFilterKey) => {
             label="Clear filters"
             color="neutral"
             variant="outline"
-            size="xs"
-            :class="filterButtonClass"
+            size="sm"
+            :class="compareActionButtonClass"
             @click="clearFilters"
           />
         </div>

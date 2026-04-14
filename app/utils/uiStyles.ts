@@ -26,6 +26,11 @@ export const studioButtonClasses = Object.freeze({
   secondary: 'studio-button'
 })
 
+export const studioPanelActionButtonClass = joinStudioClasses(
+  studioButtonClasses.secondary,
+  'max-w-full min-h-9 whitespace-normal px-3 text-center text-[0.72rem] font-medium leading-4'
+)
+export const studioPanelToggleChipClass = 'inline-flex items-center gap-2 px-2 py-1 font-mono text-[0.56rem] uppercase tracking-[0.08em] cursor-default'
 export const studioPanelSurfaceClass = 'border border-[color:var(--studio-shell-border)] bg-[color:var(--studio-control-bg)]'
 export const studioEmptyStateClass = 'border border-dashed border-[color:var(--studio-shell-border)] px-3 py-4 text-[0.72rem] text-[color:var(--studio-shell-muted)]'
 export const studioFieldBaseClass = 'rounded-none border-[color:var(--studio-shell-border)] bg-[color:var(--studio-input-bg)] text-[color:var(--studio-shell-text)]'
@@ -97,6 +102,16 @@ export const getStudioToggleChipClass = ({
     active && 'studio-toggle-chip--active',
     extraClass
   )
+}
+
+export const getStudioPanelToggleChipClass = ({
+  active = false,
+  extraClass = ''
+}: StudioChoiceButtonClassOptions = {}) => {
+  return getStudioToggleChipClass({
+    active,
+    extraClass: joinStudioClasses(studioPanelToggleChipClass, extraClass)
+  })
 }
 
 export const getStudioSelectMenuSearchInputProps = (placeholder: string) => {

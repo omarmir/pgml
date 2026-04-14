@@ -4,9 +4,9 @@ import {
 } from '~/utils/pgml-version-summary'
 import {
   joinStudioClasses,
-  studioButtonClasses,
   studioCompactBodyCopyClass,
-  studioEmptyStateClass
+  studioEmptyStateClass,
+  studioPanelActionButtonClass
 } from '~/utils/uiStyles'
 
 type PgmlVersionPanelItem = {
@@ -59,10 +59,6 @@ const emit = defineEmits<{
   'view-target': [targetId: string]
 }>()
 
-const actionButtonClass = joinStudioClasses(
-  studioButtonClasses.secondary,
-  'max-w-full min-h-9 whitespace-normal px-3 text-center text-[0.72rem] font-medium leading-4'
-)
 const stackedActionButtonClass = 'w-full min-w-[5.5rem] justify-center sm:w-auto'
 const hasVersions = computed(() => versions.length > 0)
 const previewLabel = computed(() => {
@@ -90,7 +86,7 @@ const previewLabel = computed(() => {
           icon="i-lucide-bookmark-plus"
           color="neutral"
           variant="outline"
-          :class="actionButtonClass"
+          :class="studioPanelActionButtonClass"
           size="sm"
           :disabled="!canCreateCheckpoint"
           @click="emit('create-checkpoint')"
@@ -101,7 +97,7 @@ const previewLabel = computed(() => {
           icon="i-lucide-file-up"
           color="neutral"
           variant="outline"
-          :class="actionButtonClass"
+          :class="studioPanelActionButtonClass"
           size="sm"
           :disabled="!hasVersions"
           @click="emit('import-dbml')"
@@ -112,7 +108,7 @@ const previewLabel = computed(() => {
           icon="i-lucide-database-zap"
           color="neutral"
           variant="outline"
-          :class="actionButtonClass"
+          :class="studioPanelActionButtonClass"
           size="sm"
           :disabled="!hasVersions"
           @click="emit('import-dump')"
@@ -258,7 +254,7 @@ const previewLabel = computed(() => {
                   color="neutral"
                   variant="outline"
                   size="sm"
-                  :class="joinStudioClasses(actionButtonClass, stackedActionButtonClass)"
+                  :class="joinStudioClasses(studioPanelActionButtonClass, stackedActionButtonClass)"
                   :disabled="previewTargetId === version.id"
                   @click="emit('view-target', version.id)"
                 />
@@ -269,7 +265,7 @@ const previewLabel = computed(() => {
                   color="neutral"
                   variant="outline"
                   size="sm"
-                  :class="joinStudioClasses(actionButtonClass, stackedActionButtonClass)"
+                  :class="joinStudioClasses(studioPanelActionButtonClass, stackedActionButtonClass)"
                   @click="emit('rename-version', version.id)"
                 />
                 <UButton
@@ -279,7 +275,7 @@ const previewLabel = computed(() => {
                   color="neutral"
                   variant="outline"
                   size="sm"
-                  :class="joinStudioClasses(actionButtonClass, stackedActionButtonClass)"
+                  :class="joinStudioClasses(studioPanelActionButtonClass, stackedActionButtonClass)"
                   @click="emit('restore-version', version.id)"
                 />
                 <UButton
@@ -289,7 +285,7 @@ const previewLabel = computed(() => {
                   color="neutral"
                   variant="outline"
                   size="sm"
-                  :class="joinStudioClasses(actionButtonClass, stackedActionButtonClass)"
+                  :class="joinStudioClasses(studioPanelActionButtonClass, stackedActionButtonClass)"
                   :disabled="!version.canDelete"
                   @click="emit('delete-version', version.id)"
                 />
