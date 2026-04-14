@@ -717,6 +717,74 @@ test('compare panel ignores equivalent built-in type aliases like varchar and ch
   await expect(comparePanel).toContainText('No diff entries match the current filter.')
 })
 
+test('compare panel ignores equivalent function and trigger source changes when only formatting or syntax aliases differ', async ({ goto, page }) => {
+  await goto('/diagram')
+  const editor = getPgmlEditor(page)
+
+  await setPgmlEditorValue(editor, `Table public.users {
+  id uuid [pk]
+}
+
+Function public.touch_users() returns trigger {
+  source: $sql$
+    CREATE OR REPLACE FUNCTION public.touch_users() RETURNS trigger LANGUAGE plpgsql AS $$
+    BEGIN
+      RETURN NEW;
+    END;
+    $$;
+  $sql$
+}
+
+Trigger trg_touch_users on public.users {
+  source: $sql$
+    CREATE TRIGGER trg_touch_users
+      BEFORE UPDATE OR INSERT ON public.users
+      FOR EACH ROW
+      EXECUTE FUNCTION public.touch_users();
+  $sql$
+}`)
+  await createCheckpoint(page, 'Equivalent executable formatting baseline')
+
+  await setPgmlEditorValue(editor, `Table public.users {
+  id uuid [pk]
+}
+
+Function public.touch_users() returns trigger {
+  source: $sql$
+    create or replace function public.touch_users()
+    returns trigger
+    as $fn$
+    -- formatting-only change
+    begin
+      return new;
+    end;
+    $fn$
+    language plpgsql;
+  $sql$
+}
+
+Trigger trg_touch_users on public.users {
+  source: $sql$
+    create trigger trg_touch_users before insert or update on public.users
+      for each row
+      execute procedure public.touch_users();
+  $sql$
+}`)
+
+  await compareFromVersion(page, 'Equivalent executable formatting baseline')
+
+  const comparePanel = getComparePanel(page)
+  const modifiedStat = comparePanel.locator('[data-compare-stat-filter="modified"]')
+  const addedStat = comparePanel.locator('[data-compare-stat-filter="added"]')
+  const removedStat = comparePanel.locator('[data-compare-stat-filter="removed"]')
+
+  await expect(modifiedStat).toContainText('0')
+  await expect(addedStat).toContainText('0')
+  await expect(removedStat).toContainText('0')
+  await expect(comparePanel.locator('[data-compare-entry]')).toHaveCount(0)
+  await expect(comparePanel).toContainText('No diff entries match the current filter.')
+})
+
 test('compare noise filters hide optional compare-only changes and saved comparisons recall their settings', async ({ goto, page }) => {
   await goto('/diagram')
   const editor = getPgmlEditor(page)

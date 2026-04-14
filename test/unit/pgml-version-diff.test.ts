@@ -180,6 +180,63 @@ Sequence public.common_review_set_id_seq {
     expect(migrationBundle.meta.statementCount).toBe(0)
   })
 
+  it('ignores function source differences when only formatting, comments, dollar-quote tags, or clause order change', () => {
+    const beforeModel = parsePgml(`Function public.touch_users() returns trigger {
+  source: $sql$
+    CREATE OR REPLACE FUNCTION public.touch_users() RETURNS trigger LANGUAGE plpgsql AS $$
+    BEGIN
+      RETURN NEW;
+    END;
+    $$;
+  $sql$
+}`)
+    const afterModel = parsePgml(`Function public.touch_users() returns trigger {
+  source: $sql$
+    create or replace function public.touch_users()
+    returns trigger
+    as $fn$
+    -- formatting-only change
+    begin
+      return new;
+    end;
+    $fn$
+    language plpgsql;
+  $sql$
+}`)
+    const diff = diffPgmlSchemaModels(beforeModel, afterModel)
+    const migrationBundle = buildPgmlMigrationDiffBundle(beforeModel, afterModel)
+
+    expect(diff.functions).toEqual([])
+    expect(diff.summary.modified).toBe(0)
+    expect(migrationBundle.meta.hasChanges).toBe(false)
+    expect(migrationBundle.meta.statementCount).toBe(0)
+  })
+
+  it('ignores trigger source differences when only formatting, event ordering, or execute syntax aliases change', () => {
+    const beforeModel = parsePgml(`Trigger trg_touch_users on public.users {
+  source: $sql$
+    CREATE TRIGGER trg_touch_users
+      BEFORE UPDATE OR INSERT ON public.users
+      FOR EACH ROW
+      EXECUTE FUNCTION public.touch_users();
+  $sql$
+}`)
+    const afterModel = parsePgml(`Trigger trg_touch_users on public.users {
+  source: $sql$
+    create trigger trg_touch_users before insert or update on public.users
+      for each row
+      execute procedure public.touch_users();
+  $sql$
+}`)
+    const diff = diffPgmlSchemaModels(beforeModel, afterModel)
+    const migrationBundle = buildPgmlMigrationDiffBundle(beforeModel, afterModel)
+
+    expect(diff.triggers).toEqual([])
+    expect(diff.summary.modified).toBe(0)
+    expect(migrationBundle.meta.hasChanges).toBe(false)
+    expect(migrationBundle.meta.statementCount).toBe(0)
+  })
+
   it('ignores equivalent built-in type aliases when diffing and generating migrations', () => {
     const beforeModel = parsePgml(`Table public.agency_profile {
   legal_name varchar(255) [not null]

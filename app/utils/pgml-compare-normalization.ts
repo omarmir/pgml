@@ -34,6 +34,316 @@ const normalizeWhitespace = (value: string) => {
   return value.replaceAll(/\s+/g, ' ').trim()
 }
 
+const normalizeSqlIdentifier = (value: string) => {
+  return value.trim().replaceAll('"', '')
+}
+
+const readSqlIdentifier = (value: string) => {
+  const trimmed = value.trimStart()
+  const leadingOffset = value.length - trimmed.length
+
+  if (trimmed.length === 0) {
+    return null
+  }
+
+  if (trimmed.startsWith('"')) {
+    let identifier = ''
+
+    for (let index = 0; index < trimmed.length; index += 1) {
+      const character = trimmed[index] || ''
+      const nextCharacter = trimmed[index + 1] || ''
+
+      identifier += character
+
+      if (character === '"' && nextCharacter === '"') {
+        identifier += nextCharacter
+        index += 1
+        continue
+      }
+
+      if (index > 0 && character === '"') {
+        return {
+          nextIndex: leadingOffset + identifier.length,
+          raw: identifier
+        }
+      }
+    }
+  }
+
+  const match = trimmed.match(/^[^\s(),]+/u)
+
+  if (!match) {
+    return null
+  }
+
+  return {
+    nextIndex: leadingOffset + match[0].length,
+    raw: match[0]
+  }
+}
+
+const readBalancedSqlSection = (
+  value: string,
+  startIndex: number,
+  delimiters: {
+    close: string
+    open: string
+  } = {
+    close: ')',
+    open: '('
+  }
+) => {
+  let current = ''
+  let depth = 0
+  let doubleQuoted = false
+  let singleQuoted = false
+  let dollarQuoted: string | null = null
+
+  for (let index = startIndex; index < value.length; index += 1) {
+    const character = value[index] || ''
+    const nextCharacter = value[index + 1] || ''
+
+    if (dollarQuoted) {
+      if (value.startsWith(dollarQuoted, index)) {
+        current += dollarQuoted
+        index += dollarQuoted.length - 1
+        dollarQuoted = null
+        continue
+      }
+
+      current += character
+      continue
+    }
+
+    if (singleQuoted) {
+      current += character
+
+      if (character === '\'' && nextCharacter === '\'') {
+        current += nextCharacter
+        index += 1
+        continue
+      }
+
+      if (character === '\'') {
+        singleQuoted = false
+      }
+
+      continue
+    }
+
+    if (doubleQuoted) {
+      current += character
+
+      if (character === '"' && nextCharacter === '"') {
+        current += nextCharacter
+        index += 1
+        continue
+      }
+
+      if (character === '"') {
+        doubleQuoted = false
+      }
+
+      continue
+    }
+
+    if (character === '\'') {
+      singleQuoted = true
+      current += character
+      continue
+    }
+
+    if (character === '"') {
+      doubleQuoted = true
+      current += character
+      continue
+    }
+
+    if (character === '$') {
+      const remainder = value.slice(index)
+      const match = remainder.match(/^\$[A-Za-z0-9_]*\$/u)
+
+      if (match) {
+        dollarQuoted = match[0]
+        current += dollarQuoted
+        index += dollarQuoted.length - 1
+        continue
+      }
+    }
+
+    if (character === delimiters.open) {
+      depth += 1
+
+      if (depth > 1) {
+        current += character
+      }
+
+      continue
+    }
+
+    if (character === delimiters.close) {
+      depth -= 1
+
+      if (depth === 0) {
+        return {
+          content: current,
+          endIndex: index
+        }
+      }
+
+      current += character
+      continue
+    }
+
+    if (depth > 0) {
+      current += character
+    }
+  }
+
+  return null
+}
+
+const normalizeExecutableSqlText = (value: string | null | undefined): string | null => {
+  if (!value || value.trim().length === 0) {
+    return null
+  }
+
+  let normalized = ''
+  let blockCommentDepth = 0
+  let doubleQuoted = false
+  let inLineComment = false
+  let singleQuoted = false
+  let pendingWhitespace = false
+  let dollarQuoted: string | null = null
+
+  const appendToken = (token: string) => {
+    if (pendingWhitespace && normalized.length > 0) {
+      normalized += ' '
+    }
+
+    normalized += token
+    pendingWhitespace = false
+  }
+
+  for (let index = 0; index < value.length; index += 1) {
+    const character = value[index] || ''
+    const nextCharacter = value[index + 1] || ''
+
+    if (inLineComment) {
+      if (character === '\n') {
+        inLineComment = false
+        pendingWhitespace = normalized.length > 0
+      }
+
+      continue
+    }
+
+    if (blockCommentDepth > 0) {
+      if (character === '/' && nextCharacter === '*') {
+        blockCommentDepth += 1
+        index += 1
+      } else if (character === '*' && nextCharacter === '/') {
+        blockCommentDepth -= 1
+        index += 1
+      }
+
+      continue
+    }
+
+    if (dollarQuoted) {
+      const endIndex = value.indexOf(dollarQuoted, index)
+
+      if (endIndex < 0) {
+        const innerValue = value.slice(index)
+        appendToken(`$body$${normalizeExecutableSqlText(innerValue) || ''}$body$`)
+        break
+      }
+
+      const innerValue = value.slice(index, endIndex)
+      appendToken(`$body$${normalizeExecutableSqlText(innerValue) || ''}$body$`)
+      index = endIndex + dollarQuoted.length - 1
+      dollarQuoted = null
+      continue
+    }
+
+    if (singleQuoted) {
+      appendToken(character)
+
+      if (character === '\'' && nextCharacter === '\'') {
+        appendToken(nextCharacter)
+        index += 1
+        continue
+      }
+
+      if (character === '\'') {
+        singleQuoted = false
+      }
+
+      continue
+    }
+
+    if (doubleQuoted) {
+      appendToken(character)
+
+      if (character === '"' && nextCharacter === '"') {
+        appendToken(nextCharacter)
+        index += 1
+        continue
+      }
+
+      if (character === '"') {
+        doubleQuoted = false
+      }
+
+      continue
+    }
+
+    if (character === '-' && nextCharacter === '-') {
+      inLineComment = true
+      index += 1
+      continue
+    }
+
+    if (character === '/' && nextCharacter === '*') {
+      blockCommentDepth += 1
+      index += 1
+      continue
+    }
+
+    if (character === '\'') {
+      singleQuoted = true
+      appendToken(character)
+      continue
+    }
+
+    if (character === '"') {
+      doubleQuoted = true
+      appendToken(character)
+      continue
+    }
+
+    if (character === '$') {
+      const remainder = value.slice(index)
+      const match = remainder.match(/^\$[A-Za-z0-9_]*\$/u)
+
+      if (match) {
+        dollarQuoted = match[0]
+        index += dollarQuoted.length - 1
+        continue
+      }
+    }
+
+    if (/\s/u.test(character)) {
+      pendingWhitespace = normalized.length > 0
+      continue
+    }
+
+    appendToken(character.toLowerCase())
+  }
+
+  return normalized.trim()
+}
+
 const splitArraySuffix = (value: string) => {
   let baseType = value.trim()
   let arrayDepth = 0
@@ -209,6 +519,40 @@ export const normalizePgmlCompareMetadataEntries = (
   })
 }
 
+const normalizeTriggerMetadataValue = (entry: PgmlMetadataEntry) => {
+  const normalizedKey = entry.key.trim().toLowerCase().replaceAll(/[^\w]+/g, '_')
+
+  if (normalizedKey !== 'events') {
+    return entry.value
+  }
+
+  const trimmedValue = entry.value.trim()
+  const listMatch = trimmedValue.match(/^\[(.*)\]$/u)
+
+  if (!listMatch?.[1]) {
+    return entry.value
+  }
+
+  const normalizedEvents = listMatch[1]
+    .split(',')
+    .map(eventName => normalizeWhitespace(eventName))
+    .filter(eventName => eventName.length > 0)
+    .sort((left, right) => left.localeCompare(right))
+
+  return `[${normalizedEvents.join(', ')}]`
+}
+
+const normalizePgmlCompareTriggerMetadataEntries = (
+  entries: PgmlMetadataEntry[]
+) => {
+  return normalizePgmlCompareMetadataEntries(entries.map((entry) => {
+    return {
+      ...entry,
+      value: normalizeTriggerMetadataValue(entry)
+    }
+  }))
+}
+
 export const normalizePgmlCompareDocumentationValue = (
   documentation: PgmlDocumentation | null
 ) => {
@@ -250,6 +594,289 @@ export const normalizePgmlCompareAffectsValue = (
   }
 }
 
+const routineCompareClauseKeywords = [
+  'language',
+  'immutable',
+  'stable',
+  'volatile',
+  'security',
+  'leakproof',
+  'cost',
+  'rows',
+  'support',
+  'set',
+  'as'
+] as const
+
+const isWordCharacter = (value: string) => {
+  return /[a-z0-9_]/i.test(value)
+}
+
+const isKeywordBoundary = (value: string, startIndex: number, keyword: string) => {
+  const previousCharacter = startIndex > 0 ? value[startIndex - 1] || '' : ''
+  const afterIndex = startIndex + keyword.length
+  const nextCharacter = afterIndex < value.length ? value[afterIndex] || '' : ''
+
+  if (previousCharacter.length > 0 && isWordCharacter(previousCharacter)) {
+    return false
+  }
+
+  return nextCharacter.length === 0 || !isWordCharacter(nextCharacter)
+}
+
+const findTopLevelKeywordIndex = (value: string, keywords: readonly string[]) => {
+  let doubleQuoted = false
+  let roundDepth = 0
+  let squareDepth = 0
+  let singleQuoted = false
+  let dollarQuoted: string | null = null
+  const lowercase = value.toLowerCase()
+
+  for (let index = 0; index < value.length; index += 1) {
+    const character = value[index] || ''
+    const nextCharacter = value[index + 1] || ''
+
+    if (dollarQuoted) {
+      if (value.startsWith(dollarQuoted, index)) {
+        index += dollarQuoted.length - 1
+        dollarQuoted = null
+      }
+
+      continue
+    }
+
+    if (singleQuoted) {
+      if (character === '\'' && nextCharacter === '\'') {
+        index += 1
+        continue
+      }
+
+      if (character === '\'') {
+        singleQuoted = false
+      }
+
+      continue
+    }
+
+    if (doubleQuoted) {
+      if (character === '"' && nextCharacter === '"') {
+        index += 1
+        continue
+      }
+
+      if (character === '"') {
+        doubleQuoted = false
+      }
+
+      continue
+    }
+
+    if (character === '\'') {
+      singleQuoted = true
+      continue
+    }
+
+    if (character === '"') {
+      doubleQuoted = true
+      continue
+    }
+
+    if (character === '$') {
+      const remainder = value.slice(index)
+      const match = remainder.match(/^\$[A-Za-z0-9_]*\$/u)
+
+      if (match) {
+        dollarQuoted = match[0]
+        index += dollarQuoted.length - 1
+        continue
+      }
+    }
+
+    if (character === '(') {
+      roundDepth += 1
+      continue
+    }
+
+    if (character === ')') {
+      roundDepth = Math.max(0, roundDepth - 1)
+      continue
+    }
+
+    if (character === '[') {
+      squareDepth += 1
+      continue
+    }
+
+    if (character === ']') {
+      squareDepth = Math.max(0, squareDepth - 1)
+      continue
+    }
+
+    if (roundDepth > 0 || squareDepth > 0) {
+      continue
+    }
+
+    const matchedKeyword = keywords.find((keyword) => {
+      return lowercase.startsWith(keyword, index) && isKeywordBoundary(lowercase, index, keyword)
+    })
+
+    if (matchedKeyword) {
+      return index
+    }
+  }
+
+  return -1
+}
+
+const extractDollarQuotedBody = (value: string) => {
+  const openDelimiterIndex = value.indexOf('$body$')
+
+  if (openDelimiterIndex < 0) {
+    return null
+  }
+
+  const closeDelimiterIndex = value.indexOf('$body$', openDelimiterIndex + '$body$'.length)
+
+  if (closeDelimiterIndex < 0) {
+    return null
+  }
+
+  return {
+    body: value.slice(openDelimiterIndex + '$body$'.length, closeDelimiterIndex),
+    prefix: value.slice(0, openDelimiterIndex),
+    suffix: value.slice(closeDelimiterIndex + '$body$'.length)
+  }
+}
+
+const normalizeRoutineSourceForCompare = (source: string | null) => {
+  const normalizedSource = normalizeExecutableSqlText(source)
+
+  if (!normalizedSource) {
+    return null
+  }
+
+  const keywordMatch = normalizedSource.match(/^create\s+(?:or\s+replace\s+)?(function|procedure)\s+/u)
+
+  if (!keywordMatch) {
+    return normalizedSource
+  }
+
+  const afterKeyword = normalizedSource.slice(keywordMatch[0].length)
+  const identifier = readSqlIdentifier(afterKeyword)
+
+  if (!identifier?.raw) {
+    return normalizedSource
+  }
+
+  let remainder = afterKeyword.slice(identifier.nextIndex).trim()
+
+  if (!remainder.startsWith('(')) {
+    return normalizedSource
+  }
+
+  const argumentsSection = readBalancedSqlSection(remainder, 0)
+
+  if (!argumentsSection) {
+    return normalizedSource
+  }
+
+  remainder = remainder.slice(argumentsSection.endIndex + 1).trim()
+
+  if (keywordMatch[1] === 'function' && remainder.startsWith('returns ')) {
+    const afterReturns = remainder.slice('returns '.length)
+    const nextKeywordIndex = findTopLevelKeywordIndex(afterReturns, routineCompareClauseKeywords)
+
+    remainder = nextKeywordIndex < 0
+      ? ''
+      : afterReturns.slice(nextKeywordIndex).trim()
+  }
+
+  const extractedBody = extractDollarQuotedBody(remainder)
+  const body = extractedBody?.body || null
+  let clauseRemainder = normalizeWhitespace(`${extractedBody?.prefix || remainder} ${extractedBody?.suffix || ''}`)
+
+  clauseRemainder = clauseRemainder
+    .replaceAll(/\blanguage\s+[^\s;]+/gu, '')
+    .replaceAll(/\b(?:immutable|stable|volatile)\b/gu, '')
+    .replaceAll(/\bsecurity\s+(?:definer|invoker)\b/gu, '')
+    .replaceAll(/\bas\b/gu, '')
+  clauseRemainder = normalizeWhitespace(clauseRemainder)
+
+  return {
+    body,
+    clauses: clauseRemainder.length > 0 ? clauseRemainder : null
+  }
+}
+
+const normalizeTriggerEvents = (value: string) => {
+  return value
+    .split(/\s+or\s+/u)
+    .map(eventName => normalizeWhitespace(eventName))
+    .filter(eventName => eventName.length > 0)
+    .sort((left, right) => left.localeCompare(right))
+}
+
+const normalizeTriggerArguments = (value: string) => {
+  const normalizedValue = normalizeWhitespace(value)
+
+  if (normalizedValue.length === 0) {
+    return []
+  }
+
+  return splitSqlValueList(normalizedValue)
+    .map(entry => normalizeExecutableSqlText(entry) || '')
+    .filter(entry => entry.length > 0)
+}
+
+const normalizeTriggerSourceForCompare = (source: string | null) => {
+  const normalizedSource = normalizeExecutableSqlText(source)
+
+  if (!normalizedSource) {
+    return null
+  }
+
+  const normalizedExecuteSource = normalizedSource.replace(/\bexecute\s+procedure\b/gu, 'execute function')
+  const triggerMatch = normalizedExecuteSource.match(
+    /^create\s+(constraint\s+)?trigger\s+([^\s]+)\s+(before|after|instead\s+of)\s+(.+?)\s+on\s+([^\s]+)\s+(.+)$/u
+  )
+
+  if (!triggerMatch) {
+    return normalizedExecuteSource
+  }
+
+  const trailingSource = triggerMatch[6] || ''
+  const executeMatch = trailingSource.match(
+    /^(.*?)(?:\s+for\s+each\s+(row|statement))?(?:\s+when\s*\((.+)\))?\s+execute\s+function\s+([^(;\s]+)\s*(?:\((.*?)\))?\s*;?$/u
+  )
+
+  if (!executeMatch) {
+    return normalizedExecuteSource
+  }
+
+  const prefix = normalizeWhitespace(executeMatch[1] || '')
+  const fromMatch = prefix.match(/\bfrom\s+([^\s]+)\b/u)
+  const initiallyMatch = prefix.match(/\binitially\s+(deferred|immediate)\b/u)
+  const deferrable = /\bnot\s+deferrable\b/u.test(prefix)
+    ? 'not deferrable'
+    : /\bdeferrable\b/u.test(prefix)
+      ? 'deferrable'
+      : null
+
+  return {
+    arguments: normalizeTriggerArguments(executeMatch[5] || ''),
+    constraint: Boolean(triggerMatch[1]),
+    deferrable,
+    events: normalizeTriggerEvents(triggerMatch[4] || ''),
+    fromTable: fromMatch?.[1] ? normalizeSqlIdentifier(fromMatch[1]) : null,
+    initially: initiallyMatch?.[1] || null,
+    level: executeMatch[2] || null,
+    routineName: normalizeSqlIdentifier(executeMatch[4] || ''),
+    tableName: normalizeSqlIdentifier(triggerMatch[5] || ''),
+    timing: normalizeWhitespace(triggerMatch[3] || ''),
+    when: executeMatch[3] ? normalizeExecutableSqlText(executeMatch[3]) : null
+  }
+}
+
 export const normalizePgmlCompareRoutineValue = (routine: PgmlRoutine) => {
   return {
     affects: normalizePgmlCompareAffectsValue(routine.affects),
@@ -257,7 +884,7 @@ export const normalizePgmlCompareRoutineValue = (routine: PgmlRoutine) => {
     metadata: normalizePgmlCompareMetadataEntries(routine.metadata),
     name: routine.name,
     signature: routine.signature,
-    source: routine.source?.trim() || null
+    source: normalizeRoutineSourceForCompare(routine.source)
   }
 }
 
@@ -265,9 +892,9 @@ export const normalizePgmlCompareTriggerValue = (trigger: PgmlTrigger) => {
   return {
     affects: normalizePgmlCompareAffectsValue(trigger.affects),
     docs: normalizePgmlCompareDocumentationValue(trigger.docs),
-    metadata: normalizePgmlCompareMetadataEntries(trigger.metadata),
+    metadata: normalizePgmlCompareTriggerMetadataEntries(trigger.metadata),
     name: trigger.name,
-    source: trigger.source?.trim() || null,
+    source: normalizeTriggerSourceForCompare(trigger.source),
     tableName: trigger.tableName
   }
 }
@@ -290,7 +917,7 @@ export const normalizePgmlCompareSequenceValue = (
     docs: normalizePgmlCompareDocumentationValue(sequence.docs),
     metadata,
     name: sequence.name,
-    source: shouldOmitSource ? null : (sequence.source?.trim() || null)
+    source: shouldOmitSource ? null : normalizeExecutableSqlText(sequence.source)
   }
 }
 

@@ -17,8 +17,10 @@ import {
   normalizePgmlCompareColumnValue,
   normalizePgmlCompareConstraintExpression,
   normalizePgmlCompareCustomTypeName,
+  normalizePgmlCompareRoutineValue,
   normalizePgmlCompareSequenceValue,
-  normalizePgmlCompareSequenceMetadataEntries
+  normalizePgmlCompareSequenceMetadataEntries,
+  normalizePgmlCompareTriggerValue
 } from './pgml-compare-normalization'
 
 export type PgmlDiffChangeKind = 'added' | 'modified' | 'removed'
@@ -88,25 +90,6 @@ const toStableJson = (value: unknown): string => {
   }
 
   return JSON.stringify(value)
-}
-
-const sortStringValues = (values: string[]) => {
-  return [...values].sort((left, right) => left.localeCompare(right))
-}
-
-const sortKeyValueEntries = (
-  entries: Array<{
-    key: string
-    value: string
-  }>
-) => {
-  return [...entries].sort((left, right) => {
-    if (left.key !== right.key) {
-      return left.key.localeCompare(right.key)
-    }
-
-    return left.value.localeCompare(right.value)
-  })
 }
 
 const buildChangedFields = (beforeValue: unknown, afterValue: unknown) => {
@@ -180,75 +163,12 @@ const normalizeGroupValue = (group: PgmlGroup) => {
   }
 }
 
-const normalizeMetadataEntries = (
-  entries: Array<{
-    key: string
-    value: string
-  }>
-) => {
-  return sortKeyValueEntries(entries.map((entry) => {
-    return {
-      key: entry.key,
-      value: entry.value
-    }
-  }))
-}
-
-const normalizeDocumentationValue = (
-  documentation: PgmlRoutine['docs'] | PgmlTrigger['docs'] | PgmlSequence['docs']
-) => {
-  if (!documentation) {
-    return null
-  }
-
-  return {
-    entries: sortKeyValueEntries(documentation.entries),
-    summary: documentation.summary
-  }
-}
-
-const normalizeAffectsValue = (affects: PgmlRoutine['affects'] | PgmlTrigger['affects'] | PgmlSequence['affects']) => {
-  if (!affects) {
-    return null
-  }
-
-  return {
-    calls: sortStringValues(affects.calls),
-    dependsOn: sortStringValues(affects.dependsOn),
-    extras: [...affects.extras].map((entry) => {
-      return {
-        key: entry.key,
-        values: sortStringValues(entry.values)
-      }
-    }).sort((left, right) => left.key.localeCompare(right.key)),
-    ownedBy: sortStringValues(affects.ownedBy),
-    reads: sortStringValues(affects.reads),
-    sets: sortStringValues(affects.sets),
-    uses: sortStringValues(affects.uses),
-    writes: sortStringValues(affects.writes)
-  }
-}
-
 const normalizeRoutineValue = (routine: PgmlRoutine) => {
-  return {
-    affects: normalizeAffectsValue(routine.affects),
-    docs: normalizeDocumentationValue(routine.docs),
-    metadata: normalizeMetadataEntries(routine.metadata),
-    name: routine.name,
-    signature: routine.signature,
-    source: routine.source?.trim() || null
-  }
+  return normalizePgmlCompareRoutineValue(routine)
 }
 
 const normalizeTriggerValue = (trigger: PgmlTrigger) => {
-  return {
-    affects: normalizeAffectsValue(trigger.affects),
-    docs: normalizeDocumentationValue(trigger.docs),
-    metadata: normalizeMetadataEntries(trigger.metadata),
-    name: trigger.name,
-    source: trigger.source?.trim() || null,
-    tableName: trigger.tableName
-  }
+  return normalizePgmlCompareTriggerValue(trigger)
 }
 
 const normalizeSequenceValue = (
