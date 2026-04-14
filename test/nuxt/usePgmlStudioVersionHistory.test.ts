@@ -230,6 +230,109 @@ describe('usePgmlStudioVersionHistory', () => {
     expect(api.renameVersion(initialVersion.id, '   ')).toBe(false)
   })
 
+  it('deletes only unreferenced leaf versions and blocks versions still needed by history or saved comparisons', async () => {
+    const { api, source } = await mountVersionHistoryComposable()
+    const rootVersion = createDesignCheckpoint(api, 'Initial design')
+
+    source.value = importedWorkspaceSource
+
+    const trunkVersion = api.createCheckpoint({
+      createdAt: '2026-03-29T12:05:00.000Z',
+      includeLayout: true,
+      name: 'Add status',
+      role: 'design'
+    })
+
+    if (!trunkVersion) {
+      throw new Error('Expected the trunk version to be created.')
+    }
+
+    expect(api.versionItems.value.find(version => version.id === rootVersion.id)).toEqual(expect.objectContaining({
+      canDelete: false,
+      deleteBlockedReason: 'a newer checkpoint branches from it'
+    }))
+    expect(api.versionItems.value.find(version => version.id === trunkVersion.id)).toEqual(expect.objectContaining({
+      canDelete: false,
+      deleteBlockedReason: 'the workspace increments from it'
+    }))
+
+    expect(api.replaceWorkspaceFromVersion(rootVersion.id)).toBe(true)
+
+    source.value = `Table public.users {
+  id uuid [pk]
+}
+
+Table public.teams {
+  id uuid [pk]
+}`
+
+    const branchVersion = api.createCheckpoint({
+      createdAt: '2026-03-29T12:10:00.000Z',
+      includeLayout: true,
+      name: 'Teams branch',
+      role: 'design'
+    })
+
+    if (!branchVersion) {
+      throw new Error('Expected the branch version to be created.')
+    }
+
+    expect(api.versionItems.value.find(version => version.id === trunkVersion.id)).toEqual(expect.objectContaining({
+      canDelete: true,
+      deleteBlockedReason: null
+    }))
+
+    api.setPreviewTarget(trunkVersion.id)
+    api.setCompareTargets({
+      baseId: trunkVersion.id,
+      targetId: 'workspace'
+    })
+
+    expect(api.deleteVersion(trunkVersion.id)).toBe(true)
+    expect(api.versions.value.map(version => version.id)).not.toContain(trunkVersion.id)
+    expect(api.previewTargetId.value).toBe('workspace')
+    expect(api.compareBaseId.value).toBe(branchVersion.id)
+    expect(api.versionedDocumentSource.value).not.toContain('name: "Add status"')
+
+    expect(api.replaceWorkspaceFromVersion(rootVersion.id)).toBe(true)
+
+    source.value = `Table public.users {
+  id uuid [pk]
+}
+
+Table public.audit_log {
+  id uuid [pk]
+  user_id uuid [not null]
+}`
+
+    const alternateBranchVersion = api.createCheckpoint({
+      createdAt: '2026-03-29T12:15:00.000Z',
+      includeLayout: true,
+      name: 'Audit branch',
+      role: 'design'
+    })
+
+    if (!alternateBranchVersion) {
+      throw new Error('Expected the alternate branch version to be created.')
+    }
+
+    api.setCompareTargets({
+      baseId: branchVersion.id,
+      targetId: alternateBranchVersion.id
+    })
+
+    expect(api.createComparison('Branch comparison')).toEqual(expect.objectContaining({
+      baseId: branchVersion.id,
+      targetId: alternateBranchVersion.id
+    }))
+    expect(api.versionItems.value.find(version => version.id === branchVersion.id)).toEqual(expect.objectContaining({
+      canDelete: false,
+      deleteBlockedReason: '1 saved comparison references it'
+    }))
+    expect(api.deleteVersion(branchVersion.id)).toBe(false)
+    expect(api.versions.value.map(version => version.id)).toContain(branchVersion.id)
+  })
+
   it('persists multiple diagram views per workspace and version preview target', async () => {
     const { api, source } = await mountVersionHistoryComposable()
     const defaultViewId = api.activeDiagramViewId.value

@@ -260,6 +260,7 @@ const buildVersionHistoryItem = (
   }
 ) => {
   const parentVersionLabel = getVersionDisplayLabelById(document, version.parentVersionId)
+  const versionDeleteBlockedReason = getVersionDeleteBlockedReason(document, version.id)
 
   return {
     ancestorCount: getPgmlVersionAncestorCount(document, version.id),
@@ -272,6 +273,8 @@ const buildVersionHistoryItem = (
     descendantCount: getPgmlDescendantVersionCount(document, version.id),
     depth: getPgmlVersionDepth(document, version.id),
     ...version,
+    canDelete: versionDeleteBlockedReason === null,
+    deleteBlockedReason: versionDeleteBlockedReason,
     parentVersionLabel,
     isLeaf: isPgmlLeafVersion(document, version.id),
     isLatestByRole: version.id === (
@@ -439,6 +442,47 @@ const normalizeComparisonName = (value: string | null | undefined) => {
 
 const normalizeVersionName = (value: string | null | undefined) => {
   return value?.trim() || ''
+}
+
+const joinHumanReadableList = (items: string[]) => {
+  if (items.length === 0) {
+    return null
+  }
+
+  if (items.length === 1) {
+    return items[0] || null
+  }
+
+  if (items.length === 2) {
+    return `${items[0]} and ${items[1]}`
+  }
+
+  return `${items.slice(0, -1).join(', ')}, and ${items[items.length - 1]}`
+}
+
+const getVersionDeleteBlockedReason = (
+  document: PgmlVersionSetDocument,
+  versionId: string
+) => {
+  const reasons: string[] = []
+  const childCount = getPgmlChildVersions(document, versionId).length
+  const comparisonReferenceCount = document.comparisons.filter((comparison) => {
+    return comparison.baseId === versionId || comparison.targetId === versionId
+  }).length
+
+  if (childCount > 0) {
+    reasons.push(childCount === 1 ? 'a newer checkpoint branches from it' : `${childCount} newer checkpoints branch from it`)
+  }
+
+  if (document.workspace.basedOnVersionId === versionId) {
+    reasons.push('the workspace increments from it')
+  }
+
+  if (comparisonReferenceCount > 0) {
+    reasons.push(comparisonReferenceCount === 1 ? '1 saved comparison references it' : `${comparisonReferenceCount} saved comparisons reference it`)
+  }
+
+  return joinHumanReadableList(reasons)
 }
 
 const hasDiagramViewName = (
@@ -986,6 +1030,24 @@ export const usePgmlStudioVersionHistory = (
     return true
   }
 
+  const deleteVersion = (versionId: string) => {
+    const targetVersion = getPgmlVersionById(documentState.value, versionId)
+
+    if (!targetVersion || getVersionDeleteBlockedReason(documentState.value, versionId) !== null) {
+      return false
+    }
+
+    const nextDocument = clonePgmlVersionSetDocument(
+      buildWorkspaceSyncedDocument(documentState.value, input.source.value)
+    )
+
+    nextDocument.versions = nextDocument.versions.filter(version => version.id !== versionId)
+    documentState.value = nextDocument
+    normalizeSelectionState()
+
+    return true
+  }
+
   const syncSelectedComparison = (inputOptions?: {
     baseId?: string | null
     exclusions?: Partial<PgmlCompareExclusions>
@@ -1281,6 +1343,7 @@ export const usePgmlStudioVersionHistory = (
     createDiagramView,
     createNamedDiagramView,
     deleteComparison,
+    deleteVersion,
     document,
     diagramViewItems,
     diagramViewSettings,

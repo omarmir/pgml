@@ -70,12 +70,18 @@ describe('diagram versions panel source', () => {
       'icon="i-lucide-eye"',
       'icon="i-lucide-pencil"',
       'icon="i-lucide-rotate-ccw"',
+      'icon="i-lucide-trash-2"',
       'size="sm"',
       'variant="outline"',
       ':disabled="previewTargetId === version.id"',
+      ':disabled="!version.canDelete"',
       ':data-version-view="version.id"',
+      ':data-version-delete="version.id"',
+      ':data-version-delete-blocked="version.id"',
       ':data-version-rename="version.id"',
       ':data-version-restore="version.id"',
+      'label="Delete"',
+      'Delete stays locked while {{ version.deleteBlockedReason }}.',
       'label="Rename"',
       'Preview target: {{ previewLabel }}.'
     ]

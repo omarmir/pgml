@@ -81,6 +81,8 @@ import {
 } from '~/utils/pgml-version-migration'
 import {
   buildPgmlCheckpointCreatedDescription,
+  buildPgmlDeleteVersionDescription,
+  buildPgmlDeleteVersionSuccessDescription,
   buildPgmlCheckpointRoleDescription,
   buildPgmlCheckpointTargetLabel,
   buildPgmlImportDumpConfirmLabel,
@@ -329,6 +331,8 @@ const importExecutableAttachmentError: Ref<string | null> = ref(null)
 const isSubmittingImportExecutableAttachmentResolution: Ref<boolean> = ref(false)
 const restoreVersionDialogOpen: Ref<boolean> = ref(false)
 const restoreVersionId: Ref<string | null> = ref(null)
+const deleteVersionDialogOpen: Ref<boolean> = ref(false)
+const deleteVersionId: Ref<string | null> = ref(null)
 const compareExclusionsDialogOpen: Ref<boolean> = ref(false)
 const compareExclusionsDraft: Ref<PgmlCompareExclusions | null> = ref(null)
 const compareExclusionsSearchQuery: Ref<string> = ref('')
@@ -383,6 +387,7 @@ const {
   createComparison,
   createNamedDiagramView,
   deleteComparison,
+  deleteVersion,
   document: versionDocument,
   diagramViewItems,
   diagramViewSettings,
@@ -1156,8 +1161,10 @@ const versionPanelItems = computed(() => {
       branchVersionCount: version.branchVersionCount,
       branchRootId: version.branchRootId,
       branchRootLabel: version.branchRootLabel,
+      canDelete: version.canDelete,
       childCount: version.childCount,
       createdAt: formatSavedPgmlSchemaTime(version.createdAt),
+      deleteBlockedReason: version.deleteBlockedReason,
       descendantCount: version.descendantCount,
       depth: version.depth,
       id: version.id,
@@ -1989,6 +1996,16 @@ const restoreVersionCandidate = computed(() => {
     ? versions.value.find(version => version.id === restoreVersionId.value) || null
     : null
 })
+const deleteVersionCandidate = computed(() => {
+  return deleteVersionId.value
+    ? versionHistoryItems.value.find(version => version.id === deleteVersionId.value) || null
+    : null
+})
+const deleteVersionDialogDescription = computed(() => {
+  return buildPgmlDeleteVersionDescription({
+    blockedReason: deleteVersionCandidate.value?.deleteBlockedReason || null
+  })
+})
 
 watch(activeSchemaName, (nextName) => {
   versionDocumentName.value = nextName
@@ -2128,6 +2145,10 @@ const closeCheckpointDialog = () => {
 const closeRestoreVersionDialog = () => {
   restoreVersionDialogOpen.value = false
   restoreVersionId.value = null
+}
+const closeDeleteVersionDialog = () => {
+  deleteVersionDialogOpen.value = false
+  deleteVersionId.value = null
 }
 const compareExclusionsDialogDescription = computed(() => {
   return selectedComparison.value
@@ -2320,6 +2341,16 @@ const closeRenameVersionDialog = () => {
   renameVersionDialogOpen.value = false
   renameVersionDraftName.value = ''
   renameVersionId.value = null
+}
+const openDeleteVersionDialog = (versionId: string) => {
+  const version = versionHistoryItems.value.find(entry => entry.id === versionId) || null
+
+  if (!version || !version.canDelete) {
+    return
+  }
+
+  deleteVersionId.value = versionId
+  deleteVersionDialogOpen.value = true
 }
 const saveCheckpoint = async () => {
   await flushPendingEditorChanges()
@@ -2877,6 +2908,23 @@ const viewVersionTarget = (targetId: string) => {
 const restoreVersionToWorkspace = (versionId: string) => {
   restoreVersionId.value = versionId
   restoreVersionDialogOpen.value = true
+}
+const confirmDeleteVersion = () => {
+  const targetVersion = deleteVersionCandidate.value
+
+  if (!targetVersion || !targetVersion.canDelete || !deleteVersion(targetVersion.id)) {
+    return
+  }
+
+  markBrowserSchemaStatusEligible()
+  requestCanvasViewportReset()
+  closeDeleteVersionDialog()
+  toast.add({
+    title: 'Version deleted',
+    description: buildPgmlDeleteVersionSuccessDescription(getVersionLabel(targetVersion)),
+    color: 'success',
+    icon: 'i-lucide-check'
+  })
 }
 const confirmRestoreVersionToWorkspace = () => {
   if (!restoreVersionId.value) {
@@ -3777,6 +3825,7 @@ onBeforeUnmount(() => {
           @create-table="openTableCreator"
           @delete-compare-comparison="deleteSelectedComparisonPreset"
           @delete-diagram-view="deleteSelectedDiagramView"
+          @delete-version="openDeleteVersionDialog"
           @edit-group="openGroupEditor"
           @edit-table="openTableEditor"
           @edit-compare-exclusions="openCompareExclusionsDialog"
@@ -3906,6 +3955,7 @@ onBeforeUnmount(() => {
           @create-table="openTableCreator"
           @delete-compare-comparison="deleteSelectedComparisonPreset"
           @delete-diagram-view="deleteSelectedDiagramView"
+          @delete-version="openDeleteVersionDialog"
           @edit-group="openGroupEditor"
           @edit-table="openTableEditor"
           @edit-compare-exclusions="openCompareExclusionsDialog"
@@ -4040,6 +4090,52 @@ onBeforeUnmount(() => {
             variant="soft"
             :class="primaryModalButtonClass"
             @click="confirmRestoreVersionToWorkspace"
+          />
+        </template>
+      </StudioModalFrame>
+
+      <StudioModalFrame
+        v-model:open="deleteVersionDialogOpen"
+        title="Delete version"
+        :description="deleteVersionDialogDescription"
+        surface-id="delete-version"
+        body-class="grid gap-4 px-4 py-3"
+        @close="closeDeleteVersionDialog"
+      >
+        <div class="grid gap-3">
+          <div class="border border-[color:var(--studio-shell-border)] bg-[color:var(--studio-control-bg)] px-3 py-3">
+            <div :class="studioFieldKickerClass">
+              Selected version
+            </div>
+            <div class="mt-2 text-[0.85rem] font-semibold text-[color:var(--studio-shell-text)]">
+              {{ deleteVersionCandidate ? getVersionLabel(deleteVersionCandidate) : 'Unknown version' }}
+            </div>
+            <p class="mt-2 text-[0.74rem] leading-6 text-[color:var(--studio-shell-muted)]">
+              {{
+                deleteVersionCandidate?.deleteBlockedReason
+                  ? `Delete stays locked while ${deleteVersionCandidate.deleteBlockedReason}.`
+                  : 'This permanently removes the locked checkpoint from the current PGML document.'
+              }}
+            </p>
+          </div>
+        </div>
+
+        <template #footer>
+          <UButton
+            label="Cancel"
+            color="neutral"
+            variant="outline"
+            :class="secondaryModalButtonClass"
+            @click="closeDeleteVersionDialog"
+          />
+          <UButton
+            label="Delete version"
+            data-delete-version-confirm="true"
+            color="neutral"
+            variant="soft"
+            :class="primaryModalButtonClass"
+            :disabled="!deleteVersionCandidate || !deleteVersionCandidate.canDelete"
+            @click="confirmDeleteVersion"
           />
         </template>
       </StudioModalFrame>

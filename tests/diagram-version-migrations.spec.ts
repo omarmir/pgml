@@ -1977,6 +1977,60 @@ Ref: public.memberships.team_id > public.teams.id`)
   await expect(getVersionsPanel(page)).toContainText('No schema or layout changes are visible for the selected compare pair.')
 })
 
+test('versions panel only deletes unreferenced checkpoints', async ({ goto, page }) => {
+  await goto('/diagram')
+  const editor = getPgmlEditor(page)
+
+  await setPgmlEditorValue(editor, `Table public.users {
+  id uuid [pk]
+}`)
+  await createCheckpoint(page, 'Users only')
+
+  await setPgmlEditorValue(editor, `Table public.users {
+  id uuid [pk]
+}
+
+Table public.teams {
+  id uuid [pk]
+}`)
+  await createCheckpoint(page, 'Users and teams')
+
+  await openVersionsPanel(page)
+  await expect(getVersionCardByLabel(page, 'Users only').locator('[data-version-delete]')).toBeDisabled()
+  await expect(getVersionCardByLabel(page, 'Users only')).toContainText('Delete stays locked while a newer checkpoint branches from it.')
+  await expect(getVersionCardByLabel(page, 'Users and teams').locator('[data-version-delete]')).toBeDisabled()
+  await expect(getVersionCardByLabel(page, 'Users and teams')).toContainText('Delete stays locked while the workspace increments from it.')
+
+  await clickVersionCardAction(page, 'Users only', '[data-version-restore]')
+
+  const restoreDialog = page.locator('[data-studio-modal-surface="restore-version"]')
+
+  await expect(restoreDialog).toBeVisible()
+  await restoreDialog.getByRole('button', { name: 'Restore version' }).click()
+  await expect(restoreDialog).toHaveCount(0)
+
+  await setPgmlEditorValue(editor, `Table public.users {
+  id uuid [pk]
+}
+
+Table public.projects {
+  id uuid [pk]
+}`)
+  await createCheckpoint(page, 'Users and projects')
+
+  await openVersionsPanel(page)
+  await expect(getVersionCardByLabel(page, 'Users and teams').locator('[data-version-delete]')).toBeEnabled()
+  await clickVersionCardAction(page, 'Users and teams', '[data-version-delete]')
+
+  const deleteDialog = page.locator('[data-studio-modal-surface="delete-version"]')
+
+  await expect(deleteDialog).toBeVisible()
+  await deleteDialog.getByRole('button', { name: 'Delete version' }).click()
+  await expect(deleteDialog).toHaveCount(0)
+  await expect(getVersionCardByLabel(page, 'Users and teams')).toHaveCount(0)
+  await expect.poll(async () => readPgmlEditorValue(editor)).toContain('Table public.projects')
+})
+
 test('versioned document mode can scope the editor to the full document, workspace block, or a selected version block', async ({ goto, page }) => {
   await goto('/diagram')
   const editor = getPgmlEditor(page)

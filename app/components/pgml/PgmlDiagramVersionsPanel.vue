@@ -16,8 +16,10 @@ type PgmlVersionPanelItem = {
   branchVersionCount: number
   branchRootId: string | null
   branchRootLabel: string | null
+  canDelete: boolean
   childCount: number
   createdAt: string
+  deleteBlockedReason: string | null
   descendantCount: number
   depth: number
   id: string
@@ -49,6 +51,7 @@ const {
 
 const emit = defineEmits<{
   'create-checkpoint': []
+  'delete-version': [versionId: string]
   'import-dbml': []
   'import-dump': []
   'rename-version': [versionId: string]
@@ -246,38 +249,59 @@ const previewLabel = computed(() => {
               </div>
             </div>
 
-            <div class="grid grid-cols-1 gap-1 sm:flex sm:flex-wrap">
-              <UButton
-                :data-version-view="version.id"
-                label="View"
-                icon="i-lucide-eye"
-                color="neutral"
-                variant="outline"
-                size="sm"
-                :class="joinStudioClasses(actionButtonClass, stackedActionButtonClass)"
-                :disabled="previewTargetId === version.id"
-                @click="emit('view-target', version.id)"
-              />
-              <UButton
-                :data-version-rename="version.id"
-                label="Rename"
-                icon="i-lucide-pencil"
-                color="neutral"
-                variant="outline"
-                size="sm"
-                :class="joinStudioClasses(actionButtonClass, stackedActionButtonClass)"
-                @click="emit('rename-version', version.id)"
-              />
-              <UButton
-                :data-version-restore="version.id"
-                label="Restore"
-                icon="i-lucide-rotate-ccw"
-                color="neutral"
-                variant="outline"
-                size="sm"
-                :class="joinStudioClasses(actionButtonClass, stackedActionButtonClass)"
-                @click="emit('restore-version', version.id)"
-              />
+            <div class="grid gap-2">
+              <div class="grid grid-cols-1 gap-1 sm:flex sm:flex-wrap">
+                <UButton
+                  :data-version-view="version.id"
+                  label="View"
+                  icon="i-lucide-eye"
+                  color="neutral"
+                  variant="outline"
+                  size="sm"
+                  :class="joinStudioClasses(actionButtonClass, stackedActionButtonClass)"
+                  :disabled="previewTargetId === version.id"
+                  @click="emit('view-target', version.id)"
+                />
+                <UButton
+                  :data-version-rename="version.id"
+                  label="Rename"
+                  icon="i-lucide-pencil"
+                  color="neutral"
+                  variant="outline"
+                  size="sm"
+                  :class="joinStudioClasses(actionButtonClass, stackedActionButtonClass)"
+                  @click="emit('rename-version', version.id)"
+                />
+                <UButton
+                  :data-version-restore="version.id"
+                  label="Restore"
+                  icon="i-lucide-rotate-ccw"
+                  color="neutral"
+                  variant="outline"
+                  size="sm"
+                  :class="joinStudioClasses(actionButtonClass, stackedActionButtonClass)"
+                  @click="emit('restore-version', version.id)"
+                />
+                <UButton
+                  :data-version-delete="version.id"
+                  label="Delete"
+                  icon="i-lucide-trash-2"
+                  color="neutral"
+                  variant="outline"
+                  size="sm"
+                  :class="joinStudioClasses(actionButtonClass, stackedActionButtonClass)"
+                  :disabled="!version.canDelete"
+                  @click="emit('delete-version', version.id)"
+                />
+              </div>
+
+              <p
+                v-if="!version.canDelete && version.deleteBlockedReason"
+                :data-version-delete-blocked="version.id"
+                class="max-w-[18rem] text-[0.62rem] leading-5 text-[color:var(--studio-shell-muted)] sm:justify-self-end sm:text-right"
+              >
+                Delete stays locked while {{ version.deleteBlockedReason }}.
+              </p>
             </div>
           </div>
         </div>

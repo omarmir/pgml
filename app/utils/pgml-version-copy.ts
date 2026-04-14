@@ -108,6 +108,20 @@ export const buildPgmlRestoreSuccessDescription = () => {
   return 'The selected version is now the active workspace draft.'
 }
 
+export const buildPgmlDeleteVersionDescription = (input: {
+  blockedReason?: string | null
+}) => {
+  if (input.blockedReason) {
+    return `Delete stays locked while ${input.blockedReason}.`
+  }
+
+  return 'This permanently removes the locked checkpoint from the version history.'
+}
+
+export const buildPgmlDeleteVersionSuccessDescription = (versionLabel: string) => {
+  return `${versionLabel} was removed from the version history.`
+}
+
 export const buildPgmlCheckpointCreatedDescription = (
   versionLabel: string,
   role: 'design' | 'implementation'

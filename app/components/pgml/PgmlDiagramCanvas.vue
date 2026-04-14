@@ -60,8 +60,10 @@ type VersionPanelItem = {
   branchVersionCount: number
   branchRootId: string | null
   branchRootLabel: string | null
+  canDelete: boolean
   childCount: number
   createdAt: string
+  deleteBlockedReason: string | null
   descendantCount: number
   depth: number
   id: string
@@ -162,6 +164,7 @@ const emit = defineEmits<{
   createDiagramView: []
   deleteCompareComparison: []
   deleteDiagramView: []
+  deleteVersion: [versionId: string]
   editGroup: [groupName: string]
   editCompareExclusions: []
   renameDiagramView: []
@@ -255,6 +258,7 @@ defineExpose<CanvasHandle>({
     @create-diagram-view="emit('createDiagramView')"
     @delete-compare-comparison="emit('deleteCompareComparison')"
     @delete-diagram-view="emit('deleteDiagramView')"
+    @delete-version="emit('deleteVersion', $event)"
     @edit-group="emit('editGroup', $event)"
     @edit-compare-exclusions="emit('editCompareExclusions')"
     @rename-diagram-view="emit('renameDiagramView')"

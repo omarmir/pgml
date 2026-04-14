@@ -229,8 +229,10 @@ type VersionPanelItem = {
   branchVersionCount: number
   branchRootId: string | null
   branchRootLabel: string | null
+  canDelete: boolean
   childCount: number
   createdAt: string
+  deleteBlockedReason: string | null
   descendantCount: number
   depth: number
   id: string
@@ -472,6 +474,7 @@ const emit = defineEmits<{
   createDiagramView: []
   deleteCompareComparison: []
   deleteDiagramView: []
+  deleteVersion: [versionId: string]
   editGroup: [groupName: string]
   editCompareExclusions: []
   renameDiagramView: []
@@ -8555,6 +8558,7 @@ defineExpose<{
         :workspace-base-label="workspaceBaseLabel"
         :workspace-status="workspaceStatus"
         @create-checkpoint="emit('versionCheckpoint')"
+        @delete-version="emit('deleteVersion', $event)"
         @import-dbml="emit('versionImportDbml')"
         @import-dump="emit('versionImportDump')"
         @rename-version="emit('renameVersion', $event)"
