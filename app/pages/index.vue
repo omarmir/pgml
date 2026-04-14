@@ -36,7 +36,10 @@ import {
   buildBrowserStudioNewQuery,
   buildBrowserStudioSavedQuery,
   buildFileStudioRecentQuery,
-  type FileStudioLaunchRequest
+  getStudioWorkspacePath,
+  isStudioWorkspacePath,
+  type FileStudioLaunchRequest,
+  type StudioWorkspacePage
 } from '~/utils/studio-launch'
 
 type SourceCardId = 'browser-local-storage' | 'computer-saved-file' | 'hosted-database'
@@ -99,6 +102,7 @@ type PendingComputerFileAction = { kind: 'create-example' }
     kind: 'create-import'
     schemaName: string
     text: string
+    workspacePage: StudioWorkspacePage
   }
   | { kind: 'create-new' }
   | { kind: 'open-picker' }
@@ -125,6 +129,12 @@ type ImportDialogCopy = {
   title: string
 }
 
+type PendingImportedSchemaLaunch = {
+  importTarget: PgDumpImportTarget
+  schemaName: string
+  snapshotSource: string
+}
+
 const computerFileAccessDialogOpen: Ref<boolean> = ref(false)
 const dbmlImportDialogOpen: Ref<boolean> = ref(false)
 const dbmlImportError: Ref<string | null> = ref(null)
@@ -136,13 +146,16 @@ const dbmlImportText: Ref<string> = ref('')
 const isConfirmingComputerFileAction: Ref<boolean> = ref(false)
 const isSubmittingDbmlImport: Ref<boolean> = ref(false)
 const isSubmittingPgDumpImport: Ref<boolean> = ref(false)
+const isSubmittingImportedSchemaLaunch: Ref<boolean> = ref(false)
 const pendingComputerFileAction: Ref<PendingComputerFileAction | null> = ref(null)
+const pendingImportedSchemaLaunch: Ref<PendingImportedSchemaLaunch | null> = ref(null)
 const pgDumpImportDialogOpen: Ref<boolean> = ref(false)
 const pgDumpImportError: Ref<string | null> = ref(null)
 const pgDumpImportFoldIdentifiersToLowercase: Ref<boolean> = ref(false)
 const pgDumpImportSelectedFile: Ref<File | null> = ref(null)
 const pgDumpImportTarget: Ref<PgDumpImportTarget | null> = ref(null)
 const pgDumpImportText: Ref<string> = ref('')
+const importedSchemaLaunchDialogOpen: Ref<boolean> = ref(false)
 const browserNewQuery = buildBrowserStudioNewQuery()
 const browserExampleQuery = buildBrowserStudioExampleQuery()
 const studioSessionStore = useStudioSessionStore()
@@ -330,11 +343,12 @@ const submitImportedSchema = async (input: {
     const preparedImport = prepareImportedExecutableAttachments(importedSchema.pgml)
 
     resetImportDialogState(input.state)
-    await finishImportedSchemaLaunch({
+    pendingImportedSchemaLaunch.value = {
       importTarget,
       schemaName: importedSchema.schemaName,
       snapshotSource: preparedImport.pgml
-    })
+    }
+    importedSchemaLaunchDialogOpen.value = true
   } catch (error) {
     input.state.error.value = getActionErrorMessage(error, input.fallbackErrorMessage)
   } finally {
@@ -380,10 +394,19 @@ const refreshSavedSchemas = () => {
 const refreshRecentComputerFiles = async () => {
   await studioSourcesStore.refreshRecentComputerFiles()
 }
+const closeImportedSchemaLaunchDialog = () => {
+  if (isSubmittingImportedSchemaLaunch.value) {
+    return
+  }
+
+  importedSchemaLaunchDialogOpen.value = false
+  pendingImportedSchemaLaunch.value = null
+}
 const finishImportedSchemaLaunch = async (input: {
   importTarget: PgDumpImportTarget
   schemaName: string
   snapshotSource: string
+  workspacePage: StudioWorkspacePage
 }) => {
   // Browser imports become saved browser documents immediately. File imports
   // queue the file-system permission dialog first so the actual save target is
@@ -397,19 +420,22 @@ const finishImportedSchemaLaunch = async (input: {
         name: input.schemaName,
         role: 'implementation',
         snapshotSource: input.snapshotSource
-      })
+      }),
+      workspacePage: input.workspacePage
     })
     return
   }
 
   await createBrowserSchemaFromImport({
     name: input.schemaName,
-    snapshotSource: input.snapshotSource
+    snapshotSource: input.snapshotSource,
+    workspacePage: input.workspacePage
   })
 }
 const createBrowserSchemaFromImport = async (input: {
   name: string
   snapshotSource: string
+  workspacePage: StudioWorkspacePage
 }) => {
   const createdSchema = studioSourcesStore.createBrowserSchema({
     name: input.name,
@@ -427,7 +453,7 @@ const createBrowserSchemaFromImport = async (input: {
   }
 
   await router.push({
-    path: '/diagram',
+    path: getStudioWorkspacePath(input.workspacePage),
     query: buildBrowserStudioSavedQuery(createdSchema.id)
   })
 
@@ -459,6 +485,7 @@ const buildFileLaunchRequest = (recentFileId: string): FileStudioLaunchRequest =
 }
 const navigateToRecentComputerFile = async (
   recentFileId: string,
+  workspacePage: StudioWorkspacePage = 'diagram',
   preloadedFile?: {
     entry: PgmlRecentComputerFile
     text: string
@@ -469,7 +496,7 @@ const navigateToRecentComputerFile = async (
   }
 
   await router.push({
-    path: '/diagram',
+    path: getStudioWorkspacePath(workspacePage),
     query: buildFileStudioRecentQuery(recentFileId)
   })
 }
@@ -482,7 +509,7 @@ const openComputerFileFromPicker = async () => {
     }
 
     await refreshRecentComputerFiles()
-    await navigateToRecentComputerFile(loadedFile.entry.id, loadedFile)
+    await navigateToRecentComputerFile(loadedFile.entry.id, 'diagram', loadedFile)
   } catch (error) {
     pushComputerFileActionErrorToast(getActionErrorMessage(error, 'Unable to open the selected file.'))
   }
@@ -490,16 +517,20 @@ const openComputerFileFromPicker = async () => {
 const createComputerFile = async (input: {
   name: string
   text: string
+  workspacePage?: StudioWorkspacePage
 }) => {
   try {
-    const createdFile = await createComputerPgmlFile(input)
+    const createdFile = await createComputerPgmlFile({
+      name: input.name,
+      text: input.text
+    })
 
     if (!createdFile) {
       return
     }
 
     await refreshRecentComputerFiles()
-    await navigateToRecentComputerFile(createdFile.entry.id, createdFile)
+    await navigateToRecentComputerFile(createdFile.entry.id, input.workspacePage || 'diagram', createdFile)
   } catch (error) {
     pushSaveErrorToast(getActionErrorMessage(error, 'Unable to save to the selected file.'))
   }
@@ -524,7 +555,7 @@ const openRecentComputerFileFromLaunch = async (recentFileId: string) => {
     }
 
     await refreshRecentComputerFiles()
-    await navigateToRecentComputerFile(loadedFile.entry.id, loadedFile)
+    await navigateToRecentComputerFile(loadedFile.entry.id, 'diagram', loadedFile)
   } catch (error) {
     pushComputerFileActionErrorToast(getActionErrorMessage(error, 'Unable to reopen the selected file.'))
   }
@@ -660,7 +691,8 @@ const confirmComputerFileAccessAction = async () => {
     if (pendingAction.kind === 'create-import') {
       await createComputerFile({
         name: pendingAction.schemaName,
-        text: pendingAction.text
+        text: pendingAction.text,
+        workspacePage: pendingAction.workspacePage
       })
       return
     }
@@ -669,6 +701,26 @@ const confirmComputerFileAccessAction = async () => {
   } finally {
     isConfirmingComputerFileAction.value = false
     pendingComputerFileAction.value = null
+  }
+}
+const launchImportedSchemaIntoWorkspace = async (workspacePage: StudioWorkspacePage) => {
+  const pendingLaunch = pendingImportedSchemaLaunch.value
+
+  if (!pendingLaunch) {
+    return
+  }
+
+  isSubmittingImportedSchemaLaunch.value = true
+
+  try {
+    await finishImportedSchemaLaunch({
+      ...pendingLaunch,
+      workspacePage
+    })
+    importedSchemaLaunchDialogOpen.value = false
+    pendingImportedSchemaLaunch.value = null
+  } finally {
+    isSubmittingImportedSchemaLaunch.value = false
   }
 }
 const handleSourceCardAction = async (payload: {
@@ -1067,7 +1119,7 @@ onMounted(() => {
 })
 
 onBeforeRouteLeave((to) => {
-  if (to.path !== '/diagram') {
+  if (!isStudioWorkspacePath(to.path)) {
     return
   }
 
@@ -1103,7 +1155,7 @@ onBeforeRouteLeave((to) => {
             Spec guide
           </div>
           <h2 class="mt-3 text-2xl font-semibold tracking-[-0.03em] text-[color:var(--studio-shell-text)]">
-            Need the PGML spec before you open versioning, compare, and migrations?
+            Need the PGML spec before you open analysis, compare, and migrations?
           </h2>
           <p class="mt-2 max-w-3xl text-[0.9rem] leading-7 text-[color:var(--studio-shell-muted)]">
             Jump straight to the PGML spec for `VersionSet`, named `View` blocks, checkpoints, `SchemaMetadata`, DBML and pg_dump imports, executable placement, and history-aware SQL or Kysely migrations.
@@ -1162,6 +1214,51 @@ onBeforeRouteLeave((to) => {
         @clear-file="clearPgDumpImportFile"
         @submit="submitPgDumpImport"
       />
+
+      <StudioModalFrame
+        v-model:open="importedSchemaLaunchDialogOpen"
+        title="Open imported schema"
+        description="Choose which workspace should open the imported document first. Diagram keeps the visual canvas and editor; Analysis skips both and opens directly into versions, compare, and migrations."
+        surface-id="imported-schema-launch"
+        body-class="grid gap-3 px-4 py-3"
+        @close="closeImportedSchemaLaunchDialog"
+      >
+        <div :class="computerFileAccessInfoPanelClass">
+          <div :class="studioCompactFieldKickerClass">
+            Imported schema
+          </div>
+          <p :class="studioBodyCopyClass">
+            {{ pendingImportedSchemaLaunch ? pendingImportedSchemaLaunch.schemaName : 'Imported schema' }}
+          </p>
+        </div>
+
+        <template #footer>
+          <UButton
+            label="Cancel"
+            color="neutral"
+            variant="outline"
+            :class="modalSecondaryButtonClass"
+            :disabled="isSubmittingImportedSchemaLaunch"
+            @click="closeImportedSchemaLaunchDialog"
+          />
+          <UButton
+            label="Open Diagram"
+            color="neutral"
+            variant="outline"
+            :class="modalSecondaryButtonClass"
+            :disabled="isSubmittingImportedSchemaLaunch"
+            @click="launchImportedSchemaIntoWorkspace('diagram')"
+          />
+          <UButton
+            label="Open Analysis"
+            color="neutral"
+            variant="soft"
+            :class="modalPrimaryButtonClass"
+            :loading="isSubmittingImportedSchemaLaunch"
+            @click="launchImportedSchemaIntoWorkspace('analysis')"
+          />
+        </template>
+      </StudioModalFrame>
 
       <StudioModalFrame
         v-model:open="computerFileAccessDialogOpen"

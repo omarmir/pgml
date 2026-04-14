@@ -5,7 +5,7 @@ describe('diagram performance source', () => {
   it('limits GPU plane promotion to active viewport interactions', () => {
     const benchmarkFile = readSourceFile('scripts/benchmark-diagram-fps.ts')
     const canvasFile = readSourceFile('app/components/pgml/PgmlDiagramCanvasGpuShell.vue')
-    const pageFile = readSourceFile('app/pages/diagram.vue')
+    const pageFile = readSourceFile('app/components/studio/StudioWorkspacePage.vue')
     const sceneFile = readSourceFile('app/components/pgml/PgmlDiagramGpuScene.vue')
 
     expect(canvasFile).toContain('const routedConnectionLines: Ref<DiagramGpuConnectionLine[]> = ref([])')
@@ -88,7 +88,7 @@ describe('diagram performance source', () => {
     expect(sceneFile).toContain('setRendererCapability(applyDiagramRendererInitFailure(initialRendererCapability))')
     expect(sceneFile).toContain('await restartPixi()')
     expect(sceneFile).toContain('shouldDisableConnectionCulling = /Android/i.test(navigator.userAgent) || window.matchMedia(\'(pointer: coarse)\').matches')
-    expect(pageFile).toContain('new Worker(new URL(\'../workers/pgml-analysis.worker.ts\', import.meta.url), {')
+    expect(pageFile).toContain('new Worker(new URL(\'../../workers/pgml-analysis.worker.ts\', import.meta.url), {')
     expect(pageFile).toContain('const shouldBuildVersionArtifacts = computed(() => {')
     expect(pageFile).toContain('const compareMigrationBundle = computed(() => {')
   })
@@ -139,7 +139,7 @@ describe('diagram performance source', () => {
 
   it('uses transform previews, live dragged-line rerouting, and viewport culling for static lines', () => {
     const canvasFile = readSourceFile('app/components/pgml/PgmlDiagramCanvasGpuShell.vue')
-    const pageFile = readSourceFile('app/pages/diagram.vue')
+    const pageFile = readSourceFile('app/components/studio/StudioWorkspacePage.vue')
     const sceneFile = readSourceFile('app/components/pgml/PgmlDiagramGpuScene.vue')
 
     expect(canvasFile).toContain('const viewportSize: Ref<MeasuredSize> = ref({')

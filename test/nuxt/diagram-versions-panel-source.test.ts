@@ -55,11 +55,11 @@ describe('diagram versions panel source', () => {
     ]
     const expectedVersionStrings = [
       'data-version-overview="true"',
-      'Choose which locked snapshot the diagram and raw PGML preview should show. Compare and migrations now live in their own dedicated tabs.',
+      'Choose which locked snapshot the active workspace should inspect. Compare and migrations now live in their own dedicated tabs.',
       'Version Switcher',
       'data-version-import-dbml="true"',
       'label="Import DBML"',
-      'Pick the workspace or a locked checkpoint to change the diagram preview. Restore copies a locked snapshot back into the workspace draft.',
+      'Pick the workspace or a locked checkpoint to change the active inspection target. Restore copies a locked snapshot back into the workspace draft.',
       '<div class="grid gap-2">',
       'Locked {{ version.role }} checkpoint',
       'Leaf',

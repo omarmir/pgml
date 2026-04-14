@@ -116,7 +116,7 @@ const previewLabel = computed(() => {
       </div>
 
       <p :class="studioCompactBodyCopyClass">
-        Choose which locked snapshot the diagram and raw PGML preview should show. Compare and migrations now live in their own dedicated tabs.
+        Choose which locked snapshot the active workspace should inspect. Compare and migrations now live in their own dedicated tabs.
       </p>
       <p
         v-if="!canCreateCheckpoint"
@@ -137,7 +137,7 @@ const previewLabel = computed(() => {
         Version Switcher
       </div>
       <p :class="studioCompactBodyCopyClass">
-        Pick the workspace or a locked checkpoint to change the diagram preview. Restore copies a locked snapshot back into the workspace draft.
+        Pick the workspace or a locked checkpoint to change the active inspection target. Restore copies a locked snapshot back into the workspace draft.
       </p>
 
       <div class="grid gap-2">

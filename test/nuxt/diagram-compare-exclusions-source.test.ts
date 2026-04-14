@@ -3,7 +3,7 @@ import { readSourceFile } from './source-test-utils'
 
 describe('diagram compare exclusions source', () => {
   it('uses search plus a type-filter row with nested group sections, separate ungrouped tables, and additional non-column compare-entity sections in the comparison-scoped exclusion editor', () => {
-    const pageFile = readSourceFile('app/pages/diagram.vue')
+    const pageFile = readSourceFile('app/components/studio/StudioWorkspacePage.vue')
     const entityKindOrderBlock = pageFile.match(/const compareExclusionEntityKindOrder: PgmlDiagramCompareEntityKind\[] = \[[\s\S]*?\]/)?.[0] || ''
     const exclusionOptionsBlock = pageFile.match(/data-compare-exclusion-options="true"[\s\S]*?data-compare-exclusion-groups-section="true"/)?.[0] || ''
 

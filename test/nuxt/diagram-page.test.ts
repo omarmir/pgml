@@ -3,9 +3,9 @@ import { readSourceFile } from './source-test-utils'
 
 describe('diagram page source', () => {
   it('keeps the studio workspace shells and modal entry points in the page source', () => {
-    const file = readSourceFile('app/pages/diagram.vue')
+    const pageFile = readSourceFile('app/pages/diagram.vue')
+    const file = readSourceFile('app/components/studio/StudioWorkspacePage.vue')
     const expectedStrings = [
-      'middleware: \'require-studio-launch\'',
       '<StudioDesktopWorkspace',
       '<StudioMobileWorkspace',
       '<StudioEditorSurface',
@@ -77,20 +77,21 @@ describe('diagram page source', () => {
       'latestImplementationVersion.value?.id'
     ]
 
+    expect(pageFile).toContain('middleware: \'require-studio-launch\'')
     expectedStrings.forEach((expectedString) => {
       expect(file).toContain(expectedString)
     })
   })
 
   it('serializes layout whenever the PGML can embed it instead of checking canvas mount state', () => {
-    const file = readSourceFile('app/pages/diagram.vue')
+    const file = readSourceFile('app/components/studio/StudioWorkspacePage.vue')
 
     expect(file).toContain('const shouldIncludeLayout = includeLayout && canEmbedLayout.value')
     expect(file).not.toContain('const shouldIncludeLayout = includeLayout && canEmbedLayout.value && canvasRef.value !== null')
   })
 
   it('prefers the reactive workspace source unless the editor has uncommitted local edits', () => {
-    const file = readSourceFile('app/pages/diagram.vue')
+    const file = readSourceFile('app/components/studio/StudioWorkspacePage.vue')
 
     expect(file).toContain('if (!editorRef.value?.hasPendingChanges()) {')
     expect(file).toContain('const editorValue = editorRef.value.getValue()')

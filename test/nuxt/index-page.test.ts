@@ -23,7 +23,7 @@ describe('Index page source', () => {
     expect(file).toContain('Open bundled example')
     expect(file).toContain('Open existing')
     expect(file).toContain('data-spec-banner="true"')
-    expect(file).toContain('Need the PGML spec before you open versioning, compare, and migrations?')
+    expect(file).toContain('Need the PGML spec before you open analysis, compare, and migrations?')
     expect(file).toContain('VersionSet')
     expect(file).toContain('history-aware SQL or Kysely migrations')
   })

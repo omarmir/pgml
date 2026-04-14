@@ -5,6 +5,8 @@ type StudioLaunchQueryValue = LocationQueryValue | LocationQueryValue[] | undefi
 
 type StudioLaunchQuery = LocationQuery
 
+export type StudioWorkspacePage = 'diagram' | 'analysis'
+
 type BrowserStudioExampleLaunchRequest = {
   launch: 'example'
   source: 'browser'
@@ -48,6 +50,10 @@ type StoredPreloadedFileStudioLaunch = {
 const studioLaunchAccessStorageKey = 'pgml-studio-launch-access-v1'
 const studioLaunchAccessGrantedValue = 'granted'
 const preloadedFileStudioLaunchStorageKey = 'pgml-studio-file-launch-v1'
+const studioWorkspacePathByPage: Readonly<Record<StudioWorkspacePage, string>> = Object.freeze({
+  analysis: '/analysis',
+  diagram: '/diagram'
+})
 
 const getSingleStudioLaunchQueryValue = (value: StudioLaunchQueryValue) => {
   if (Array.isArray(value)) {
@@ -85,6 +91,26 @@ export const buildFileStudioRecentQuery = (recentFileId: string) => {
     launch: 'recent',
     source: 'file'
   }
+}
+
+export const getStudioWorkspacePath = (page: StudioWorkspacePage) => {
+  return studioWorkspacePathByPage[page]
+}
+
+export const getStudioWorkspacePageFromPath = (path: string): StudioWorkspacePage | null => {
+  if (path === studioWorkspacePathByPage.diagram) {
+    return 'diagram'
+  }
+
+  if (path === studioWorkspacePathByPage.analysis) {
+    return 'analysis'
+  }
+
+  return null
+}
+
+export const isStudioWorkspacePath = (path: string) => {
+  return getStudioWorkspacePageFromPath(path) !== null
 }
 
 export const getBrowserStudioLaunchRequestKey = (request: BrowserStudioLaunchRequest) => {

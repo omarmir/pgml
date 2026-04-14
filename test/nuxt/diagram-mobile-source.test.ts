@@ -3,7 +3,7 @@ import { readSourceFile } from './source-test-utils'
 
 describe('studio mobile workspace source', () => {
   it('keeps the mobile studio shell and touch-aware canvas flow explicit in source', () => {
-    const pageFile = readSourceFile('app/pages/diagram.vue')
+    const pageFile = readSourceFile('app/components/studio/StudioWorkspacePage.vue')
     const mobileWorkspaceFile = readSourceFile('app/components/studio/StudioMobileWorkspace.vue')
     const canvasFile = readSourceFile('app/components/pgml/PgmlDiagramCanvasGpuShell.vue')
     const connectionCanvasFile = readSourceFile('app/components/pgml/PgmlDiagramConnectionCanvas.vue')

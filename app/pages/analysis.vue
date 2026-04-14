@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import StudioWorkspacePage from '~/components/studio/StudioWorkspacePage.vue'
+import StudioAnalysisWorkspacePage from '~/components/studio/StudioAnalysisWorkspacePage.vue'
 
 definePageMeta({
   layout: 'studio',
@@ -8,5 +8,5 @@ definePageMeta({
 </script>
 
 <template>
-  <StudioWorkspacePage workspace-mode="diagram" />
+  <StudioAnalysisWorkspacePage />
 </template>
