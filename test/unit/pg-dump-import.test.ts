@@ -161,6 +161,58 @@ CREATE TABLE public."Agency_Agreement_Type" (
 }`)
   })
 
+  it('imports partial pg_dump indexes without swallowing WHERE predicates into the indexed column list', () => {
+    const sql = `CREATE TABLE public."Agency_Profile" (
+  id bigint NOT NULL,
+  egcs_ay_name_en text,
+  egcs_ay_name_fr text,
+  _deleted boolean
+);
+CREATE UNIQUE INDEX ay_idx_profilenameen ON public."Agency_Profile" USING btree (egcs_ay_name_en) WHERE (_deleted = false);
+CREATE UNIQUE INDEX ay_idx_profilenamefr ON public."Agency_Profile" USING btree (egcs_ay_name_fr) WHERE ((_deleted = false) AND (egcs_ay_name_fr IS NOT NULL));`
+    const result = convertPgDumpToPgml({ sql })
+    const model = parsePgml(result.pgml)
+    const table = model.tables.find(currentTable => currentTable.fullName === 'public.Agency_Profile')
+
+    expect(result.pgml).toContain('Index ay_idx_profilenameen (egcs_ay_name_en) [type: btree]')
+    expect(result.pgml).toContain('Index ay_idx_profilenamefr (egcs_ay_name_fr) [type: btree]')
+    expect(table?.indexes).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        columns: ['egcs_ay_name_en'],
+        name: 'ay_idx_profilenameen',
+        type: 'btree'
+      }),
+      expect.objectContaining({
+        columns: ['egcs_ay_name_fr'],
+        name: 'ay_idx_profilenamefr',
+        type: 'btree'
+      })
+    ]))
+  })
+
+  it('imports pg_dump expression indexes through structured Indexes blocks when inline PGML syntax cannot represent them', () => {
+    const sql = `CREATE TABLE public."Transfer_Payment_Objective" (
+  id bigint NOT NULL,
+  egcs_tp_transferpaymentprofile bigint NOT NULL,
+  egcs_tp_objective_en text,
+  _deleted boolean
+);
+CREATE UNIQUE INDEX tp_idx_objectivetransferpaymentprofileobjectiveen ON public."Transfer_Payment_Objective" USING btree (egcs_tp_transferpaymentprofile, md5(lower(egcs_tp_objective_en))) WHERE (_deleted = false);`
+    const result = convertPgDumpToPgml({ sql })
+    const model = parsePgml(result.pgml)
+    const table = model.tables.find(currentTable => currentTable.fullName === 'public.Transfer_Payment_Objective')
+
+    expect(result.pgml).toContain('  Indexes {')
+    expect(result.pgml).toContain('    (egcs_tp_transferpaymentprofile, md5(lower(egcs_tp_objective_en))) [name: tp_idx_objectivetransferpaymentprofileobjectiveen, type: btree]')
+    expect(table?.indexes).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        columns: ['egcs_tp_transferpaymentprofile', 'md5(lower(egcs_tp_objective_en))'],
+        name: 'tp_idx_objectivetransferpaymentprofileobjectiveen',
+        type: 'btree'
+      })
+    ]))
+  })
+
   it('canonicalizes built-in type aliases during pg_dump import', () => {
     const sql = `CREATE TABLE public."Agency_Profile" (
   name character varying(255) NOT NULL,

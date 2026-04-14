@@ -1369,27 +1369,106 @@ const parseAlterTableStatement = (statement: string, tables: Map<string, PgDumpI
   }
 }
 
-const parseCreateIndexStatement = (statement: string, tables: Map<string, PgDumpImportTable>) => {
+const parseCreateIndexDefinition = (statement: string) => {
   const normalized = normalizeSqlWhitespace(statement)
-  const indexMatch = normalized.match(/^create\s+(unique\s+)?index\s+([^\s]+)\s+on\s+(?:only\s+)?([^\s]+)(?:\s+using\s+([^\s]+))?\s*\((.+)\)(?:\s+where\s+.+)?$/iu)
+  const keywordMatch = normalized.match(/^create\s+(unique\s+)?index\s+/iu)
 
-  if (!indexMatch) {
-    return
+  if (!keywordMatch) {
+    return null
   }
 
-  const table = ensureTable(tables, indexMatch[3] || '')
-  const columns = splitTopLevelSqlList(indexMatch[5] || '')
+  let remainder = normalized.slice(keywordMatch[0].length).trim()
 
-  if (columns.some(column => column.includes('(') || column.includes(')'))) {
-    return
+  if (remainder.toLowerCase().startsWith('concurrently ')) {
+    remainder = remainder.slice('concurrently '.length).trim()
   }
 
-  table.indexes.push({
+  if (remainder.toLowerCase().startsWith('if not exists ')) {
+    remainder = remainder.slice('if not exists '.length).trim()
+  }
+
+  const indexIdentifier = readSqlIdentifier(remainder)
+
+  if (!indexIdentifier?.raw) {
+    return null
+  }
+
+  remainder = remainder.slice(indexIdentifier.nextIndex).trim()
+
+  if (!remainder.toLowerCase().startsWith('on ')) {
+    return null
+  }
+
+  remainder = remainder.slice('on '.length).trim()
+
+  if (remainder.toLowerCase().startsWith('only ')) {
+    remainder = remainder.slice('only '.length).trim()
+  }
+
+  const tableIdentifier = readSqlIdentifier(remainder)
+
+  if (!tableIdentifier?.raw) {
+    return null
+  }
+
+  remainder = remainder.slice(tableIdentifier.nextIndex).trim()
+
+  let indexType = 'btree'
+
+  if (remainder.toLowerCase().startsWith('using ')) {
+    remainder = remainder.slice('using '.length).trim()
+
+    const methodIdentifier = readSqlIdentifier(remainder)
+
+    if (!methodIdentifier?.raw) {
+      return null
+    }
+
+    indexType = trimSqlIdentifier(methodIdentifier.raw).toLowerCase()
+    remainder = remainder.slice(methodIdentifier.nextIndex).trim()
+  }
+
+  const openParenIndex = remainder.indexOf('(')
+
+  if (openParenIndex < 0) {
+    return null
+  }
+
+  const columnsSection = readBalancedSection(remainder, openParenIndex)
+
+  if (!columnsSection) {
+    return null
+  }
+
+  const columns = splitTopLevelSqlList(columnsSection.content)
+
+  if (columns.length === 0) {
+    return null
+  }
+
+  return {
     columns: columns.map((column) => {
       return trimSqlIdentifier(column)
     }),
-    name: trimSqlIdentifier(indexMatch[2] || ''),
-    type: trimSqlIdentifier(indexMatch[4] || 'btree').toLowerCase()
+    name: trimSqlIdentifier(indexIdentifier.raw),
+    tableName: normalizeQualifiedName(tableIdentifier.raw),
+    type: indexType
+  } satisfies PgDumpImportIndex & { tableName: string }
+}
+
+const parseCreateIndexStatement = (statement: string, tables: Map<string, PgDumpImportTable>) => {
+  const parsedIndex = parseCreateIndexDefinition(statement)
+
+  if (!parsedIndex) {
+    return
+  }
+
+  const table = ensureTable(tables, parsedIndex.tableName)
+
+  table.indexes.push({
+    columns: parsedIndex.columns,
+    name: parsedIndex.name,
+    type: parsedIndex.type
   })
 }
 
@@ -1630,6 +1709,16 @@ const shouldIgnoreStatement = (statement: string) => {
 
 const renderTable = (table: PgDumpImportTable) => {
   const lines = [`Table ${table.name} {`]
+  const inlineIndexes = table.indexes.filter((index) => {
+    return index.columns.every((column) => {
+      return !column.includes('(') && !column.includes(')')
+    })
+  })
+  const structuredIndexes = table.indexes.filter((index) => {
+    return index.columns.some((column) => {
+      return column.includes('(') || column.includes(')')
+    })
+  })
 
   table.columns.forEach((column) => {
     const modifiers = column.modifiers.length > 0 ? ` [${column.modifiers.join(', ')}]` : ''
@@ -1645,9 +1734,19 @@ const renderTable = (table: PgDumpImportTable) => {
     lines.push(`  Constraint ${constraint.name}: ${constraint.expression}`)
   })
 
-  table.indexes.forEach((index) => {
+  inlineIndexes.forEach((index) => {
     lines.push(`  Index ${index.name} (${index.columns.join(', ')}) [type: ${index.type}]`)
   })
+
+  if (structuredIndexes.length > 0) {
+    lines.push('  Indexes {')
+
+    structuredIndexes.forEach((index) => {
+      lines.push(`    (${index.columns.join(', ')}) [name: ${index.name}, type: ${index.type}]`)
+    })
+
+    lines.push('  }')
+  }
 
   lines.push('}')
 

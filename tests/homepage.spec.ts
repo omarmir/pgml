@@ -155,6 +155,33 @@ ALTER TABLE ONLY public.users ADD CONSTRAINT users_pkey PRIMARY KEY (id);`)
   }).toBe(1)
 })
 
+test('home page pg_dump import keeps partial and expression indexes in the imported PGML', async ({ goto, page }) => {
+  await goto('/')
+
+  const browserCard = page.locator('[data-source-card="browser-local-storage"]')
+
+  await browserCard.getByRole('button', { name: 'Import into browser storage' }).click()
+
+  const importDialog = getPgDumpImportDialog(page)
+
+  await expect(importDialog).toContainText('Import pg_dump into browser storage')
+  await importDialog.locator('textarea').fill(`CREATE TABLE public.users (
+  id uuid NOT NULL,
+  email text NOT NULL,
+  deleted boolean
+);
+ALTER TABLE ONLY public.users ADD CONSTRAINT users_pkey PRIMARY KEY (id);
+CREATE UNIQUE INDEX idx_users_email_active ON public.users USING btree (email) WHERE (deleted = false);
+CREATE UNIQUE INDEX idx_users_email_expression ON public.users USING btree (email, md5(lower(email))) WHERE (deleted = false);`)
+  await page.getByRole('button', { name: 'Import into browser storage' }).click()
+
+  await expect.poll(async () => readPgmlEditorValue(getPgmlEditor(page))).toContain('Index idx_users_email_active (email) [type: btree]')
+  await expect.poll(async () => readPgmlEditorValue(getPgmlEditor(page))).toContain('Indexes {')
+  await expect.poll(async () => readPgmlEditorValue(getPgmlEditor(page))).toContain(
+    '(email, md5(lower(email))) [name: idx_users_email_expression, type: btree]'
+  )
+})
+
 test('home page pg_dump import auto-populates trigger-linked function owned_by attachments', async ({ goto, page }) => {
   await goto('/')
 
