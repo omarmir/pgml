@@ -19,6 +19,7 @@ import type {
   PgmlSourceRange
 } from '~/utils/pgml'
 import {
+  getStudioToggleChipClass,
   joinStudioClasses,
   studioButtonClasses,
   studioCompactBodyCopyClass,
@@ -86,14 +87,8 @@ const emit = defineEmits<{
   'update:compareTargetId': [value: string]
 }>()
 
-type PgmlCompareFilterKind = 'all' | 'added' | 'modified' | 'removed'
-type PgmlCompareStatKind = Exclude<PgmlCompareFilterKind, 'all'>
+type PgmlCompareStatKind = 'added' | 'modified' | 'removed'
 type PgmlCompareNoiseFilterKey = keyof PgmlCompareNoiseFilters
-
-type PgmlCompareFilterOption = {
-  label: string
-  value: PgmlCompareFilterKind
-}
 
 type PgmlCompareEntityFilterOption = {
   count: number
@@ -145,7 +140,7 @@ const compareEntityFilterLabelByKind: Readonly<Record<PgmlDiagramCompareEntityKi
 })
 
 const searchQuery: Ref<string> = ref('')
-const filterKind: Ref<PgmlCompareFilterKind> = ref('all')
+const selectedChangeKinds: Ref<PgmlCompareStatKind[]> = ref([])
 const selectedEntityKinds: Ref<PgmlDiagramCompareEntityKind[]> = ref([])
 const detailViewMode: Ref<PgmlCompareDetailViewMode> = ref('structured')
 const filterButtonClass = joinStudioClasses(studioButtonClasses.secondary, 'text-[0.62rem]')
@@ -156,7 +151,7 @@ const compareEntityFilterCountClass = 'border px-1 py-0.5 text-[0.48rem] leading
 const compareOverviewSectionClass = 'grid min-w-0 gap-3 border-b border-[color:var(--studio-divider)] pb-3'
 const compareDividerSectionClass = 'grid min-w-0 gap-3 border-t border-[color:var(--studio-divider)] pt-3'
 const exclusionChipClass = 'border border-[color:var(--studio-divider)] px-1.5 py-0.5 font-mono text-[0.52rem] uppercase tracking-[0.08em] text-[color:var(--studio-shell-muted)]'
-const compareNoiseFilterButtonClass = 'inline-flex items-center gap-2 border px-2 py-1 font-mono text-[0.56rem] uppercase tracking-[0.08em] transition-colors duration-150 cursor-default'
+const compareNoiseFilterButtonClass = 'inline-flex items-center gap-2 px-2 py-1 font-mono text-[0.56rem] uppercase tracking-[0.08em] cursor-default'
 const currentComparisonOptionValue = '__current__'
 const compareStatKinds: PgmlCompareStatKind[] = ['added', 'modified', 'removed']
 const compareStatLabelByKind: Readonly<Record<PgmlCompareStatKind, string>> = Object.freeze({
@@ -164,24 +159,6 @@ const compareStatLabelByKind: Readonly<Record<PgmlCompareStatKind, string>> = Ob
   modified: 'Modified',
   removed: 'Removed'
 })
-const compareFilterOptions: PgmlCompareFilterOption[] = [
-  {
-    label: 'All',
-    value: 'all'
-  },
-  {
-    label: 'Added',
-    value: 'added'
-  },
-  {
-    label: 'Modified',
-    value: 'modified'
-  },
-  {
-    label: 'Removed',
-    value: 'removed'
-  }
-]
 const compareDetailViewOptions: PgmlCompareDetailViewOption[] = [
   {
     label: 'Structured',
@@ -248,6 +225,12 @@ const showFieldDiffs = computed(() => {
 const showSnapshotDiff = computed(() => {
   return detailViewMode.value !== 'structured'
 })
+const orderedSelectedChangeKinds = computed(() => {
+  return compareStatKinds.filter(kind => selectedChangeKinds.value.includes(kind))
+})
+const hasSelectedChangeKindFilters = computed(() => {
+  return orderedSelectedChangeKinds.value.length > 0
+})
 const buildEntrySearchHaystack = (entry: PgmlDiagramCompareEntry) => {
   return [
     entry.label,
@@ -261,13 +244,15 @@ const normalizedSearchQuery = computed(() => {
   return searchQuery.value.trim().toLowerCase()
 })
 const hasEntityKindFilter = computed(() => selectedEntityKinds.value.length > 0)
-const entriesMatchingChangeKind = computed(() => {
-  return filterKind.value === 'all'
-    ? entries
-    : entries.filter(entry => entry.changeKind === filterKind.value)
+const entriesMatchingSelectedChangeKinds = computed(() => {
+  if (!hasSelectedChangeKindFilters.value) {
+    return entries
+  }
+
+  return entries.filter(entry => orderedSelectedChangeKinds.value.includes(entry.changeKind))
 })
 const compareEntityFilterOptions = computed<PgmlCompareEntityFilterOption[]>(() => {
-  const countsByKind = entriesMatchingChangeKind.value.reduce<Record<PgmlDiagramCompareEntityKind, number>>((counts, entry) => {
+  const countsByKind = entriesMatchingSelectedChangeKinds.value.reduce<Record<PgmlDiagramCompareEntityKind, number>>((counts, entry) => {
     counts[entry.entityKind] = (counts[entry.entityKind] || 0) + 1
     return counts
   }, {
@@ -303,16 +288,19 @@ const isEntityKindFilterActive = (kind: PgmlDiagramCompareEntityKind) => {
   return selectedEntityKinds.value.includes(kind)
 }
 const hasActiveCompareFilters = computed(() => {
-  return normalizedSearchQuery.value.length > 0 || filterKind.value !== 'all' || hasEntityKindFilter.value
+  return normalizedSearchQuery.value.length > 0 || hasSelectedChangeKindFilters.value || hasEntityKindFilter.value
 })
 const isCompareNoiseFilterActive = (key: PgmlCompareNoiseFilterKey) => {
   return compareNoiseFilters[key]
+}
+const entryMatchesSelectedChangeKinds = (entry: PgmlDiagramCompareEntry) => {
+  return !hasSelectedChangeKindFilters.value || orderedSelectedChangeKinds.value.includes(entry.changeKind)
 }
 const entryMatchesCurrentFilters = (
   entry: PgmlDiagramCompareEntry,
   normalizedQuery: string
 ) => {
-  if (filterKind.value !== 'all' && entry.changeKind !== filterKind.value) {
+  if (!entryMatchesSelectedChangeKinds(entry)) {
     return false
   }
 
@@ -332,6 +320,21 @@ const buildCompareStats = (items: PgmlDiagramCompareEntry[]) => {
     modified: items.filter(entry => entry.changeKind === 'modified').length,
     removed: items.filter(entry => entry.changeKind === 'removed').length
   }
+}
+const buildVisibleChangeFilterLabel = (changeKinds: PgmlCompareStatKind[]) => {
+  const orderedKinds = compareStatKinds.filter(kind => changeKinds.includes(kind))
+
+  if (orderedKinds.length === 0) {
+    return 'All visible changes'
+  }
+
+  if (orderedKinds.length === 1) {
+    const selectedKind = orderedKinds[0]
+
+    return selectedKind ? `${compareStatLabelByKind[selectedKind]} only` : 'All visible changes'
+  }
+
+  return orderedKinds.map(kind => compareStatLabelByKind[kind]).join(' + ')
 }
 
 const filteredEntries = computed(() => {
@@ -400,7 +403,7 @@ const buildCompareExportInput = (): PgmlCompareExportInput => {
     relationshipSummary,
     searchQuery: searchQuery.value,
     targetLabel: detailTargetLabel.value,
-    visibleChangeFilter: filterKind.value
+    visibleChangeFilters: orderedSelectedChangeKinds.value
   }
 }
 const downloadCompareExport = (content: string, format: PgmlCompareExportFormat, mimeType: string) => {
@@ -468,11 +471,13 @@ const updateSelectedComparisonId = (value: unknown) => {
 }
 
 const isCompareFilterActive = (kind: PgmlCompareStatKind) => {
-  return filterKind.value === kind
+  return selectedChangeKinds.value.includes(kind)
 }
 
 const toggleCompareStatFilter = (kind: PgmlCompareStatKind) => {
-  filterKind.value = filterKind.value === kind ? 'all' : kind
+  selectedChangeKinds.value = selectedChangeKinds.value.includes(kind)
+    ? selectedChangeKinds.value.filter(value => value !== kind)
+    : [...selectedChangeKinds.value, kind]
 }
 
 const getCompareStatButtonStyle = (kind: PgmlCompareStatKind) => {
@@ -498,7 +503,7 @@ const clearSearch = () => {
 
 const clearFilters = () => {
   clearSearch()
-  filterKind.value = 'all'
+  selectedChangeKinds.value = []
   selectedEntityKinds.value = []
 }
 
@@ -555,21 +560,11 @@ const getCompareEntityFilterCountStyle = (kind: PgmlDiagramCompareEntityKind) =>
   }
 }
 
-const getCompareNoiseFilterButtonStyle = (key: PgmlCompareNoiseFilterKey) => {
-  const isActive = isCompareNoiseFilterActive(key)
-  const accent = 'var(--studio-shell-label)'
-
-  return {
-    backgroundColor: isActive
-      ? `color-mix(in srgb, ${accent} 16%, var(--studio-input-bg) 84%)`
-      : 'var(--studio-input-bg)',
-    borderColor: isActive
-      ? `color-mix(in srgb, ${accent} 52%, var(--studio-divider) 48%)`
-      : 'var(--studio-divider)',
-    color: isActive
-      ? 'var(--studio-shell-text)'
-      : 'var(--studio-shell-muted)'
-  }
+const getCompareNoiseFilterButtonClass = (key: PgmlCompareNoiseFilterKey) => {
+  return getStudioToggleChipClass({
+    active: isCompareNoiseFilterActive(key),
+    extraClass: compareNoiseFilterButtonClass
+  })
 }
 
 const isDetailViewModeActive = (mode: PgmlCompareDetailViewMode) => {
@@ -754,9 +749,8 @@ const toggleCompareNoiseFilter = (key: PgmlCompareNoiseFilterKey) => {
                 :key="option.key"
                 type="button"
                 :data-compare-noise-filter="option.key"
-                :class="compareNoiseFilterButtonClass"
+                :class="getCompareNoiseFilterButtonClass(option.key)"
                 :aria-pressed="isCompareNoiseFilterActive(option.key)"
-                :style="getCompareNoiseFilterButtonStyle(option.key)"
                 :title="option.description"
                 @click="toggleCompareNoiseFilter(option.key)"
               >
@@ -798,7 +792,7 @@ const toggleCompareNoiseFilter = (key: PgmlCompareNoiseFilterKey) => {
               {{ filteredEntries.length }} visible
             </span>
             <span :class="exclusionChipClass">
-              {{ compareFilterOptions.find(option => option.value === filterKind)?.label || 'All' }}
+              {{ buildVisibleChangeFilterLabel(orderedSelectedChangeKinds) }}
             </span>
             <span
               v-if="selectedEntityKinds.length > 0"
@@ -894,16 +888,6 @@ const toggleCompareNoiseFilter = (key: PgmlCompareNoiseFilterKey) => {
             placeholder="Filter changed entities"
             :class="joinStudioClasses(studioCompactInputClass, 'min-w-[12rem] flex-1')"
           >
-          <UButton
-            v-for="option in compareFilterOptions"
-            :key="option.value"
-            :label="option.label"
-            color="neutral"
-            :variant="filterKind === option.value ? 'soft' : 'outline'"
-            size="xs"
-            :class="filterKind === option.value ? activeFilterButtonClass : filterButtonClass"
-            @click="filterKind = option.value"
-          />
           <UButton
             v-if="hasActiveCompareFilters"
             label="Clear filters"

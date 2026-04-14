@@ -79,7 +79,7 @@ const buildCompareExportInput = (): PgmlCompareExportInput => {
     relationshipSummary: 'Current workspace increments directly from Baseline.',
     searchQuery: 'users',
     targetLabel: 'Current workspace',
-    visibleChangeFilter: 'all'
+    visibleChangeFilters: []
   }
 }
 
@@ -142,7 +142,7 @@ describe('PGML compare exports', () => {
         hideOrderOnly: true
       },
       targetLabel: 'Current workspace',
-      visibleChangeFilter: 'added'
+      visibleChangeFilters: ['added']
     })
 
     expect(html).toContain('No visible compare entries')
@@ -163,11 +163,20 @@ describe('PGML compare exports', () => {
         hideOrderOnly: true
       },
       targetLabel: 'Current workspace',
-      visibleChangeFilter: 'added'
+      visibleChangeFilters: ['added']
     })
 
     expect(markdown).toContain('## Changes')
     expect(markdown).toContain('No visible compare entries.')
     expect(markdown).toContain('- change filter: Added only')
+  })
+
+  it('renders a combined change-filter label when multiple change kinds remain visible', () => {
+    const markdown = buildPgmlCompareMarkdownExport({
+      ...buildCompareExportInput(),
+      visibleChangeFilters: ['added', 'modified']
+    })
+
+    expect(markdown).toContain('- change filter: Added + Modified')
   })
 })

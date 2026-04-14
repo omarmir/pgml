@@ -10,6 +10,7 @@ import {
 import {
   getStudioChoiceButtonClass,
   getStudioStateButtonClass,
+  getStudioTabButtonClass,
   getStudioToggleChipClass,
   studioPersistentSelectMenuProps,
   studioButtonClasses,
@@ -29,6 +30,9 @@ describe('studio ui modules', () => {
     expect(getStudioStateButtonClass({
       emphasized: true
     })).toContain('border-[color:var(--studio-shell-label)]')
+    expect(getStudioTabButtonClass({
+      active: true
+    })).toContain('shadow-[inset_0_-2px_0_0_var(--studio-shell-label)]')
   })
 
   it('exposes the shared modal and field primitives used across the studio', () => {

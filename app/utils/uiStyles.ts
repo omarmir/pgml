@@ -83,7 +83,7 @@ export const getStudioTabButtonClass = ({
     withTrailingBorder && 'border-r border-[color:var(--studio-divider)]',
     'px-3 py-2 font-mono text-[0.6rem] uppercase tracking-[0.08em] transition-colors duration-150',
     active
-      ? 'bg-[color:var(--studio-input-bg)] text-[color:var(--studio-shell-text)]'
+      ? 'bg-[color:var(--studio-input-bg)] font-semibold text-[color:var(--studio-shell-text)] shadow-[inset_0_-2px_0_0_var(--studio-shell-label)]'
       : 'text-[color:var(--studio-shell-muted)] hover:bg-[color:var(--studio-surface-hover)]'
   )
 }

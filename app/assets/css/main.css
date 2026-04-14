@@ -140,14 +140,19 @@ button,
 }
 
 .studio-button--primary {
-  background-color: var(--studio-input-bg) !important;
+  border-color: color-mix(in srgb, var(--studio-shell-label) 42%, var(--studio-shell-border)) !important;
+  background-color: color-mix(in srgb, var(--studio-input-bg) 88%, var(--studio-shell-label) 12%) !important;
+  box-shadow:
+    inset 0 1px 0 color-mix(in srgb, var(--studio-shell-text) 8%, transparent),
+    inset 0 0 0 1px color-mix(in srgb, var(--studio-shell-label) 18%, transparent) !important;
 }
 
 .studio-button--primary:hover,
 .studio-button--primary:focus-visible,
 .studio-button--primary[data-state='open'],
 .studio-button--primary[aria-expanded='true'] {
-  background-color: color-mix(in srgb, var(--studio-input-bg) 84%, var(--studio-shell-text) 16%) !important;
+  border-color: color-mix(in srgb, var(--studio-shell-label) 58%, var(--studio-shell-border)) !important;
+  background-color: color-mix(in srgb, var(--studio-input-bg) 74%, var(--studio-shell-label) 26%) !important;
 }
 
 .studio-button--ghost {

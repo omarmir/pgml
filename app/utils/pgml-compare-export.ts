@@ -7,6 +7,7 @@ import {
 
 export type PgmlCompareExportDetailViewMode = 'both' | 'snapshot' | 'structured'
 export type PgmlCompareHtmlExportDetailViewMode = PgmlCompareExportDetailViewMode
+export type PgmlCompareExportChangeFilterKind = 'added' | 'modified' | 'removed'
 
 export type PgmlCompareExportInput = {
   baseLabel: string
@@ -23,7 +24,7 @@ export type PgmlCompareExportInput = {
   relationshipSummary?: string
   searchQuery?: string
   targetLabel: string
-  visibleChangeFilter: 'all' | 'added' | 'modified' | 'removed'
+  visibleChangeFilters: PgmlCompareExportChangeFilterKind[]
 }
 
 type PgmlCompareEntryGroup = {
@@ -60,12 +61,12 @@ const compareChangeKindColorByValue: Readonly<Record<'added' | 'modified' | 'rem
   removed: '#be123c'
 })
 
-const compareVisibleChangeFilterLabelByValue: Readonly<Record<'all' | 'added' | 'modified' | 'removed', string>> = Object.freeze({
-  all: 'All visible changes',
-  added: 'Added only',
-  modified: 'Modified only',
-  removed: 'Removed only'
+const compareVisibleChangeFilterLabelByValue: Readonly<Record<PgmlCompareExportChangeFilterKind, string>> = Object.freeze({
+  added: 'Added',
+  modified: 'Modified',
+  removed: 'Removed'
 })
+const compareVisibleChangeFilterOrder: PgmlCompareExportChangeFilterKind[] = ['added', 'modified', 'removed']
 
 const compareDetailViewLabelByValue: Readonly<Record<PgmlCompareExportDetailViewMode, string>> = Object.freeze({
   both: 'Structured and snapshot diffs',
@@ -212,6 +213,22 @@ const buildVisibleNoiseFilterLabels = (noiseFilters: PgmlCompareNoiseFilters) =>
 
     return [compareNoiseFilterLabelByKey[key as keyof PgmlCompareNoiseFilters]]
   })
+}
+
+const buildVisibleChangeFilterLabel = (visibleChangeFilters: PgmlCompareExportChangeFilterKind[]) => {
+  const orderedFilters = compareVisibleChangeFilterOrder.filter(filter => visibleChangeFilters.includes(filter))
+
+  if (orderedFilters.length === 0) {
+    return 'All visible changes'
+  }
+
+  if (orderedFilters.length === 1) {
+    const selectedFilter = orderedFilters[0]
+
+    return selectedFilter ? `${compareVisibleChangeFilterLabelByValue[selectedFilter]} only` : 'All visible changes'
+  }
+
+  return orderedFilters.map(filter => compareVisibleChangeFilterLabelByValue[filter]).join(' + ')
 }
 
 const buildEntityKindSections = (entries: PgmlDiagramCompareEntry[]) => {
@@ -673,7 +690,7 @@ export const buildPgmlCompareHtmlExport = (input: PgmlCompareExportInput) => {
           <h2>Current compare state</h2>
           <dl class="meta-list">
             ${renderHtmlMetaRow('Exported', escapeHtml(input.exportedAtLabel))}
-            ${renderHtmlMetaRow('Visible change filter', escapeHtml(compareVisibleChangeFilterLabelByValue[input.visibleChangeFilter]))}
+            ${renderHtmlMetaRow('Visible change filter', escapeHtml(buildVisibleChangeFilterLabel(input.visibleChangeFilters)))}
             ${renderHtmlMetaRow('Detail view', escapeHtml(compareDetailViewLabelByValue[input.detailViewMode]))}
             ${renderHtmlMetaRow('Visible entries', escapeHtml(`${input.entries.length}`))}
           </dl>
@@ -745,7 +762,7 @@ export const buildPgmlCompareMarkdownExport = (input: PgmlCompareExportInput) =>
     `- comparison: ${escapeMarkdown(input.comparisonLabel)}`,
     `- base: ${escapeMarkdown(input.baseLabel)}`,
     `- target: ${escapeMarkdown(input.targetLabel)}`,
-    `- change filter: ${escapeMarkdown(compareVisibleChangeFilterLabelByValue[input.visibleChangeFilter])}`,
+    `- change filter: ${escapeMarkdown(buildVisibleChangeFilterLabel(input.visibleChangeFilters))}`,
     `- detail view: ${escapeMarkdown(compareDetailViewLabelByValue[input.detailViewMode])}`,
     `- visible entries: ${input.entries.length}`,
     `- entity kinds: ${visibleEntityKindFilters.length > 0 ? escapeMarkdown(visibleEntityKindFilters.join(', ')) : 'All entity kinds'}`,

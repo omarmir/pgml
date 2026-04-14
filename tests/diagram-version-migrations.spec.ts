@@ -1014,7 +1014,7 @@ Table public.orders {
 
   await modifiedStat.click()
   await expect(modifiedStat).toHaveAttribute('aria-pressed', 'true')
-  await expect(addedTableScope).toHaveCount(0)
+  await expect(addedTableScope).toBeVisible()
   await expect(modifiedTableScope).toBeVisible()
   await expect(modifiedColumnEntry).toBeVisible()
   await expect(removedTableScope).toHaveCount(0)
@@ -1022,9 +1022,9 @@ Table public.orders {
 
   await removedStat.click()
   await expect(removedStat).toHaveAttribute('aria-pressed', 'true')
-  await expect(addedTableScope).toHaveCount(0)
-  await expect(modifiedTableScope).toHaveCount(0)
-  await expect(modifiedColumnEntry).toHaveCount(0)
+  await expect(addedTableScope).toBeVisible()
+  await expect(modifiedTableScope).toBeVisible()
+  await expect(modifiedColumnEntry).toBeVisible()
   await expect(removedTableScope).toBeVisible()
   await expectComparePanelWithinContainer(page)
 
@@ -1033,7 +1033,7 @@ Table public.orders {
   await expect(addedTableScope).toBeVisible()
   await expect(modifiedTableScope).toBeVisible()
   await expect(modifiedColumnEntry).toBeVisible()
-  await expect(removedTableScope).toBeVisible()
+  await expect(removedTableScope).toHaveCount(0)
   await expectComparePanelWithinContainer(page)
 })
 
@@ -1580,6 +1580,11 @@ Table public.common_review {
 
   await modifiedStat.click()
   await expect(modifiedStat).toHaveAttribute('aria-pressed', 'true')
+  await expect(referenceEntry).toBeVisible()
+  await expect(columnEntry).toHaveCount(0)
+
+  await addedStat.click()
+  await expect(addedStat).toHaveAttribute('aria-pressed', 'false')
   await expect(referenceEntry).toHaveCount(0)
   await expect(columnEntry).toHaveCount(0)
   await expect(comparePanel).toContainText('No diff entries match the current filter.')
