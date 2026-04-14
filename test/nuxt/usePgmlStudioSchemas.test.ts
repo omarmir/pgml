@@ -3,6 +3,8 @@ import { defineComponent } from 'vue'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { usePgmlStudioSchemas } from '../../app/composables/usePgmlStudioSchemas'
+import { usePgmlStudioVersionHistory } from '../../app/composables/usePgmlStudioVersionHistory'
+import { useStudioSessionStore } from '../../app/stores/studio-session'
 
 const installLocalStorage = () => {
   const values = new Map<string, string>()
@@ -335,6 +337,153 @@ describe('usePgmlStudioSchemas', () => {
     expect(api.hasSavedSchemaInSession.value).toBe(true)
     expect(api.isSavedToLocalStorage.value).toBe(true)
     expect(api.hasPendingLocalChanges.value).toBe(false)
+  })
+
+  it('autosaves embedded layout changes even when download exports exclude layout', async () => {
+    vi.useFakeTimers()
+
+    const source = ref('Table public.users {\n  id uuid [pk]\n}')
+    const embeddedLayoutSuffix = ref('')
+    let api!: ReturnType<typeof usePgmlStudioSchemas>
+
+    await mountSuspended(defineComponent({
+      setup() {
+        const studioSessionStore = useStudioSessionStore()
+
+        studioSessionStore.includeLayoutInSchema = false
+        api = usePgmlStudioSchemas({
+          buildSchemaText: (includeLayout) => {
+            return includeLayout
+              ? `${source.value}${embeddedLayoutSuffix.value}`
+              : source.value
+          },
+          canEmbedLayout: computed(() => true),
+          initialSource: 'Table public.example {\n  id uuid [pk]\n}',
+          source
+        })
+
+        return () => null
+      }
+    }))
+
+    embeddedLayoutSuffix.value = '\n\nProperties "group:Core" {\n  masonry: true\n}'
+
+    expect(api.hasPendingLocalChanges.value).toBe(true)
+
+    await vi.advanceTimersByTimeAsync(5000)
+
+    const persisted = JSON.parse(window.localStorage.getItem('pgml-studio-schemas-v1') || '[]')
+
+    expect(persisted).toHaveLength(1)
+    expect(persisted[0]?.text).toContain('Properties "group:Core" {')
+    expect(persisted[0]?.text).toContain('masonry: true')
+    expect(api.hasSavedSchemaInSession.value).toBe(true)
+    expect(api.isSavedToLocalStorage.value).toBe(true)
+    expect(api.hasPendingLocalChanges.value).toBe(false)
+  })
+
+  it('autosaves the debounced browser snapshot instead of recomputing stale schema text', async () => {
+    vi.useFakeTimers()
+
+    const source = ref('Table public.users {\n  id uuid [pk]\n}')
+    const serializedDocumentText = ref(source.value)
+    let api!: ReturnType<typeof usePgmlStudioSchemas>
+    let useStaleSerializedText = false
+    let staleSerializedText = source.value
+
+    await mountSuspended(defineComponent({
+      setup() {
+        api = usePgmlStudioSchemas({
+          buildSchemaText: () => {
+            return useStaleSerializedText ? staleSerializedText : serializedDocumentText.value
+          },
+          canEmbedLayout: computed(() => true),
+          initialSource: 'Table public.example {\n  id uuid [pk]\n}',
+          source
+        })
+
+        return () => null
+      }
+    }))
+
+    serializedDocumentText.value = `${source.value}\n\nProperties "group:Core" {\n  masonry: true\n}`
+    await nextTick()
+    expect(api.hasPendingLocalChanges.value).toBe(true)
+    staleSerializedText = source.value
+    useStaleSerializedText = true
+
+    await vi.advanceTimersByTimeAsync(5000)
+
+    const persisted = JSON.parse(window.localStorage.getItem('pgml-studio-schemas-v1') || '[]')
+
+    expect(persisted).toHaveLength(1)
+    expect(persisted[0]?.text).toContain('masonry: true')
+    expect(api.hasPendingLocalChanges.value).toBe(false)
+  })
+
+  it('autosaves real version-history layout changes when the workspace PGML changes', async () => {
+    vi.useFakeTimers()
+
+    const source = ref(`TableGroup Core {
+  public.users
+}
+
+Table public.users in Core {
+  id uuid [pk]
+}`)
+    let schemaApi!: ReturnType<typeof usePgmlStudioSchemas>
+    let versionHistoryApi!: ReturnType<typeof usePgmlStudioVersionHistory>
+
+    await mountSuspended(defineComponent({
+      setup() {
+        versionHistoryApi = usePgmlStudioVersionHistory({
+          documentName: computed(() => 'Example schema'),
+          source
+        })
+        schemaApi = usePgmlStudioSchemas({
+          buildSchemaText: (includeLayout) => {
+            return versionHistoryApi.serializeCurrentDocument(includeLayout, source.value)
+          },
+          canEmbedLayout: computed(() => true),
+          initialSource: source.value,
+          source
+        })
+
+        return () => null
+      }
+    }))
+
+    expect(versionHistoryApi.updateCurrentDiagramViewNodeProperties({
+      'group:Core': {
+        color: '#8b5cf6',
+        masonry: true,
+        tableColumns: 1,
+        x: 120,
+        y: 90
+      }
+    })).toBe(true)
+
+    expect(source.value).toContain('Properties "group:Core" {')
+    expect(source.value).toContain('masonry: true')
+    expect(versionHistoryApi.document.value.workspace.views[0]?.nodeProperties['group:Core']).toEqual({
+      color: '#8b5cf6',
+      masonry: true,
+      tableColumns: 1,
+      x: 120,
+      y: 90
+    })
+    expect(versionHistoryApi.serializeCurrentDocument(true)).toContain('masonry: true')
+    expect(versionHistoryApi.serializeCurrentDocument(true, source.value)).toContain('masonry: true')
+    expect(schemaApi.hasPendingLocalChanges.value).toBe(true)
+
+    await vi.advanceTimersByTimeAsync(5000)
+
+    const persisted = JSON.parse(window.localStorage.getItem('pgml-studio-schemas-v1') || '[]')
+
+    expect(persisted).toHaveLength(1)
+    expect(persisted[0]?.text).toContain('Properties "group:Core" {')
+    expect(persisted[0]?.text).toContain('masonry: true')
+    expect(schemaApi.hasPendingLocalChanges.value).toBe(false)
   })
 
   it('keeps pending changes and exposes an error when local storage saving fails', async () => {

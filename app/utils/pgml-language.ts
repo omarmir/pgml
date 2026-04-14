@@ -1204,7 +1204,7 @@ const collectTopLevelReference = (
       diagnostics,
       'pgml/ref-top-level',
       'error',
-      'Top-level refs must use `Ref: table.column > table.column` or `Ref name: table.(column_a, column_b) > table.(column_a, column_b)`.',
+      'Top-level refs must use `Ref: table.column > table.column` or `Ref name: table.(column_a, column_b) > table.(column_a, column_b)`, with optional `[delete: ..., update: ...]` actions.',
       line
     )
     return

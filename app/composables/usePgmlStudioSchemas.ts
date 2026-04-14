@@ -56,8 +56,14 @@ export const usePgmlStudioSchemas = ({
 
   const schemaActionTitle = computed(() => schemaDialogMode.value === 'save' ? 'Save schema' : 'Download schema')
   const schemaActionDescription = computed(() => {
+    if (schemaDialogMode.value === 'save') {
+      return canEmbedLayout.value
+        ? 'Save the current PGML to browser local storage. Browser saves always include the current canvas layout so autosave stays aligned with the saved schema.'
+        : 'The current PGML has a parse error, so only the raw text can be saved right now.'
+    }
+
     return canEmbedLayout.value
-      ? 'Choose a name and decide whether to embed the current canvas layout into the PGML text.'
+      ? 'Choose whether to embed the current canvas layout into the downloaded PGML text.'
       : 'The current PGML has a parse error, so only the raw text can be saved right now.'
   })
   const saveSchemaTarget = computed(() => {
@@ -78,11 +84,17 @@ export const usePgmlStudioSchemas = ({
   const getAutosaveName = () => {
     return normalizeSchemaName(currentSchemaName.value)
   }
-  const getAutosaveText = () => {
-    return buildSchemaText(includeLayoutInSchema.value)
+  const getPersistedText = () => {
+    return buildSchemaText(true)
   }
   const getCurrentSnapshot = () => {
-    return getSnapshot(getAutosaveName(), getAutosaveText())
+    return getSnapshot(getAutosaveName(), getPersistedText())
+  }
+  const parseSnapshot = (snapshot: string) => {
+    return JSON.parse(snapshot) as {
+      name: string
+      text: string
+    }
   }
   const currentSnapshot = computed(() => {
     return getCurrentSnapshot()
@@ -232,10 +244,11 @@ export const usePgmlStudioSchemas = ({
     return true
   }
 
-  const persistCurrentSchemaToBrowser = async (options: PersistSchemaOptions) => {
-    const name = normalizeSchemaName(currentSchemaName.value)
-    const text = buildSchemaText(includeLayoutInSchema.value)
-
+  const persistSnapshotToBrowser = async (
+    snapshot: string,
+    options: PersistSchemaOptions
+  ) => {
+    const { name, text } = parseSnapshot(snapshot)
     isSavingToLocalStorage.value = true
     try {
       const didSave = persistSchemaToBrowser(name, text, options)
@@ -249,6 +262,24 @@ export const usePgmlStudioSchemas = ({
       return false
     } finally {
       isSavingToLocalStorage.value = false
+    }
+  }
+  const persistCurrentSchemaToBrowser = async (options: PersistSchemaOptions) => {
+    return persistSnapshotToBrowser(currentSnapshot.value, options)
+  }
+  const persistAutosaveSnapshotsToBrowser = async (snapshot: string) => {
+    let nextSnapshot = snapshot
+
+    while (nextSnapshot !== lastPersistedSnapshot.value) {
+      const didSave = await persistSnapshotToBrowser(nextSnapshot, {
+        closeDialog: false
+      })
+
+      if (!didSave || nextSnapshot === currentSnapshot.value) {
+        return
+      }
+
+      nextSnapshot = currentSnapshot.value
     }
   }
 
@@ -336,9 +367,7 @@ export const usePgmlStudioSchemas = ({
       return
     }
 
-    await persistCurrentSchemaToBrowser({
-      closeDialog: false
-    })
+    await persistAutosaveSnapshotsToBrowser(nextSnapshot)
   }, {
     debounce: schemaAutosaveDebounceMs,
     maxWait: schemaAutosaveDebounceMs

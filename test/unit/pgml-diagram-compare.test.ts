@@ -328,6 +328,34 @@ Table public.accounts {
     })
   })
 
+  it('treats materially equivalent inline and top-level refs as compare-noise-free no-ops', () => {
+    const baseModel = parseSnapshotModel(`Table public.users {
+  id uuid [pk]
+}
+
+Table public.orders {
+  id uuid [pk]
+  user_id uuid
+}
+
+Ref orders_user_ref: public.orders.user_id > public.users.id [delete: restrict, update: no action]`)
+    const targetModel = parseSnapshotModel(`Table public.users {
+  id uuid [pk]
+}
+
+Table public.orders {
+  id uuid [pk]
+  user_id uuid [ref: > public.users.id, delete: restrict, update: no action]
+}`)
+    const entries = buildPgmlDiagramCompareEntries(
+      diffPgmlSchemaModels(baseModel, targetModel),
+      baseModel,
+      targetModel
+    )
+
+    expect(entries).toEqual([])
+  })
+
   it('builds layout compare entries with diagram-target selections', () => {
     const baseModel = parseSnapshotModel(`TableGroup Analytics {
   public.users

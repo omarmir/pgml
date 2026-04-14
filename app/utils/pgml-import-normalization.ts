@@ -421,8 +421,15 @@ const normalizeReferenceLine = (
   const normalizedName = declaration.name
     ? ` ${normalizeImportedIdentifier(declaration.name, options)}`
     : ''
+  const normalizedActions = [
+    declaration.onDelete ? `delete: ${declaration.onDelete}` : null,
+    declaration.onUpdate ? `update: ${declaration.onUpdate}` : null
+  ].filter((entry): entry is string => entry !== null)
+  const normalizedOptions = normalizedActions.length > 0
+    ? ` [${normalizedActions.join(', ')}]`
+    : ''
 
-  return `Ref${normalizedName}: ${buildReferenceEndpoint(declaration.fromTable, declaration.fromColumns, options)} ${declaration.relation} ${buildReferenceEndpoint(declaration.toTable, declaration.toColumns, options)}`
+  return `Ref${normalizedName}: ${buildReferenceEndpoint(declaration.fromTable, declaration.fromColumns, options)} ${declaration.relation} ${buildReferenceEndpoint(declaration.toTable, declaration.toColumns, options)}${normalizedOptions}`
 }
 
 const normalizeTableGroupLine = (

@@ -495,7 +495,7 @@ Table public.accounts {
   entity_type text [not null]
 }
 
-Ref account_user_ref: public.accounts.(user_id, entity_type) > public.users.(id, status)`
+Ref account_user_ref: public.accounts.(user_id, entity_type) > public.users.(id, status) [delete: restrict, update: no action]`
     const model = parsePgml(source)
     const usersTable = model.tables.find(table => table.fullName === 'public.users')
     const namedReference = model.references.find(reference => reference.name === 'account_user_ref')
@@ -528,6 +528,8 @@ AND email = ''
       fromColumn: 'user_id',
       fromColumns: ['user_id', 'entity_type'],
       name: 'account_user_ref',
+      onDelete: 'restrict',
+      onUpdate: 'no action',
       toColumn: 'id',
       toColumns: ['id', 'status']
     }))

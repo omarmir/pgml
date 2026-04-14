@@ -239,6 +239,39 @@ test('studio autosaves changes to local storage and updates the header status ic
   })
 })
 
+test('browser autosave ignores the download layout preference for UI-driven PGML changes', async ({ goto, page }) => {
+  await goto('/diagram')
+  const editor = getPgmlEditor(page)
+
+  await page.getByRole('button', { name: 'Schema' }).click()
+  await page.getByRole('menuitem', { name: 'Download schema' }).click()
+  await page.getByRole('switch', { name: 'Include current layout' }).click()
+  await page.getByRole('button', { name: 'Cancel' }).click()
+
+  await page.locator('[data-node-anchor="group:Core"]').dispatchEvent('click')
+  await page.getByRole('switch', { name: 'Masonry' }).click()
+  await expect.poll(async () => readPgmlEditorValue(editor), {
+    timeout: 8000
+  }).toMatch(/Properties "group:Core" \{[\s\S]*masonry: true/)
+  await expect(page.locator('[data-studio-schema-status]')).toHaveAttribute('data-studio-schema-status', 'pending')
+
+  await expect.poll(async () => {
+    return page.evaluate(() => {
+      const savedSchemas = JSON.parse(window.localStorage.getItem('pgml-studio-schemas-v1') || '[]')
+
+      return {
+        count: savedSchemas.length,
+        text: savedSchemas[0]?.text || ''
+      }
+    })
+  }, {
+    timeout: 8000
+  }).toEqual({
+    count: 1,
+    text: expect.stringMatching(/Properties "group:Core" \{[\s\S]*masonry: true/)
+  })
+})
+
 test('browser-backed checkpoint creation autosaves version history changes', async ({ goto, page }) => {
   await goto('/diagram')
 
@@ -278,6 +311,52 @@ test('browser-backed checkpoint creation autosaves version history changes', asy
     count: 1,
     status: 'saved',
     text: expect.stringContaining('Autosaved browser checkpoint')
+  })
+})
+
+test('file-backed checkpoint creation autosaves version history changes back to the selected file', async ({ goto, page }) => {
+  await installMockComputerFiles(page)
+  await goto('/')
+  const recentFileId = await primeMockComputerFile(page, {
+    fileName: 'autosave-checkpoint.pgml',
+    text: `Table public.users {
+  id uuid [pk]
+  email text
+}`,
+    updatedAt: '2026-03-20T11:00:00.000Z'
+  })
+
+  await goto(`/diagram?source=file&launch=recent&file=${recentFileId}`)
+
+  const editor = getPgmlEditor(page)
+
+  await expect.poll(async () => readPgmlEditorValue(editor)).toContain('Table public.users')
+
+  await page.locator('[data-diagram-tool-toggle="versions"]').click()
+  await page.locator('[data-version-create-checkpoint="true"]').click()
+
+  const checkpointDialog = page.locator('[data-studio-modal-surface="checkpoint"]')
+
+  await expect(checkpointDialog).toBeVisible()
+  await checkpointDialog.getByPlaceholder('Checkpoint name').fill('Autosaved file checkpoint')
+  await checkpointDialog.getByRole('button', { name: 'Create design checkpoint' }).click()
+  await expect(checkpointDialog).toHaveCount(0)
+
+  await expect(page.locator('[data-studio-schema-status]')).toHaveAttribute('data-studio-schema-status', 'pending')
+
+  await expect.poll(async () => {
+    const state = await readMockComputerFileState(page)
+    const status = await page.locator('[data-studio-schema-status]').getAttribute('data-studio-schema-status')
+
+    return {
+      status,
+      text: recentFileId ? state?.files[recentFileId]?.text || '' : ''
+    }
+  }, {
+    timeout: 8000
+  }).toEqual({
+    status: 'saved',
+    text: expect.stringContaining('Autosaved file checkpoint')
   })
 })
 
@@ -491,6 +570,53 @@ test('file-backed studio saves back to the selected computer file', async ({ got
 
     return recentFileId ? state?.files[recentFileId]?.text || '' : ''
   }).toContain('status text')
+})
+
+test('file-backed group layout property changes autosave back to the selected file', async ({ goto, page }) => {
+  await installMockComputerFiles(page)
+  await goto('/')
+  const recentFileId = await primeMockComputerFile(page, {
+    fileName: 'group-layout-file.pgml',
+    text: `TableGroup Core {
+  public.tenants
+  public.users
+}
+
+Table public.tenants {
+  id uuid [pk]
+}
+
+Table public.users {
+  id uuid [pk]
+}`,
+    updatedAt: '2026-03-20T11:00:00.000Z'
+  })
+
+  await goto(`/diagram?source=file&launch=recent&file=${recentFileId}`)
+
+  const editor = getPgmlEditor(page)
+
+  await expect.poll(async () => readPgmlEditorValue(editor)).toContain('TableGroup Core')
+
+  await page.getByRole('button', { name: 'Schema' }).click()
+  await page.getByRole('menuitem', { name: 'Save schema' }).click()
+  await expect(page.getByText('Include current layout')).toHaveCount(0)
+  await page.getByRole('button', { name: 'Cancel' }).click()
+
+  await page.locator('[data-node-anchor="group:Core"]').dispatchEvent('click')
+  await page.getByRole('switch', { name: 'Masonry' }).click()
+  await expect.poll(async () => readPgmlEditorValue(editor), {
+    timeout: 8000
+  }).toMatch(/Properties "group:Core" \{[\s\S]*masonry: true/)
+  await expect(page.locator('[data-studio-schema-status]')).toHaveAttribute('data-studio-schema-status', 'pending')
+
+  await expect.poll(async () => {
+    const state = await readMockComputerFileState(page)
+
+    return recentFileId ? state?.files[recentFileId]?.text || '' : ''
+  }, {
+    timeout: 8000
+  }).toMatch(/Properties "group:Core" \{[\s\S]*masonry: true/)
 })
 
 test('file-backed save asks for permission again after access is reset', async ({ goto, page }) => {

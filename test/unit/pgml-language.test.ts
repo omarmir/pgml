@@ -71,7 +71,7 @@ Table public.accounts {
   entity_type text [not null]
 }
 
-Ref account_user_ref: public.accounts.(user_id, entity_type) > public.users.(id, status)`
+Ref account_user_ref: public.accounts.(user_id, entity_type) > public.users.(id, status) [delete: restrict, update: no action]`
 
     const analysis = analyzePgmlDocument(source)
 

@@ -35,6 +35,36 @@ Ref: users.id < orders.user_id`
     expect(model.references).toHaveLength(1)
   })
 
+  it('preserves top-level reference actions during DBML import normalization', () => {
+    const result = convertDbmlToPgml({
+      dbml: `Table users {
+  id uuid [pk]
+}
+
+Table orders {
+  id uuid [pk]
+  user_id uuid
+}
+
+Ref: users.id < orders.user_id [delete: restrict, update: no action]`
+    })
+
+    const model = parsePgml(result.pgml)
+
+    expect(result.pgml).toContain('Ref: public.users.id < public.orders.user_id [delete: restrict, update: no action]')
+    expect(model.references).toEqual([
+      expect.objectContaining({
+        fromColumn: 'id',
+        fromTable: 'public.users',
+        onDelete: 'restrict',
+        onUpdate: 'no action',
+        relation: '<',
+        toColumn: 'user_id',
+        toTable: 'public.orders'
+      })
+    ])
+  })
+
   it('derives imported schema names from the preferred file name when there is no Project block', () => {
     expect(deriveDbmlSchemaName({
       preferredName: 'billing.dbml'

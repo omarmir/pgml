@@ -502,11 +502,16 @@ export const usePgmlStudioVersionHistory = (
   })
   const buildNamedWorkingDocument = (options?: {
     includeLayout?: boolean
+    source?: string
     updatedAt?: string | null
   }) => {
     // The editor owns the mutable workspace text, so any serialized document
     // view needs to rebuild the current workspace snapshot before it is shown.
-    const workingDocument = buildWorkspaceSyncedDocument(documentState.value, input.source.value, options)
+    const workingDocument = buildWorkspaceSyncedDocument(
+      documentState.value,
+      options?.source === undefined ? input.source.value : options.source,
+      options
+    )
 
     workingDocument.name = input.documentName.value
 
@@ -907,10 +912,14 @@ export const usePgmlStudioVersionHistory = (
     }
   })
 
-  const serializeCurrentDocument = (includeLayout: boolean) => {
+  const serializeCurrentDocument = (
+    includeLayout: boolean,
+    source = input.source.value
+  ) => {
     const workingDocument = clonePgmlVersionSetDocument(
       buildNamedWorkingDocument({
-        includeLayout
+        includeLayout,
+        source
       })
     )
     workingDocument.versions = workingDocument.versions.map((version) => {

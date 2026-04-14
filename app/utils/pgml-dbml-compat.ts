@@ -4,6 +4,8 @@ export type PgmlCompatibleReferenceDeclaration = {
   fromColumns: string[]
   fromTable: string
   name: string | null
+  onDelete: string | null
+  onUpdate: string | null
   relation: PgmlCompatibleRelation
   toColumns: string[]
   toTable: string
@@ -37,6 +39,33 @@ const splitBracketParts = (value: string) => {
     .split(',')
     .map(part => part.trim())
     .filter(part => part.length > 0)
+}
+
+const getBracketOptionValue = (
+  options: string[],
+  key: string
+) => {
+  const option = options.find((entry) => {
+    return entry.toLowerCase().startsWith(`${key}:`)
+  })
+
+  if (!option) {
+    return null
+  }
+
+  return option.slice(option.indexOf(':') + 1).trim().toLowerCase()
+}
+
+const parseReferenceEndpointWithOptions = (value: string) => {
+  const match = value.trim().match(/^(.*?)(?:\s*\[([^\]]+)\])?$/)
+  const endpoint = cleanName(match?.[1] || value)
+  const options = match?.[2] ? splitBracketParts(match[2]) : []
+
+  return {
+    endpoint,
+    onDelete: getBracketOptionValue(options, 'delete'),
+    onUpdate: getBracketOptionValue(options, 'update')
+  }
 }
 
 const findSourceDelimiter = (line: string) => {
@@ -235,7 +264,8 @@ export const parsePgmlCompatibleReference = (value: string): PgmlCompatibleRefer
 
   const fromTarget = parseReferenceEndpoint(declarationMatch[2] || '')
   const relation = (declarationMatch[3] || '>') as PgmlCompatibleRelation
-  const toTarget = parseReferenceEndpoint(declarationMatch[4] || '')
+  const parsedTarget = parseReferenceEndpointWithOptions(declarationMatch[4] || '')
+  const toTarget = parseReferenceEndpoint(parsedTarget.endpoint)
 
   if (fromTarget.table.length === 0 || toTarget.table.length === 0) {
     return null
@@ -253,6 +283,8 @@ export const parsePgmlCompatibleReference = (value: string): PgmlCompatibleRefer
     fromColumns: fromTarget.columns,
     fromTable: fromTarget.table,
     name: declarationMatch[1] ? cleanName(declarationMatch[1]) : null,
+    onDelete: parsedTarget.onDelete,
+    onUpdate: parsedTarget.onUpdate,
     relation,
     toColumns: toTarget.columns,
     toTable: toTarget.table

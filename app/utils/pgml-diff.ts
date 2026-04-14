@@ -351,6 +351,24 @@ const normalizeConstraintValue = (constraint: PgmlConstraint) => {
   }
 }
 
+const normalizeReferenceValue = (reference: PgmlReference) => {
+  return {
+    fromColumn: reference.fromColumn,
+    fromColumns: reference.fromColumns && reference.fromColumns.length > 0
+      ? [...reference.fromColumns]
+      : [reference.fromColumn],
+    fromTable: reference.fromTable,
+    onDelete: reference.onDelete,
+    onUpdate: reference.onUpdate,
+    relation: reference.relation,
+    toColumn: reference.toColumn,
+    toColumns: reference.toColumns && reference.toColumns.length > 0
+      ? [...reference.toColumns]
+      : [reference.toColumn],
+    toTable: reference.toTable
+  }
+}
+
 const normalizeLayoutValue = (value: PgmlNodeProperties) => {
   return value
 }
@@ -737,7 +755,7 @@ export const diffPgmlSchemaModels = (
     buildReferenceMap(beforeModel.references),
     buildReferenceMap(afterModel.references),
     (_id, value) => `${value.fromTable}.${value.fromColumn} -> ${value.toTable}.${value.toColumn}`,
-    value => value
+    normalizeReferenceValue
   )
   const columns = buildDiffEntries(
     beforeColumns,

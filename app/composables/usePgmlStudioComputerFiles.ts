@@ -81,11 +81,22 @@ export const usePgmlStudioComputerFiles = ({
       text
     })
   }
-  const getCurrentSnapshot = () => {
-    return getSnapshot(buildSchemaText(true))
+  const getCurrentText = () => {
+    return buildSchemaText(true)
   }
+  const getCurrentSnapshot = () => {
+    return getSnapshot(getCurrentText())
+  }
+  const parseSnapshot = (snapshot: string) => {
+    return JSON.parse(snapshot) as {
+      text: string
+    }
+  }
+  const currentSnapshot = computed(() => {
+    return getCurrentSnapshot()
+  })
   const hasPendingComputerFileChanges = computed(() => {
-    return currentComputerFileId.value !== null && lastPersistedSnapshot.value !== getCurrentSnapshot()
+    return currentComputerFileId.value !== null && lastPersistedSnapshot.value !== currentSnapshot.value
   })
   const isSavedToComputerFile = computed(() => {
     return currentComputerFileId.value !== null && !hasPendingComputerFileChanges.value
@@ -135,7 +146,7 @@ export const usePgmlStudioComputerFiles = ({
     currentComputerFileName.value = payload.entry.name
     currentComputerFileUpdatedAt.value = payload.entry.updatedAt
     hasSavedComputerFileInSession.value = false
-    lastPersistedSnapshot.value = getSnapshot(buildSchemaText(true))
+    lastPersistedSnapshot.value = getSnapshot(payload.text)
     computerFileSaveError.value = null
   }
 
@@ -212,8 +223,8 @@ export const usePgmlStudioComputerFiles = ({
     }
   }
 
-  const saveSchemaToComputerFile = async (includeLayout: boolean) => {
-    const text = buildSchemaText(includeLayout)
+  const saveSchemaToComputerFile = async () => {
+    const text = getCurrentText()
 
     isSavingToComputerFile.value = true
 
@@ -228,12 +239,27 @@ export const usePgmlStudioComputerFiles = ({
   }
 
   const formatSavedAt = (value: string) => formatSavedPgmlSchemaTime(value)
+  const persistAutosaveSnapshotsToCurrentComputerFile = async (snapshot: string) => {
+    let nextSnapshot = snapshot
+
+    while (nextSnapshot !== lastPersistedSnapshot.value) {
+      const didSave = await persistCurrentComputerFile(parseSnapshot(nextSnapshot).text, {
+        interactive: false
+      })
+
+      if (!didSave || nextSnapshot === currentSnapshot.value) {
+        return
+      }
+
+      nextSnapshot = currentSnapshot.value
+    }
+  }
 
   if (import.meta.client) {
     void refreshRecentComputerFiles()
   }
 
-  watchDebounced(source, async () => {
+  watchDebounced(currentSnapshot, async (nextSnapshot) => {
     if (
       !autosaveEnabled.value
       || !passiveComputerFileWritesSupported.value
@@ -241,9 +267,6 @@ export const usePgmlStudioComputerFiles = ({
     ) {
       return
     }
-
-    const nextSnapshot = getCurrentSnapshot()
-
     if (nextSnapshot === lastPersistedSnapshot.value) {
       return
     }
@@ -251,9 +274,7 @@ export const usePgmlStudioComputerFiles = ({
     isSavingToComputerFile.value = true
 
     try {
-      await persistCurrentComputerFile(buildSchemaText(true), {
-        interactive: false
-      })
+      await persistAutosaveSnapshotsToCurrentComputerFile(nextSnapshot)
     } finally {
       await nextTick()
       isSavingToComputerFile.value = false

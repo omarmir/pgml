@@ -777,7 +777,13 @@ const getLiveWorkspaceSource = () => {
     return source.value
   }
 
-  return editorRef.value?.getValue() || source.value
+  if (!editorRef.value?.hasPendingChanges()) {
+    return source.value
+  }
+
+  const editorValue = editorRef.value.getValue()
+
+  return editorValue === source.value ? source.value : editorValue
 }
 
 const waitForLatestWorkspaceAnalysis = async () => {
@@ -810,9 +816,9 @@ const flushPendingEditorChanges = async (options: {
 }
 
 const buildSchemaText = (includeLayout: boolean) => {
-  const shouldIncludeLayout = includeLayout && canEmbedLayout.value && canvasRef.value !== null
+  const shouldIncludeLayout = includeLayout && canEmbedLayout.value
 
-  return serializeCurrentDocument(shouldIncludeLayout)
+  return serializeCurrentDocument(shouldIncludeLayout, getLiveWorkspaceSource())
 }
 
 const markBrowserSchemaStatusEligible = () => {
@@ -1104,8 +1110,8 @@ const schemaActionDescriptionText = computed(() => {
   if (currentPersistenceSource.value === 'file') {
     return canEmbedLayout.value
       ? passiveComputerFileWritesSupported.value
-        ? 'Save the current PGML back to the selected `.pgml` file on your computer and optionally embed the current canvas layout.'
-        : 'Mobile Chrome requires explicit saves for `.pgml` files, so use Save to write the current PGML back to the selected file and optionally embed the current canvas layout.'
+        ? 'Save the current PGML back to the selected `.pgml` file on your computer. File-backed saves always include the current canvas layout so autosave stays aligned with the selected file.'
+        : 'Mobile Chrome requires explicit saves for `.pgml` files, so use Save to write the current PGML back to the selected file. File-backed saves always include the current canvas layout when PGML can be parsed.'
       : passiveComputerFileWritesSupported.value
         ? 'The current PGML has a parse error, so only the raw text can be written back to the selected file right now.'
         : 'Mobile Chrome requires explicit saves for `.pgml` files, and the current PGML has a parse error, so only the raw text can be written back to the selected file right now.'
@@ -2082,7 +2088,7 @@ const saveCurrentSchema = async () => {
   })
 
   if (currentPersistenceSource.value === 'file') {
-    const didSave = await saveSchemaToComputerFile(includeLayoutInSchema.value)
+    const didSave = await saveSchemaToComputerFile()
 
     if (didSave) {
       schemaDialogOpen.value = false
@@ -4815,6 +4821,7 @@ onBeforeUnmount(() => {
             </label>
 
             <USwitch
+              v-if="schemaDialogMode === 'download'"
               v-model="includeLayoutInSchema"
               color="neutral"
               size="sm"

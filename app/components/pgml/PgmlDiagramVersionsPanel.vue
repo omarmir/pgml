@@ -56,15 +56,11 @@ const emit = defineEmits<{
   'view-target': [targetId: string]
 }>()
 
-const primaryButtonClass = joinStudioClasses(
-  studioButtonClasses.primary,
-  'max-w-full whitespace-normal text-center text-[0.65rem] leading-4'
-)
-const secondaryButtonClass = joinStudioClasses(
+const actionButtonClass = joinStudioClasses(
   studioButtonClasses.secondary,
-  'max-w-full whitespace-normal text-center text-[0.65rem] leading-4'
+  'max-w-full min-h-9 whitespace-normal px-3 text-center text-[0.72rem] font-medium leading-4'
 )
-const stackedActionButtonClass = 'w-full justify-center sm:w-auto'
+const stackedActionButtonClass = 'w-full min-w-[5.5rem] justify-center sm:w-auto'
 const hasVersions = computed(() => versions.length > 0)
 const previewLabel = computed(() => {
   return buildPgmlPreviewTargetLabel({
@@ -88,27 +84,33 @@ const previewLabel = computed(() => {
         <UButton
           data-version-create-checkpoint="true"
           label="Create checkpoint"
+          icon="i-lucide-bookmark-plus"
           color="neutral"
-          variant="soft"
-          :class="primaryButtonClass"
+          variant="outline"
+          :class="actionButtonClass"
+          size="sm"
           :disabled="!canCreateCheckpoint"
           @click="emit('create-checkpoint')"
         />
         <UButton
           data-version-import-dbml="true"
           label="Import DBML"
+          icon="i-lucide-file-up"
           color="neutral"
           variant="outline"
-          :class="secondaryButtonClass"
+          :class="actionButtonClass"
+          size="sm"
           :disabled="!hasVersions"
           @click="emit('import-dbml')"
         />
         <UButton
           data-version-import-dump="true"
           label="Import dump"
+          icon="i-lucide-database-zap"
           color="neutral"
           variant="outline"
-          :class="secondaryButtonClass"
+          :class="actionButtonClass"
+          size="sm"
           :disabled="!hasVersions"
           @click="emit('import-dump')"
         />
@@ -248,29 +250,32 @@ const previewLabel = computed(() => {
               <UButton
                 :data-version-view="version.id"
                 label="View"
+                icon="i-lucide-eye"
                 color="neutral"
                 variant="outline"
-                size="xs"
-                :class="joinStudioClasses(secondaryButtonClass, stackedActionButtonClass)"
+                size="sm"
+                :class="joinStudioClasses(actionButtonClass, stackedActionButtonClass)"
                 :disabled="previewTargetId === version.id"
                 @click="emit('view-target', version.id)"
               />
               <UButton
                 :data-version-rename="version.id"
                 label="Rename"
+                icon="i-lucide-pencil"
                 color="neutral"
                 variant="outline"
-                size="xs"
-                :class="joinStudioClasses(secondaryButtonClass, stackedActionButtonClass)"
+                size="sm"
+                :class="joinStudioClasses(actionButtonClass, stackedActionButtonClass)"
                 @click="emit('rename-version', version.id)"
               />
               <UButton
                 :data-version-restore="version.id"
                 label="Restore"
+                icon="i-lucide-rotate-ccw"
                 color="neutral"
-                variant="soft"
-                size="xs"
-                :class="joinStudioClasses(primaryButtonClass, stackedActionButtonClass)"
+                variant="outline"
+                size="sm"
+                :class="joinStudioClasses(actionButtonClass, stackedActionButtonClass)"
                 @click="emit('restore-version', version.id)"
               />
             </div>

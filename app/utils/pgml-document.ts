@@ -1564,6 +1564,28 @@ const buildSnapshotBlock = (snapshot: PgmlDocumentSnapshot, level: number) => {
   return lines.join('\n')
 }
 
+const buildViewPropertiesSource = (
+  snapshotSource: string,
+  nodeProperties: Record<string, PgmlNodeProperties>
+) => {
+  const normalizedSnapshotSource = normalizePgmlSnapshotSource(stripPgmlPropertiesBlocks(snapshotSource))
+  const serializedSource = buildPgmlWithNodeProperties(snapshotSource, nodeProperties)
+
+  if (normalizedSnapshotSource.length === 0) {
+    return serializedSource
+  }
+
+  if (serializedSource === normalizedSnapshotSource) {
+    return ''
+  }
+
+  const prefixedSnapshotSource = `${normalizedSnapshotSource}\n\n`
+
+  return serializedSource.startsWith(prefixedSnapshotSource)
+    ? serializedSource.slice(prefixedSnapshotSource.length)
+    : serializedSource
+}
+
 const buildMetadataLine = (
   key: string,
   value: string,
@@ -1581,10 +1603,11 @@ const pushMetadataSpacer = (lines: string[]) => {
 
 const buildViewBlock = (
   view: PgmlDocumentDiagramView,
+  snapshotSource: string,
   level: number
 ) => {
   const lines = [`${'  '.repeat(level)}${viewKeyword} ${quoteMetadataValue(view.name)} {`]
-  const propertiesSource = buildPgmlWithNodeProperties('', view.nodeProperties)
+  const propertiesSource = buildViewPropertiesSource(snapshotSource, view.nodeProperties)
 
   lines.push(buildMetadataLine('id', view.id, level + 1))
 
@@ -1637,7 +1660,7 @@ const buildWorkspaceBlock = (
 
   if (workspace.views.length > 0) {
     lines.push('')
-    lines.push(workspace.views.map(view => buildViewBlock(view, level + 1)).join('\n\n'))
+    lines.push(workspace.views.map(view => buildViewBlock(view, workspace.snapshot.source, level + 1)).join('\n\n'))
   }
 
   lines.push(`${'  '.repeat(level)}}`)
@@ -1672,7 +1695,7 @@ const buildVersionBlock = (
 
   if (version.views.length > 0) {
     lines.push('')
-    lines.push(version.views.map(view => buildViewBlock(view, level + 1)).join('\n\n'))
+    lines.push(version.views.map(view => buildViewBlock(view, version.snapshot.source, level + 1)).join('\n\n'))
   }
 
   lines.push(`${'  '.repeat(level)}}`)

@@ -75,4 +75,19 @@ describe('diagram page source', () => {
       expect(file).toContain(expectedString)
     })
   })
+
+  it('serializes layout whenever the PGML can embed it instead of checking canvas mount state', () => {
+    const file = readSourceFile('app/pages/diagram.vue')
+
+    expect(file).toContain('const shouldIncludeLayout = includeLayout && canEmbedLayout.value')
+    expect(file).not.toContain('const shouldIncludeLayout = includeLayout && canEmbedLayout.value && canvasRef.value !== null')
+  })
+
+  it('prefers the reactive workspace source unless the editor has uncommitted local edits', () => {
+    const file = readSourceFile('app/pages/diagram.vue')
+
+    expect(file).toContain('if (!editorRef.value?.hasPendingChanges()) {')
+    expect(file).toContain('const editorValue = editorRef.value.getValue()')
+    expect(file).toContain('return editorValue === source.value ? source.value : editorValue')
+  })
 })
