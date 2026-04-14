@@ -47,6 +47,9 @@ export default defineNuxtConfig({
       allowedHosts: resolveViteAllowedHosts({
         extraAllowedHosts: process.env.NUXT_DEV_ALLOWED_HOSTS
       })
+    },
+    worker: {
+      format: 'es'
     }
   },
 

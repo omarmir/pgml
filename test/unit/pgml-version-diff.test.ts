@@ -1,9 +1,10 @@
-import { describe, expect, it } from 'vitest'
+import { beforeAll, describe, expect, it } from 'vitest'
 
 import { buildPgmlWithNodeProperties, parsePgml } from '../../app/utils/pgml'
 import { convertDbmlToPgml } from '../../app/utils/dbml-import'
 import { diffPgmlSchemaModels } from '../../app/utils/pgml-diff'
 import { convertPgDumpToPgml } from '../../app/utils/pg-dump-import'
+import { initializePgmlExecutableParser } from '../../app/utils/pgml-executable-parser'
 import { buildPgmlMigrationDiffBundle } from '../../app/utils/pgml-migration-diff'
 
 const baseSnapshotSource = `Table public.users {
@@ -11,6 +12,10 @@ const baseSnapshotSource = `Table public.users {
 }`
 
 describe('PGML version diffing', () => {
+  beforeAll(async () => {
+    await initializePgmlExecutableParser()
+  })
+
   it('classifies schema and layout deltas between two snapshots', () => {
     const baseModel = parsePgml(baseSnapshotSource)
     const targetModel = parsePgml(buildPgmlWithNodeProperties(`Table public.users {
@@ -212,6 +217,54 @@ Sequence public.common_review_set_id_seq {
     expect(migrationBundle.meta.statementCount).toBe(0)
   })
 
+  it('ignores SQL function source differences when only clause order, type aliases, or SQL-body formatting change', () => {
+    const beforeModel = parsePgml(`Function public.calc_total(account_id uuid, include_archived boolean) returns numeric {
+  source: $sql$
+    CREATE FUNCTION public.calc_total(
+      IN account_id uuid,
+      IN include_archived boolean DEFAULT false,
+      OUT total numeric
+    ) RETURNS numeric
+    LANGUAGE sql
+    STABLE
+    SECURITY INVOKER
+    SET search_path = public
+    AS $$
+      SELECT COALESCE(SUM(amount), 0)::numeric
+      FROM public.invoice_lines
+      WHERE invoice_lines.account_id = account_id
+        AND (include_archived OR invoice_lines.archived_at IS NULL)
+    $$;
+  $sql$
+}`)
+    const afterModel = parsePgml(`Function public.calc_total(account_id uuid, include_archived boolean) returns numeric {
+  source: $sql$
+    create function public.calc_total(
+      in account_id uuid,
+      in include_archived bool default false,
+      out total numeric
+    ) returns numeric
+    as $fn$
+      select coalesce(sum(amount), 0)::numeric
+      from public.invoice_lines
+      where invoice_lines.account_id = account_id
+        and (include_archived or invoice_lines.archived_at is null)
+    $fn$
+    set search_path = public
+    security invoker
+    stable
+    language sql;
+  $sql$
+}`)
+    const diff = diffPgmlSchemaModels(beforeModel, afterModel)
+    const migrationBundle = buildPgmlMigrationDiffBundle(beforeModel, afterModel)
+
+    expect(diff.functions).toEqual([])
+    expect(diff.summary.modified).toBe(0)
+    expect(migrationBundle.meta.hasChanges).toBe(false)
+    expect(migrationBundle.meta.statementCount).toBe(0)
+  })
+
   it('ignores trigger source differences when only formatting, event ordering, or execute syntax aliases change', () => {
     const beforeModel = parsePgml(`Trigger trg_touch_users on public.users {
   source: $sql$
@@ -232,6 +285,69 @@ Sequence public.common_review_set_id_seq {
     const migrationBundle = buildPgmlMigrationDiffBundle(beforeModel, afterModel)
 
     expect(diff.triggers).toEqual([])
+    expect(diff.summary.modified).toBe(0)
+    expect(migrationBundle.meta.hasChanges).toBe(false)
+    expect(migrationBundle.meta.statementCount).toBe(0)
+  })
+
+  it('ignores trigger source differences when only update column ordering or when-clause formatting change', () => {
+    const beforeModel = parsePgml(`Trigger trg_accounts_audit on public.accounts {
+  source: $sql$
+    CREATE TRIGGER trg_accounts_audit
+      AFTER UPDATE OF email, status OR INSERT ON public.accounts
+      REFERENCING NEW TABLE AS new_rows
+      FOR EACH ROW
+      WHEN (NEW.status IS DISTINCT FROM OLD.status)
+      EXECUTE FUNCTION public.audit_account_change('status-change');
+  $sql$
+}`)
+    const afterModel = parsePgml(`Trigger trg_accounts_audit on public.accounts {
+  source: $sql$
+    create trigger trg_accounts_audit
+      after insert or update of status, email on public.accounts
+      referencing new table as new_rows
+      for each row
+      when ((new.status is distinct from old.status))
+      execute procedure public.audit_account_change('status-change');
+  $sql$
+}`)
+    const diff = diffPgmlSchemaModels(beforeModel, afterModel)
+    const migrationBundle = buildPgmlMigrationDiffBundle(beforeModel, afterModel)
+
+    expect(diff.triggers).toEqual([])
+    expect(diff.summary.modified).toBe(0)
+    expect(migrationBundle.meta.hasChanges).toBe(false)
+    expect(migrationBundle.meta.statementCount).toBe(0)
+  })
+
+  it('ignores sequence source differences when only default clauses, ordering, or quoted ownership differ', () => {
+    const beforeModel = parsePgml(`Sequence public.user_number_seq {
+  source: $sql$
+    CREATE SEQUENCE public.user_number_seq
+      AS bigint
+      START WITH 1
+      INCREMENT BY 1
+      NO MINVALUE
+      NO MAXVALUE
+      CACHE 1
+      NO CYCLE;
+    ALTER SEQUENCE public.user_number_seq OWNED BY public.users.id;
+  $sql$
+}`)
+    const afterModel = parsePgml(`Sequence public.user_number_seq {
+  source: $sql$
+    ALTER SEQUENCE public.user_number_seq OWNED BY public."users".id;
+    CREATE SEQUENCE public.user_number_seq
+      CACHE 1
+      INCREMENT BY 1
+      START WITH 1
+      AS int8;
+  $sql$
+}`)
+    const diff = diffPgmlSchemaModels(beforeModel, afterModel)
+    const migrationBundle = buildPgmlMigrationDiffBundle(beforeModel, afterModel)
+
+    expect(diff.sequences).toEqual([])
     expect(diff.summary.modified).toBe(0)
     expect(migrationBundle.meta.hasChanges).toBe(false)
     expect(migrationBundle.meta.statementCount).toBe(0)

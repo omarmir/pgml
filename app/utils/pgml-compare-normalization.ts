@@ -15,10 +15,20 @@ import type {
   PgmlTrigger
 } from './pgml'
 import {
+  buildPgmlRoutineSemanticModel,
+  buildPgmlSequenceSemanticModel,
+  buildPgmlTriggerSemanticModel
+} from './pgml-executable-parser'
+import {
   extractPgmlSequenceSourceDefinition,
   normalizePgmlSequenceMetadataEntries,
   type PgmlSequenceMetadataEntry
 } from './pgml-sequence-metadata'
+import {
+  normalizeExecutableSqlText,
+  normalizeSqlIdentifier,
+  normalizeWhitespace
+} from './pgml-executable-sql'
 import { normalizePgmlTypeExpression } from './pgml-types'
 
 const serialBaseTypeByValue: Readonly<Record<string, string>> = Object.freeze({
@@ -29,14 +39,6 @@ const serialBaseTypeByValue: Readonly<Record<string, string>> = Object.freeze({
   serial8: 'bigint',
   smallserial: 'smallint'
 })
-
-const normalizeWhitespace = (value: string) => {
-  return value.replaceAll(/\s+/g, ' ').trim()
-}
-
-const normalizeSqlIdentifier = (value: string) => {
-  return value.trim().replaceAll('"', '')
-}
 
 const readSqlIdentifier = (value: string) => {
   const trimmed = value.trimStart()
@@ -201,147 +203,6 @@ const readBalancedSqlSection = (
   }
 
   return null
-}
-
-const normalizeExecutableSqlText = (value: string | null | undefined): string | null => {
-  if (!value || value.trim().length === 0) {
-    return null
-  }
-
-  let normalized = ''
-  let blockCommentDepth = 0
-  let doubleQuoted = false
-  let inLineComment = false
-  let singleQuoted = false
-  let pendingWhitespace = false
-  let dollarQuoted: string | null = null
-
-  const appendToken = (token: string) => {
-    if (pendingWhitespace && normalized.length > 0) {
-      normalized += ' '
-    }
-
-    normalized += token
-    pendingWhitespace = false
-  }
-
-  for (let index = 0; index < value.length; index += 1) {
-    const character = value[index] || ''
-    const nextCharacter = value[index + 1] || ''
-
-    if (inLineComment) {
-      if (character === '\n') {
-        inLineComment = false
-        pendingWhitespace = normalized.length > 0
-      }
-
-      continue
-    }
-
-    if (blockCommentDepth > 0) {
-      if (character === '/' && nextCharacter === '*') {
-        blockCommentDepth += 1
-        index += 1
-      } else if (character === '*' && nextCharacter === '/') {
-        blockCommentDepth -= 1
-        index += 1
-      }
-
-      continue
-    }
-
-    if (dollarQuoted) {
-      const endIndex = value.indexOf(dollarQuoted, index)
-
-      if (endIndex < 0) {
-        const innerValue = value.slice(index)
-        appendToken(`$body$${normalizeExecutableSqlText(innerValue) || ''}$body$`)
-        break
-      }
-
-      const innerValue = value.slice(index, endIndex)
-      appendToken(`$body$${normalizeExecutableSqlText(innerValue) || ''}$body$`)
-      index = endIndex + dollarQuoted.length - 1
-      dollarQuoted = null
-      continue
-    }
-
-    if (singleQuoted) {
-      appendToken(character)
-
-      if (character === '\'' && nextCharacter === '\'') {
-        appendToken(nextCharacter)
-        index += 1
-        continue
-      }
-
-      if (character === '\'') {
-        singleQuoted = false
-      }
-
-      continue
-    }
-
-    if (doubleQuoted) {
-      appendToken(character)
-
-      if (character === '"' && nextCharacter === '"') {
-        appendToken(nextCharacter)
-        index += 1
-        continue
-      }
-
-      if (character === '"') {
-        doubleQuoted = false
-      }
-
-      continue
-    }
-
-    if (character === '-' && nextCharacter === '-') {
-      inLineComment = true
-      index += 1
-      continue
-    }
-
-    if (character === '/' && nextCharacter === '*') {
-      blockCommentDepth += 1
-      index += 1
-      continue
-    }
-
-    if (character === '\'') {
-      singleQuoted = true
-      appendToken(character)
-      continue
-    }
-
-    if (character === '"') {
-      doubleQuoted = true
-      appendToken(character)
-      continue
-    }
-
-    if (character === '$') {
-      const remainder = value.slice(index)
-      const match = remainder.match(/^\$[A-Za-z0-9_]*\$/u)
-
-      if (match) {
-        dollarQuoted = match[0]
-        index += dollarQuoted.length - 1
-        continue
-      }
-    }
-
-    if (/\s/u.test(character)) {
-      pendingWhitespace = normalized.length > 0
-      continue
-    }
-
-    appendToken(character.toLowerCase())
-  }
-
-  return normalized.trim()
 }
 
 const splitArraySuffix = (value: string) => {
@@ -878,23 +739,31 @@ const normalizeTriggerSourceForCompare = (source: string | null) => {
 }
 
 export const normalizePgmlCompareRoutineValue = (routine: PgmlRoutine) => {
+  const semantic = routine.semantic || buildPgmlRoutineSemanticModel(routine.source)
+
   return {
     affects: normalizePgmlCompareAffectsValue(routine.affects),
     docs: normalizePgmlCompareDocumentationValue(routine.docs),
     metadata: normalizePgmlCompareMetadataEntries(routine.metadata),
     name: routine.name,
     signature: routine.signature,
-    source: normalizeRoutineSourceForCompare(routine.source)
+    source: semantic?.status === 'parsed'
+      ? semantic.fingerprint
+      : normalizeRoutineSourceForCompare(routine.source)
   }
 }
 
 export const normalizePgmlCompareTriggerValue = (trigger: PgmlTrigger) => {
+  const semantic = trigger.semantic || buildPgmlTriggerSemanticModel(trigger.source)
+
   return {
     affects: normalizePgmlCompareAffectsValue(trigger.affects),
     docs: normalizePgmlCompareDocumentationValue(trigger.docs),
     metadata: normalizePgmlCompareTriggerMetadataEntries(trigger.metadata),
     name: trigger.name,
-    source: normalizeTriggerSourceForCompare(trigger.source),
+    source: semantic?.status === 'parsed'
+      ? semantic.fingerprint
+      : normalizeTriggerSourceForCompare(trigger.source),
     tableName: trigger.tableName
   }
 }
@@ -909,6 +778,7 @@ export const normalizePgmlCompareSequenceValue = (
     normalizeType
   })
   const normalizedSourceMetadata = normalizeBigintSequenceDefault(extractedSourceDefinition.metadata)
+  const semantic = sequence.semantic || buildPgmlSequenceSemanticModel(sequence.source)
   const shouldOmitSource = extractedSourceDefinition.isFullyStructured
     && toStableJson(normalizedSourceMetadata) === toStableJson(metadata)
 
@@ -917,7 +787,11 @@ export const normalizePgmlCompareSequenceValue = (
     docs: normalizePgmlCompareDocumentationValue(sequence.docs),
     metadata,
     name: sequence.name,
-    source: shouldOmitSource ? null : normalizeExecutableSqlText(sequence.source)
+    source: shouldOmitSource
+      ? null
+      : semantic?.status === 'parsed'
+        ? semantic.fingerprint
+        : normalizeExecutableSqlText(sequence.source)
   }
 }
 

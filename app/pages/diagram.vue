@@ -110,6 +110,7 @@ import {
   buildPgmlImportBaseVersionItems,
   buildPgmlVersionCompareOptions
 } from '~/utils/pgml-version-options'
+import { initializePgmlExecutableParser } from '~/utils/pgml-executable-parser'
 import {
   clonePgmlCompareExclusions,
   createEmptyPgmlCompareExclusions,
@@ -437,6 +438,7 @@ const workspaceAnalysisHasBlockingErrors: Ref<boolean> = ref(false)
 const workspaceAnalysisParsedModel: ShallowRef<PgmlSchemaModel> = shallowRef(parsePgml(source.value))
 const workspaceAnalysisRevision: Ref<number> = ref(0)
 const workspaceAnalysisRequestRevision: Ref<number> = ref(0)
+const executableParserReadyRevision: Ref<number> = ref(0)
 const lastRenderableWorkspaceModel: ShallowRef<PgmlSchemaModel> = shallowRef(applyPgmlDocumentSchemaMetadataToModel(
   parsePgml(source.value),
   versionDocument.value.schemaMetadata
@@ -505,11 +507,29 @@ const queueWorkspaceAnalysis = (nextSource: string) => {
   })
 }
 
+const parsePgmlForCurrentExecutableParser = (
+  nextSource: string,
+  parserReadyRevision: number
+) => {
+  if (parserReadyRevision < 0) {
+    return parsePgml(nextSource)
+  }
+
+  return parsePgml(nextSource)
+}
+
 watch(source, (nextSource) => {
   queueWorkspaceAnalysis(nextSource)
 }, {
   immediate: true
 })
+
+if (import.meta.client) {
+  void initializePgmlExecutableParser().then(() => {
+    executableParserReadyRevision.value += 1
+    queueWorkspaceAnalysis(source.value)
+  }).catch(() => null)
+}
 const {
   isEditorPanelVisible,
   isCompactStudioLayout,
@@ -628,6 +648,8 @@ watch(workspaceParsedModelWithSchemaMetadata, (nextModel) => {
   immediate: true
 })
 const parsedModel = computed(() => {
+  const parserReadyRevision = executableParserReadyRevision.value
+
   if (isWorkspacePreview.value) {
     return workspaceHasBlockingSourceErrors.value
       ? lastRenderableWorkspaceModel.value
@@ -635,7 +657,7 @@ const parsedModel = computed(() => {
   }
 
   return applyPgmlDocumentSchemaMetadataToModel(
-    parsePgml(previewSource.value),
+    parsePgmlForCurrentExecutableParser(previewSource.value, parserReadyRevision),
     versionDocument.value.schemaMetadata
   )
 })
@@ -1316,18 +1338,22 @@ const compareExclusionTypeFilterOrder: CompareExclusionTypeFilterValue[] = [
 ]
 
 const compareBaseRawModel = computed<PgmlSchemaModel | null>(() => {
+  const parserReadyRevision = executableParserReadyRevision.value
+
   if (!shouldBuildVersionArtifacts.value) {
     return null
   }
 
-  return parsePgml(compareBaseSource.value)
+  return parsePgmlForCurrentExecutableParser(compareBaseSource.value, parserReadyRevision)
 })
 const compareTargetRawModel = computed<PgmlSchemaModel | null>(() => {
+  const parserReadyRevision = executableParserReadyRevision.value
+
   if (!shouldBuildVersionArtifacts.value) {
     return null
   }
 
-  return parsePgml(compareTargetSource.value)
+  return parsePgmlForCurrentExecutableParser(compareTargetSource.value, parserReadyRevision)
 })
 const compareBaseModel = computed<PgmlSchemaModel | null>(() => {
   return compareBaseRawModel.value

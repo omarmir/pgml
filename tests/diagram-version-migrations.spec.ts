@@ -785,6 +785,98 @@ Trigger trg_touch_users on public.users {
   await expect(comparePanel).toContainText('No diff entries match the current filter.')
 })
 
+test('compare panel ignores equivalent SQL function and sequence source changes when only clause order, defaults, or formatting differ', async ({ goto, page }) => {
+  await goto('/diagram')
+  const editor = getPgmlEditor(page)
+
+  await setPgmlEditorValue(editor, `Table public.users {
+  id bigint [pk]
+}
+
+Function public.calc_total(account_id uuid, include_archived boolean) returns numeric {
+  source: $sql$
+    CREATE FUNCTION public.calc_total(
+      IN account_id uuid,
+      IN include_archived boolean DEFAULT false,
+      OUT total numeric
+    ) RETURNS numeric
+    LANGUAGE sql
+    STABLE
+    SECURITY INVOKER
+    SET search_path = public
+    AS $$
+      SELECT COALESCE(SUM(amount), 0)::numeric
+      FROM public.invoice_lines
+      WHERE invoice_lines.account_id = account_id
+        AND (include_archived OR invoice_lines.archived_at IS NULL)
+    $$;
+  $sql$
+}
+
+Sequence public.user_number_seq {
+  source: $sql$
+    CREATE SEQUENCE public.user_number_seq
+      AS bigint
+      START WITH 1
+      INCREMENT BY 1
+      NO MINVALUE
+      NO MAXVALUE
+      CACHE 1
+      NO CYCLE;
+    ALTER SEQUENCE public.user_number_seq OWNED BY public.users.id;
+  $sql$
+}`)
+  await createCheckpoint(page, 'Equivalent semantic executable baseline')
+
+  await setPgmlEditorValue(editor, `Table public.users {
+  id bigint [pk]
+}
+
+Function public.calc_total(account_id uuid, include_archived boolean) returns numeric {
+  source: $sql$
+    create function public.calc_total(
+      in account_id uuid,
+      in include_archived bool default false,
+      out total numeric
+    ) returns numeric
+    as $fn$
+      select coalesce(sum(amount), 0)::numeric
+      from public.invoice_lines
+      where invoice_lines.account_id = account_id
+        and (include_archived or invoice_lines.archived_at is null)
+    $fn$
+    set search_path = public
+    security invoker
+    stable
+    language sql;
+  $sql$
+}
+
+Sequence public.user_number_seq {
+  source: $sql$
+    ALTER SEQUENCE public.user_number_seq OWNED BY public."users".id;
+    CREATE SEQUENCE public.user_number_seq
+      CACHE 1
+      INCREMENT BY 1
+      START WITH 1
+      AS int8;
+  $sql$
+}`)
+
+  await compareFromVersion(page, 'Equivalent semantic executable baseline')
+
+  const comparePanel = getComparePanel(page)
+  const modifiedStat = comparePanel.locator('[data-compare-stat-filter="modified"]')
+  const addedStat = comparePanel.locator('[data-compare-stat-filter="added"]')
+  const removedStat = comparePanel.locator('[data-compare-stat-filter="removed"]')
+
+  await expect(modifiedStat).toContainText('0')
+  await expect(addedStat).toContainText('0')
+  await expect(removedStat).toContainText('0')
+  await expect(comparePanel.locator('[data-compare-entry]')).toHaveCount(0)
+  await expect(comparePanel).toContainText('No diff entries match the current filter.')
+})
+
 test('compare noise filters hide optional compare-only changes and saved comparisons recall their settings', async ({ goto, page }) => {
   await goto('/diagram')
   const editor = getPgmlEditor(page)

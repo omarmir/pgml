@@ -14,6 +14,15 @@ import {
   extractPgmlSequenceSourceDefinition,
   normalizePgmlSequenceMetadataEntries
 } from './pgml-sequence-metadata'
+import {
+  buildPgmlRoutineSemanticModel,
+  buildPgmlSequenceSemanticModel,
+  buildPgmlTriggerSemanticModel,
+  isPgmlExecutableParserReady,
+  type PgmlRoutineSemanticModel,
+  type PgmlSequenceSemanticModel,
+  type PgmlTriggerSemanticModel
+} from './pgml-executable-parser'
 import { normalizePgmlTypeExpression } from './pgml-types'
 
 export type PgmlColumn = {
@@ -144,6 +153,7 @@ export type PgmlRoutine = {
   metadata: PgmlMetadataEntry[]
   docs: PgmlDocumentation | null
   affects: PgmlAffects | null
+  semantic?: PgmlRoutineSemanticModel | null
   source: string | null
   sourceRange?: PgmlSourceRange
 }
@@ -155,6 +165,7 @@ export type PgmlTrigger = {
   metadata: PgmlMetadataEntry[]
   docs: PgmlDocumentation | null
   affects: PgmlAffects | null
+  semantic?: PgmlTriggerSemanticModel | null
   source: string | null
   sourceRange?: PgmlSourceRange
 }
@@ -165,6 +176,7 @@ export type PgmlSequence = {
   metadata: PgmlMetadataEntry[]
   docs: PgmlDocumentation | null
   affects: PgmlAffects | null
+  semantic?: PgmlSequenceSemanticModel | null
   source: string | null
   sourceRange?: PgmlSourceRange
 }
@@ -3011,6 +3023,9 @@ const parseRoutine = (block: NamedBlock, keyword: 'Function' | 'Procedure') => {
     ? signature
     : (derived.signature || signature)
   const routineName = cleanName(readMatch(normalizedSignature.split('(')[0] || derived.name || ''))
+  const semantic = executable.source && isPgmlExecutableParserReady()
+    ? buildPgmlRoutineSemanticModel(executable.source)
+    : null
 
   return {
     name: routineName,
@@ -3019,6 +3034,7 @@ const parseRoutine = (block: NamedBlock, keyword: 'Function' | 'Procedure') => {
     metadata: mergedMetadata,
     docs: executable.docs,
     affects: executable.affects,
+    semantic: semantic || undefined,
     source: executable.source,
     sourceRange: {
       startLine: block.startLine,
@@ -3043,6 +3059,9 @@ const parseTrigger = (block: NamedBlock) => {
   }
 
   const mergedMetadata = mergeMetadataEntries(executable.metadata, derived.metadata)
+  const semantic = executable.source && isPgmlExecutableParserReady()
+    ? buildPgmlTriggerSemanticModel(executable.source)
+    : null
 
   return {
     name: cleanName(readMatch(headerMatch[1]) || derived.name || ''),
@@ -3051,6 +3070,7 @@ const parseTrigger = (block: NamedBlock) => {
     metadata: mergedMetadata,
     docs: executable.docs,
     affects: executable.affects,
+    semantic: semantic || undefined,
     source: executable.source,
     sourceRange: {
       startLine: block.startLine,
@@ -3075,6 +3095,9 @@ const parseSequence = (block: NamedBlock) => {
       normalizeType: normalizePgmlTypeExpression
     }
   )
+  const semantic = executable.source && isPgmlExecutableParserReady()
+    ? buildPgmlSequenceSemanticModel(executable.source)
+    : null
 
   return {
     name: cleanName(readMatch(headerMatch[1]) || derived.name || ''),
@@ -3082,6 +3105,7 @@ const parseSequence = (block: NamedBlock) => {
     metadata: mergedMetadata,
     docs: executable.docs,
     affects: executable.affects,
+    semantic: semantic || undefined,
     source: executable.source,
     sourceRange: {
       startLine: block.startLine,
