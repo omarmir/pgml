@@ -17,6 +17,7 @@ import {
   normalizePgmlCompareColumnValue,
   normalizePgmlCompareConstraintExpression,
   normalizePgmlCompareCustomTypeName,
+  normalizePgmlCompareRoutinePairValues,
   normalizePgmlCompareRoutineValue,
   normalizePgmlCompareSequenceValue,
   normalizePgmlCompareSequenceMetadataEntries,
@@ -478,7 +479,11 @@ const buildDiffEntries = <T>(
   beforeValues: Map<string, T>,
   afterValues: Map<string, T>,
   buildLabel: (id: string, value: T) => string,
-  normalizeValue: (value: T) => unknown
+  normalizeValue: (value: T) => unknown,
+  normalizePairValues?: (beforeValue: T, afterValue: T) => {
+    after: unknown
+    before: unknown
+  }
 ) => {
   const ids = buildSortedDiffIds(beforeValues, afterValues)
 
@@ -514,8 +519,14 @@ const buildDiffEntries = <T>(
       return entries
     }
 
-    const normalizedBeforeValue = normalizeValue(beforeValue)
-    const normalizedAfterValue = normalizeValue(afterValue)
+    const normalizedPairValues = normalizePairValues
+      ? normalizePairValues(beforeValue, afterValue)
+      : {
+          after: normalizeValue(afterValue),
+          before: normalizeValue(beforeValue)
+        }
+    const normalizedBeforeValue = normalizedPairValues.before
+    const normalizedAfterValue = normalizedPairValues.after
 
     if (toStableJson(normalizedBeforeValue) !== toStableJson(normalizedAfterValue)) {
       entries.push({
@@ -713,7 +724,15 @@ const buildGroupMap = (groups: PgmlGroup[]) => {
 }
 
 const buildRoutineMap = (routines: PgmlRoutine[]) => {
-  return buildEntityMap(routines, routine => routine.name)
+  return buildEntityMap(routines, (routine) => {
+    const normalizedValue = normalizeImportedQualifiedName(routine.name, {
+      foldIdentifiersToLowercase: true
+    })
+
+    return normalizedValue.startsWith('public.')
+      ? normalizedValue.slice('public.'.length)
+      : normalizedValue
+  })
 }
 
 const normalizeTriggerTableKey = (value: string) => {
@@ -991,7 +1010,8 @@ export const diffPgmlSchemaModels = (
     buildRoutineMap(beforeModel.functions),
     buildRoutineMap(afterModel.functions),
     (id, value) => value.name || id,
-    normalizeRoutineValue
+    normalizeRoutineValue,
+    normalizePgmlCompareRoutinePairValues
   )
   const pairedFunctions = pairDiffEntriesByMaterial({
     buildLabel: (id, value) => value.name || id,
@@ -1003,7 +1023,8 @@ export const diffPgmlSchemaModels = (
     buildRoutineMap(beforeModel.procedures),
     buildRoutineMap(afterModel.procedures),
     (id, value) => value.name || id,
-    normalizeRoutineValue
+    normalizeRoutineValue,
+    normalizePgmlCompareRoutinePairValues
   )
   const pairedProcedures = pairDiffEntriesByMaterial({
     buildLabel: (id, value) => value.name || id,

@@ -187,14 +187,14 @@ Sequence public.users_identity_seq {
     expect(diff.functions).toEqual([
       expect.objectContaining({
         changes: ['name', 'signature'],
-        id: 'public.refresh_users_v2',
+        id: 'refresh_users_v2',
         kind: 'modified'
       })
     ])
     expect(diff.procedures).toEqual([
       expect.objectContaining({
         changes: ['name', 'signature'],
-        id: 'public.rebuild_users_v2',
+        id: 'rebuild_users_v2',
         kind: 'modified'
       })
     ])
@@ -544,6 +544,46 @@ Sequence public.common_review_set_id_seq {
     const migrationBundle = buildPgmlMigrationDiffBundle(beforeModel, afterModel)
 
     expect(diff.triggers).toEqual([])
+    expect(diff.summary.modified).toBe(0)
+    expect(migrationBundle.meta.hasChanges).toBe(false)
+    expect(migrationBundle.meta.statementCount).toBe(0)
+  })
+
+  it('ignores function source differences when only public qualification and language clause presence change', () => {
+    const beforeModel = parsePgml(`Function trg_fn_enforce_approval_sequence() returns trigger {
+  source: $sql$
+    CREATE FUNCTION trg_fn_enforce_approval_sequence() RETURNS trigger AS $$
+    DECLARE
+      incomplete_prior integer;
+    BEGIN
+      IF NEW.egcs_cn_approvalvalue IS NULL OR OLD.egcs_cn_approvalvalue IS NOT NULL THEN
+        RETURN NEW;
+      END IF;
+      RETURN NEW;
+    END;
+    $$;
+  $sql$
+}`)
+    const afterModel = parsePgml(`Function public.trg_fn_enforce_approval_sequence() returns trigger {
+  source: $sql$
+    CREATE FUNCTION public.trg_fn_enforce_approval_sequence() RETURNS trigger
+      LANGUAGE plpgsql
+      AS $$
+      DECLARE
+        incomplete_prior integer;
+      BEGIN
+        IF NEW.egcs_cn_approvalvalue IS NULL OR OLD.egcs_cn_approvalvalue IS NOT NULL THEN
+          RETURN NEW;
+        END IF;
+        RETURN NEW;
+      END;
+      $$;
+  $sql$
+}`)
+    const diff = diffPgmlSchemaModels(beforeModel, afterModel)
+    const migrationBundle = buildPgmlMigrationDiffBundle(beforeModel, afterModel)
+
+    expect(diff.functions).toEqual([])
     expect(diff.summary.modified).toBe(0)
     expect(migrationBundle.meta.hasChanges).toBe(false)
     expect(migrationBundle.meta.statementCount).toBe(0)

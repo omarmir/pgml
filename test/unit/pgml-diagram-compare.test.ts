@@ -65,7 +65,7 @@ Properties "public.users" {
     )
     const modifiedColumn = entries.find(entry => entry.id === 'column:public.users::email') || null
     const addedTable = entries.find(entry => entry.id === 'table:public.audit_log') || null
-    const removedFunction = entries.find(entry => entry.id === 'function:public.legacy_cleanup') || null
+    const removedFunction = entries.find(entry => entry.id === 'function:legacy_cleanup') || null
     const removedConstraint = entries.find(entry => entry.id === 'constraint:public.users::chk_users_email') || null
     const removedReference = entries.find(entry => entry.id === 'reference:>::public.orders::user_id::public.users::id') || null
 
@@ -162,10 +162,10 @@ Function public.refresh_users() returns void {
       targetModel
     )
     const filteredEntries = filterPgmlDiagramCompareEntriesForExclusions(entries, {
-      entityIds: ['function:public.refresh_users']
+      entityIds: ['function:refresh_users']
     })
 
-    expect(filteredEntries.some(entry => entry.id === 'function:public.refresh_users')).toBe(false)
+    expect(filteredEntries.some(entry => entry.id === 'function:refresh_users')).toBe(false)
     expect(filteredEntries.some(entry => entry.id === 'column:public.users::email')).toBe(true)
   })
 
@@ -210,13 +210,13 @@ Function public.refresh_users() returns void {
       baseModel,
       targetModel
     )
-    const metadataEntry = entries.find(entry => entry.id === 'function:public.refresh_orders') || null
+    const metadataEntry = entries.find(entry => entry.id === 'function:refresh_orders') || null
 
     expect(metadataEntry?.noiseKinds).toEqual(['metadata'])
-    expect(filterPgmlDiagramCompareEntriesForNoise(entries).some(entry => entry.id === 'function:public.refresh_orders')).toBe(false)
+    expect(filterPgmlDiagramCompareEntriesForNoise(entries).some(entry => entry.id === 'function:refresh_orders')).toBe(false)
     expect(filterPgmlDiagramCompareEntriesForNoise(entries, {
       hideMetadata: false
-    }).some(entry => entry.id === 'function:public.refresh_orders')).toBe(true)
+    }).some(entry => entry.id === 'function:refresh_orders')).toBe(true)
   })
 
   it('classifies executable rename-only diffs as optional compare noise', () => {
@@ -235,15 +235,15 @@ Function public.refresh_users() returns void {
       baseModel,
       targetModel
     )
-    const executableRenameEntry = entries.find(entry => entry.id === 'function:public.refresh_orders_v2') || null
+    const executableRenameEntry = entries.find(entry => entry.id === 'function:refresh_orders_v2') || null
 
     expect(executableRenameEntry?.changeKind).toBe('modified')
     expect(executableRenameEntry?.changedFields).toEqual(expect.arrayContaining(['name', 'signature']))
     expect(executableRenameEntry?.noiseKinds).toEqual(['executable-name'])
-    expect(filterPgmlDiagramCompareEntriesForNoise(entries).some(entry => entry.id === 'function:public.refresh_orders_v2')).toBe(false)
+    expect(filterPgmlDiagramCompareEntriesForNoise(entries).some(entry => entry.id === 'function:refresh_orders_v2')).toBe(false)
     expect(filterPgmlDiagramCompareEntriesForNoise(entries, {
       hideExecutableNameOnly: false
-    }).some(entry => entry.id === 'function:public.refresh_orders_v2')).toBe(true)
+    }).some(entry => entry.id === 'function:refresh_orders_v2')).toBe(true)
   })
 
   it('classifies index and constraint rename-only diffs as optional compare noise', () => {

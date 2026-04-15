@@ -9,7 +9,7 @@ import {
   normalizePgmlCompareColumnValue,
   normalizePgmlCompareConstraintExpression,
   normalizePgmlCompareCustomTypeName,
-  normalizePgmlCompareRoutineValue,
+  normalizePgmlCompareRoutinePairValues,
   normalizePgmlCompareSequenceMetadataEntries,
   normalizePgmlCompareSequenceValue,
   normalizePgmlCompareTriggerValue
@@ -410,7 +410,7 @@ const buildDropSequenceStatement = (sequence: PgmlSequence) => {
 }
 
 const buildRoutineMap = (routines: PgmlRoutine[]) => {
-  return new Map(routines.map(routine => [routine.name, routine] as const))
+  return new Map(routines.map(routine => [normalizeRoutineKey(routine.name), routine] as const))
 }
 
 const buildSequenceMap = (sequences: PgmlSequence[]) => {
@@ -632,8 +632,14 @@ const normalizeReferenceForCompare = (reference: PgmlReference) => {
   }
 }
 
-const normalizeRoutineForCompare = (routine: PgmlRoutine) => {
-  return normalizePgmlCompareRoutineValue(routine)
+const normalizeRoutineKey = (value: string) => {
+  const normalizedValue = normalizeImportedQualifiedName(value, {
+    foldIdentifiersToLowercase: true
+  })
+
+  return normalizedValue.startsWith('public.')
+    ? normalizedValue.slice('public.'.length)
+    : normalizedValue
 }
 
 const normalizeTriggerForCompare = (trigger: PgmlTrigger) => {
@@ -1289,7 +1295,11 @@ export const buildPgmlMigrationDiffPlan = (
 
       if (
         !beforeRoutine
-        || toStableJson(normalizeRoutineForCompare(beforeRoutine)) !== toStableJson(normalizeRoutineForCompare(afterRoutine))
+        || (() => {
+          const normalizedPair = normalizePgmlCompareRoutinePairValues(beforeRoutine, afterRoutine)
+
+          return toStableJson(normalizedPair.before) !== toStableJson(normalizedPair.after)
+        })()
       ) {
         const statement = buildRoutineCreateStatement(kind, afterRoutine, warnings)
 

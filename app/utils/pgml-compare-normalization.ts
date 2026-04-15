@@ -672,6 +672,44 @@ const normalizeRoutineSourceForCompare = (source: string | null) => {
   }
 }
 
+const normalizeRoutineExecutableObjectName = (value: string) => {
+  const normalizedValue = normalizeImportedQualifiedName(value, {
+    foldIdentifiersToLowercase: true
+  })
+
+  return normalizedValue.startsWith('public.')
+    ? normalizedValue.slice('public.'.length)
+    : normalizedValue
+}
+
+const normalizeRoutineSignatureForCompare = (value: string) => {
+  const normalizedValue = value.trim()
+  const parameterIndex = normalizedValue.indexOf('(')
+
+  if (parameterIndex < 0) {
+    return normalizeRoutineExecutableObjectName(normalizedValue)
+  }
+
+  const name = normalizedValue.slice(0, parameterIndex).trim()
+  const remainder = normalizedValue.slice(parameterIndex)
+
+  return `${normalizeRoutineExecutableObjectName(name)}${remainder}`
+}
+
+const normalizeRoutineSemanticFingerprint = (
+  fingerprint: Record<string, unknown>
+) => {
+  return {
+    ...fingerprint,
+    language: typeof fingerprint.language === 'string'
+      ? fingerprint.language.toLowerCase()
+      : fingerprint.language,
+    name: typeof fingerprint.name === 'string'
+      ? normalizeRoutineExecutableObjectName(fingerprint.name)
+      : fingerprint.name
+  }
+}
+
 const normalizeTriggerEvents = (value: string) => {
   return value
     .split(/\s+or\s+/u)
@@ -784,11 +822,74 @@ export const normalizePgmlCompareRoutineValue = (routine: PgmlRoutine) => {
     affects: normalizePgmlCompareAffectsValue(routine.affects),
     docs: normalizePgmlCompareDocumentationValue(routine.docs),
     metadata: normalizePgmlCompareMetadataEntries(routine.metadata),
-    name: routine.name,
-    signature: routine.signature,
+    name: normalizeRoutineExecutableObjectName(routine.name),
+    signature: normalizeRoutineSignatureForCompare(routine.signature),
     source: semantic?.status === 'parsed'
-      ? semantic.fingerprint
+      ? normalizeRoutineSemanticFingerprint(semantic.fingerprint as Record<string, unknown>)
       : normalizeRoutineSourceForCompare(routine.source)
+  }
+}
+
+export const normalizePgmlCompareRoutinePairValues = (
+  beforeRoutine: PgmlRoutine,
+  afterRoutine: PgmlRoutine
+) => {
+  const beforeValue = normalizePgmlCompareRoutineValue(beforeRoutine)
+  const afterValue = normalizePgmlCompareRoutineValue(afterRoutine)
+
+  if (
+    beforeValue.source
+    && afterValue.source
+    && typeof beforeValue.source === 'object'
+    && typeof afterValue.source === 'object'
+    && !Array.isArray(beforeValue.source)
+    && !Array.isArray(afterValue.source)
+  ) {
+    const beforeSource = {
+      ...(beforeValue.source as Record<string, unknown>)
+    }
+    const afterSource = {
+      ...(afterValue.source as Record<string, unknown>)
+    }
+
+    if (beforeSource.language == null || afterSource.language == null) {
+      delete beforeSource.language
+      delete afterSource.language
+    }
+
+    if (beforeSource.language == null || afterSource.language == null) {
+      const normalizedBeforeMetadata = beforeValue.metadata.filter(entry => entry.key !== 'language')
+      const normalizedAfterMetadata = afterValue.metadata.filter(entry => entry.key !== 'language')
+
+      return {
+        after: {
+          ...afterValue,
+          metadata: normalizedAfterMetadata,
+          source: normalizeRoutineSourceForCompare(afterRoutine.source)
+        },
+        before: {
+          ...beforeValue,
+          metadata: normalizedBeforeMetadata,
+          source: normalizeRoutineSourceForCompare(beforeRoutine.source)
+        }
+      }
+    }
+
+    return {
+      after: {
+        ...afterValue,
+        source: afterSource
+      },
+      before: {
+        ...beforeValue,
+        source: beforeSource
+      }
+    }
+  }
+
+  return {
+    after: afterValue,
+    before: beforeValue
   }
 }
 
