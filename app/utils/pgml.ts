@@ -109,10 +109,27 @@ export type PgmlCompareExclusions = {
   tableIds: string[]
 }
 
+export type PgmlCompareNoteFlag = 'pending' | 'ignore' | 'fixed' | 'blocked'
+
+export type PgmlCompareNote = {
+  entryId: string
+  flag: PgmlCompareNoteFlag
+  note: string
+}
+
 export type PgmlCompareNoiseFilters = {
   hideDefaults: boolean
+  hideExecutableNameOnly: boolean
+  hideStructuralNameOnly: boolean
   hideMetadata: boolean
   hideOrderOnly: boolean
+}
+
+export type PgmlCompareNoteFilters = {
+  showBlocked: boolean
+  showFixed: boolean
+  showIgnore: boolean
+  showPending: boolean
 }
 
 export type PgmlMetadataEntry = {
@@ -292,8 +309,19 @@ export const createEmptyPgmlCompareExclusions = (): PgmlCompareExclusions => {
 export const createDefaultPgmlCompareNoiseFilters = (): PgmlCompareNoiseFilters => {
   return {
     hideDefaults: true,
+    hideExecutableNameOnly: true,
+    hideStructuralNameOnly: true,
     hideMetadata: true,
     hideOrderOnly: true
+  }
+}
+
+export const createDefaultPgmlCompareNoteFilters = (): PgmlCompareNoteFilters => {
+  return {
+    showBlocked: true,
+    showFixed: true,
+    showIgnore: true,
+    showPending: true
   }
 }
 
@@ -306,6 +334,12 @@ export const clonePgmlCompareNoiseFilters = (
     hideDefaults: filters?.hideDefaults === undefined
       ? defaults.hideDefaults
       : filters.hideDefaults,
+    hideExecutableNameOnly: filters?.hideExecutableNameOnly === undefined
+      ? defaults.hideExecutableNameOnly
+      : filters.hideExecutableNameOnly,
+    hideStructuralNameOnly: filters?.hideStructuralNameOnly === undefined
+      ? defaults.hideStructuralNameOnly
+      : filters.hideStructuralNameOnly,
     hideMetadata: filters?.hideMetadata === undefined
       ? defaults.hideMetadata
       : filters.hideMetadata,
@@ -313,6 +347,55 @@ export const clonePgmlCompareNoiseFilters = (
       ? defaults.hideOrderOnly
       : filters.hideOrderOnly
   }
+}
+
+export const clonePgmlCompareNoteFilters = (
+  filters?: Partial<PgmlCompareNoteFilters> | null
+): PgmlCompareNoteFilters => {
+  const defaults = createDefaultPgmlCompareNoteFilters()
+
+  return {
+    showBlocked: filters?.showBlocked === undefined
+      ? defaults.showBlocked
+      : filters.showBlocked,
+    showFixed: filters?.showFixed === undefined
+      ? defaults.showFixed
+      : filters.showFixed,
+    showIgnore: filters?.showIgnore === undefined
+      ? defaults.showIgnore
+      : filters.showIgnore,
+    showPending: filters?.showPending === undefined
+      ? defaults.showPending
+      : filters.showPending
+  }
+}
+
+export const clonePgmlCompareNotes = (
+  notes?: PgmlCompareNote[] | null
+): PgmlCompareNote[] => {
+  const seenEntryIds = new Set<string>()
+
+  return (notes || []).flatMap((note) => {
+    const entryId = note.entryId.trim()
+    const normalizedNote = note.note.trim()
+
+    if (
+      entryId.length === 0
+      || normalizedNote.length === 0
+      || seenEntryIds.has(entryId)
+      || !['pending', 'ignore', 'fixed', 'blocked'].includes(note.flag)
+    ) {
+      return []
+    }
+
+    seenEntryIds.add(entryId)
+
+    return [{
+      entryId,
+      flag: note.flag,
+      note: normalizedNote
+    }] satisfies PgmlCompareNote[]
+  })
 }
 
 export const clonePgmlCompareExclusions = (
@@ -2800,8 +2883,8 @@ const parseTable = (block: NamedBlock) => {
     if (/^Indexes\s*\{$/i.test(trimmed)) {
       const nestedBlock = collectNestedBlockBody(block.body, lineIndex)
 
-      nestedBlock.body.forEach((nestedLine, nestedLineIndex) => {
-        const indexDefinition = parseDbmlCompatibleIndexDefinition(nestedLine)
+      collectDbmlCompatibleMultilineEntries(nestedBlock.body).forEach((nestedEntry) => {
+        const indexDefinition = parseDbmlCompatibleIndexDefinition(nestedEntry.text)
 
         if (!indexDefinition || indexDefinition.columns.length === 0) {
           return
@@ -2813,8 +2896,8 @@ const parseTable = (block: NamedBlock) => {
           columns: indexDefinition.columns,
           type: indexDefinition.type || 'btree',
           sourceRange: {
-            startLine: sourceLine + nestedLineIndex + 1,
-            endLine: sourceLine + nestedLineIndex + 1
+            startLine: sourceLine + nestedEntry.startIndex + 1,
+            endLine: sourceLine + nestedEntry.endIndex + 1
           }
         })
       })

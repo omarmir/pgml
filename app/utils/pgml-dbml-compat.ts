@@ -35,10 +35,123 @@ const sourceDelimiterPattern = /^(source|definition):\s*(\$(?:[A-Za-z0-9_]+)?\$)
 const cleanName = (value: string) => value.replaceAll('"', '').trim()
 
 const splitBracketParts = (value: string) => {
-  return value
-    .split(',')
-    .map(part => part.trim())
-    .filter(part => part.length > 0)
+  const parts: string[] = []
+  let currentPart = ''
+  let insideSingleQuote = false
+  let insideDoubleQuote = false
+  let insideBacktick = false
+  let parenthesisDepth = 0
+  let bracketDepth = 0
+
+  for (let index = 0; index < value.length; index += 1) {
+    const character = value[index] || ''
+    const nextCharacter = value[index + 1] || ''
+
+    if (insideSingleQuote) {
+      currentPart += character
+
+      if (character === '\'' && nextCharacter === '\'') {
+        currentPart += nextCharacter
+        index += 1
+        continue
+      }
+
+      if (character === '\'') {
+        insideSingleQuote = false
+      }
+
+      continue
+    }
+
+    if (insideDoubleQuote) {
+      currentPart += character
+
+      if (character === '"' && nextCharacter === '"') {
+        currentPart += nextCharacter
+        index += 1
+        continue
+      }
+
+      if (character === '"') {
+        insideDoubleQuote = false
+      }
+
+      continue
+    }
+
+    if (insideBacktick) {
+      currentPart += character
+
+      if (character === '`') {
+        insideBacktick = false
+      }
+
+      continue
+    }
+
+    if (character === '\'') {
+      insideSingleQuote = true
+      currentPart += character
+      continue
+    }
+
+    if (character === '"') {
+      insideDoubleQuote = true
+      currentPart += character
+      continue
+    }
+
+    if (character === '`') {
+      insideBacktick = true
+      currentPart += character
+      continue
+    }
+
+    if (character === '(') {
+      parenthesisDepth += 1
+      currentPart += character
+      continue
+    }
+
+    if (character === ')') {
+      parenthesisDepth = Math.max(0, parenthesisDepth - 1)
+      currentPart += character
+      continue
+    }
+
+    if (character === '[') {
+      bracketDepth += 1
+      currentPart += character
+      continue
+    }
+
+    if (character === ']') {
+      bracketDepth = Math.max(0, bracketDepth - 1)
+      currentPart += character
+      continue
+    }
+
+    if (character === ',' && parenthesisDepth === 0 && bracketDepth === 0) {
+      const trimmedPart = currentPart.trim()
+
+      if (trimmedPart.length > 0) {
+        parts.push(trimmedPart)
+      }
+
+      currentPart = ''
+      continue
+    }
+
+    currentPart += character
+  }
+
+  const trimmedPart = currentPart.trim()
+
+  if (trimmedPart.length > 0) {
+    parts.push(trimmedPart)
+  }
+
+  return parts
 }
 
 const getBracketOptionValue = (
@@ -56,10 +169,91 @@ const getBracketOptionValue = (
   return option.slice(option.indexOf(':') + 1).trim().toLowerCase()
 }
 
+const splitTrailingBracketOptions = (value: string) => {
+  const trimmedValue = value.trim()
+
+  if (!trimmedValue.endsWith(']')) {
+    return {
+      body: trimmedValue,
+      options: null
+    }
+  }
+
+  let insideSingleQuote = false
+  let insideDoubleQuote = false
+  let insideBacktick = false
+  let bracketDepth = 0
+
+  for (let index = trimmedValue.length - 1; index >= 0; index -= 1) {
+    const character = trimmedValue[index] || ''
+    const previousCharacter = trimmedValue[index - 1] || ''
+
+    if (insideSingleQuote) {
+      if (character === '\'' && previousCharacter !== '\'') {
+        insideSingleQuote = false
+      }
+
+      continue
+    }
+
+    if (insideDoubleQuote) {
+      if (character === '"' && previousCharacter !== '"') {
+        insideDoubleQuote = false
+      }
+
+      continue
+    }
+
+    if (insideBacktick) {
+      if (character === '`') {
+        insideBacktick = false
+      }
+
+      continue
+    }
+
+    if (character === '\'') {
+      insideSingleQuote = true
+      continue
+    }
+
+    if (character === '"') {
+      insideDoubleQuote = true
+      continue
+    }
+
+    if (character === '`') {
+      insideBacktick = true
+      continue
+    }
+
+    if (character === ']') {
+      bracketDepth += 1
+      continue
+    }
+
+    if (character === '[') {
+      bracketDepth -= 1
+
+      if (bracketDepth === 0) {
+        return {
+          body: trimmedValue.slice(0, index).trim(),
+          options: trimmedValue.slice(index + 1, -1).trim()
+        }
+      }
+    }
+  }
+
+  return {
+    body: trimmedValue,
+    options: null
+  }
+}
+
 const parseReferenceEndpointWithOptions = (value: string) => {
-  const match = value.trim().match(/^(.*?)(?:\s*\[([^\]]+)\])?$/)
-  const endpoint = cleanName(match?.[1] || value)
-  const options = match?.[2] ? splitBracketParts(match[2]) : []
+  const parsedValue = splitTrailingBracketOptions(value)
+  const endpoint = cleanName(parsedValue.body)
+  const options = parsedValue.options ? splitBracketParts(parsedValue.options) : []
 
   return {
     endpoint,
@@ -292,17 +486,17 @@ export const parsePgmlCompatibleReference = (value: string): PgmlCompatibleRefer
 }
 
 export const parseDbmlCompatibleIndexDefinition = (value: string): PgmlCompatibleIndexDefinition | null => {
-  const match = value.trim().match(/^(.*?)(?:\s*\[([^\]]+)\])?$/)
+  const parsedValue = splitTrailingBracketOptions(value)
 
-  if (!match?.[1]) {
+  if (parsedValue.body.length === 0) {
     return null
   }
 
-  const rawColumnValue = match[1].trim()
+  const rawColumnValue = parsedValue.body
   const columnList = rawColumnValue.startsWith('(') && rawColumnValue.endsWith(')')
     ? rawColumnValue.slice(1, -1)
     : rawColumnValue
-  const options = match[2] ? splitBracketParts(match[2]) : []
+  const options = parsedValue.options ? splitBracketParts(parsedValue.options) : []
   const nameEntry = options.find(option => option.startsWith('name:'))
   const typeEntry = options.find(option => option.startsWith('type:'))
   const whereEntry = options.find(option => option.startsWith('where:'))
@@ -320,17 +514,19 @@ export const parseDbmlCompatibleIndexDefinition = (value: string): PgmlCompatibl
 }
 
 export const parseDbmlCompatibleCheckDefinition = (value: string): PgmlCompatibleCheckDefinition | null => {
-  const match = value.trim().match(/^`([\s\S]+)`(?:\s*\[([^\]]+)\])?$/)
+  const parsedValue = splitTrailingBracketOptions(value)
+  const body = parsedValue.body.trim()
+  const expressionMatch = body.match(/^`([\s\S]+)`$/)
 
-  if (!match) {
+  if (!expressionMatch) {
     return null
   }
 
-  const options = match[2] ? splitBracketParts(match[2]) : []
+  const options = parsedValue.options ? splitBracketParts(parsedValue.options) : []
   const nameEntry = options.find(option => option.startsWith('name:'))
 
   return {
-    expression: (match[1] || '').trim(),
+    expression: (expressionMatch[1] || '').trim(),
     name: nameEntry ? nameEntry.replace(/^name:\s*/, '').replaceAll(/^['"`]+|['"`]+$/g, '').trim() : null
   }
 }

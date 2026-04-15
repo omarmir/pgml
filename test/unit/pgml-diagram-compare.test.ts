@@ -219,6 +219,72 @@ Function public.refresh_users() returns void {
     }).some(entry => entry.id === 'function:public.refresh_orders')).toBe(true)
   })
 
+  it('classifies executable rename-only diffs as optional compare noise', () => {
+    const baseModel = parseSnapshotModel(`Function public.refresh_orders() returns void {
+  source: $sql$
+    select 1;
+  $sql$
+}`)
+    const targetModel = parseSnapshotModel(`Function public.refresh_orders_v2() returns void {
+  source: $sql$
+    select 1;
+  $sql$
+}`)
+    const entries = buildPgmlDiagramCompareEntries(
+      diffPgmlSchemaModels(baseModel, targetModel),
+      baseModel,
+      targetModel
+    )
+    const executableRenameEntry = entries.find(entry => entry.id === 'function:public.refresh_orders_v2') || null
+
+    expect(executableRenameEntry?.changeKind).toBe('modified')
+    expect(executableRenameEntry?.changedFields).toEqual(expect.arrayContaining(['name', 'signature']))
+    expect(executableRenameEntry?.noiseKinds).toEqual(['executable-name'])
+    expect(filterPgmlDiagramCompareEntriesForNoise(entries).some(entry => entry.id === 'function:public.refresh_orders_v2')).toBe(false)
+    expect(filterPgmlDiagramCompareEntriesForNoise(entries, {
+      hideExecutableNameOnly: false
+    }).some(entry => entry.id === 'function:public.refresh_orders_v2')).toBe(true)
+  })
+
+  it('classifies index and constraint rename-only diffs as optional compare noise', () => {
+    const baseModel = parseSnapshotModel(`Table public.orders {
+  id uuid [pk]
+  user_id uuid
+  Index cn_idx_orders_user_id (user_id)
+  Constraint cn_chk_orders_user_id: user_id is not null
+}`)
+    const targetModel = parseSnapshotModel(`Table public.orders {
+  id uuid [pk]
+  user_id uuid
+  Index cn_idx_orders_customer_id (user_id)
+  Constraint cn_chk_orders_customer_id: user_id is not null
+}`)
+    const entries = buildPgmlDiagramCompareEntries(
+      diffPgmlSchemaModels(baseModel, targetModel),
+      baseModel,
+      targetModel
+    )
+    const indexRenameEntry = entries.find(entry => entry.id === 'index:public.orders::cn_idx_orders_customer_id') || null
+    const constraintRenameEntry = entries.find(entry => entry.id === 'constraint:public.orders::cn_chk_orders_customer_id') || null
+
+    expect(indexRenameEntry?.changeKind).toBe('modified')
+    expect(indexRenameEntry?.changedFields).toEqual(['name'])
+    expect(indexRenameEntry?.noiseKinds).toEqual(['structural-name'])
+
+    expect(constraintRenameEntry?.changeKind).toBe('modified')
+    expect(constraintRenameEntry?.changedFields).toEqual(['name'])
+    expect(constraintRenameEntry?.noiseKinds).toEqual(['structural-name'])
+
+    expect(filterPgmlDiagramCompareEntriesForNoise(entries).some(entry => entry.id === 'index:public.orders::cn_idx_orders_customer_id')).toBe(false)
+    expect(filterPgmlDiagramCompareEntriesForNoise(entries).some(entry => entry.id === 'constraint:public.orders::cn_chk_orders_customer_id')).toBe(false)
+    expect(filterPgmlDiagramCompareEntriesForNoise(entries, {
+      hideStructuralNameOnly: false
+    }).some(entry => entry.id === 'index:public.orders::cn_idx_orders_customer_id')).toBe(true)
+    expect(filterPgmlDiagramCompareEntriesForNoise(entries, {
+      hideStructuralNameOnly: false
+    }).some(entry => entry.id === 'constraint:public.orders::cn_chk_orders_customer_id')).toBe(true)
+  })
+
   it('filters order-only compare entries independently of other noise kinds', () => {
     const orderOnlyEntry = {
       afterSnapshot: null,

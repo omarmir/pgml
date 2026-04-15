@@ -130,6 +130,9 @@ import {
   pgmlExample,
   pgmlVersionedExample,
   replacePgmlSourceRange,
+  type PgmlCompareNote,
+  type PgmlCompareNoteFlag,
+  type PgmlCompareNoteFilters,
   type PgmlCompareExclusions,
   type PgmlCompareNoiseFilters,
   type PgmlNodeProperties,
@@ -361,6 +364,10 @@ const compareExclusionsDialogOpen: Ref<boolean> = ref(false)
 const compareExclusionsDraft: Ref<PgmlCompareExclusions | null> = ref(null)
 const compareExclusionsSearchQuery: Ref<string> = ref('')
 const compareExclusionsTypeFilter: Ref<CompareExclusionTypeFilterValue> = ref('all')
+const compareNoteDialogOpen: Ref<boolean> = ref(false)
+const compareNoteDraftEntryId: Ref<string | null> = ref(null)
+const compareNoteDraftFlag: Ref<PgmlCompareNoteFlag> = ref('pending')
+const compareNoteDraftText: Ref<string> = ref('')
 const comparisonDialogOpen: Ref<boolean> = ref(false)
 const comparisonDialogMode: Ref<'create' | 'rename'> = ref('create')
 const comparisonDraftName: Ref<string> = ref('')
@@ -400,6 +407,7 @@ const {
   compareBaseId: versionCompareBaseId,
   compareBaseSource,
   compareExclusions: activeCompareExclusions,
+  compareNoteFilters,
   compareNoiseFilters: activeCompareNoiseFilters,
   comparisonItems,
   compareTargetId: versionCompareTargetId,
@@ -410,6 +418,7 @@ const {
   createCheckpoint: createVersionCheckpoint,
   createComparison,
   createNamedDiagramView,
+  deleteSelectedComparisonNote,
   deleteComparison,
   deleteVersion,
   document: versionDocument,
@@ -433,11 +442,14 @@ const {
   selectedComparison,
   selectedComparisonId,
   serializeCurrentDocument,
+  pruneSelectedComparisonNotes,
   setCompareTargets,
   setCurrentCompareExclusions,
+  setCurrentCompareNoteFilters,
   setCurrentCompareNoiseFilters,
   setDocumentEditorScope,
   setPreviewTarget,
+  saveSelectedComparisonNote,
   setSchemaMetadata,
   nextDiagramViewName,
   updateCurrentDiagramViewNodeProperties,
@@ -1291,6 +1303,7 @@ type CompareExclusionTypeFilterValue = 'all' | 'group' | 'table' | PgmlDiagramCo
 type CompareExclusionOption = {
   entityKind?: PgmlDiagramCompareEntityKind | null
   id: string
+  isStale?: boolean
   kind: CompareExclusionOptionKind
   label: string
   searchText: string
@@ -1311,6 +1324,12 @@ type CompareExclusionTypeFilterItem = {
   count: number
   label: string
   value: CompareExclusionTypeFilterValue
+}
+
+type CompareNoteFlagItem = {
+  description: string
+  label: string
+  value: PgmlCompareNoteFlag
 }
 
 const compareExclusionEntityKindOrder: PgmlDiagramCompareEntityKind[] = [
@@ -1367,6 +1386,28 @@ const compareExclusionTypeFilterOrder: CompareExclusionTypeFilterValue[] = [
   'table',
   ...compareExclusionEntityKindOrder
 ]
+const compareNoteFlagItems: CompareNoteFlagItem[] = [
+  {
+    description: 'Work is still open on this difference.',
+    label: 'Pending',
+    value: 'pending'
+  },
+  {
+    description: 'The difference is intentional and can be left alone.',
+    label: 'Ignore',
+    value: 'ignore'
+  },
+  {
+    description: 'The difference has already been handled.',
+    label: 'Fixed',
+    value: 'fixed'
+  },
+  {
+    description: 'Work is blocked by another dependency or decision.',
+    label: 'Blocked',
+    value: 'blocked'
+  }
+]
 
 const compareBaseRawModel = computed<PgmlSchemaModel | null>(() => {
   const parserReadyRevision = executableParserReadyRevision.value
@@ -1419,6 +1460,31 @@ const compareEntries = computed<PgmlDiagramCompareEntry[]>(() => {
     filterPgmlDiagramCompareEntriesForExclusions(compareRawEntries.value, activeCompareExclusions.value),
     activeCompareNoiseFilters.value
   )
+})
+const compareRawEntriesById = computed<Record<string, PgmlDiagramCompareEntry>>(() => {
+  return compareRawEntries.value.reduce<Record<string, PgmlDiagramCompareEntry>>((entries, entry) => {
+    entries[entry.id] = entry
+    return entries
+  }, {})
+})
+const activeCompareNotes = computed<PgmlCompareNote[]>(() => {
+  return selectedComparison.value?.notes || []
+})
+const activeCompareNoteForDraftEntry = computed<PgmlCompareNote | null>(() => {
+  if (!compareNoteDraftEntryId.value) {
+    return null
+  }
+
+  return activeCompareNotes.value.find((note) => {
+    return note.entryId === compareNoteDraftEntryId.value
+  }) || null
+})
+const compareNoteDraftEntry = computed<PgmlDiagramCompareEntry | null>(() => {
+  if (!compareNoteDraftEntryId.value) {
+    return null
+  }
+
+  return compareRawEntriesById.value[compareNoteDraftEntryId.value] || null
 })
 const compareBaseLabel = computed(() => {
   if (versionCompareBaseId.value === null) {
@@ -1542,6 +1608,60 @@ const selectedImportDbmlBaseVersion = computed(() => {
 const compareComparisonLabel = computed(() => {
   return selectedComparison.value?.name || 'Current comparison'
 })
+const savedComparisonHint = computed(() => {
+  return selectedComparison.value
+    ? `${compareComparisonLabel.value} keeps its managed exclusions, note flags, notes, and noise filters when you change the base or target here.`
+    : null
+})
+const compareNoteDialogTitle = computed(() => {
+  return activeCompareNoteForDraftEntry.value ? 'Edit compare note' : 'Add compare note'
+})
+const compareNoteDialogDescription = computed(() => {
+  return selectedComparison.value
+    ? `Store a flagged note on ${compareComparisonLabel.value}. It will stay with this saved comparison until the underlying diff disappears.`
+    : 'Save the current comparison first to persist compare notes.'
+})
+const compareNoteDialogEntryLabel = computed(() => {
+  return compareNoteDraftEntry.value?.label || compareNoteDraftEntryId.value || 'Unknown compare entry'
+})
+const canSaveCompareNote = computed(() => {
+  return compareNoteDraftEntryId.value !== null && compareNoteDraftText.value.trim().length > 0
+})
+watch([
+  () => selectedComparisonId.value,
+  () => compareRawEntries.value.map(entry => entry.id).sort().join('|')
+], () => {
+  if (!selectedComparison.value) {
+    if (compareNoteDialogOpen.value) {
+      compareNoteDialogOpen.value = false
+      compareNoteDraftEntryId.value = null
+      compareNoteDraftFlag.value = 'pending'
+      compareNoteDraftText.value = ''
+    }
+    return
+  }
+
+  const previousNoteCount = selectedComparison.value.notes.length
+  const didPrune = pruneSelectedComparisonNotes(compareRawEntries.value.map(entry => entry.id))
+  const nextNoteCount = selectedComparison.value.notes.length
+
+  if (didPrune && nextNoteCount !== previousNoteCount) {
+    markBrowserSchemaStatusEligible()
+  }
+
+  if (
+    compareNoteDialogOpen.value
+    && compareNoteDraftEntryId.value
+    && !compareRawEntriesById.value[compareNoteDraftEntryId.value]
+  ) {
+    compareNoteDialogOpen.value = false
+    compareNoteDraftEntryId.value = null
+    compareNoteDraftFlag.value = 'pending'
+    compareNoteDraftText.value = ''
+  }
+}, {
+  immediate: true
+})
 const buildCompareExclusionSummary = (
   exclusions: Partial<PgmlCompareExclusions> | null | undefined
 ) => {
@@ -1562,6 +1682,9 @@ const buildCompareExclusionSummary = (
 
   return parts.length > 0 ? parts.join(' · ') : null
 }
+const buildStaleCompareExclusionCountLabel = (count: number) => {
+  return `${count} stale exclusion${count === 1 ? '' : 's'}`
+}
 const compareExclusionsEffective = computed<PgmlCompareExclusions>(() => {
   return compareExclusionsDraft.value
     ? compareExclusionsDraft.value
@@ -1579,12 +1702,28 @@ const compareExclusionsSelectionCount = computed(() => {
   )
 })
 const activeCompareExclusionSummary = computed(() => {
-  return buildCompareExclusionSummary(activeCompareExclusions.value)
+  const summary = buildCompareExclusionSummary(activeCompareExclusions.value)
+  const staleCount = activeCompareExclusionStaleEntityOptions.value.length
+
+  if (staleCount === 0) {
+    return summary
+  }
+
+  return [summary, buildStaleCompareExclusionCountLabel(staleCount)].filter(Boolean).join(' · ')
 })
 const draftCompareExclusionSummary = computed(() => {
-  return compareExclusionsDraft.value
-    ? buildCompareExclusionSummary(compareExclusionsEffective.value)
-    : null
+  if (!compareExclusionsDraft.value) {
+    return null
+  }
+
+  const summary = buildCompareExclusionSummary(compareExclusionsEffective.value)
+  const staleCount = staleCompareExclusionEntityOptions.value.length
+
+  if (staleCount === 0) {
+    return summary
+  }
+
+  return [summary, buildStaleCompareExclusionCountLabel(staleCount)].filter(Boolean).join(' · ')
 })
 const compareExclusionSourceModels = computed<PgmlSchemaModel[]>(() => {
   return [compareBaseRawModel.value, compareTargetRawModel.value].flatMap(model => model ? [model] : [])
@@ -1644,6 +1783,7 @@ const createCompareExclusionEntityOption = (entry: PgmlDiagramCompareEntry): Com
   return {
     entityKind: entry.entityKind,
     id: entry.id,
+    isStale: false,
     kind: 'entity',
     label: entry.label,
     searchText: `${entityKindLabel} ${entry.label} ${entry.description}`.toLowerCase(),
@@ -1658,6 +1798,7 @@ const createStoredCompareExclusionEntityOption = (entryId: string): CompareExclu
   return {
     entityKind,
     id: entryId,
+    isStale: true,
     kind: 'entity',
     label,
     searchText: `${entityKindLabel} ${label}`.toLowerCase(),
@@ -1686,6 +1827,18 @@ const compareExclusionEntityOptionMap = computed(() => {
 const resolveCompareExclusionEntityOption = (entryId: string) => {
   return compareExclusionEntityOptionMap.value.get(entryId) || createStoredCompareExclusionEntityOption(entryId)
 }
+const staleCompareExclusionEntityOptions = computed(() => {
+  return compareExclusionsEffective.value.entityIds
+    .map(resolveCompareExclusionEntityOption)
+    .filter(option => option.isStale)
+    .sort((left, right) => left.label.localeCompare(right.label))
+})
+const activeCompareExclusionStaleEntityOptions = computed(() => {
+  return activeCompareExclusions.value.entityIds
+    .map(resolveCompareExclusionEntityOption)
+    .filter(option => option.isStale)
+    .sort((left, right) => left.label.localeCompare(right.label))
+})
 const buildCompareExclusionSummaryLabel = (option: CompareExclusionOption) => {
   if (option.kind === 'group') {
     return option.label
@@ -1809,7 +1962,11 @@ const compareExclusionEntitySections = computed<CompareExclusionEntitySection[]>
     })
 
   compareExclusionsEffective.value.entityIds.forEach((entryId) => {
-    pushOption(resolveCompareExclusionEntityOption(entryId))
+    const option = resolveCompareExclusionEntityOption(entryId)
+
+    if (!option.isStale) {
+      pushOption(option)
+    }
   })
 
   return compareExclusionEntityKindOrder.flatMap((entityKind) => {
@@ -2255,9 +2412,14 @@ const closeDeleteVersionDialog = () => {
   deleteVersionId.value = null
 }
 const compareExclusionsDialogDescription = computed(() => {
+  const staleCount = staleCompareExclusionEntityOptions.value.length
+  const staleSuffix = staleCount > 0
+    ? ` ${buildStaleCompareExclusionCountLabel(staleCount)} no longer match the current compare target and can be removed below.`
+    : ''
+
   return selectedComparison.value
-    ? `Choose the compare entities to exclude for ${compareComparisonLabel.value}. Changes here update that saved comparison preset.`
-    : 'Choose the compare entities to exclude from the current comparison. Save it as a comparison preset if you want to reuse it later.'
+    ? `Choose the compare entities to exclude for ${compareComparisonLabel.value}. Changes here update that saved comparison preset while keeping its exclusions unless you remove them.${staleSuffix}`
+    : `Choose the compare entities to exclude from the current comparison. Save it as a comparison preset if you want to reuse it later.${staleSuffix}`
 })
 const isCompareExclusionOptionSelected = (option: CompareExclusionOption) => {
   if (option.kind === 'group') {
@@ -2313,6 +2475,13 @@ const toggleCompareExclusionOption = (option: CompareExclusionOption) => {
     [option.kind === 'entity' ? 'entityIds' : option.kind === 'group' ? 'groupNames' : 'tableIds']: Array.from(nextValues)
   })
 }
+const removeCompareExclusionOption = (option: CompareExclusionOption) => {
+  if (!isCompareExclusionOptionSelected(option)) {
+    return
+  }
+
+  toggleCompareExclusionOption(option)
+}
 const clearCompareExclusionsDraft = () => {
   compareExclusionsDraft.value = createEmptyPgmlCompareExclusions()
 }
@@ -2337,6 +2506,76 @@ const saveCompareExclusionsDialog = () => {
     description: selectedComparison.value
       ? `${compareComparisonLabel.value} now keeps its saved exclusions.`
       : 'The current comparison now uses the updated exclusions.',
+    color: 'success',
+    icon: 'i-lucide-check'
+  })
+}
+const closeCompareNoteDialog = () => {
+  compareNoteDialogOpen.value = false
+  compareNoteDraftEntryId.value = null
+  compareNoteDraftFlag.value = 'pending'
+  compareNoteDraftText.value = ''
+}
+const openCompareNoteDialog = (entryId: string) => {
+  if (!selectedComparison.value) {
+    toast.add({
+      title: 'Save a comparison first',
+      description: 'Create or select a saved comparison before adding persisted compare notes.',
+      color: 'warning',
+      icon: 'i-lucide-bookmark'
+    })
+    return
+  }
+
+  const existingNote = selectedComparison.value.notes.find((note) => {
+    return note.entryId === entryId
+  }) || null
+
+  compareNoteDraftEntryId.value = entryId
+  compareNoteDraftFlag.value = existingNote?.flag || 'pending'
+  compareNoteDraftText.value = existingNote?.note || ''
+  compareNoteDialogOpen.value = true
+}
+const saveCompareNoteDialog = () => {
+  if (!compareNoteDraftEntryId.value || compareNoteDraftText.value.trim().length === 0) {
+    return
+  }
+
+  const didSave = saveSelectedComparisonNote({
+    entryId: compareNoteDraftEntryId.value,
+    flag: compareNoteDraftFlag.value,
+    note: compareNoteDraftText.value
+  })
+
+  if (!didSave) {
+    return
+  }
+
+  markBrowserSchemaStatusEligible()
+  closeCompareNoteDialog()
+  toast.add({
+    title: 'Compare note saved',
+    description: `${compareComparisonLabel.value} now keeps the note for this difference.`,
+    color: 'success',
+    icon: 'i-lucide-check'
+  })
+}
+const deleteCompareNoteDialog = () => {
+  if (!compareNoteDraftEntryId.value) {
+    return
+  }
+
+  const didDelete = deleteSelectedComparisonNote(compareNoteDraftEntryId.value)
+
+  if (!didDelete) {
+    return
+  }
+
+  markBrowserSchemaStatusEligible()
+  closeCompareNoteDialog()
+  toast.add({
+    title: 'Compare note removed',
+    description: `${compareComparisonLabel.value} no longer keeps a note for this difference.`,
     color: 'success',
     icon: 'i-lucide-check'
   })
@@ -3064,6 +3303,12 @@ const updateVersionCompareSelection = (input: {
 
   if (didUpdate && selectedComparisonId.value) {
     markBrowserSchemaStatusEligible()
+    toast.add({
+      title: 'Saved comparison updated',
+      description: `${compareComparisonLabel.value} now compares the selected base and target while keeping its saved exclusions, note flags, notes, and noise filters.`,
+      color: 'success',
+      icon: 'i-lucide-check'
+    })
   }
 }
 const updateVersionCompareBaseId = (value: string | null) => {
@@ -3080,6 +3325,13 @@ const updateVersionCompareTargetId = (value: string) => {
 }
 const updateVersionCompareNoiseFilters = (value: PgmlCompareNoiseFilters) => {
   const didUpdate = setCurrentCompareNoiseFilters(value)
+
+  if (didUpdate && selectedComparisonId.value) {
+    markBrowserSchemaStatusEligible()
+  }
+}
+const updateVersionCompareNoteFilters = (value: PgmlCompareNoteFilters) => {
+  const didUpdate = setCurrentCompareNoteFilters(value)
 
   if (didUpdate && selectedComparisonId.value) {
     markBrowserSchemaStatusEligible()
@@ -3959,8 +4211,11 @@ onBeforeUnmount(() => {
             :compare-excluded-labels="activeCompareExclusionVisibleLabels"
             :compare-excluded-summary="activeCompareExclusionSummary"
             :compare-hidden-excluded-label-count="activeCompareExclusionHiddenLabelCount"
+            :compare-note-filters="compareNoteFilters"
+            :compare-notes="activeCompareNotes"
             :compare-noise-filters="activeCompareNoiseFilters"
             :compare-relationship-summary="compareRelationshipSummary"
+            :compare-saved-comparison-hint="savedComparisonHint"
             :compare-selected-comparison-id="selectedComparisonId"
             :compare-target-label="compareTargetLabel"
             :diagram-view-items="diagramViewItems"
@@ -4003,6 +4258,7 @@ onBeforeUnmount(() => {
             @delete-version="openDeleteVersionDialog"
             @edit-group="openGroupEditor"
             @edit-table="openTableEditor"
+            @edit-compare-entry-note="openCompareNoteDialog"
             @edit-compare-exclusions="openCompareExclusionsDialog"
             @node-properties-change="syncSourceWithNodeProperties"
             @rename-compare-comparison="openRenameComparisonDialog"
@@ -4011,6 +4267,7 @@ onBeforeUnmount(() => {
             @restore-version="restoreVersionToWorkspace"
             @select-compare-comparison="selectComparison"
             @select-diagram-view="selectActiveDiagramView"
+            @update-compare-note-filters="updateVersionCompareNoteFilters"
             @update-compare-noise-filters="updateVersionCompareNoiseFilters"
             @update-diagram-view-settings="updateDiagramViewSettings"
             @update-version-compare-base-id="updateVersionCompareBaseId"
@@ -4092,8 +4349,11 @@ onBeforeUnmount(() => {
             :compare-excluded-labels="activeCompareExclusionVisibleLabels"
             :compare-excluded-summary="activeCompareExclusionSummary"
             :compare-hidden-excluded-label-count="activeCompareExclusionHiddenLabelCount"
+            :compare-note-filters="compareNoteFilters"
+            :compare-notes="activeCompareNotes"
             :compare-noise-filters="activeCompareNoiseFilters"
             :compare-relationship-summary="compareRelationshipSummary"
+            :compare-saved-comparison-hint="savedComparisonHint"
             :compare-selected-comparison-id="selectedComparisonId"
             :compare-target-label="compareTargetLabel"
             :diagram-view-items="diagramViewItems"
@@ -4133,6 +4393,7 @@ onBeforeUnmount(() => {
             @delete-version="openDeleteVersionDialog"
             @edit-group="openGroupEditor"
             @edit-table="openTableEditor"
+            @edit-compare-entry-note="openCompareNoteDialog"
             @edit-compare-exclusions="openCompareExclusionsDialog"
             @node-properties-change="syncSourceWithNodeProperties"
             @rename-compare-comparison="openRenameComparisonDialog"
@@ -4141,6 +4402,7 @@ onBeforeUnmount(() => {
             @restore-version="restoreVersionToWorkspace"
             @select-compare-comparison="selectComparison"
             @select-diagram-view="selectActiveDiagramView"
+            @update-compare-note-filters="updateVersionCompareNoteFilters"
             @update-compare-noise-filters="updateVersionCompareNoiseFilters"
             @update-diagram-view-settings="updateDiagramViewSettings"
             @update-version-compare-base-id="updateVersionCompareBaseId"
@@ -4255,7 +4517,10 @@ onBeforeUnmount(() => {
           :base-label="compareBaseLabel"
           :comparison-items="comparisonItems"
           :comparison-label="analysisComparisonLabel"
+          :can-edit-notes="selectedComparison !== null"
           :compare-base-id="versionCompareBaseId"
+          :compare-note-filters="compareNoteFilters"
+          :compare-notes="activeCompareNotes"
           :compare-noise-filters="activeCompareNoiseFilters"
           :compare-options="versionCompareOptions"
           :compare-target-id="versionCompareTargetId"
@@ -4264,12 +4529,14 @@ onBeforeUnmount(() => {
           :entries="compareEntries"
           :hidden-excluded-label-count="activeCompareExclusionHiddenLabelCount"
           :relationship-summary="compareRelationshipSummary"
+          :saved-comparison-hint="savedComparisonHint"
           :selected-comparison-id="selectedComparisonId"
           :selected-diagram-context-ids="[]"
           :selected-entry-id="analysisSelectedCompareEntryId"
           :target-label="compareTargetLabel"
           @create-comparison="openCreateComparisonDialog"
           @delete-comparison="deleteSelectedComparisonPreset"
+          @edit-entry-note="openCompareNoteDialog"
           @edit-comparison-exclusions="openCompareExclusionsDialog"
           @focus-source="handleAnalysisCompareFocusSource"
           @focus-target="handleAnalysisCompareFocusTarget"
@@ -4277,6 +4544,7 @@ onBeforeUnmount(() => {
           @select-comparison="selectComparison"
           @select-entry="analysisSelectedCompareEntryId = $event"
           @update:compare-base-id="updateVersionCompareBaseId"
+          @update:compare-note-filters="updateVersionCompareNoteFilters"
           @update:compare-noise-filters="updateVersionCompareNoiseFilters"
           @update:compare-target-id="updateVersionCompareTargetId"
         />
@@ -4586,6 +4854,82 @@ onBeforeUnmount(() => {
       </StudioModalFrame>
 
       <StudioModalFrame
+        v-model:open="compareNoteDialogOpen"
+        :title="compareNoteDialogTitle"
+        :description="compareNoteDialogDescription"
+        surface-id="compare-note"
+        body-class="grid gap-4 px-4 py-3"
+        @close="closeCompareNoteDialog"
+      >
+        <div class="grid gap-4">
+          <div class="border border-[color:var(--studio-shell-border)] bg-[color:var(--studio-control-bg)] px-3 py-3">
+            <div :class="studioFieldKickerClass">
+              Compare entry
+            </div>
+            <div class="mt-2 text-[0.85rem] font-semibold text-[color:var(--studio-shell-text)] [overflow-wrap:anywhere]">
+              {{ compareNoteDialogEntryLabel }}
+            </div>
+          </div>
+
+          <label class="grid gap-1">
+            <span :class="studioFieldKickerClass">
+              Flag
+            </span>
+            <USelect
+              v-model="compareNoteDraftFlag"
+              :items="compareNoteFlagItems"
+              value-key="value"
+              label-key="label"
+              color="neutral"
+              variant="outline"
+              size="sm"
+              :ui="studioSelectUi"
+            />
+          </label>
+
+          <label class="grid gap-1">
+            <span :class="studioFieldKickerClass">
+              Note
+            </span>
+            <textarea
+              v-model="compareNoteDraftText"
+              data-compare-note-input="true"
+              rows="6"
+              placeholder="Describe the follow-up or decision for this difference."
+              :class="joinStudioClasses(textareaClass, 'min-h-[7rem]')"
+            />
+          </label>
+        </div>
+
+        <template #footer>
+          <UButton
+            label="Cancel"
+            color="neutral"
+            variant="outline"
+            :class="secondaryModalButtonClass"
+            @click="closeCompareNoteDialog"
+          />
+          <UButton
+            v-if="activeCompareNoteForDraftEntry"
+            label="Remove note"
+            color="neutral"
+            variant="outline"
+            :class="secondaryModalButtonClass"
+            @click="deleteCompareNoteDialog"
+          />
+          <UButton
+            label="Save note"
+            data-compare-note-save="true"
+            color="neutral"
+            variant="soft"
+            :class="primaryModalButtonClass"
+            :disabled="!canSaveCompareNote"
+            @click="saveCompareNoteDialog"
+          />
+        </template>
+      </StudioModalFrame>
+
+      <StudioModalFrame
         v-model:open="compareExclusionsDialogOpen"
         title="Manage compare exclusions"
         :description="compareExclusionsDialogDescription"
@@ -4658,6 +5002,38 @@ onBeforeUnmount(() => {
             <p :class="studioCompactBodyCopyClass">
               Select a group to exclude its full cluster, pick individual tables inside it, or exclude other comparable entities like indexes, references, types, and executables.
             </p>
+            <section
+              v-if="staleCompareExclusionEntityOptions.length > 0"
+              data-compare-exclusion-stale-section="true"
+              class="grid gap-2 border border-amber-500/30 bg-amber-500/8 px-3 py-3"
+            >
+              <div :class="studioFieldKickerClass">
+                No longer applicable
+              </div>
+              <p :class="studioCompactBodyCopyClass">
+                These saved entity exclusions no longer exist in the current base and target pair. Remove them if they are no longer needed.
+              </p>
+              <div class="grid gap-2">
+                <div
+                  v-for="option in staleCompareExclusionEntityOptions"
+                  :key="`stale:${option.id}`"
+                  class="flex flex-wrap items-center justify-between gap-2 border border-[color:var(--studio-shell-border)]/70 px-3 py-2"
+                >
+                  <div class="min-w-0 text-[0.72rem] leading-5 text-[color:var(--studio-shell-text)]">
+                    {{ buildCompareExclusionSummaryLabel(option) }}
+                  </div>
+                  <UButton
+                    label="Remove"
+                    :data-compare-exclusion-stale-remove="option.id"
+                    color="neutral"
+                    variant="outline"
+                    size="xs"
+                    :class="secondaryModalButtonClass"
+                    @click="removeCompareExclusionOption(option)"
+                  />
+                </div>
+              </div>
+            </section>
             <div
               v-if="hasVisibleCompareExclusionOptions"
               data-compare-exclusion-options="true"

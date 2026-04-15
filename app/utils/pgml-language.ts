@@ -51,6 +51,7 @@ type PgmlBlockKind = 'Table'
   | 'Properties'
   | 'SchemaMetadata'
   | 'CompareExclusions'
+  | 'CompareNote'
   | 'VersionSet'
   | 'Workspace'
   | 'Version'
@@ -76,6 +77,7 @@ type PgmlContextKind = 'top-level'
   | 'schema-metadata'
   | 'comparison'
   | 'compare-exclusions'
+  | 'compare-note'
   | 'workspace'
   | 'version'
   | 'snapshot'
@@ -242,9 +244,20 @@ const comparisonMetadataKeywordTemplates = [
   { label: 'base', detail: 'Choose the base version, workspace, or empty state.', apply: 'base: ' },
   { label: 'target', detail: 'Choose the comparison target version or workspace.', apply: 'target: ' },
   { label: 'hide_defaults', detail: 'Hide default-only compare noise by default.', apply: 'hide_defaults: false' },
+  { label: 'hide_executable_name_only', detail: 'Hide executable rename-only compare noise by default.', apply: 'hide_executable_name_only: false' },
+  { label: 'hide_structural_name_only', detail: 'Hide index and constraint rename-only compare noise by default.', apply: 'hide_structural_name_only: false' },
   { label: 'hide_metadata', detail: 'Hide metadata-only compare noise by default.', apply: 'hide_metadata: false' },
   { label: 'hide_order_only', detail: 'Hide order-only compare noise by default.', apply: 'hide_order_only: false' },
+  { label: 'show_pending_notes', detail: 'Show pending compare notes by default.', apply: 'show_pending_notes: false' },
+  { label: 'show_ignore_notes', detail: 'Show ignored compare notes by default.', apply: 'show_ignore_notes: false' },
+  { label: 'show_fixed_notes', detail: 'Show fixed compare notes by default.', apply: 'show_fixed_notes: false' },
+  { label: 'show_blocked_notes', detail: 'Show blocked compare notes by default.', apply: 'show_blocked_notes: false' },
+  { label: 'CompareNote', detail: 'Store a flagged note for a compare entry.', apply: 'CompareNote "" {' },
   { label: 'CompareExclusions', detail: 'Store excluded compare entities for this comparison.', apply: 'CompareExclusions {' }
+] as const
+const compareNoteKeywordTemplates = [
+  { label: 'flag', detail: 'Set the note flag for this compare entry.', apply: 'flag: pending' },
+  { label: 'note', detail: 'Store the compare note text.', apply: 'note: "' }
 ] as const
 
 const viewMetadataKeywordTemplates = [
@@ -267,10 +280,17 @@ const comparisonMetadataKeys = new Set([
   'base',
   'target',
   'hide_defaults',
+  'hide_executable_name_only',
+  'hide_structural_name_only',
   'hide_metadata',
-  'hide_order_only'
+  'hide_order_only',
+  'show_pending_notes',
+  'show_ignore_notes',
+  'show_fixed_notes',
+  'show_blocked_notes'
 ])
 const compareExclusionsMetadataKeys = new Set(['entity', 'group', 'table', 'include_entity', 'include_group', 'include_table'])
+const compareNoteMetadataKeys = new Set(['flag', 'note'])
 const viewMetadataKeys = new Set(['id', 'show_lines', 'lines', 'snap_to_grid', 'snap', 'show_execs', 'execs', 'show_fields', 'fields'])
 
 const tableBodyKeywordTemplates = [
@@ -527,6 +547,10 @@ const parseBlockKind = (header: string): { kind: PgmlBlockKind, keyword: string 
 
   if (keyword === 'CompareExclusions') {
     return { kind: 'CompareExclusions', keyword }
+  }
+
+  if (keyword === 'CompareNote') {
+    return { kind: 'CompareNote', keyword }
   }
 
   if (keyword === 'VersionSet') {
@@ -841,6 +865,16 @@ const getVersionSetNameFromHeader = (header: string) => {
 
 const getComparisonNameFromHeader = (header: string) => {
   const match = header.match(/^Comparison\s+(.+)$/)
+
+  if (!match) {
+    return null
+  }
+
+  return cleanText(match[1] || '')
+}
+
+const getCompareNoteEntryIdFromHeader = (header: string) => {
+  const match = header.match(/^CompareNote\s+(.+)$/)
 
   if (!match) {
     return null
@@ -1867,6 +1901,18 @@ const buildContexts = (blocks: PgmlRawBlock[], contexts: PgmlContextRange[]) => 
       return
     }
 
+    if (block.kind === 'CompareNote') {
+      contexts.push({
+        kind: 'compare-note',
+        blockKind: block.kind,
+        from: block.from,
+        to: block.to,
+        startLine: block.startLine,
+        endLine: block.endLine
+      })
+      return
+    }
+
     if (block.kind === 'View') {
       contexts.push({
         kind: 'view',
@@ -2503,6 +2549,49 @@ const analyzeCompareExclusionsBlock = (
   })
 }
 
+const analyzeCompareNoteBlock = (
+  block: PgmlRawBlock,
+  diagnostics: PgmlLanguageDiagnostic[],
+  contexts: PgmlContextRange[],
+  containerLabel: string
+) => {
+  const entryId = getCompareNoteEntryIdFromHeader(block.header)
+
+  if (!entryId || entryId.trim().length === 0) {
+    createDiagnostic(
+      diagnostics,
+      'pgml/compare-note-header',
+      'error',
+      `${containerLabel} CompareNote blocks must use \`CompareNote "entry-id" {\`.`,
+      block.headerLine
+    )
+    return
+  }
+
+  const nested = collectRawBlocks(block.body, diagnostics, contexts, {
+    topLevelContextKind: null
+  })
+  const metadataLines = collectParsedMetadataLines(nested.topLevelLines)
+
+  validateMetadataOnlyLines(metadataLines, diagnostics, {
+    allowedKeys: compareNoteMetadataKeys,
+    entryCode: 'pgml/compare-note-entry',
+    entryMessage: 'CompareNote only allows metadata entries.',
+    keyCode: 'pgml/compare-note-key',
+    keyMessage: 'CompareNote only supports `flag` and `note` metadata.'
+  })
+
+  nested.blocks.forEach((nestedBlock) => {
+    createDiagnostic(
+      diagnostics,
+      'pgml/compare-note-block-kind',
+      'error',
+      'CompareNote does not allow nested blocks.',
+      nestedBlock.headerLine
+    )
+  })
+}
+
 const analyzeComparisonBlock = (
   block: PgmlRawBlock,
   diagnostics: PgmlLanguageDiagnostic[],
@@ -2530,18 +2619,18 @@ const analyzeComparisonBlock = (
   validateMetadataOnlyLines(metadataLines, diagnostics, {
     allowedKeys: comparisonMetadataKeys,
     entryCode: 'pgml/comparison-entry',
-    entryMessage: 'Comparison only allows metadata entries plus nested CompareExclusions blocks.',
+    entryMessage: 'Comparison only allows metadata entries plus nested CompareExclusions and CompareNote blocks.',
     keyCode: 'pgml/comparison-key',
-    keyMessage: 'Comparison only supports `id`, `base`, `target`, `hide_defaults`, `hide_metadata`, and `hide_order_only` metadata.'
+    keyMessage: 'Comparison only supports `id`, `base`, `target`, `hide_defaults`, `hide_executable_name_only`, `hide_structural_name_only`, `hide_metadata`, `hide_order_only`, and `show_*_notes` metadata.'
   })
 
   nested.blocks.forEach((nestedBlock) => {
-    if (nestedBlock.kind !== 'CompareExclusions') {
+    if (nestedBlock.kind !== 'CompareExclusions' && nestedBlock.kind !== 'CompareNote') {
       createDiagnostic(
         diagnostics,
         'pgml/comparison-block-kind',
         'error',
-        'Comparison only allows nested CompareExclusions blocks.',
+        'Comparison only allows nested CompareExclusions and CompareNote blocks.',
         nestedBlock.headerLine
       )
     }
@@ -2550,6 +2639,9 @@ const analyzeComparisonBlock = (
   nested.blocks
     .filter(nestedBlock => nestedBlock.kind === 'CompareExclusions')
     .forEach(nestedBlock => analyzeCompareExclusionsBlock(nestedBlock, diagnostics, contexts, `Comparison ${comparisonName}`))
+  nested.blocks
+    .filter(nestedBlock => nestedBlock.kind === 'CompareNote')
+    .forEach(nestedBlock => analyzeCompareNoteBlock(nestedBlock, diagnostics, contexts, `Comparison ${comparisonName}`))
 }
 
 const analyzeWorkspaceBlock = (
@@ -3375,6 +3467,10 @@ const getCompletionItemsForLine = (
 
   if (context.kind === 'comparison') {
     return getComparisonCompletionItems(beforeCursor, fragment, from, to)
+  }
+
+  if (context.kind === 'compare-note') {
+    return filterCompletionTemplates(compareNoteKeywordTemplates, 'property', fragment, from, to)
   }
 
   if (context.kind === 'snapshot') {

@@ -76,6 +76,8 @@ const compareDetailViewLabelByValue: Readonly<Record<PgmlCompareExportDetailView
 
 const compareNoiseFilterLabelByKey: Readonly<Record<keyof PgmlCompareNoiseFilters, string>> = Object.freeze({
   hideDefaults: 'Hide defaults',
+  hideExecutableNameOnly: 'Hide executable name only',
+  hideStructuralNameOnly: 'Hide index/constraint name only',
   hideMetadata: 'Hide metadata',
   hideOrderOnly: 'Hide order only'
 })

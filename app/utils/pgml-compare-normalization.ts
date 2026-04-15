@@ -833,6 +833,24 @@ const stripSqlLiteralCasts = (value: string) => {
   )
 }
 
+const stripSqlTextCasts = (value: string) => {
+  let nextValue = value.trim()
+
+  while (true) {
+    const strippedOuterValue = trimBalancedOuterParentheses(nextValue)
+    const withoutTextCast = strippedOuterValue.replace(
+      /::\s*(?:pg_catalog\.)?text(?:\s*\[\s*\])?$/iu,
+      ''
+    ).trim()
+
+    if (withoutTextCast === nextValue || withoutTextCast.length === 0) {
+      return strippedOuterValue
+    }
+
+    nextValue = withoutTextCast
+  }
+}
+
 const trimBalancedOuterParentheses = (value: string) => {
   let nextValue = value.trim()
 
@@ -956,6 +974,121 @@ const normalizeMembershipListEntry = (value: string) => {
   return normalizeWhitespace(stripSqlLiteralCasts(value))
 }
 
+const normalizeConstraintEnumRangeTypeName = (value: string) => {
+  const normalizedIdentifier = normalizeSqlIdentifier(value)
+  const parts = normalizedIdentifier
+    .split('.')
+    .map(part => part.trim())
+    .filter(part => part.length > 0)
+
+  if (parts.length === 0) {
+    return normalizedIdentifier
+  }
+
+  if (parts.length === 1) {
+    return (parts[0] || normalizedIdentifier).toLowerCase()
+  }
+
+  const schema = parts.slice(0, -1).join('.')
+  const name = parts.at(-1) || normalizedIdentifier
+
+  if (schema === 'public') {
+    return name.toLowerCase()
+  }
+
+  return `${schema.toLowerCase()}.${name.toLowerCase()}`
+}
+
+const normalizeConstraintEnumRangeMemberships = (value: string) => {
+  const enumRangeMembershipPattern = /((?:\(*\s*[A-Za-z_"][^=]*?\s*\)*)(?:::text)?)\s+in\s*\(\s*select\s+enum_range\s*\(\s*null\s*::\s*([^)]+?)\s*\)\s*::\s*text\s*\)/giu
+  const enumRangeAnyPattern = /((?:\(*\s*[A-Za-z_"][^=]*?\s*\)*)(?:::text)?)\s*=\s*any\s*\(\s*\(\s*enum_range\s*\(\s*null\s*::\s*([^)]+?)\s*\)\s*\)\s*::\s*text\s*\[\s*\]\s*\)/giu
+  const rewriteMembership = (_match: string, leftSide: string, typeName: string) => {
+    const normalizedLeftSide = normalizeWhitespace(
+      stripSqlTextCasts(leftSide)
+        .replace(/^\(+/u, '')
+        .replace(/\)+$/u, '')
+    )
+    const normalizedTypeName = normalizeConstraintEnumRangeTypeName(typeName)
+
+    if (normalizedLeftSide.length === 0 || normalizedTypeName.length === 0) {
+      return normalizeWhitespace(_match)
+    }
+
+    return `${normalizedLeftSide} IN ENUM_RANGE(${normalizedTypeName})`
+  }
+
+  return value
+    .replace(enumRangeMembershipPattern, rewriteMembership)
+    .replace(enumRangeAnyPattern, rewriteMembership)
+}
+
+const normalizeConstraintComparisonGrouping = (value: string) => {
+  let nextValue = value
+
+  while (true) {
+    const normalizedValue = nextValue
+      .replace(/\(\s*([^()]+?\s(?:=|<>|!=|<=|>=|<|>)\s[^()]+?)\s*\)/gu, '$1')
+      .replace(/\(\s*([^()]+?\s(?:IN|NOT IN)\s(?:ENUM_RANGE\([^)]+\)|\([^()]+\)))\s*\)/giu, '$1')
+      .replace(/\(\s*([^()]+?\sAND\s[^()]+?)\s*\)/giu, '$1')
+
+    if (normalizedValue === nextValue) {
+      return normalizedValue
+    }
+
+    nextValue = normalizedValue
+  }
+}
+
+const stripDanglingOuterParentheses = (value: string) => {
+  let nextValue = value.trim()
+  let parenthesisBalance = 0
+  let inString = false
+
+  for (let index = 0; index < nextValue.length; index += 1) {
+    const character = nextValue[index] || ''
+    const nextCharacter = nextValue[index + 1] || ''
+
+    if (inString) {
+      if (character === '\'' && nextCharacter === '\'') {
+        index += 1
+        continue
+      }
+
+      if (character === '\'') {
+        inString = false
+      }
+
+      continue
+    }
+
+    if (character === '\'') {
+      inString = true
+      continue
+    }
+
+    if (character === '(') {
+      parenthesisBalance += 1
+      continue
+    }
+
+    if (character === ')') {
+      parenthesisBalance -= 1
+    }
+  }
+
+  while (parenthesisBalance > 0 && nextValue.startsWith('(')) {
+    nextValue = nextValue.slice(1).trim()
+    parenthesisBalance -= 1
+  }
+
+  while (parenthesisBalance < 0 && nextValue.endsWith(')')) {
+    nextValue = nextValue.slice(0, -1).trim()
+    parenthesisBalance += 1
+  }
+
+  return nextValue
+}
+
 const normalizeMembershipExpression = (
   value: string,
   options: {
@@ -984,8 +1117,13 @@ const normalizeMembershipExpression = (
 }
 
 export const normalizePgmlCompareConstraintExpression = (value: string) => {
-  const normalizedValue = normalizeWhitespace(stripSqlLiteralCasts(value))
-  const normalizedNotInExpression = normalizeMembershipExpression(normalizedValue, {
+  const normalizedValue = normalizeConstraintComparisonGrouping(
+    normalizeConstraintEnumRangeMemberships(
+      normalizeWhitespace(stripSqlLiteralCasts(value))
+    )
+  )
+  const trimmedNormalizedValue = stripDanglingOuterParentheses(normalizedValue)
+  const normalizedNotInExpression = normalizeMembershipExpression(trimmedNormalizedValue, {
     operator: 'NOT IN',
     pattern: /^(.*?)\s+not\s+in\s*\((.+)\)$/iu
   })
@@ -994,7 +1132,7 @@ export const normalizePgmlCompareConstraintExpression = (value: string) => {
     return normalizedNotInExpression
   }
 
-  const normalizedAllExpression = normalizeMembershipExpression(normalizedValue, {
+  const normalizedAllExpression = normalizeMembershipExpression(trimmedNormalizedValue, {
     operator: 'NOT IN',
     pattern: /^(.*?)\s*<>\s*all\s*\(\s*array\s*\[(.+)\]\s*\)$/iu
   })
@@ -1003,7 +1141,7 @@ export const normalizePgmlCompareConstraintExpression = (value: string) => {
     return normalizedAllExpression
   }
 
-  const normalizedInExpression = normalizeMembershipExpression(normalizedValue, {
+  const normalizedInExpression = normalizeMembershipExpression(trimmedNormalizedValue, {
     operator: 'IN',
     pattern: /^(.*?)\s+in\s*\((.+)\)$/iu
   })
@@ -1012,12 +1150,12 @@ export const normalizePgmlCompareConstraintExpression = (value: string) => {
     return normalizedInExpression
   }
 
-  const normalizedAnyExpression = normalizeMembershipExpression(normalizedValue, {
+  const normalizedAnyExpression = normalizeMembershipExpression(trimmedNormalizedValue, {
     operator: 'IN',
     pattern: /^(.*?)\s*=\s*any\s*\(\s*array\s*\[(.+)\]\s*\)$/iu
   })
 
-  return normalizedAnyExpression || normalizedValue
+  return normalizedAnyExpression || trimmedNormalizedValue
 }
 
 export const toStableJson = (value: unknown): string => {

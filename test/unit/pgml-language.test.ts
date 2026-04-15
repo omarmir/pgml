@@ -78,6 +78,34 @@ Ref account_user_ref: public.accounts.(user_id, entity_type) > public.users.(id,
     expect(analysis.diagnostics).toEqual([])
   })
 
+  it('accepts multiline DBML-style partial indexes inside Indexes blocks', () => {
+    const source = `Table public.common_approval_template {
+  id uuid [pk]
+  egcs_cn_reviewsetsetup uuid
+  egcs_cn_entitytype text
+  egcs_cn_entityid uuid
+  egcs_cn_status public.statuses
+
+  Indexes {
+    (egcs_cn_reviewsetsetup, egcs_cn_entitytype, egcs_cn_entityid, egcs_cn_status) [name: 'cn_idx_reviewsetreviewsetsetupentitytypeentityidstatus', unique, where: \`(_deleted = false)
+  AND (
+    egcs_cn_status <> ALL (
+      ARRAY[
+        'complete'::public.statuses,
+        'approved'::public.statuses,
+        'denied'::public.statuses,
+        'withdrawn'::public.statuses,
+        'cancelled'::public.statuses
+      ]
+    )
+  )\`]
+  }
+}`
+    const analysis = analyzePgmlDocument(source)
+
+    expect(analysis.diagnostics).toEqual([])
+  })
+
   it('reports duplicate columns and missing reference targets', () => {
     const source = `Table public.users {
   id uuid [pk]
@@ -260,10 +288,46 @@ Enum public.language_preference {
         kind: 'property'
       }),
       expect.objectContaining({
+        label: 'hide_structural_name_only',
+        kind: 'property'
+      }),
+      expect.objectContaining({
+        label: 'show_pending_notes',
+        kind: 'property'
+      }),
+      expect.objectContaining({
+        label: 'CompareNote',
+        kind: 'property'
+      }),
+      expect.objectContaining({
         label: 'CompareExclusions',
         kind: 'property'
       })
     ]))
+  })
+
+  it('accepts CompareNote blocks inside saved comparisons', () => {
+    const source = buildVersionedCompletionFixture(`  Workspace {
+    Snapshot {
+      Table public.users {
+        id uuid [pk]
+      }
+    }
+  }
+
+  Comparison "Tracked scope" {
+    id: cmp_scope
+    base: workspace
+    target: workspace
+
+    CompareNote "index:public.users::users_name_idx" {
+      flag: pending
+      note: "Follow up on the renamed index."
+    }
+  }`)
+    const analysis = analyzePgmlDocument(source)
+
+    expect(analysis.diagnostics).toEqual([])
   })
 
   it('collects no diagnostics for standalone workspace and version document scopes', () => {

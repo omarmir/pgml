@@ -4,6 +4,8 @@ import { ref } from 'vue'
 import PgmlDiagramCanvasGpuShell from '~/components/pgml/PgmlDiagramCanvasGpuShell.vue'
 import type { PgmlDiagramCompareEntry } from '~/utils/pgml-diagram-compare'
 import type {
+  PgmlCompareNote,
+  PgmlCompareNoteFilters,
   PgmlCompareNoiseFilters,
   PgmlNodeProperties,
   PgmlSchemaModel,
@@ -90,12 +92,22 @@ const {
   compareExcludedLabels = [],
   compareExcludedSummary = null,
   compareHiddenExcludedLabelCount = 0,
+  compareNoteFilters = {
+    showBlocked: true,
+    showFixed: true,
+    showIgnore: true,
+    showPending: true
+  },
+  compareNotes = [],
   compareNoiseFilters = {
     hideDefaults: true,
+    hideExecutableNameOnly: true,
+    hideStructuralNameOnly: true,
     hideMetadata: true,
     hideOrderOnly: true
   },
   compareRelationshipSummary = '',
+  compareSavedComparisonHint = null,
   compareSelectedComparisonId = null,
   compareTargetLabel = 'Target',
   exportBaseName = 'pgml-schema',
@@ -133,8 +145,11 @@ const {
   compareExcludedLabels?: string[]
   compareExcludedSummary?: string | null
   compareHiddenExcludedLabelCount?: number
+  compareNoteFilters?: PgmlCompareNoteFilters
+  compareNotes?: PgmlCompareNote[]
   compareNoiseFilters?: PgmlCompareNoiseFilters
   compareRelationshipSummary?: string
+  compareSavedComparisonHint?: string | null
   compareSelectedComparisonId?: string | null
   compareTargetLabel?: string
   diagramViewItems?: DiagramViewItem[]
@@ -163,6 +178,7 @@ const emit = defineEmits<{
   createTable: [groupName: string | null]
   createDiagramView: []
   deleteCompareComparison: []
+  editCompareEntryNote: [entryId: string]
   deleteDiagramView: []
   deleteVersion: [versionId: string]
   editGroup: [groupName: string]
@@ -181,6 +197,7 @@ const emit = defineEmits<{
   restoreVersion: [versionId: string]
   selectCompareComparison: [comparisonId: string | null]
   selectDiagramView: [viewId: string]
+  updateCompareNoteFilters: [value: PgmlCompareNoteFilters]
   updateDiagramViewSettings: [settings: Partial<DiagramViewSettings>]
   updateCompareNoiseFilters: [value: PgmlCompareNoiseFilters]
   updateVersionCompareBaseId: [value: string | null]
@@ -223,8 +240,11 @@ defineExpose<CanvasHandle>({
     :compare-excluded-labels="compareExcludedLabels"
     :compare-excluded-summary="compareExcludedSummary"
     :compare-hidden-excluded-label-count="compareHiddenExcludedLabelCount"
+    :compare-note-filters="compareNoteFilters"
+    :compare-notes="compareNotes"
     :compare-noise-filters="compareNoiseFilters"
     :compare-relationship-summary="compareRelationshipSummary"
+    :compare-saved-comparison-hint="compareSavedComparisonHint"
     :compare-selected-comparison-id="compareSelectedComparisonId"
     :compare-target-label="compareTargetLabel"
     :diagram-view-items="diagramViewItems"
@@ -257,6 +277,7 @@ defineExpose<CanvasHandle>({
     @create-table="emit('createTable', $event)"
     @create-diagram-view="emit('createDiagramView')"
     @delete-compare-comparison="emit('deleteCompareComparison')"
+    @edit-compare-entry-note="emit('editCompareEntryNote', $event)"
     @delete-diagram-view="emit('deleteDiagramView')"
     @delete-version="emit('deleteVersion', $event)"
     @edit-group="emit('editGroup', $event)"
@@ -275,6 +296,7 @@ defineExpose<CanvasHandle>({
     @restore-version="emit('restoreVersion', $event)"
     @select-compare-comparison="emit('selectCompareComparison', $event)"
     @select-diagram-view="emit('selectDiagramView', $event)"
+    @update-compare-note-filters="emit('updateCompareNoteFilters', $event)"
     @update-compare-noise-filters="emit('updateCompareNoiseFilters', $event)"
     @update-diagram-view-settings="emit('updateDiagramViewSettings', $event)"
     @update-version-compare-base-id="emit('updateVersionCompareBaseId', $event)"

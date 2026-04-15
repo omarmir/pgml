@@ -702,6 +702,8 @@ Properties "public.users" {
     })).toBe(true)
     expect(api.setCurrentCompareNoiseFilters({
       hideDefaults: false,
+      hideExecutableNameOnly: false,
+      hideStructuralNameOnly: false,
       hideMetadata: false,
       hideOrderOnly: true
     })).toBe(true)
@@ -723,6 +725,8 @@ Properties "public.users" {
     })
     expect(savedComparison?.noiseFilters).toEqual({
       hideDefaults: false,
+      hideExecutableNameOnly: false,
+      hideStructuralNameOnly: false,
       hideMetadata: false,
       hideOrderOnly: true
     })
@@ -730,6 +734,7 @@ Properties "public.users" {
     expect(api.selectedComparisonId.value).toBe(savedComparison?.id || null)
     expect(api.versionedDocumentSource.value).toContain('Comparison "Implemented scope" {')
     expect(api.versionedDocumentSource.value).toContain('hide_defaults: false')
+    expect(api.versionedDocumentSource.value).toContain('hide_structural_name_only: false')
     expect(api.versionedDocumentSource.value).toContain('hide_metadata: false')
 
     const appOnlyVersion = createDesignCheckpoint(api, 'App-only')
@@ -747,6 +752,8 @@ Properties "public.users" {
     })
     expect(api.compareNoiseFilters.value).toEqual({
       hideDefaults: true,
+      hideExecutableNameOnly: true,
+      hideStructuralNameOnly: true,
       hideMetadata: true,
       hideOrderOnly: true
     })
@@ -763,6 +770,8 @@ Properties "public.users" {
     })
     expect(api.compareNoiseFilters.value).toEqual({
       hideDefaults: false,
+      hideExecutableNameOnly: false,
+      hideStructuralNameOnly: false,
       hideMetadata: false,
       hideOrderOnly: true
     })
@@ -774,6 +783,131 @@ Properties "public.users" {
     })
     expect(api.deleteComparison(savedComparison?.id || '')).toBe(true)
     expect(api.comparisons.value).toHaveLength(0)
+  })
+
+  it('retargets a selected saved comparison without clearing its saved exclusions', async () => {
+    const { api } = await mountVersionHistoryComposable({
+      source: groupedWorkspaceSource
+    })
+    const initialVersion = createDesignCheckpoint(api, 'Initial design')
+    const nextVersion = api.createCheckpoint({
+      createdAt: '2026-03-29T13:00:00.000Z',
+      includeLayout: true,
+      name: 'Implemented slice',
+      role: 'implementation'
+    })
+
+    if (!nextVersion) {
+      throw new Error('Expected the implementation checkpoint to be created.')
+    }
+
+    expect(api.setCompareTargets({
+      baseId: initialVersion.id,
+      targetId: 'workspace'
+    })).toBe(true)
+    expect(api.setCurrentCompareExclusions({
+      entityIds: ['function:public.refresh_users'],
+      groupNames: ['Core'],
+      tableIds: ['public.audit_log']
+    })).toBe(true)
+
+    const savedComparison = api.createComparison('Managed exclusions')
+
+    expect(api.selectComparison(savedComparison?.id || null)).toBe(true)
+    expect(api.setCompareTargets({
+      baseId: nextVersion.id,
+      targetId: initialVersion.id
+    })).toBe(true)
+
+    expect(api.selectedComparison.value).toEqual(expect.objectContaining({
+      baseId: nextVersion.id,
+      targetId: initialVersion.id
+    }))
+    expect(api.selectedComparison.value?.exclusions).toEqual({
+      entityIds: ['function:public.refresh_users'],
+      groupNames: ['Core'],
+      includedEntityIds: [],
+      includedGroupNames: [],
+      includedTableIds: [],
+      tableIds: ['public.audit_log']
+    })
+    expect(api.compareExclusions.value).toEqual({
+      entityIds: ['function:public.refresh_users'],
+      groupNames: ['Core'],
+      includedEntityIds: [],
+      includedGroupNames: [],
+      includedTableIds: [],
+      tableIds: ['public.audit_log']
+    })
+  })
+
+  it('persists compare notes and note flag filters on saved comparisons', async () => {
+    const { api } = await mountVersionHistoryComposable()
+    const initialVersion = createDesignCheckpoint(api, 'Initial design')
+
+    expect(api.setCompareTargets({
+      baseId: initialVersion.id,
+      targetId: 'workspace'
+    })).toBe(true)
+
+    const savedComparison = api.createComparison('Tracked scope')
+
+    expect(api.selectComparison(savedComparison?.id || null)).toBe(true)
+    expect(api.setCurrentCompareNoteFilters({
+      showBlocked: false,
+      showFixed: false,
+      showIgnore: true,
+      showPending: true
+    })).toBe(true)
+    expect(api.saveSelectedComparisonNote({
+      entryId: 'index:public.users::public.users_name_idx',
+      flag: 'pending',
+      note: 'Validate after deploy.'
+    })).toBe(true)
+
+    expect(api.selectedComparison.value?.noteFilters).toEqual({
+      showBlocked: false,
+      showFixed: false,
+      showIgnore: true,
+      showPending: true
+    })
+    expect(api.selectedComparison.value?.notes).toEqual([
+      {
+        entryId: 'index:public.users::public.users_name_idx',
+        flag: 'pending',
+        note: 'Validate after deploy.'
+      }
+    ])
+    expect(api.versionedDocumentSource.value).toContain('show_fixed_notes: false')
+    expect(api.versionedDocumentSource.value).toContain('CompareNote "index:public.users::public.users_name_idx" {')
+  })
+
+  it('prunes saved compare notes when the tracked diff ids are no longer present', async () => {
+    const { api } = await mountVersionHistoryComposable()
+
+    const savedComparison = api.createComparison('Tracked scope')
+
+    expect(api.selectComparison(savedComparison?.id || null)).toBe(true)
+    expect(api.saveSelectedComparisonNote({
+      entryId: 'index:public.users::public.users_name_idx',
+      flag: 'pending',
+      note: 'Validate after deploy.'
+    })).toBe(true)
+    expect(api.saveSelectedComparisonNote({
+      entryId: 'constraint:public.users::users_name_check',
+      flag: 'ignore',
+      note: 'Intentional difference.'
+    })).toBe(true)
+
+    expect(api.pruneSelectedComparisonNotes(['constraint:public.users::users_name_check'])).toBe(true)
+    expect(api.selectedComparison.value?.notes).toEqual([
+      {
+        entryId: 'constraint:public.users::users_name_check',
+        flag: 'ignore',
+        note: 'Intentional difference.'
+      }
+    ])
+    expect(api.versionedDocumentSource.value).not.toContain('CompareNote "index:public.users::public.users_name_idx" {')
   })
 
   it('returns false when restoring a missing version id and keeps compare targets editable', async () => {

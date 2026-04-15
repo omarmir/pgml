@@ -1,7 +1,9 @@
 import {
+  createDefaultPgmlCompareNoteFilters,
   createDefaultPgmlCompareNoiseFilters,
   createEmptyPgmlCompareExclusions,
   type PgmlCompareExclusions,
+  type PgmlCompareNoteFilters,
   type PgmlCompareNoiseFilters
 } from '~/utils/pgml'
 import {
@@ -14,6 +16,7 @@ import type { PgmlVersionedDocumentEditorMode, PgmlVersionPreviewTarget } from '
 const studioWorkspaceStateKeys = Object.freeze({
   compareBaseId: 'studio-workspace-compare-base-id-v1',
   compareExclusions: 'studio-workspace-compare-exclusions-v1',
+  compareNoteFilters: 'studio-workspace-compare-note-filters-v1',
   compareNoiseFilters: 'studio-workspace-compare-noise-filters-v1',
   compareTargetId: 'studio-workspace-compare-target-id-v1',
   computerFileId: 'studio-workspace-computer-file-id-v1',
@@ -61,6 +64,7 @@ export const useStudioWorkspaceDocumentNameState = (initialName: string) => {
 export const useStudioWorkspaceVersionHistoryState = (defaults: {
   compareBaseId: string | null
   compareExclusions: PgmlCompareExclusions
+  compareNoteFilters: PgmlCompareNoteFilters
   compareNoiseFilters: PgmlCompareNoiseFilters
   compareTargetId: string
   document: PgmlVersionSetDocument
@@ -72,6 +76,7 @@ export const useStudioWorkspaceVersionHistoryState = (defaults: {
   return {
     compareBaseId: useStateWithDefault<string | null>(studioWorkspaceStateKeys.compareBaseId, () => defaults.compareBaseId),
     compareExclusions: useStateWithDefault<PgmlCompareExclusions>(studioWorkspaceStateKeys.compareExclusions, () => defaults.compareExclusions),
+    compareNoteFilters: useStateWithDefault<PgmlCompareNoteFilters>(studioWorkspaceStateKeys.compareNoteFilters, () => defaults.compareNoteFilters),
     compareNoiseFilters: useStateWithDefault<PgmlCompareNoiseFilters>(studioWorkspaceStateKeys.compareNoiseFilters, () => defaults.compareNoiseFilters),
     compareTargetId: useStateWithDefault<string>(studioWorkspaceStateKeys.compareTargetId, () => defaults.compareTargetId),
     document: useStateWithDefault<PgmlVersionSetDocument>(studioWorkspaceStateKeys.versionHistoryDocumentState, () => defaults.document),
@@ -113,6 +118,7 @@ export const useStudioWorkspaceComputerFileState = () => {
 export const resetStudioWorkspaceState = () => {
   useState<string | null>(studioWorkspaceStateKeys.compareBaseId, () => null).value = null
   useState<PgmlCompareExclusions>(studioWorkspaceStateKeys.compareExclusions, createEmptyPgmlCompareExclusions).value = createEmptyPgmlCompareExclusions()
+  useState<PgmlCompareNoteFilters>(studioWorkspaceStateKeys.compareNoteFilters, createDefaultPgmlCompareNoteFilters).value = createDefaultPgmlCompareNoteFilters()
   useState<PgmlCompareNoiseFilters>(studioWorkspaceStateKeys.compareNoiseFilters, createDefaultPgmlCompareNoiseFilters).value = createDefaultPgmlCompareNoiseFilters()
   useState<string>(studioWorkspaceStateKeys.compareTargetId, () => 'workspace').value = 'workspace'
   useState<string | null>(studioWorkspaceStateKeys.computerFileId, () => null).value = null

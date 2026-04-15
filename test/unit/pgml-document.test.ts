@@ -287,6 +287,8 @@ Table public.orders {
     base: v1
     target: workspace
     hide_defaults: false
+    hide_executable_name_only: false
+    hide_structural_name_only: false
     hide_metadata: false
 
     CompareExclusions {
@@ -325,8 +327,17 @@ Table public.orders {
         },
         id: 'cmp_implemented',
         name: 'Implemented scope',
+        noteFilters: {
+          showBlocked: true,
+          showFixed: true,
+          showIgnore: true,
+          showPending: true
+        },
+        notes: [],
         noiseFilters: {
           hideDefaults: false,
+          hideExecutableNameOnly: false,
+          hideStructuralNameOnly: false,
           hideMetadata: false,
           hideOrderOnly: true
         },
@@ -338,6 +349,8 @@ Table public.orders {
     expect(serialized).toContain('base: v1')
     expect(serialized).toContain('target: workspace')
     expect(serialized).toContain('hide_defaults: false')
+    expect(serialized).toContain('hide_executable_name_only: false')
+    expect(serialized).toContain('hide_structural_name_only: false')
     expect(serialized).toContain('hide_metadata: false')
     expect(serialized).toContain('CompareExclusions {')
     expect(serialized).not.toContain('entity: "column:public.users::id"')
@@ -420,8 +433,17 @@ Table public.orders {
         },
         id: expect.stringMatching(/^cmp_/),
         name: 'Current workspace comparison',
+        noteFilters: {
+          showBlocked: true,
+          showFixed: true,
+          showIgnore: true,
+          showPending: true
+        },
+        notes: [],
         noiseFilters: {
           hideDefaults: true,
+          hideExecutableNameOnly: true,
+          hideStructuralNameOnly: true,
           hideMetadata: true,
           hideOrderOnly: true
         },
@@ -439,8 +461,17 @@ Table public.orders {
         },
         id: expect.stringMatching(/^cmp_/),
         name: 'Initial implementation comparison',
+        noteFilters: {
+          showBlocked: true,
+          showFixed: true,
+          showIgnore: true,
+          showPending: true
+        },
+        notes: [],
         noiseFilters: {
           hideDefaults: true,
+          hideExecutableNameOnly: true,
+          hideStructuralNameOnly: true,
           hideMetadata: true,
           hideOrderOnly: true
         },
@@ -450,6 +481,75 @@ Table public.orders {
     expect(serialized).toContain('Comparison "Current workspace comparison" {')
     expect(serialized).toContain('Comparison "Initial implementation comparison" {')
     expect(serialized).not.toContain('Workspace {\n    based_on: v1\n\n    CompareExclusions {')
+  })
+
+  it('serializes and parses compare notes and note flag filters inside saved comparisons', () => {
+    const parsed = parsePgmlDocument(`VersionSet "Billing" {
+  Comparison "Tracked scope" {
+    id: cmp_tracked
+    base: v1
+    target: workspace
+    show_fixed_notes: false
+    show_blocked_notes: false
+
+    CompareNote "index:public.users::public.users_name_idx" {
+      flag: pending
+      note: "Need to validate the renamed index before cutover."
+    }
+
+    CompareNote "constraint:public.users::users_name_check" {
+      flag: ignore
+      note: "Intentional expression normalization\\nNo action required."
+    }
+  }
+
+  Workspace {
+    based_on: v1
+
+    Snapshot {
+      Table public.users {
+        id uuid [pk]
+      }
+    }
+  }
+
+  Version v1 {
+    name: "Initial implementation"
+    role: implementation
+    created_at: "2026-03-29T12:00:00.000Z"
+
+    Snapshot {
+      Table public.users {
+        id uuid [pk]
+      }
+    }
+  }
+}`)
+
+    const serialized = serializePgmlDocument(parsed)
+
+    expect(parsed.comparisons[0]?.noteFilters).toEqual({
+      showBlocked: false,
+      showFixed: false,
+      showIgnore: true,
+      showPending: true
+    })
+    expect(parsed.comparisons[0]?.notes).toEqual([
+      {
+        entryId: 'index:public.users::public.users_name_idx',
+        flag: 'pending',
+        note: 'Need to validate the renamed index before cutover.'
+      },
+      {
+        entryId: 'constraint:public.users::users_name_check',
+        flag: 'ignore',
+        note: 'Intentional expression normalization\nNo action required.'
+      }
+    ])
+    expect(serialized).toContain('show_fixed_notes: false')
+    expect(serialized).toContain('show_blocked_notes: false')
+    expect(serialized).toContain('CompareNote "constraint:public.users::users_name_check" {')
+    expect(serialized).toContain('note: "Intentional expression normalization\\\\nNo action required."')
   })
 
   it('migrates legacy snapshot Properties blocks into the default workspace view', () => {

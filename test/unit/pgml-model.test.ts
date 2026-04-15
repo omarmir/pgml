@@ -535,6 +535,43 @@ AND email = ''
     }))
   })
 
+  it('keeps multiline DBML-style partial indexes inside Indexes blocks as a single index entry', () => {
+    const model = parsePgml(`Table public.common_approval_template {
+  id uuid [pk]
+  egcs_cn_reviewsetsetup uuid
+  egcs_cn_entitytype text
+  egcs_cn_entityid uuid
+  egcs_cn_status public.statuses
+
+  Indexes {
+    (egcs_cn_reviewsetsetup, egcs_cn_entitytype, egcs_cn_entityid, egcs_cn_status) [name: 'cn_idx_reviewsetreviewsetsetupentitytypeentityidstatus', unique, where: \`(_deleted = false)
+  AND (
+    egcs_cn_status <> ALL (
+      ARRAY[
+        'complete'::public.statuses,
+        'approved'::public.statuses,
+        'denied'::public.statuses,
+        'withdrawn'::public.statuses,
+        'cancelled'::public.statuses
+      ]
+    )
+  )\`]
+  }
+}`)
+    const indexes = model.tables.find(table => table.fullName === 'public.common_approval_template')?.indexes || []
+
+    expect(indexes).toHaveLength(1)
+    expect(indexes[0]).toEqual(expect.objectContaining({
+      columns: [
+        'egcs_cn_reviewsetsetup',
+        'egcs_cn_entitytype',
+        'egcs_cn_entityid',
+        'egcs_cn_status'
+      ],
+      name: 'cn_idx_reviewsetreviewsetsetupentitytypeentityidstatus'
+    }))
+  })
+
   it('tracks source ranges for navigable schema objects', () => {
     const source = `TableGroup Core {
   orders

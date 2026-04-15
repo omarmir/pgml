@@ -94,6 +94,8 @@ import {
 } from '~/utils/diagram-gpu-scene'
 import type {
   PgmlColumn,
+  PgmlCompareNote,
+  PgmlCompareNoteFilters,
   PgmlCompareNoiseFilters,
   PgmlCustomType,
   PgmlNodeProperties,
@@ -395,12 +397,22 @@ const {
   compareExcludedLabels = [],
   compareExcludedSummary = null,
   compareHiddenExcludedLabelCount = 0,
+  compareNoteFilters = {
+    showBlocked: true,
+    showFixed: true,
+    showIgnore: true,
+    showPending: true
+  },
+  compareNotes = [],
   compareNoiseFilters = {
     hideDefaults: true,
+    hideExecutableNameOnly: true,
+    hideStructuralNameOnly: true,
     hideMetadata: true,
     hideOrderOnly: true
   },
   compareRelationshipSummary = '',
+  compareSavedComparisonHint = null,
   compareSelectedComparisonId = null,
   compareTargetLabel = 'Target',
   diagramViewItems = [],
@@ -443,8 +455,11 @@ const {
   compareExcludedLabels?: string[]
   compareExcludedSummary?: string | null
   compareHiddenExcludedLabelCount?: number
+  compareNoteFilters?: PgmlCompareNoteFilters
+  compareNotes?: PgmlCompareNote[]
   compareNoiseFilters?: PgmlCompareNoiseFilters
   compareRelationshipSummary?: string
+  compareSavedComparisonHint?: string | null
   compareSelectedComparisonId?: string | null
   compareTargetLabel?: string
   diagramViewItems?: DiagramViewItem[]
@@ -473,6 +488,7 @@ const emit = defineEmits<{
   createTable: [groupName: string | null]
   createDiagramView: []
   deleteCompareComparison: []
+  editCompareEntryNote: [entryId: string]
   deleteDiagramView: []
   deleteVersion: [versionId: string]
   editGroup: [groupName: string]
@@ -491,6 +507,7 @@ const emit = defineEmits<{
   restoreVersion: [versionId: string]
   selectCompareComparison: [comparisonId: string | null]
   selectDiagramView: [viewId: string]
+  updateCompareNoteFilters: [value: PgmlCompareNoteFilters]
   updateDiagramViewSettings: [settings: Partial<DiagramViewSettings>]
   updateVersionCompareBaseId: [value: string | null]
   updateCompareNoiseFilters: [value: PgmlCompareNoiseFilters]
@@ -8521,9 +8538,12 @@ defineExpose<{
       >
         <PgmlDiagramComparePanel
           :base-label="compareBaseLabel"
+          :can-edit-notes="compareSelectedComparisonId !== null"
           :comparison-items="compareComparisonItems"
           :comparison-label="compareSelectedComparisonId ? compareComparisonItems.find(item => item.value === compareSelectedComparisonId)?.label || 'Saved comparison' : 'Current comparison'"
           :compare-base-id="versionCompareBaseId"
+          :compare-note-filters="compareNoteFilters"
+          :compare-notes="compareNotes"
           :compare-noise-filters="compareNoiseFilters"
           :compare-options="versionCompareOptions"
           :compare-target-id="versionCompareTargetId"
@@ -8532,12 +8552,14 @@ defineExpose<{
           :entries="compareEntries"
           :hidden-excluded-label-count="compareHiddenExcludedLabelCount"
           :relationship-summary="compareRelationshipSummary"
+          :saved-comparison-hint="compareSavedComparisonHint"
           :selected-comparison-id="compareSelectedComparisonId"
           :selected-diagram-context-ids="selectedDiagramCompareEntryIds"
           :selected-entry-id="selectedCompareEntryId"
           :target-label="compareTargetLabel"
           @create-comparison="emit('createCompareComparison')"
           @delete-comparison="emit('deleteCompareComparison')"
+          @edit-entry-note="emit('editCompareEntryNote', $event)"
           @edit-comparison-exclusions="emit('editCompareExclusions')"
           @focus-source="focusSourceRange"
           @focus-target="focusCompareEntry"
@@ -8545,6 +8567,7 @@ defineExpose<{
           @select-comparison="emit('selectCompareComparison', $event)"
           @select-entry="selectedCompareEntryId = $event"
           @update:compare-base-id="emit('updateVersionCompareBaseId', $event)"
+          @update:compare-note-filters="emit('updateCompareNoteFilters', $event)"
           @update:compare-noise-filters="emit('updateCompareNoiseFilters', $event)"
           @update:compare-target-id="emit('updateVersionCompareTargetId', $event)"
         />

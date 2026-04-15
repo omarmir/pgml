@@ -73,6 +73,8 @@ const buildCompareExportInput = (): PgmlCompareExportInput => {
     hiddenExcludedLabelCount: 0,
     noiseFilters: {
       hideDefaults: true,
+      hideExecutableNameOnly: true,
+      hideStructuralNameOnly: true,
       hideMetadata: true,
       hideOrderOnly: false
     },
@@ -91,7 +93,7 @@ describe('PGML compare exports', () => {
     expect(html).toContain('Implemented scope')
     expect(html).toContain('Baseline to Current workspace')
     expect(html).toContain('1 excluded compare entity')
-    expect(html).toContain('Hide defaults, Hide metadata')
+    expect(html).toContain('Hide defaults, Hide executable name only, Hide index/constraint name only, Hide metadata')
     expect(html).toContain('Search')
     expect(html).toContain('users')
     expect(html).toContain('Table')
@@ -138,6 +140,8 @@ describe('PGML compare exports', () => {
       exportedAtLabel: 'Apr 13, 2026, 1:30 p.m.',
       noiseFilters: {
         hideDefaults: true,
+        hideExecutableNameOnly: true,
+        hideStructuralNameOnly: true,
         hideMetadata: true,
         hideOrderOnly: true
       },
@@ -159,6 +163,8 @@ describe('PGML compare exports', () => {
       exportedAtLabel: 'Apr 13, 2026, 1:30 p.m.',
       noiseFilters: {
         hideDefaults: true,
+        hideExecutableNameOnly: true,
+        hideStructuralNameOnly: true,
         hideMetadata: true,
         hideOrderOnly: true
       },

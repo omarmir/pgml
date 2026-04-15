@@ -167,15 +167,79 @@ const normalizeRoutineValue = (routine: PgmlRoutine) => {
   return normalizePgmlCompareRoutineValue(routine)
 }
 
+const normalizeRoutineMaterialSignature = (signature: string) => {
+  const parameterIndex = signature.indexOf('(')
+
+  if (parameterIndex < 0) {
+    return signature
+  }
+
+  return signature.slice(parameterIndex)
+}
+
+const normalizeRoutineMaterialValue = (routine: PgmlRoutine) => {
+  const normalizedRoutine = normalizeRoutineValue(routine)
+
+  return {
+    ...normalizedRoutine,
+    name: null,
+    signature: normalizeRoutineMaterialSignature(normalizedRoutine.signature)
+  }
+}
+
+const normalizeExecutableSourceName = (value: unknown) => {
+  if (!value || typeof value !== 'object') {
+    return value
+  }
+
+  return {
+    ...(value as Record<string, unknown>),
+    name: null
+  }
+}
+
 const normalizeTriggerValue = (trigger: PgmlTrigger) => {
-  return normalizePgmlCompareTriggerValue(trigger)
+  const normalizedTrigger = normalizePgmlCompareTriggerValue(trigger)
+
+  return {
+    ...normalizedTrigger,
+    source: normalizeExecutableSourceName(normalizedTrigger.source)
+  }
+}
+
+const normalizeTriggerMaterialValue = (trigger: PgmlTrigger) => {
+  const normalizedTrigger = normalizeTriggerValue(trigger)
+
+  return {
+    ...normalizedTrigger,
+    name: null,
+    source: normalizeExecutableSourceName(normalizedTrigger.source)
+  }
 }
 
 const normalizeSequenceValue = (
   sequence: PgmlSequence,
   normalizeType: (value: string) => string
 ) => {
-  return normalizePgmlCompareSequenceValue(sequence, normalizeType)
+  const normalizedSequence = normalizePgmlCompareSequenceValue(sequence, normalizeType)
+
+  return {
+    ...normalizedSequence,
+    source: normalizeExecutableSourceName(normalizedSequence.source)
+  }
+}
+
+const normalizeSequenceMaterialValue = (
+  sequence: PgmlSequence,
+  normalizeType: (value: string) => string
+) => {
+  const normalizedSequence = normalizeSequenceValue(sequence, normalizeType)
+
+  return {
+    ...normalizedSequence,
+    name: null,
+    source: normalizeExecutableSourceName(normalizedSequence.source)
+  }
 }
 
 const normalizeCustomTypeValue = (
@@ -264,10 +328,36 @@ const normalizeIndexValue = (index: PgmlIndex) => {
   }
 }
 
+const normalizeIndexMaterialValue = (value: {
+  index: PgmlIndex
+  tableId: string
+}) => {
+  const normalizedIndex = normalizeIndexValue(value.index)
+
+  return {
+    ...normalizedIndex,
+    name: null,
+    tableId: value.tableId
+  }
+}
+
 const normalizeConstraintValue = (constraint: PgmlConstraint) => {
   return {
     expression: normalizePgmlCompareConstraintExpression(constraint.expression),
     name: constraint.name
+  }
+}
+
+const normalizeConstraintMaterialValue = (value: {
+  constraint: PgmlConstraint
+  tableId: string
+}) => {
+  const normalizedConstraint = normalizeConstraintValue(value.constraint)
+
+  return {
+    ...normalizedConstraint,
+    name: null,
+    tableId: value.tableId
   }
 }
 
@@ -287,6 +377,86 @@ const normalizeReferenceValue = (reference: PgmlReference) => {
       : [reference.toColumn],
     toTable: reference.toTable
   }
+}
+
+const normalizeReferenceValueForSuppression = (reference: PgmlReference) => {
+  const normalizedReference = normalizeReferenceValue(reference)
+
+  return {
+    ...normalizedReference,
+    fromColumn: normalizedReference.fromColumn.toLowerCase(),
+    fromColumns: normalizedReference.fromColumns.map(columnName => columnName.toLowerCase()),
+    fromTable: normalizeQualifiedEntityName(normalizedReference.fromTable),
+    toColumn: normalizedReference.toColumn.toLowerCase(),
+    toColumns: normalizedReference.toColumns.map(columnName => columnName.toLowerCase()),
+    toTable: normalizeQualifiedEntityName(normalizedReference.toTable)
+  }
+}
+
+const normalizeQualifiedEntityName = (value: string) => {
+  const normalizedValue = value.replaceAll('"', '').trim().toLowerCase()
+
+  if (normalizedValue.length === 0) {
+    return normalizedValue
+  }
+
+  return normalizedValue.includes('.') ? normalizedValue : `public.${normalizedValue}`
+}
+
+const parseForeignKeyReferenceAction = (
+  value: string,
+  action: 'delete' | 'update'
+) => {
+  const normalizedValue = value.trim()
+  const actionPattern = action === 'delete'
+    ? /\bon\s+delete\s+(.+?)(?=\s+on\s+update\b|$)/iu
+    : /\bon\s+update\s+(.+?)(?=\s+on\s+delete\b|$)/iu
+  const matched = normalizedValue.match(actionPattern)
+
+  if (!matched?.[1]) {
+    return null
+  }
+
+  return matched[1].trim().toLowerCase()
+}
+
+const normalizeForeignKeyConstraintAsReferenceValue = (value: {
+  constraint: PgmlConstraint
+  tableId: string
+}) => {
+  const normalizedExpression = normalizeConstraintValue(value.constraint).expression
+  const matched = normalizedExpression.match(/^foreign key\s*\((.+)\)\s+references\s+([^\s(]+)\s*\((.+)\)(.*)$/iu)
+
+  if (!matched) {
+    return null
+  }
+
+  const fromColumns = matched[1]
+    .split(',')
+    .map(columnName => columnName.replaceAll('"', '').trim().toLowerCase())
+    .filter(columnName => columnName.length > 0)
+  const toColumns = matched[3]
+    .split(',')
+    .map(columnName => columnName.replaceAll('"', '').trim().toLowerCase())
+    .filter(columnName => columnName.length > 0)
+
+  if (fromColumns.length === 0 || toColumns.length === 0) {
+    return null
+  }
+
+  return normalizeReferenceValueForSuppression({
+    fromColumn: fromColumns[0] || '',
+    fromColumns,
+    fromTable: normalizeQualifiedEntityName(value.tableId),
+    name: value.constraint.name,
+    onDelete: parseForeignKeyReferenceAction(matched[4] || '', 'delete'),
+    onUpdate: parseForeignKeyReferenceAction(matched[4] || '', 'update'),
+    relation: '>',
+    sourceRange: undefined,
+    toColumn: toColumns[0] || '',
+    toColumns,
+    toTable: normalizeQualifiedEntityName(matched[2] || '')
+  })
 }
 
 const normalizeLayoutValue = (value: PgmlNodeProperties) => {
@@ -359,6 +529,178 @@ const buildDiffEntries = <T>(
 
     return entries
   }, [])
+}
+
+const pairDiffEntriesByMaterial = <T>(input: {
+  buildLabel: (id: string, value: T) => string
+  entries: PgmlDiffEntry<T>[]
+  normalizeMaterialValue: (value: T) => unknown
+  normalizeValue: (value: T) => unknown
+}) => {
+  const removedIndexesByMaterial = new Map<string, number[]>()
+  const addedIndexesByMaterial = new Map<string, number[]>()
+
+  input.entries.forEach((entry, index) => {
+    if (entry.kind === 'removed' && entry.before) {
+      const materialKey = toStableJson(input.normalizeMaterialValue(entry.before))
+      const indexes = removedIndexesByMaterial.get(materialKey) || []
+      indexes.push(index)
+      removedIndexesByMaterial.set(materialKey, indexes)
+    }
+
+    if (entry.kind === 'added' && entry.after) {
+      const materialKey = toStableJson(input.normalizeMaterialValue(entry.after))
+      const indexes = addedIndexesByMaterial.get(materialKey) || []
+      indexes.push(index)
+      addedIndexesByMaterial.set(materialKey, indexes)
+    }
+  })
+
+  const replacementEntries = new Map<number, PgmlDiffEntry<T>>()
+  const consumedIndexes = new Set<number>()
+
+  removedIndexesByMaterial.forEach((removedIndexes, materialKey) => {
+    const addedIndexes = addedIndexesByMaterial.get(materialKey) || []
+
+    if (removedIndexes.length !== 1 || addedIndexes.length !== 1) {
+      return
+    }
+
+    const removedIndex = removedIndexes[0]
+    const addedIndex = addedIndexes[0]
+
+    if (removedIndex === undefined || addedIndex === undefined) {
+      return
+    }
+
+    const removedEntry = input.entries[removedIndex]
+    const addedEntry = input.entries[addedIndex]
+
+    if (
+      !removedEntry
+      || !addedEntry
+      || removedEntry.kind !== 'removed'
+      || addedEntry.kind !== 'added'
+      || !removedEntry.before
+      || !addedEntry.after
+    ) {
+      return
+    }
+
+    const normalizedBeforeValue = input.normalizeValue(removedEntry.before)
+    const normalizedAfterValue = input.normalizeValue(addedEntry.after)
+    const replacementIndex = Math.min(removedIndex, addedIndex)
+
+    replacementEntries.set(replacementIndex, {
+      after: addedEntry.after,
+      before: removedEntry.before,
+      changes: buildChangedFields(normalizedBeforeValue, normalizedAfterValue),
+      id: addedEntry.id,
+      kind: 'modified',
+      label: input.buildLabel(addedEntry.id, addedEntry.after)
+    })
+    consumedIndexes.add(removedIndex)
+    consumedIndexes.add(addedIndex)
+  })
+
+  return input.entries.reduce<PgmlDiffEntry<T>[]>((entries, entry, index) => {
+    const replacementEntry = replacementEntries.get(index)
+
+    if (replacementEntry) {
+      entries.push(replacementEntry)
+      return entries
+    }
+
+    if (consumedIndexes.has(index)) {
+      return entries
+    }
+
+    entries.push(entry)
+    return entries
+  }, [])
+}
+
+const suppressEquivalentReferenceConstraintNoise = (input: {
+  constraints: PgmlDiffEntry<{
+    constraint: PgmlConstraint
+    tableId: string
+  }>[]
+  references: PgmlDiffEntry<PgmlReference>[]
+}) => {
+  const removableReferenceIndexes = new Set<number>()
+  const removableConstraintIndexes = new Set<number>()
+  const referenceIndexesByKindAndValue = new Map<string, number[]>()
+  const constraintIndexesByKindAndValue = new Map<string, number[]>()
+
+  input.references.forEach((entry, index) => {
+    const referenceValue = entry.kind === 'removed'
+      ? entry.before
+      : entry.kind === 'added'
+        ? entry.after
+        : null
+
+    if (!referenceValue) {
+      return
+    }
+
+    const key = `${entry.kind}::${toStableJson(normalizeReferenceValueForSuppression(referenceValue))}`
+    const indexes = referenceIndexesByKindAndValue.get(key) || []
+    indexes.push(index)
+    referenceIndexesByKindAndValue.set(key, indexes)
+  })
+
+  input.constraints.forEach((entry, index) => {
+    const constraintValue = entry.kind === 'removed'
+      ? entry.before
+      : entry.kind === 'added'
+        ? entry.after
+        : null
+    const normalizedReferenceValue = constraintValue
+      ? normalizeForeignKeyConstraintAsReferenceValue(constraintValue)
+      : null
+
+    if (!normalizedReferenceValue) {
+      return
+    }
+
+    const oppositeKind = entry.kind === 'added'
+      ? 'removed'
+      : entry.kind === 'removed'
+        ? 'added'
+        : null
+
+    if (!oppositeKind) {
+      return
+    }
+
+    const key = `${oppositeKind}::${toStableJson(normalizedReferenceValue)}`
+    const indexes = constraintIndexesByKindAndValue.get(key) || []
+    indexes.push(index)
+    constraintIndexesByKindAndValue.set(key, indexes)
+  })
+
+  referenceIndexesByKindAndValue.forEach((referenceIndexes, key) => {
+    const constraintIndexes = constraintIndexesByKindAndValue.get(key) || []
+
+    if (referenceIndexes.length !== 1 || constraintIndexes.length !== 1) {
+      return
+    }
+
+    const referenceIndex = referenceIndexes[0]
+    const constraintIndex = constraintIndexes[0]
+
+    if (referenceIndex === undefined || constraintIndex === undefined) {
+      return
+    }
+
+    removableReferenceIndexes.add(referenceIndex)
+    removableConstraintIndexes.add(constraintIndex)
+  })
+
+  return {
+    constraints: input.constraints.filter((_entry, index) => !removableConstraintIndexes.has(index)),
+    references: input.references.filter((_entry, index) => !removableReferenceIndexes.has(index))
+  }
 }
 
 const buildTableMap = (tables: PgmlTable[]) => {
@@ -640,18 +982,36 @@ export const diffPgmlSchemaModels = (
     (id, value) => value.name || id,
     normalizeRoutineValue
   )
+  const pairedFunctions = pairDiffEntriesByMaterial({
+    buildLabel: (id, value) => value.name || id,
+    entries: functions,
+    normalizeMaterialValue: normalizeRoutineMaterialValue,
+    normalizeValue: normalizeRoutineValue
+  })
   const procedures = buildDiffEntries(
     buildRoutineMap(beforeModel.procedures),
     buildRoutineMap(afterModel.procedures),
     (id, value) => value.name || id,
     normalizeRoutineValue
   )
+  const pairedProcedures = pairDiffEntriesByMaterial({
+    buildLabel: (id, value) => value.name || id,
+    entries: procedures,
+    normalizeMaterialValue: normalizeRoutineMaterialValue,
+    normalizeValue: normalizeRoutineValue
+  })
   const triggers = buildDiffEntries(
     buildTriggerMap(beforeModel.triggers),
     buildTriggerMap(afterModel.triggers),
     (_id, value) => `${value.tableName} :: ${value.name}`,
     normalizeTriggerValue
   )
+  const pairedTriggers = pairDiffEntriesByMaterial({
+    buildLabel: (_id, value) => `${value.tableName} :: ${value.name}`,
+    entries: triggers,
+    normalizeMaterialValue: normalizeTriggerMaterialValue,
+    normalizeValue: normalizeTriggerValue
+  })
   const sequences = buildDiffEntries(
     buildSequenceMap(beforeModel.sequences),
     buildSequenceMap(afterModel.sequences),
@@ -664,6 +1024,12 @@ export const diffPgmlSchemaModels = (
       entry,
       normalizeType: normalizeCompareTypeExpression
     })
+  })
+  const pairedSequences = pairDiffEntriesByMaterial({
+    buildLabel: (id, value) => value.name || id,
+    entries: sequences,
+    normalizeMaterialValue: value => normalizeSequenceMaterialValue(value, normalizeCompareTypeExpression),
+    normalizeValue: value => normalizeSequenceValue(value, normalizeCompareTypeExpression)
   })
   const customTypes = buildDiffEntries(
     buildCustomTypeMap(beforeModel.customTypes, normalizeCompareTypeExpression),
@@ -689,12 +1055,28 @@ export const diffPgmlSchemaModels = (
     (_id, value) => `${value.tableId}.${value.index.name}`,
     value => normalizeIndexValue(value.index)
   )
+  const pairedIndexes = pairDiffEntriesByMaterial({
+    buildLabel: (_id, value) => `${value.tableId}.${value.index.name}`,
+    entries: indexes,
+    normalizeMaterialValue: normalizeIndexMaterialValue,
+    normalizeValue: value => normalizeIndexValue(value.index)
+  })
   const constraints = buildDiffEntries(
     buildConstraintMap(beforeModel.tables),
     buildConstraintMap(afterModel.tables),
     (_id, value) => `${value.tableId}.${value.constraint.name}`,
     value => normalizeConstraintValue(value.constraint)
   )
+  const pairedConstraints = pairDiffEntriesByMaterial({
+    buildLabel: (_id, value) => `${value.tableId}.${value.constraint.name}`,
+    entries: constraints,
+    normalizeMaterialValue: normalizeConstraintMaterialValue,
+    normalizeValue: value => normalizeConstraintValue(value.constraint)
+  })
+  const compareEntriesWithoutReferenceConstraintNoise = suppressEquivalentReferenceConstraintNoise({
+    constraints: pairedConstraints,
+    references
+  })
   const layout = buildDiffEntries(
     buildLayoutMap(beforeModel.nodeProperties),
     buildLayoutMap(afterModel.nodeProperties),
@@ -704,31 +1086,31 @@ export const diffPgmlSchemaModels = (
   const schemaEntries = [
     ...tables,
     ...groups,
-    ...functions,
-    ...procedures,
-    ...triggers,
-    ...sequences,
+    ...pairedFunctions,
+    ...pairedProcedures,
+    ...pairedTriggers,
+    ...pairedSequences,
     ...customTypes,
-    ...references,
+    ...compareEntriesWithoutReferenceConstraintNoise.references,
     ...columns,
-    ...indexes,
-    ...constraints
+    ...pairedIndexes,
+    ...compareEntriesWithoutReferenceConstraintNoise.constraints
   ]
   const summary = buildDiffSummary(schemaEntries, layout)
 
   return {
     columns,
-    constraints,
+    constraints: compareEntriesWithoutReferenceConstraintNoise.constraints,
     customTypes,
-    functions,
+    functions: pairedFunctions,
     groups,
-    indexes,
+    indexes: pairedIndexes,
     layout,
-    procedures,
-    references,
-    sequences,
+    procedures: pairedProcedures,
+    references: compareEntriesWithoutReferenceConstraintNoise.references,
+    sequences: pairedSequences,
     summary,
     tables,
-    triggers
+    triggers: pairedTriggers
   }
 }

@@ -15,6 +15,8 @@ import {
   type PgmlDiagramCompareEntry
 } from '~/utils/pgml-diagram-compare'
 import type {
+  PgmlCompareNote,
+  PgmlCompareNoteFilters,
   PgmlCompareNoiseFilters,
   PgmlSourceRange
 } from '~/utils/pgml'
@@ -29,11 +31,21 @@ import {
 
 const {
   baseLabel,
+  canEditNotes = false,
   comparisonItems = [],
   comparisonLabel = 'Current comparison',
   compareBaseId = null,
+  compareNoteFilters = {
+    showBlocked: true,
+    showFixed: true,
+    showIgnore: true,
+    showPending: true
+  },
+  compareNotes = [],
   compareNoiseFilters = {
     hideDefaults: true,
+    hideExecutableNameOnly: true,
+    hideStructuralNameOnly: true,
     hideMetadata: true,
     hideOrderOnly: true
   },
@@ -44,18 +56,22 @@ const {
   entries,
   hiddenExcludedLabelCount = 0,
   relationshipSummary = '',
+  savedComparisonHint = null,
   selectedComparisonId = null,
   selectedDiagramContextIds = [],
   selectedEntryId = null,
   targetLabel
 } = defineProps<{
   baseLabel: string
+  canEditNotes?: boolean
   comparisonItems?: Array<{
     label: string
     value: string
   }>
   comparisonLabel?: string
   compareBaseId?: string | null
+  compareNoteFilters?: PgmlCompareNoteFilters
+  compareNotes?: PgmlCompareNote[]
   compareNoiseFilters?: PgmlCompareNoiseFilters
   compareOptions: Array<{
     label: string
@@ -67,6 +83,7 @@ const {
   entries: PgmlDiagramCompareEntry[]
   hiddenExcludedLabelCount?: number
   relationshipSummary?: string
+  savedComparisonHint?: string | null
   selectedComparisonId?: string | null
   selectedDiagramContextIds?: string[]
   selectedEntryId?: string | null
@@ -76,6 +93,7 @@ const {
 const emit = defineEmits<{
   'create-comparison': []
   'delete-comparison': []
+  'edit-entry-note': [entryId: string]
   'edit-comparison-exclusions': []
   'focus-source': [sourceRange: PgmlSourceRange]
   'focus-target': [entryId: string]
@@ -83,6 +101,7 @@ const emit = defineEmits<{
   'select-comparison': [comparisonId: string | null]
   'select-entry': [entryId: string | null]
   'update:compareBaseId': [value: string | null]
+  'update:compare-note-filters': [value: PgmlCompareNoteFilters]
   'update:compare-noise-filters': [value: PgmlCompareNoiseFilters]
   'update:compareTargetId': [value: string]
 }>()
@@ -106,6 +125,15 @@ type PgmlCompareDetailViewOption = {
 type PgmlCompareNoiseFilterOption = {
   description: string
   key: PgmlCompareNoiseFilterKey
+  label: string
+}
+
+type PgmlCompareNoteFilterKey = keyof PgmlCompareNoteFilters
+
+type PgmlCompareNoteFilterOption = {
+  count: number
+  description: string
+  key: PgmlCompareNoteFilterKey
   label: string
 }
 
@@ -179,6 +207,16 @@ const compareNoiseFilterOptions: PgmlCompareNoiseFilterOption[] = [
     label: 'Hide defaults'
   },
   {
+    description: 'Hide executable changes where only the routine, trigger, or sequence name differs.',
+    key: 'hideExecutableNameOnly',
+    label: 'Hide executable name only'
+  },
+  {
+    description: 'Hide index and constraint changes where only the object name differs.',
+    key: 'hideStructuralNameOnly',
+    label: 'Hide index/constraint name only'
+  },
+  {
     description: 'Hide docs, affects, and metadata-only changes.',
     key: 'hideMetadata',
     label: 'Hide metadata'
@@ -189,6 +227,19 @@ const compareNoiseFilterOptions: PgmlCompareNoiseFilterOption[] = [
     label: 'Hide order only'
   }
 ]
+const compareNoteFilterLabelByKey: Readonly<Record<PgmlCompareNoteFilterKey, string>> = Object.freeze({
+  showBlocked: 'Blocked',
+  showFixed: 'Fixed',
+  showIgnore: 'Ignore',
+  showPending: 'Pending'
+})
+const compareNoteFlagByFilterKey: Readonly<Record<PgmlCompareNoteFilterKey, PgmlCompareNote['flag']>> = Object.freeze({
+  showBlocked: 'blocked',
+  showFixed: 'fixed',
+  showIgnore: 'ignore',
+  showPending: 'pending'
+})
+const compareNoteFilterOrder: PgmlCompareNoteFilterKey[] = ['showPending', 'showIgnore', 'showFixed', 'showBlocked']
 const hasExcludedEntities = computed(() => {
   return excludedLabels.length > 0 || Boolean(excludedSummary)
 })
@@ -242,6 +293,35 @@ const buildEntrySearchHaystack = (entry: PgmlDiagramCompareEntry) => {
 const normalizedSearchQuery = computed(() => {
   return searchQuery.value.trim().toLowerCase()
 })
+const compareNotesByEntryId = computed(() => {
+  return compareNotes.reduce<Record<string, PgmlCompareNote>>((entries, note) => {
+    entries[note.entryId] = note
+    return entries
+  }, {})
+})
+const entriesMatchingSelectedNoteFlags = computed(() => {
+  return entriesMatchingSelectedChangeKinds.value.filter((entry) => {
+    const note = compareNotesByEntryId.value[entry.id]
+
+    if (!note) {
+      return true
+    }
+
+    if (note.flag === 'pending') {
+      return compareNoteFilters.showPending
+    }
+
+    if (note.flag === 'ignore') {
+      return compareNoteFilters.showIgnore
+    }
+
+    if (note.flag === 'fixed') {
+      return compareNoteFilters.showFixed
+    }
+
+    return compareNoteFilters.showBlocked
+  })
+})
 const hasEntityKindFilter = computed(() => selectedEntityKinds.value.length > 0)
 const entriesMatchingSelectedChangeKinds = computed(() => {
   if (!hasSelectedChangeKindFilters.value) {
@@ -251,7 +331,7 @@ const entriesMatchingSelectedChangeKinds = computed(() => {
   return entries.filter(entry => orderedSelectedChangeKinds.value.includes(entry.changeKind))
 })
 const compareEntityFilterOptions = computed<PgmlCompareEntityFilterOption[]>(() => {
-  const countsByKind = entriesMatchingSelectedChangeKinds.value.reduce<Record<PgmlDiagramCompareEntityKind, number>>((counts, entry) => {
+  const countsByKind = entriesMatchingSelectedNoteFlags.value.reduce<Record<PgmlDiagramCompareEntityKind, number>>((counts, entry) => {
     counts[entry.entityKind] = (counts[entry.entityKind] || 0) + 1
     return counts
   }, {
@@ -283,11 +363,49 @@ const compareEntityFilterOptions = computed<PgmlCompareEntityFilterOption[]>(() 
     }]
   })
 })
+const compareNoteFilterOptions = computed<PgmlCompareNoteFilterOption[]>(() => {
+  const countsByFlag = entriesMatchingSelectedChangeKinds.value.reduce<Record<PgmlCompareNote['flag'], number>>((counts, entry) => {
+    const note = compareNotesByEntryId.value[entry.id]
+
+    if (note) {
+      counts[note.flag] += 1
+    }
+
+    return counts
+  }, {
+    blocked: 0,
+    fixed: 0,
+    ignore: 0,
+    pending: 0
+  })
+
+  return compareNoteFilterOrder.flatMap((key) => {
+    const flag = compareNoteFlagByFilterKey[key]
+    const count = countsByFlag[flag]
+
+    if (count === 0 && compareNoteFilters[key]) {
+      return []
+    }
+
+    return [{
+      count,
+      description: `Show compare entries noted as ${compareNoteFilterLabelByKey[key].toLowerCase()}.`,
+      key,
+      label: compareNoteFilterLabelByKey[key]
+    }]
+  })
+})
 const isEntityKindFilterActive = (kind: PgmlDiagramCompareEntityKind) => {
   return selectedEntityKinds.value.includes(kind)
 }
 const hasActiveCompareFilters = computed(() => {
-  return normalizedSearchQuery.value.length > 0 || hasSelectedChangeKindFilters.value || hasEntityKindFilter.value
+  return normalizedSearchQuery.value.length > 0
+    || hasSelectedChangeKindFilters.value
+    || hasEntityKindFilter.value
+    || !compareNoteFilters.showPending
+    || !compareNoteFilters.showIgnore
+    || !compareNoteFilters.showFixed
+    || !compareNoteFilters.showBlocked
 })
 const isCompareNoiseFilterActive = (key: PgmlCompareNoiseFilterKey) => {
   return compareNoiseFilters[key]
@@ -300,6 +418,17 @@ const entryMatchesCurrentFilters = (
   normalizedQuery: string
 ) => {
   if (!entryMatchesSelectedChangeKinds(entry)) {
+    return false
+  }
+
+  const note = compareNotesByEntryId.value[entry.id]
+
+  if (
+    (note?.flag === 'pending' && !compareNoteFilters.showPending)
+    || (note?.flag === 'ignore' && !compareNoteFilters.showIgnore)
+    || (note?.flag === 'fixed' && !compareNoteFilters.showFixed)
+    || (note?.flag === 'blocked' && !compareNoteFilters.showBlocked)
+  ) {
     return false
   }
 
@@ -504,6 +633,12 @@ const clearFilters = () => {
   clearSearch()
   selectedChangeKinds.value = []
   selectedEntityKinds.value = []
+  emit('update:compare-note-filters', {
+    showBlocked: true,
+    showFixed: true,
+    showIgnore: true,
+    showPending: true
+  })
 }
 
 const toggleCompareEntityKindFilter = (kind: PgmlDiagramCompareEntityKind) => {
@@ -548,6 +683,31 @@ const getCompareNoiseFilterButtonClass = (key: PgmlCompareNoiseFilterKey) => {
   return getStudioPanelToggleChipClass({
     active: isCompareNoiseFilterActive(key),
     extraClass: ''
+  })
+}
+
+const isCompareNoteFilterActive = (key: PgmlCompareNoteFilterKey) => {
+  return compareNoteFilters[key]
+}
+
+const getCompareNoteFilterButtonClass = (key: PgmlCompareNoteFilterKey) => {
+  return getStudioPanelToggleChipClass({
+    active: isCompareNoteFilterActive(key),
+    extraClass: compareEntityFilterChipClass
+  })
+}
+
+const getCompareNoteFilterCountClass = (key: PgmlCompareNoteFilterKey) => {
+  return joinStudioClasses(
+    compareEntityFilterCountClass,
+    isCompareNoteFilterActive(key) && 'border-[color:var(--studio-shell-label)] text-[color:var(--studio-shell-text)]'
+  )
+}
+
+const toggleCompareNoteFilter = (key: PgmlCompareNoteFilterKey) => {
+  emit('update:compare-note-filters', {
+    ...compareNoteFilters,
+    [key]: !compareNoteFilters[key]
   })
 }
 
@@ -611,6 +771,13 @@ const toggleCompareNoiseFilter = (key: PgmlCompareNoiseFilterKey) => {
           class="text-[0.66rem] leading-5 text-[color:var(--studio-shell-muted)]"
         >
           {{ relationshipSummary }}
+        </p>
+
+        <p
+          v-if="savedComparisonHint"
+          class="text-[0.66rem] leading-5 text-[color:var(--studio-shell-muted)]"
+        >
+          {{ savedComparisonHint }}
         </p>
 
         <div class="grid gap-2 lg:grid-cols-[minmax(0,1fr)_auto_auto_auto] lg:items-end">
@@ -850,6 +1017,8 @@ const toggleCompareNoiseFilter = (key: PgmlCompareNoiseFilterKey) => {
 
         <PgmlDiagramCompareEntryList
           :base-label="detailBaseLabel"
+          :can-edit-notes="canEditNotes"
+          :compare-notes="compareNotes"
           :entries="visibleContextEntries"
           section="context"
           :selected-diagram-context-ids="selectedDiagramContextIds"
@@ -857,6 +1026,7 @@ const toggleCompareNoiseFilter = (key: PgmlCompareNoiseFilterKey) => {
           :show-field-diffs="showFieldDiffs"
           :show-snapshot-diff="showSnapshotDiff"
           :target-label="detailTargetLabel"
+          @edit-note="emit('edit-entry-note', $event)"
           @focus-source="emit('focus-source', $event)"
           @focus-target="emit('focus-target', $event)"
           @select-entry="emit('select-entry', $event)"
@@ -916,9 +1086,40 @@ const toggleCompareNoiseFilter = (key: PgmlCompareNoiseFilterKey) => {
           </div>
         </div>
 
+        <div
+          v-if="compareNoteFilterOptions.length > 0"
+          class="grid gap-2"
+        >
+          <div class="font-mono text-[0.58rem] uppercase tracking-[0.08em] text-[color:var(--studio-shell-label)]">
+            Note flags
+          </div>
+          <div class="flex flex-wrap gap-2">
+            <button
+              v-for="option in compareNoteFilterOptions"
+              :key="option.key"
+              type="button"
+              :data-compare-note-filter="option.key"
+              :class="getCompareNoteFilterButtonClass(option.key)"
+              :aria-pressed="isCompareNoteFilterActive(option.key)"
+              :title="option.description"
+              @click="toggleCompareNoteFilter(option.key)"
+            >
+              <span>{{ option.label }}</span>
+              <span
+                :data-compare-note-filter-count="option.key"
+                :class="getCompareNoteFilterCountClass(option.key)"
+              >
+                {{ option.count }}
+              </span>
+            </button>
+          </div>
+        </div>
+
         <PgmlDiagramCompareEntryList
           v-if="filteredEntries.length > 0"
           :base-label="detailBaseLabel"
+          :can-edit-notes="canEditNotes"
+          :compare-notes="compareNotes"
           :entries="filteredEntries"
           section="results"
           :selected-diagram-context-ids="selectedDiagramContextIds"
@@ -926,6 +1127,7 @@ const toggleCompareNoiseFilter = (key: PgmlCompareNoiseFilterKey) => {
           :show-field-diffs="showFieldDiffs"
           :show-snapshot-diff="showSnapshotDiff"
           :target-label="detailTargetLabel"
+          @edit-note="emit('edit-entry-note', $event)"
           @focus-source="emit('focus-source', $event)"
           @focus-target="emit('focus-target', $event)"
           @select-entry="emit('select-entry', $event)"

@@ -36,7 +36,7 @@ export type PgmlDiagramCompareField = {
   label: string
 }
 
-export type PgmlDiagramCompareNoiseKind = 'defaults' | 'metadata' | 'order'
+export type PgmlDiagramCompareNoiseKind = 'defaults' | 'executable-name' | 'metadata' | 'order' | 'structural-name'
 
 export type PgmlDiagramCompareScopeKind = 'group' | 'standalone' | 'table'
 
@@ -190,6 +190,16 @@ const compareOrderNoiseDisallowedEntityKinds = new Set<PgmlDiagramCompareEntityK
   'index',
   'reference'
 ])
+const compareExecutableNameOnlyKinds = new Set<PgmlDiagramCompareEntityKind>([
+  'function',
+  'procedure',
+  'sequence',
+  'trigger'
+])
+const compareStructuralNameOnlyKinds = new Set<PgmlDiagramCompareEntityKind>([
+  'constraint',
+  'index'
+])
 
 const isEnumValueOrderOnlyChange = (
   entityKind: PgmlDiagramCompareEntityKind,
@@ -218,6 +228,32 @@ const isEnumValueOrderOnlyChange = (
   return changedFields.every((fieldName) => {
     return areFieldValuesEqualIgnoringOrder(beforeRecord[fieldName], afterRecord[fieldName])
   })
+}
+
+const isExecutableNameOnlyChange = (
+  entityKind: PgmlDiagramCompareEntityKind,
+  changedFields: string[]
+) => {
+  if (!compareExecutableNameOnlyKinds.has(entityKind) || changedFields.length === 0) {
+    return false
+  }
+
+  if (entityKind === 'function' || entityKind === 'procedure') {
+    return changedFields.every(fieldName => fieldName === 'name' || fieldName === 'signature')
+  }
+
+  return changedFields.every(fieldName => fieldName === 'name')
+}
+
+const isStructuralNameOnlyChange = (
+  entityKind: PgmlDiagramCompareEntityKind,
+  changedFields: string[]
+) => {
+  if (!compareStructuralNameOnlyKinds.has(entityKind) || changedFields.length === 0) {
+    return false
+  }
+
+  return changedFields.every(fieldName => fieldName === 'name')
 }
 
 const formatCompareFieldLabel = (fieldName: string) => {
@@ -351,6 +387,14 @@ const buildCompareNoiseKinds = (
 
   if (changedFields.every(fieldName => compareMetadataFieldNames.has(fieldName))) {
     noiseKinds.push('metadata')
+  }
+
+  if (isExecutableNameOnlyChange(entityKind, changedFields)) {
+    noiseKinds.push('executable-name')
+  }
+
+  if (isStructuralNameOnlyChange(entityKind, changedFields)) {
+    noiseKinds.push('structural-name')
   }
 
   if (
@@ -874,6 +918,8 @@ export const filterPgmlDiagramCompareEntriesForNoise = (
 
   if (
     !normalizedNoiseFilters.hideDefaults
+    && !normalizedNoiseFilters.hideExecutableNameOnly
+    && !normalizedNoiseFilters.hideStructuralNameOnly
     && !normalizedNoiseFilters.hideMetadata
     && !normalizedNoiseFilters.hideOrderOnly
   ) {
@@ -882,6 +928,14 @@ export const filterPgmlDiagramCompareEntriesForNoise = (
 
   return entries.filter((entry) => {
     if (normalizedNoiseFilters.hideDefaults && entry.noiseKinds.includes('defaults')) {
+      return false
+    }
+
+    if (normalizedNoiseFilters.hideExecutableNameOnly && entry.noiseKinds.includes('executable-name')) {
+      return false
+    }
+
+    if (normalizedNoiseFilters.hideStructuralNameOnly && entry.noiseKinds.includes('structural-name')) {
       return false
     }
 

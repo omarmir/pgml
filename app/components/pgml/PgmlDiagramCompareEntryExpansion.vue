@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import type { PgmlSourceRange } from '~/utils/pgml'
+import type { PgmlCompareNote, PgmlSourceRange } from '~/utils/pgml'
 import {
   buildPgmlCompareDiffLines,
   type PgmlCompareDiffLine,
@@ -13,19 +13,24 @@ import {
 
 const {
   baseLabel,
+  canEditNote = false,
   entry,
+  note = null,
   showFieldDiffs = true,
   showSnapshotDiff = false,
   targetLabel
 } = defineProps<{
   baseLabel: string
+  canEditNote?: boolean
   entry: PgmlDiagramCompareEntry
+  note?: PgmlCompareNote | null
   showFieldDiffs?: boolean
   showSnapshotDiff?: boolean
   targetLabel: string
 }>()
 
 const emit = defineEmits<{
+  'edit-note': [entryId: string]
   'focus-source': [sourceRange: PgmlSourceRange]
   'focus-target': [entryId: string]
 }>()
@@ -42,6 +47,18 @@ const diffPrefixClassByKind: Readonly<Record<PgmlCompareDiffLineKind, string>> =
   removed: 'text-rose-300 sm:text-rose-400'
 })
 const diffLegendBadgeClass = 'inline-flex items-center gap-2 border border-[color:var(--studio-divider)] bg-[color:var(--studio-control-bg)] px-2 py-1 font-mono text-[0.56rem] uppercase tracking-[0.08em]'
+const compareNoteFlagClassByValue: Readonly<Record<PgmlCompareNote['flag'], string>> = Object.freeze({
+  blocked: 'border-rose-500/40 bg-rose-500/10 text-rose-200 sm:text-rose-300',
+  fixed: 'border-emerald-500/40 bg-emerald-500/10 text-emerald-200 sm:text-emerald-300',
+  ignore: 'border-slate-500/40 bg-slate-500/10 text-slate-200 sm:text-slate-300',
+  pending: 'border-amber-500/40 bg-amber-500/10 text-amber-200 sm:text-amber-300'
+})
+const compareNoteFlagLabelByValue: Readonly<Record<PgmlCompareNote['flag'], string>> = Object.freeze({
+  blocked: 'Blocked',
+  fixed: 'Fixed',
+  ignore: 'Ignore',
+  pending: 'Pending'
+})
 
 const getDiffValue = (
   value: string | null,
@@ -66,6 +83,10 @@ const getDiffLineClass = (line: PgmlCompareDiffLine) => {
 
 const getDiffPrefixClass = (line: PgmlCompareDiffLine) => {
   return diffPrefixClassByKind[line.kind]
+}
+
+const getCompareNoteFlagClass = (flag: PgmlCompareNote['flag']) => {
+  return compareNoteFlagClassByValue[flag]
 }
 </script>
 
@@ -94,6 +115,15 @@ const getDiffPrefixClass = (line: PgmlCompareDiffLine) => {
 
       <div class="flex flex-wrap items-center justify-end gap-2">
         <UButton
+          :label="note ? 'Edit note' : 'Add note'"
+          color="neutral"
+          variant="outline"
+          size="sm"
+          :class="actionButtonClass"
+          :disabled="!canEditNote"
+          @click="emit('edit-note', entry.id)"
+        />
+        <UButton
           label="Show on diagram"
           color="neutral"
           variant="outline"
@@ -110,6 +140,26 @@ const getDiffPrefixClass = (line: PgmlCompareDiffLine) => {
           :class="actionButtonClass"
           @click="emit('focus-source', entry.sourceRange)"
         />
+      </div>
+    </div>
+
+    <div
+      v-if="note"
+      class="grid gap-2 border border-[color:var(--studio-divider)] bg-[color:var(--studio-shell-bg)]/40 px-3 py-3"
+    >
+      <div class="flex flex-wrap items-center gap-2">
+        <div class="font-mono text-[0.58rem] uppercase tracking-[0.08em] text-[color:var(--studio-shell-label)]">
+          Compare note
+        </div>
+        <span
+          class="inline-flex items-center border px-1.5 py-0.5 font-mono text-[0.52rem] uppercase tracking-[0.08em]"
+          :class="getCompareNoteFlagClass(note.flag)"
+        >
+          {{ compareNoteFlagLabelByValue[note.flag] }}
+        </span>
+      </div>
+      <div class="whitespace-pre-wrap text-[0.7rem] leading-6 text-[color:var(--studio-shell-text)] [overflow-wrap:anywhere]">
+        {{ note.note }}
       </div>
     </div>
 

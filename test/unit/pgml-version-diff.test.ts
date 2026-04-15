@@ -99,6 +99,213 @@ describe('PGML version diffing', () => {
     expect(migrationBundle.sql.migration.content).not.toContain('SET DEFAULT')
   })
 
+  it('matches renamed indexes and constraints by material contents instead of reporting add/remove pairs', () => {
+    const diff = diffPgmlSchemaModels(
+      parsePgml(`Table public.users {
+  id uuid [pk]
+  email text
+
+  Index users_email_idx (email) [type: btree]
+  Constraint users_email_chk: email <> ''
+}`),
+      parsePgml(`Table public.users {
+  id uuid [pk]
+  email text
+
+  Index users_email_lookup_idx (email) [type: btree]
+  Constraint users_email_present_chk: email <> ''
+}`)
+    )
+
+    expect(diff.indexes).toEqual([
+      expect.objectContaining({
+        changes: ['name'],
+        id: 'public.users::users_email_lookup_idx',
+        kind: 'modified'
+      })
+    ])
+    expect(diff.constraints).toEqual([
+      expect.objectContaining({
+        changes: ['name'],
+        id: 'public.users::users_email_present_chk',
+        kind: 'modified'
+      })
+    ])
+    expect(diff.summary.added).toBe(0)
+    expect(diff.summary.removed).toBe(0)
+    expect(diff.summary.modified).toBe(2)
+  })
+
+  it('matches renamed executable objects by material contents instead of reporting add/remove pairs', () => {
+    const diff = diffPgmlSchemaModels(
+      parsePgml(`Function public.refresh_users() returns void {
+  source: $sql$
+    select 1;
+  $sql$
+}
+
+Procedure public.rebuild_users() {
+  source: $sql$
+    select 1;
+  $sql$
+}
+
+Trigger users_touch on public.users {
+  source: $sql$
+    CREATE TRIGGER users_touch BEFORE UPDATE ON public.users
+    FOR EACH ROW EXECUTE FUNCTION public.touch_users();
+  $sql$
+}
+
+Sequence public.users_id_seq {
+  as: bigint
+}`),
+      parsePgml(`Function public.refresh_users_v2() returns void {
+  source: $sql$
+    select 1;
+  $sql$
+}
+
+Procedure public.rebuild_users_v2() {
+  source: $sql$
+    select 1;
+  $sql$
+}
+
+Trigger users_touch_v2 on public.users {
+  source: $sql$
+    CREATE TRIGGER users_touch_v2 BEFORE UPDATE ON public.users
+    FOR EACH ROW EXECUTE FUNCTION public.touch_users();
+  $sql$
+}
+
+Sequence public.users_identity_seq {
+  as: bigint
+}`)
+    )
+
+    expect(diff.functions).toEqual([
+      expect.objectContaining({
+        changes: ['name', 'signature'],
+        id: 'public.refresh_users_v2',
+        kind: 'modified'
+      })
+    ])
+    expect(diff.procedures).toEqual([
+      expect.objectContaining({
+        changes: ['name', 'signature'],
+        id: 'public.rebuild_users_v2',
+        kind: 'modified'
+      })
+    ])
+    expect(diff.triggers).toEqual([
+      expect.objectContaining({
+        changes: ['name'],
+        id: 'public.users::users_touch_v2',
+        kind: 'modified'
+      })
+    ])
+    expect(diff.sequences).toEqual([
+      expect.objectContaining({
+        changes: ['name'],
+        id: 'public.users_identity_seq',
+        kind: 'modified'
+      })
+    ])
+    expect(diff.summary.added).toBe(0)
+    expect(diff.summary.removed).toBe(0)
+    expect(diff.summary.modified).toBe(4)
+  })
+
+  it('suppresses equivalent composite refs and foreign-key constraints from compare output', () => {
+    const diff = diffPgmlSchemaModels(
+      parsePgml(`Table public.Common_Approval_Template {
+  id uuid [pk]
+  egcs_cn_scopeid uuid
+  egcs_cn_scopetype text
+}
+
+Table public.Common_Entity {
+  id uuid [pk]
+  egcs_cn_entitytype text
+}
+
+Ref cn_ref_approvaltemplatescopeidscopetype: public.Common_Approval_Template.(egcs_cn_scopeid, egcs_cn_scopetype) > public.Common_Entity.(id, egcs_cn_entitytype)`),
+      parsePgml(`Table public.Common_Approval_Template {
+  id uuid [pk]
+  egcs_cn_scopeid uuid
+  egcs_cn_scopetype text
+
+  Constraint cn_ref_approvaltemplatescopeidscopetype: foreign key (egcs_cn_scopeid, egcs_cn_scopetype) references public.Common_Entity (id, egcs_cn_entitytype)
+}
+
+Table public.Common_Entity {
+  id uuid [pk]
+  egcs_cn_entitytype text
+}`)
+    )
+
+    expect(diff.references).toEqual([])
+    expect(diff.constraints).toEqual([])
+    expect(diff.summary.modified).toBe(0)
+    expect(diff.summary.added).toBe(0)
+    expect(diff.summary.removed).toBe(0)
+  })
+
+  it('suppresses equivalent composite refs and foreign-key constraints when identifier casing differs', () => {
+    const diff = diffPgmlSchemaModels(
+      parsePgml(`Table Common_Approval_Template {
+  id uuid [pk]
+  egcs_cn_scopeid uuid
+  egcs_cn_scopetype text
+}
+
+Table Common_Entity {
+  id uuid [pk]
+  egcs_cn_entitytype text
+}
+
+Ref cn_ref_approvaltemplatescopeidscopetype: Common_Approval_Template.(egcs_cn_scopeid, egcs_cn_scopetype) > Common_Entity.(id, egcs_cn_entitytype)`),
+      parsePgml(`Table public.common_approval_template {
+  id uuid [pk]
+  egcs_cn_scopeid uuid
+  egcs_cn_scopetype text
+
+  Constraint cn_ref_approvaltemplatescopeidscopetype: foreign key (egcs_cn_scopeid, egcs_cn_scopetype) references public.Common_Entity (id, egcs_cn_entitytype)
+}
+
+Table public.common_entity {
+  id uuid [pk]
+  egcs_cn_entitytype text
+}`)
+    )
+
+    expect(diff.references).toEqual([])
+    expect(diff.constraints).toEqual([])
+  })
+
+  it('suppresses equivalent enum-range constraint expressions across IN SELECT and = ANY forms', () => {
+    const diff = diffPgmlSchemaModels(
+      parsePgml(`Table public.common_entity {
+  egcs_cn_addresscountry countries
+  egcs_cn_addresssubdivision text
+
+  Constraint chk_common_entity_addresssubdivision: (egcs_cn_addresscountry = 'ca' AND egcs_cn_addresssubdivision::text IN (SELECT enum_range(NULL::Jurisdiction)::text)) OR (egcs_cn_addresscountry <> 'ca')
+}`),
+      parsePgml(`Table public.common_entity {
+  egcs_cn_addresscountry countries
+  egcs_cn_addresssubdivision text
+
+  Constraint chk_common_entity_addresssubdivision: ((egcs_cn_addresscountry = 'ca'::public.countries) AND ((egcs_cn_addresssubdivision)::text = ANY ((enum_range(NULL::public.jurisdiction))::text[]))) OR (egcs_cn_addresscountry <> 'ca'::public.countries)
+}`)
+    )
+
+    expect(diff.constraints).toEqual([])
+    expect(diff.summary.modified).toBe(0)
+    expect(diff.summary.added).toBe(0)
+    expect(diff.summary.removed).toBe(0)
+  })
+
   it('ignores equivalent sequence ownership metadata when pg_dump source only differs by quoted identifiers', () => {
     const beforeModel = parsePgml(convertPgDumpToPgml({
       foldIdentifiersToLowercase: true,

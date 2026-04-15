@@ -1,11 +1,15 @@
 import { nanoid } from 'nanoid'
 import {
+  clonePgmlCompareNoteFilters,
+  clonePgmlCompareNotes,
   buildPgmlWithNodeProperties,
   clonePgmlCompareExclusions,
   clonePgmlCompareNoiseFilters,
   createEmptyPgmlCompareExclusions,
   dedentPgmlSourceForEditor,
   hasPgmlCompareExclusionOverrides,
+  type PgmlCompareNote,
+  type PgmlCompareNoteFilters,
   type PgmlCompareExclusions,
   type PgmlCompareNoiseFilters,
   normalizePgmlSourceIndentation,
@@ -44,6 +48,8 @@ export type PgmlDocumentComparison = {
   exclusions: PgmlCompareExclusions
   id: string
   name: string
+  noteFilters: PgmlCompareNoteFilters
+  notes: PgmlCompareNote[]
   noiseFilters: PgmlCompareNoiseFilters
   targetId: string
 }
@@ -100,6 +106,7 @@ const workspaceKeyword = 'Workspace'
 const snapshotKeyword = 'Snapshot'
 const schemaMetadataKeyword = 'SchemaMetadata'
 const compareExclusionsKeyword = 'CompareExclusions'
+const compareNoteKeyword = 'CompareNote'
 const comparisonKeyword = 'Comparison'
 const viewKeyword = 'View'
 const defaultPgmlDocumentViewName = 'Default'
@@ -160,6 +167,8 @@ export const createPgmlDocumentComparison = (input?: {
   exclusions?: Partial<PgmlCompareExclusions>
   id?: string | null
   name?: string | null
+  noteFilters?: Partial<PgmlCompareNoteFilters>
+  notes?: PgmlCompareNote[]
   noiseFilters?: Partial<PgmlCompareNoiseFilters>
   targetId?: string | null
 }) => {
@@ -170,6 +179,8 @@ export const createPgmlDocumentComparison = (input?: {
     exclusions: clonePgmlCompareExclusions(input?.exclusions),
     id: input?.id && input.id.trim().length > 0 ? input.id.trim() : createPgmlDocumentComparisonId(),
     name: input?.name && input.name.trim().length > 0 ? input.name.trim() : defaultPgmlDocumentComparisonName,
+    noteFilters: clonePgmlCompareNoteFilters(input?.noteFilters),
+    notes: clonePgmlCompareNotes(input?.notes),
     noiseFilters: clonePgmlCompareNoiseFilters(input?.noiseFilters),
     targetId: input?.targetId && input.targetId.trim().length > 0 ? input.targetId.trim() : 'workspace'
   } satisfies PgmlDocumentComparison
@@ -809,6 +820,16 @@ const getComparisonName = (header: string) => {
   return trimQuotedValue(match[1] || '')
 }
 
+const getCompareNoteEntryId = (header: string) => {
+  const match = header.match(/^CompareNote\s+(.+)$/u)
+
+  if (!match) {
+    return null
+  }
+
+  return trimQuotedValue(match[1] || '')
+}
+
 const getViewName = (header: string) => {
   const match = header.match(/^View\s+(.+)$/u)
 
@@ -1104,6 +1125,60 @@ const parseComparisonReferenceValue = (
   return normalizedValue
 }
 
+const encodePgmlCompareNoteText = (value: string) => {
+  return value
+    .replaceAll('\\', '\\\\')
+    .replaceAll('\n', '\\n')
+}
+
+const decodePgmlCompareNoteText = (value: string) => {
+  return value
+    .replaceAll('\\n', '\n')
+    .replaceAll('\\\\', '\\')
+}
+
+const parseCompareNoteFlagValue = (
+  value: string | undefined,
+  context: string
+): PgmlCompareNote['flag'] => {
+  const normalizedValue = value?.trim() || ''
+
+  if (
+    normalizedValue !== 'pending'
+    && normalizedValue !== 'ignore'
+    && normalizedValue !== 'fixed'
+    && normalizedValue !== 'blocked'
+  ) {
+    throw new Error(`${context} requires flag to be one of pending, ignore, fixed, or blocked.`)
+  }
+
+  return normalizedValue
+}
+
+const parseCompareNoteBlock = (
+  block: PgmlNamedBlock,
+  context: string
+): PgmlCompareNote => {
+  const entryId = getCompareNoteEntryId(block.header)
+
+  if (!entryId || entryId.trim().length === 0) {
+    throw new Error(`${context} CompareNote blocks require a quoted compare entry id.`)
+  }
+
+  const nested = collectBlocks(block.body.join('\n'))
+  const metadata = collectBlockMetadata(nested.topLevel, `${context} CompareNote ${entryId}`)
+
+  if (nested.blocks.length > 0) {
+    throw new Error(`${context} CompareNote ${entryId} does not allow nested blocks.`)
+  }
+
+  return {
+    entryId,
+    flag: parseCompareNoteFlagValue(metadata.flag, `${context} CompareNote ${entryId}`),
+    note: decodePgmlCompareNoteText(getRequiredMetadataValue(metadata, 'note', `${context} CompareNote ${entryId}`))
+  }
+}
+
 const parseComparisonBlock = (block: PgmlNamedBlock): PgmlDocumentComparison => {
   const comparisonName = getComparisonName(block.header)
 
@@ -1114,13 +1189,14 @@ const parseComparisonBlock = (block: PgmlNamedBlock): PgmlDocumentComparison => 
   const nested = collectBlocks(block.body.join('\n'))
   const metadata = collectBlockMetadata(nested.topLevel, `Comparison ${comparisonName}`)
   const compareExclusionBlocks = nested.blocks.filter(nestedBlock => nestedBlock.header === compareExclusionsKeyword)
+  const compareNoteBlocks = nested.blocks.filter(nestedBlock => getCompareNoteEntryId(nestedBlock.header) !== null)
 
   if (compareExclusionBlocks.length > 1) {
     throw new Error(`Comparison ${comparisonName} only allows one CompareExclusions block.`)
   }
 
-  if (compareExclusionBlocks.length !== nested.blocks.length) {
-    throw new Error(`Comparison ${comparisonName} only allows nested CompareExclusions blocks.`)
+  if (compareExclusionBlocks.length + compareNoteBlocks.length !== nested.blocks.length) {
+    throw new Error(`Comparison ${comparisonName} only allows nested CompareExclusions and CompareNote blocks.`)
   }
 
   return createPgmlDocumentComparison({
@@ -1132,8 +1208,17 @@ const parseComparisonBlock = (block: PgmlNamedBlock): PgmlDocumentComparison => 
       : createEmptyPgmlCompareExclusions(),
     id: getRequiredMetadataValue(metadata, 'id', `Comparison ${comparisonName}`),
     name: comparisonName,
+    noteFilters: {
+      showBlocked: metadata.show_blocked_notes !== 'false',
+      showFixed: metadata.show_fixed_notes !== 'false',
+      showIgnore: metadata.show_ignore_notes !== 'false',
+      showPending: metadata.show_pending_notes !== 'false'
+    },
+    notes: compareNoteBlocks.map(compareNoteBlock => parseCompareNoteBlock(compareNoteBlock, `Comparison ${comparisonName}`)),
     noiseFilters: {
       hideDefaults: metadata.hide_defaults !== 'false',
+      hideExecutableNameOnly: metadata.hide_executable_name_only !== 'false',
+      hideStructuralNameOnly: metadata.hide_structural_name_only !== 'false',
       hideMetadata: metadata.hide_metadata !== 'false',
       hideOrderOnly: metadata.hide_order_only !== 'false'
     },
@@ -1756,6 +1841,19 @@ const buildCompareExclusionsBlock = (
   return lines.join('\n')
 }
 
+const buildCompareNoteBlock = (
+  note: PgmlCompareNote,
+  level: number
+) => {
+  const lines = [`${'  '.repeat(level)}${compareNoteKeyword} ${quoteMetadataValue(note.entryId)} {`]
+
+  lines.push(buildMetadataLine('flag', note.flag, level + 1))
+  lines.push(buildMetadataLine('note', encodePgmlCompareNoteText(note.note), level + 1, true))
+  lines.push(`${'  '.repeat(level)}}`)
+
+  return lines.join('\n')
+}
+
 const buildComparisonReferenceValue = (
   value: string | null
 ): PgmlComparisonReference => {
@@ -1780,6 +1878,14 @@ const buildComparisonBlock = (
     lines.push(buildMetadataLine('hide_defaults', 'false', level + 1))
   }
 
+  if (!comparison.noiseFilters.hideExecutableNameOnly) {
+    lines.push(buildMetadataLine('hide_executable_name_only', 'false', level + 1))
+  }
+
+  if (!comparison.noiseFilters.hideStructuralNameOnly) {
+    lines.push(buildMetadataLine('hide_structural_name_only', 'false', level + 1))
+  }
+
   if (!comparison.noiseFilters.hideMetadata) {
     lines.push(buildMetadataLine('hide_metadata', 'false', level + 1))
   }
@@ -1788,11 +1894,35 @@ const buildComparisonBlock = (
     lines.push(buildMetadataLine('hide_order_only', 'false', level + 1))
   }
 
+  if (!comparison.noteFilters.showPending) {
+    lines.push(buildMetadataLine('show_pending_notes', 'false', level + 1))
+  }
+
+  if (!comparison.noteFilters.showIgnore) {
+    lines.push(buildMetadataLine('show_ignore_notes', 'false', level + 1))
+  }
+
+  if (!comparison.noteFilters.showFixed) {
+    lines.push(buildMetadataLine('show_fixed_notes', 'false', level + 1))
+  }
+
+  if (!comparison.noteFilters.showBlocked) {
+    lines.push(buildMetadataLine('show_blocked_notes', 'false', level + 1))
+  }
+
   const compareExclusionsBlock = buildCompareExclusionsBlock(comparison.exclusions, level + 1)
+  const compareNoteBlocks = clonePgmlCompareNotes(comparison.notes)
+    .sort((left, right) => left.entryId.localeCompare(right.entryId))
+    .map(note => buildCompareNoteBlock(note, level + 1))
 
   if (compareExclusionsBlock) {
     lines.push('')
     lines.push(compareExclusionsBlock)
+  }
+
+  if (compareNoteBlocks.length > 0) {
+    lines.push('')
+    lines.push(compareNoteBlocks.join('\n\n'))
   }
 
   lines.push(`${'  '.repeat(level)}}`)

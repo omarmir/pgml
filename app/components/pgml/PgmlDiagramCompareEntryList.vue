@@ -2,7 +2,7 @@
 import type { Ref } from 'vue'
 import { computed, ref } from 'vue'
 import PgmlDiagramCompareEntryExpansion from '~/components/pgml/PgmlDiagramCompareEntryExpansion.vue'
-import type { PgmlSourceRange } from '~/utils/pgml'
+import type { PgmlCompareNote, PgmlSourceRange } from '~/utils/pgml'
 import {
   buildPgmlDiagramCompareScopeChangeCountLabel,
   buildPgmlDiagramCompareScopeSummary,
@@ -15,6 +15,8 @@ import {
 
 const {
   baseLabel,
+  canEditNotes = false,
+  compareNotes = [],
   entries,
   section,
   selectedDiagramContextIds = [],
@@ -24,6 +26,8 @@ const {
   targetLabel
 } = defineProps<{
   baseLabel: string
+  canEditNotes?: boolean
+  compareNotes?: PgmlCompareNote[]
   entries: PgmlDiagramCompareEntry[]
   section: 'context' | 'results'
   selectedDiagramContextIds?: string[]
@@ -34,6 +38,7 @@ const {
 }>()
 
 const emit = defineEmits<{
+  'edit-note': [entryId: string]
   'focus-source': [sourceRange: PgmlSourceRange]
   'focus-target': [entryId: string]
   'select-entry': [entryId: string | null]
@@ -55,9 +60,28 @@ type PgmlDiagramCompareEntryListItem = {
 }
 
 const expandedScopeIds: Ref<string[]> = ref([])
+const compareNoteFlagClassByValue: Readonly<Record<PgmlCompareNote['flag'], string>> = Object.freeze({
+  blocked: 'border-rose-500/40 bg-rose-500/10 text-rose-200 sm:text-rose-300',
+  fixed: 'border-emerald-500/40 bg-emerald-500/10 text-emerald-200 sm:text-emerald-300',
+  ignore: 'border-slate-500/40 bg-slate-500/10 text-slate-200 sm:text-slate-300',
+  pending: 'border-amber-500/40 bg-amber-500/10 text-amber-200 sm:text-amber-300'
+})
+const compareNoteFlagLabelByValue: Readonly<Record<PgmlCompareNote['flag'], string>> = Object.freeze({
+  blocked: 'Blocked',
+  fixed: 'Fixed',
+  ignore: 'Ignore',
+  pending: 'Pending'
+})
+const compareNoteFlagOrder: PgmlCompareNote['flag'][] = ['pending', 'ignore', 'fixed', 'blocked']
 
 const selectedDiagramContextIdSet = computed(() => {
   return new Set(selectedDiagramContextIds)
+})
+const compareNotesByEntryId = computed(() => {
+  return compareNotes.reduce<Record<string, PgmlCompareNote>>((entries, note) => {
+    entries[note.entryId] = note
+    return entries
+  }, {})
 })
 
 const buildEntryRowAttributes = (entryId: string) => {
@@ -150,6 +174,31 @@ const isEntryOnDiagram = (entryId: string) => {
   return selectedDiagramContextIdSet.value.has(entryId)
 }
 
+const getCompareNoteForEntry = (entryId: string) => {
+  return compareNotesByEntryId.value[entryId] || null
+}
+
+const getScopeNoteFlagCounts = (scopeEntries: PgmlDiagramCompareEntry[]) => {
+  return scopeEntries.reduce<Record<PgmlCompareNote['flag'], number>>((counts, entry) => {
+    const note = getCompareNoteForEntry(entry.id)
+
+    if (note) {
+      counts[note.flag] += 1
+    }
+
+    return counts
+  }, {
+    blocked: 0,
+    fixed: 0,
+    ignore: 0,
+    pending: 0
+  })
+}
+
+const getCompareNoteFlagClass = (flag: PgmlCompareNote['flag']) => {
+  return compareNoteFlagClassByValue[flag]
+}
+
 const isScopeExpanded = (
   scopeId: string,
   scopeEntries: PgmlDiagramCompareEntry[]
@@ -221,6 +270,13 @@ const toggleScopeExpansion = (
             >
               On diagram
             </span>
+            <span
+              v-if="getCompareNoteForEntry(item.entry.id)"
+              class="border px-1.5 py-0.5 font-mono text-[0.5rem] uppercase tracking-[0.08em]"
+              :class="getCompareNoteFlagClass(getCompareNoteForEntry(item.entry.id)!.flag)"
+            >
+              {{ compareNoteFlagLabelByValue[getCompareNoteForEntry(item.entry.id)!.flag] }}
+            </span>
           </div>
           <div class="min-w-0 break-words text-[0.76rem] font-semibold text-[color:var(--studio-shell-text)] [overflow-wrap:anywhere]">
             {{ item.entry.label }}
@@ -233,10 +289,13 @@ const toggleScopeExpansion = (
         <PgmlDiagramCompareEntryExpansion
           v-if="isEntryExpanded(item.entry.id)"
           :base-label="baseLabel"
+          :can-edit-note="canEditNotes"
           :entry="item.entry"
+          :note="getCompareNoteForEntry(item.entry.id)"
           :show-field-diffs="showFieldDiffs"
           :show-snapshot-diff="showSnapshotDiff"
           :target-label="targetLabel"
+          @edit-note="emit('edit-note', $event)"
           @focus-source="emit('focus-source', $event)"
           @focus-target="emit('focus-target', $event)"
         />
@@ -268,6 +327,14 @@ const toggleScopeExpansion = (
               class="border border-[color:var(--studio-ring)] px-1.5 py-0.5 font-mono text-[0.5rem] uppercase tracking-[0.08em] text-[color:var(--studio-shell-text)]"
             >
               On diagram
+            </span>
+            <span
+              v-for="flag in compareNoteFlagOrder.filter(value => getScopeNoteFlagCounts(item.entries)[value] > 0)"
+              :key="`${item.scopeId}:${flag}`"
+              class="border px-1.5 py-0.5 font-mono text-[0.5rem] uppercase tracking-[0.08em]"
+              :class="getCompareNoteFlagClass(flag)"
+            >
+              {{ compareNoteFlagLabelByValue[flag] }} {{ getScopeNoteFlagCounts(item.entries)[flag] }}
             </span>
           </div>
           <div class="min-w-0 break-words text-[0.76rem] font-semibold text-[color:var(--studio-shell-text)] [overflow-wrap:anywhere]">
@@ -313,6 +380,13 @@ const toggleScopeExpansion = (
                 >
                   On diagram
                 </span>
+                <span
+                  v-if="getCompareNoteForEntry(entry.id)"
+                  class="border px-1.5 py-0.5 font-mono text-[0.5rem] uppercase tracking-[0.08em]"
+                  :class="getCompareNoteFlagClass(getCompareNoteForEntry(entry.id)!.flag)"
+                >
+                  {{ compareNoteFlagLabelByValue[getCompareNoteForEntry(entry.id)!.flag] }}
+                </span>
               </div>
               <div class="min-w-0 break-words text-[0.76rem] font-semibold text-[color:var(--studio-shell-text)] [overflow-wrap:anywhere]">
                 {{ entry.label }}
@@ -325,10 +399,13 @@ const toggleScopeExpansion = (
             <PgmlDiagramCompareEntryExpansion
               v-if="isEntryExpanded(entry.id)"
               :base-label="baseLabel"
+              :can-edit-note="canEditNotes"
               :entry="entry"
+              :note="getCompareNoteForEntry(entry.id)"
               :show-field-diffs="showFieldDiffs"
               :show-snapshot-diff="showSnapshotDiff"
               :target-label="targetLabel"
+              @edit-note="emit('edit-note', $event)"
               @focus-source="emit('focus-source', $event)"
               @focus-target="emit('focus-target', $event)"
             />
