@@ -14,6 +14,7 @@ import {
   normalizePgmlCompareSequenceValue,
   normalizePgmlCompareTriggerValue
 } from './pgml-compare-normalization'
+import { normalizeImportedQualifiedName } from './pgml-import-normalization'
 import type {
   PgmlColumn,
   PgmlCompositeType,
@@ -637,6 +638,16 @@ const normalizeRoutineForCompare = (routine: PgmlRoutine) => {
 
 const normalizeTriggerForCompare = (trigger: PgmlTrigger) => {
   return normalizePgmlCompareTriggerValue(trigger)
+}
+
+const normalizeTriggerTableKey = (value: string) => {
+  const normalizedValue = normalizeImportedQualifiedName(value, {
+    foldIdentifiersToLowercase: true
+  })
+
+  return normalizedValue.startsWith('public.')
+    ? normalizedValue.slice('public.'.length)
+    : normalizedValue
 }
 
 const normalizeSequenceForCompare = (
@@ -1289,8 +1300,12 @@ export const buildPgmlMigrationDiffPlan = (
     })
   })
 
-  const beforeTriggers = new Map(baseModel.triggers.map(trigger => [`${trigger.tableName}::${trigger.name}`, trigger] as const))
-  const afterTriggers = new Map(targetModel.triggers.map(trigger => [`${trigger.tableName}::${trigger.name}`, trigger] as const))
+  const beforeTriggers = new Map(
+    baseModel.triggers.map(trigger => [`${normalizeTriggerTableKey(trigger.tableName)}::${trigger.name}`, trigger] as const)
+  )
+  const afterTriggers = new Map(
+    targetModel.triggers.map(trigger => [`${normalizeTriggerTableKey(trigger.tableName)}::${trigger.name}`, trigger] as const)
+  )
   const triggerIds = Array.from(new Set([...beforeTriggers.keys(), ...afterTriggers.keys()])).sort((left, right) => left.localeCompare(right))
 
   triggerIds.forEach((triggerId) => {

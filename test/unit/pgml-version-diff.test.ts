@@ -201,7 +201,7 @@ Sequence public.users_identity_seq {
     expect(diff.triggers).toEqual([
       expect.objectContaining({
         changes: ['name'],
-        id: 'public.users::users_touch_v2',
+        id: 'users::users_touch_v2',
         kind: 'modified'
       })
     ])
@@ -516,6 +516,28 @@ Sequence public.common_review_set_id_seq {
       for each row
       when ((new.status is distinct from old.status))
       execute procedure public.audit_account_change('status-change');
+  $sql$
+}`)
+    const diff = diffPgmlSchemaModels(beforeModel, afterModel)
+    const migrationBundle = buildPgmlMigrationDiffBundle(beforeModel, afterModel)
+
+    expect(diff.triggers).toEqual([])
+    expect(diff.summary.modified).toBe(0)
+    expect(migrationBundle.meta.hasChanges).toBe(false)
+    expect(migrationBundle.meta.statementCount).toBe(0)
+  })
+
+  it('ignores trigger source differences when only public qualification and quoted identifiers change', () => {
+    const beforeModel = parsePgml(`Trigger trg_register_applicantrecipient on Applicant_Recipient_Profile {
+  source: $sql$
+    CREATE TRIGGER trg_register_applicantrecipient
+      BEFORE INSERT ON Applicant_Recipient_Profile
+      FOR EACH ROW EXECUTE FUNCTION register_entity('applicantrecipient');
+  $sql$
+}`)
+    const afterModel = parsePgml(`Trigger trg_register_applicantrecipient on public."Applicant_Recipient_Profile" {
+  source: $sql$
+    CREATE TRIGGER trg_register_applicantrecipient BEFORE INSERT ON public."Applicant_Recipient_Profile" FOR EACH ROW EXECUTE FUNCTION public.register_entity('applicantrecipient');
   $sql$
 }`)
     const diff = diffPgmlSchemaModels(beforeModel, afterModel)

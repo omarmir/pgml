@@ -22,6 +22,7 @@ import {
   normalizePgmlCompareSequenceMetadataEntries,
   normalizePgmlCompareTriggerValue
 } from './pgml-compare-normalization'
+import { normalizeImportedQualifiedName } from './pgml-import-normalization'
 
 export type PgmlDiffChangeKind = 'added' | 'modified' | 'removed'
 
@@ -715,8 +716,18 @@ const buildRoutineMap = (routines: PgmlRoutine[]) => {
   return buildEntityMap(routines, routine => routine.name)
 }
 
+const normalizeTriggerTableKey = (value: string) => {
+  const normalizedValue = normalizeImportedQualifiedName(value, {
+    foldIdentifiersToLowercase: true
+  })
+
+  return normalizedValue.startsWith('public.')
+    ? normalizedValue.slice('public.'.length)
+    : normalizedValue
+}
+
 const buildTriggerMap = (triggers: PgmlTrigger[]) => {
-  return buildEntityMap(triggers, trigger => `${trigger.tableName}::${trigger.name}`)
+  return buildEntityMap(triggers, trigger => `${normalizeTriggerTableKey(trigger.tableName)}::${trigger.name}`)
 }
 
 const buildSequenceMap = (sequences: PgmlSequence[]) => {

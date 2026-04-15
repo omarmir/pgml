@@ -2,7 +2,10 @@ import {
   getNormalizedPgmlColumnDefaultModifierValue,
   normalizePgmlColumnModifiers
 } from './pgml-column-modifiers'
-import { normalizeImportedTableColumnReference } from './pgml-import-normalization'
+import {
+  normalizeImportedQualifiedName,
+  normalizeImportedTableColumnReference
+} from './pgml-import-normalization'
 import type {
   PgmlAffects,
   PgmlColumn,
@@ -689,6 +692,40 @@ const normalizeTriggerArguments = (value: string) => {
     .filter(entry => entry.length > 0)
 }
 
+const normalizeTriggerExecutableObjectName = (value: string) => {
+  const normalizedValue = normalizeImportedQualifiedName(value, {
+    foldIdentifiersToLowercase: true
+  })
+
+  return normalizedValue.startsWith('public.')
+    ? normalizedValue.slice('public.'.length)
+    : normalizedValue
+}
+
+const normalizeTriggerSemanticFingerprint = (
+  fingerprint: Record<string, unknown>
+) => {
+  return {
+    ...fingerprint,
+    constraintTable: typeof fingerprint.constraintTable === 'string'
+      ? normalizeTriggerExecutableObjectName(fingerprint.constraintTable)
+      : fingerprint.constraintTable,
+    relation: typeof fingerprint.relation === 'string'
+      ? normalizeTriggerExecutableObjectName(fingerprint.relation)
+      : fingerprint.relation,
+    routineName: typeof fingerprint.routineName === 'string'
+      ? normalizeTriggerExecutableObjectName(fingerprint.routineName)
+      : fingerprint.routineName,
+    transitionRels: Array.isArray(fingerprint.transitionRels)
+      ? fingerprint.transitionRels.map((entry) => {
+          return typeof entry === 'string'
+            ? normalizeTriggerExecutableObjectName(entry)
+            : entry
+        })
+      : fingerprint.transitionRels
+  }
+}
+
 const normalizeTriggerSourceForCompare = (source: string | null) => {
   const normalizedSource = normalizeExecutableSqlText(source)
 
@@ -728,11 +765,11 @@ const normalizeTriggerSourceForCompare = (source: string | null) => {
     constraint: Boolean(triggerMatch[1]),
     deferrable,
     events: normalizeTriggerEvents(triggerMatch[4] || ''),
-    fromTable: fromMatch?.[1] ? normalizeSqlIdentifier(fromMatch[1]) : null,
+    fromTable: fromMatch?.[1] ? normalizeTriggerExecutableObjectName(fromMatch[1]) : null,
     initially: initiallyMatch?.[1] || null,
     level: executeMatch[2] || null,
-    routineName: normalizeSqlIdentifier(executeMatch[4] || ''),
-    tableName: normalizeSqlIdentifier(triggerMatch[5] || ''),
+    routineName: normalizeTriggerExecutableObjectName(executeMatch[4] || ''),
+    tableName: normalizeTriggerExecutableObjectName(triggerMatch[5] || ''),
     timing: normalizeWhitespace(triggerMatch[3] || ''),
     when: executeMatch[3] ? normalizeExecutableSqlText(executeMatch[3]) : null
   }
@@ -762,9 +799,9 @@ export const normalizePgmlCompareTriggerValue = (trigger: PgmlTrigger) => {
     metadata: normalizePgmlCompareTriggerMetadataEntries(trigger.metadata),
     name: trigger.name,
     source: semantic?.status === 'parsed'
-      ? semantic.fingerprint
+      ? normalizeTriggerSemanticFingerprint(semantic.fingerprint as Record<string, unknown>)
       : normalizeTriggerSourceForCompare(trigger.source),
-    tableName: trigger.tableName
+    tableName: normalizeTriggerExecutableObjectName(trigger.tableName)
   }
 }
 
