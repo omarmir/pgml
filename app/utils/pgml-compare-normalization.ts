@@ -771,7 +771,9 @@ const normalizeTriggerSourceForCompare = (source: string | null) => {
     routineName: normalizeTriggerExecutableObjectName(executeMatch[4] || ''),
     tableName: normalizeTriggerExecutableObjectName(triggerMatch[5] || ''),
     timing: normalizeWhitespace(triggerMatch[3] || ''),
-    when: executeMatch[3] ? normalizeExecutableSqlText(executeMatch[3]) : null
+    when: executeMatch[3]
+      ? normalizeExecutableSqlText(trimBalancedOuterParentheses(executeMatch[3]))
+      : null
   }
 }
 

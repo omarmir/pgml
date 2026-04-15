@@ -549,6 +549,30 @@ Sequence public.common_review_set_id_seq {
     expect(migrationBundle.meta.statementCount).toBe(0)
   })
 
+  it('ignores trigger source differences when only when-clause parentheses and public qualification change', () => {
+    const beforeModel = parsePgml(`Trigger trg_cascade_routingslip_status on Common_Approval {
+  source: $sql$
+    CREATE TRIGGER trg_cascade_routingslip_status
+      AFTER UPDATE OF egcs_cn_approvalvalue ON Common_Approval
+      FOR EACH ROW
+      WHEN (OLD.egcs_cn_approvalvalue IS DISTINCT FROM NEW.egcs_cn_approvalvalue)
+      EXECUTE FUNCTION trg_fn_cascade_routingslip_status();
+  $sql$
+}`)
+    const afterModel = parsePgml(`Trigger trg_cascade_routingslip_status on public."Common_Approval" {
+  source: $sql$
+    CREATE TRIGGER trg_cascade_routingslip_status AFTER UPDATE OF egcs_cn_approvalvalue ON public."Common_Approval" FOR EACH ROW WHEN ((old.egcs_cn_approvalvalue IS DISTINCT FROM new.egcs_cn_approvalvalue)) EXECUTE FUNCTION public.trg_fn_cascade_routingslip_status();
+  $sql$
+}`)
+    const diff = diffPgmlSchemaModels(beforeModel, afterModel)
+    const migrationBundle = buildPgmlMigrationDiffBundle(beforeModel, afterModel)
+
+    expect(diff.triggers).toEqual([])
+    expect(diff.summary.modified).toBe(0)
+    expect(migrationBundle.meta.hasChanges).toBe(false)
+    expect(migrationBundle.meta.statementCount).toBe(0)
+  })
+
   it('ignores sequence source differences when only default clauses, ordering, or quoted ownership differ', () => {
     const beforeModel = parsePgml(`Sequence public.user_number_seq {
   source: $sql$
