@@ -13,6 +13,7 @@ import {
   type SavedPgmlSchema,
   untitledSchemaName
 } from '~/utils/studio-browser-schemas'
+import { useStudioWorkspaceBrowserSchemaState } from './useStudioWorkspaceState'
 
 const schemaAutosaveDebounceMs = 5000
 const localStorageSaveErrorMessage = 'Unable to save to local storage.'
@@ -45,14 +46,19 @@ export const usePgmlStudioSchemas = ({
   const studioSourcesStore = useStudioSourcesStore()
   const { browserSchemas: savedSchemas } = storeToRefs(studioSourcesStore)
   const { includeLayoutInSchema, loadDialogOpen, schemaDialogMode, schemaDialogOpen } = storeToRefs(studioSessionStore)
-  const currentSchemaId: Ref<string | null> = ref(null)
-  const currentSchemaName: Ref<string> = ref(source.value.trim().length > 0 ? exampleSchemaName : untitledSchemaName)
-  const currentSchemaUpdatedAt: Ref<string | null> = ref(null)
-  const hasSavedSchemaInSession: Ref<boolean> = ref(false)
-  const isSavingToLocalStorage: Ref<boolean> = ref(false)
-  const localStorageSaveError: Ref<string | null> = ref(null)
-  const lastPersistedSnapshot: Ref<string | null> = ref(null)
-  const saveSchemaTargetId: Ref<string | null> = ref(null)
+  const {
+    currentSchemaId,
+    currentSchemaName,
+    currentSchemaUpdatedAt,
+    hasSavedSchemaInSession,
+    isSavingToLocalStorage,
+    lastPersistedSnapshot,
+    localStorageSaveError,
+    saveSchemaTargetId
+  } = useStudioWorkspaceBrowserSchemaState({
+    isSavingToLocalStorage: false,
+    name: source.value.trim().length > 0 ? exampleSchemaName : untitledSchemaName
+  })
 
   const schemaActionTitle = computed(() => schemaDialogMode.value === 'save' ? 'Save schema' : 'Download schema')
   const schemaActionDescription = computed(() => {

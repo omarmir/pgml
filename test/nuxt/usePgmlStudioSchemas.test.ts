@@ -4,6 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { usePgmlStudioSchemas } from '../../app/composables/usePgmlStudioSchemas'
 import { usePgmlStudioVersionHistory } from '../../app/composables/usePgmlStudioVersionHistory'
+import { resetStudioWorkspaceState } from '../../app/composables/useStudioWorkspaceState'
 import { useStudioSessionStore } from '../../app/stores/studio-session'
 
 const installLocalStorage = () => {
@@ -37,6 +38,7 @@ const installLocalStorage = () => {
 describe('usePgmlStudioSchemas', () => {
   beforeEach(() => {
     installLocalStorage().clear()
+    resetStudioWorkspaceState()
   })
 
   afterEach(() => {

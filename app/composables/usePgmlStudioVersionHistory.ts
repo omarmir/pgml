@@ -1,4 +1,4 @@
-import type { ComputedRef, Ref, ShallowRef } from 'vue'
+import type { ComputedRef, Ref } from 'vue'
 import {
   buildPgmlDirectIncrementCompareRelationshipSummary,
   buildPgmlDivergedCompareRelationshipSummary,
@@ -82,6 +82,7 @@ import {
   clonePgmlDocumentSchemaMetadata,
   type PgmlDocumentSchemaMetadata
 } from '~/utils/pgml-schema-metadata'
+import { useStudioWorkspaceVersionHistoryState } from './useStudioWorkspaceState'
 
 export type PgmlVersionPreviewTarget = 'workspace' | string
 
@@ -529,18 +530,29 @@ export const usePgmlStudioVersionHistory = (
     input.source.value = initialWorkspaceSource
   }
 
-  const documentState: ShallowRef<PgmlVersionSetDocument> = shallowRef(createInitialPgmlDocument({
-    name: input.documentName.value,
-    workspaceSource: initialWorkspaceSource
-  }))
-  const previewTargetId: Ref<PgmlVersionPreviewTarget> = ref('workspace')
-  const editorMode: Ref<PgmlVersionedDocumentEditorMode> = ref('head')
-  const documentEditorScope: Ref<PgmlDocumentEditorScope> = ref('all')
-  const compareBaseId: Ref<string | null> = ref(null)
-  const compareTargetId: Ref<string> = ref('workspace')
-  const compareExclusions: Ref<PgmlCompareExclusions> = ref(createEmptyPgmlCompareExclusions())
-  const compareNoiseFilters: Ref<PgmlCompareNoiseFilters> = ref(createDefaultPgmlCompareNoiseFilters())
-  const selectedComparisonId: Ref<string | null> = ref(null)
+  const sharedVersionHistoryState = useStudioWorkspaceVersionHistoryState({
+    compareBaseId: null,
+    compareExclusions: createEmptyPgmlCompareExclusions(),
+    compareNoiseFilters: createDefaultPgmlCompareNoiseFilters(),
+    compareTargetId: 'workspace',
+    document: createInitialPgmlDocument({
+      name: input.documentName.value,
+      workspaceSource: initialWorkspaceSource
+    }),
+    documentEditorScope: 'all',
+    editorMode: 'head',
+    previewTargetId: 'workspace',
+    selectedComparisonId: null
+  })
+  const documentState = sharedVersionHistoryState.document
+  const previewTargetId = sharedVersionHistoryState.previewTargetId
+  const editorMode = sharedVersionHistoryState.editorMode
+  const documentEditorScope = sharedVersionHistoryState.documentEditorScope
+  const compareBaseId = sharedVersionHistoryState.compareBaseId
+  const compareTargetId = sharedVersionHistoryState.compareTargetId
+  const compareExclusions = sharedVersionHistoryState.compareExclusions
+  const compareNoiseFilters = sharedVersionHistoryState.compareNoiseFilters
+  const selectedComparisonId = sharedVersionHistoryState.selectedComparisonId
   const document: ComputedRef<PgmlVersionSetDocument> = computed(() => {
     return buildWorkspaceSyncedDocument(documentState.value, input.source.value)
   })

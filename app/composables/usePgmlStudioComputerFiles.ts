@@ -12,6 +12,7 @@ import {
   type PgmlRecentComputerFileWriteResult
 } from '~/utils/computer-files'
 import { formatSavedPgmlSchemaTime } from '~/utils/studio-browser-schemas'
+import { useStudioWorkspaceComputerFileState } from './useStudioWorkspaceState'
 
 const computerFileAutosaveDebounceMs = 5000
 const computerFileSaveErrorMessage = 'Unable to save to the selected file.'
@@ -60,13 +61,15 @@ export const usePgmlStudioComputerFiles = ({
 }: UsePgmlStudioComputerFilesOptions) => {
   const studioSourcesStore = useStudioSourcesStore()
   const { recentComputerFiles } = storeToRefs(studioSourcesStore)
-  const currentComputerFileId: Ref<string | null> = ref(null)
-  const currentComputerFileName: Ref<string> = ref('')
-  const currentComputerFileUpdatedAt: Ref<string | null> = ref(null)
-  const hasSavedComputerFileInSession: Ref<boolean> = ref(false)
-  const isSavingToComputerFile: Ref<boolean> = ref(false)
-  const computerFileSaveError: Ref<string | null> = ref(null)
-  const lastPersistedSnapshot: Ref<string | null> = ref(null)
+  const {
+    computerFileSaveError,
+    currentComputerFileId,
+    currentComputerFileName,
+    currentComputerFileUpdatedAt,
+    hasSavedComputerFileInSession,
+    isSavingToComputerFile,
+    lastPersistedSnapshot
+  } = useStudioWorkspaceComputerFileState()
   const autosaveEnabled = enabled ?? computed(() => true)
   const passiveComputerFileWritesSupported = computed(() => supportsPassiveRecentComputerFileWrites())
   const operations: ComputerFileOperations = {

@@ -191,6 +191,35 @@ const compareOrderNoiseDisallowedEntityKinds = new Set<PgmlDiagramCompareEntityK
   'reference'
 ])
 
+const isEnumValueOrderOnlyChange = (
+  entityKind: PgmlDiagramCompareEntityKind,
+  beforeRecord: Record<string, unknown>,
+  afterRecord: Record<string, unknown>,
+  changedFields: string[]
+) => {
+  if (entityKind !== 'custom-type') {
+    return false
+  }
+
+  if (changedFields.length === 0) {
+    return false
+  }
+
+  const allowedFields = new Set(['details', 'values'])
+
+  if (changedFields.some(fieldName => !allowedFields.has(fieldName))) {
+    return false
+  }
+
+  if (beforeRecord.kind !== 'Enum' || afterRecord.kind !== 'Enum') {
+    return false
+  }
+
+  return changedFields.every((fieldName) => {
+    return areFieldValuesEqualIgnoringOrder(beforeRecord[fieldName], afterRecord[fieldName])
+  })
+}
+
 const formatCompareFieldLabel = (fieldName: string) => {
   const explicitLabel = compareFieldLabelByValue[fieldName]
 
@@ -325,7 +354,10 @@ const buildCompareNoiseKinds = (
   }
 
   if (
-    !compareOrderNoiseDisallowedEntityKinds.has(entityKind)
+    (
+      !compareOrderNoiseDisallowedEntityKinds.has(entityKind)
+      || isEnumValueOrderOnlyChange(entityKind, beforeRecord, afterRecord, changedFields)
+    )
     && changedFields.every((fieldName) => {
       return areFieldValuesEqualIgnoringOrder(beforeRecord[fieldName], afterRecord[fieldName])
     })

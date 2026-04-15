@@ -247,6 +247,39 @@ Function public.refresh_users() returns void {
     })).toEqual([orderOnlyEntry])
   })
 
+  it('classifies enum member reordering as order-only compare noise', () => {
+    const baseModel = parseSnapshotModel(`Enum public.entity_type {
+  fundingopportunity
+  transferpaymentstream
+  fundingcaseintake
+  fundingcaseagreement
+  applicantrecipient
+  commonreview
+}`)
+    const targetModel = parseSnapshotModel(`Enum public.entity_type {
+  fundingopportunity
+  fundingcaseintake
+  fundingcaseagreement
+  applicantrecipient
+  transferpaymentstream
+  commonreview
+}`)
+    const entries = buildPgmlDiagramCompareEntries(
+      diffPgmlSchemaModels(baseModel, targetModel),
+      baseModel,
+      targetModel
+    )
+    const enumEntry = entries.find(entry => entry.id === 'custom-type:Enum::public.entity_type') || null
+
+    expect(enumEntry?.changeKind).toBe('modified')
+    expect(enumEntry?.changedFields).toEqual(expect.arrayContaining(['values']))
+    expect(enumEntry?.noiseKinds).toEqual(['order'])
+    expect(filterPgmlDiagramCompareEntriesForNoise(entries).some(entry => entry.id === 'custom-type:Enum::public.entity_type')).toBe(false)
+    expect(filterPgmlDiagramCompareEntriesForNoise(entries, {
+      hideOrderOnly: false
+    }).some(entry => entry.id === 'custom-type:Enum::public.entity_type')).toBe(true)
+  })
+
   it('describes modified references with the changed reference fields', () => {
     const baseModel = parseSnapshotModel(`Table public.users {
   id uuid [pk]

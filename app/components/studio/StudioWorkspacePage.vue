@@ -24,6 +24,11 @@ import {
   type PgmlVersionedDocumentEditorMode,
   type PgmlVersionedDocumentScopeItem
 } from '~/composables/usePgmlStudioVersionHistory'
+import {
+  resetStudioWorkspaceState,
+  useStudioWorkspaceDocumentNameState,
+  useStudioWorkspaceSourceState
+} from '~/composables/useStudioWorkspaceState'
 import type { PgmlSourceEditorHandle } from '~/composables/usePgmlSourceEditor'
 import { useStudioHeaderActions } from '~/composables/useStudioHeaderActions'
 import { useStudioSchemaStatus } from '~/composables/useStudioSchemaStatus'
@@ -300,12 +305,12 @@ const shouldBootstrapBundledExample = computed(() => {
 })
 const initialWorkspaceSource = shouldBootstrapBundledExample.value ? pgmlExample : ''
 const initialVersionedSource = shouldBootstrapBundledExample.value ? pgmlVersionedExample : ''
-const source: Ref<string> = ref(initialWorkspaceSource)
+const source: Ref<string> = useStudioWorkspaceSourceState(initialWorkspaceSource)
 const editorDisplaySource: Ref<string> = ref(initialWorkspaceSource)
 const canvasRef: Ref<PgmlDiagramCanvasExposed | null> = ref(null)
 const canvasViewportResetKey: Ref<number> = ref(0)
 const isExporting: Ref<boolean> = ref(false)
-const versionDocumentName: Ref<string> = ref('Untitled schema')
+const versionDocumentName: Ref<string> = useStudioWorkspaceDocumentNameState('Untitled schema')
 const mobileWorkspaceView: Ref<StudioMobileWorkspaceView> = ref(
   workspaceMode === 'analysis' ? 'tool-panel' : 'diagram'
 )
@@ -3922,6 +3927,7 @@ onBeforeRouteLeave((to) => {
   clearStudioHeaderActions()
   clearStudioSchemaStatus()
   studioSessionStore.resetStudioUiState()
+  resetStudioWorkspaceState()
 })
 
 onBeforeUnmount(() => {

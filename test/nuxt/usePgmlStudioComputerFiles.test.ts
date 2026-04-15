@@ -1,11 +1,16 @@
 import { mountSuspended } from '@nuxt/test-utils/runtime'
 import { defineComponent } from 'vue'
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { usePgmlStudioComputerFiles } from '../../app/composables/usePgmlStudioComputerFiles'
+import { resetStudioWorkspaceState } from '../../app/composables/useStudioWorkspaceState'
 import * as computerFiles from '../../app/utils/computer-files'
 
 describe('usePgmlStudioComputerFiles', () => {
+  beforeEach(() => {
+    resetStudioWorkspaceState()
+  })
+
   afterEach(() => {
     vi.useRealTimers()
     vi.restoreAllMocks()

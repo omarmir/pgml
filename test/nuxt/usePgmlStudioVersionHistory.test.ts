@@ -1,6 +1,6 @@
 import { mountSuspended } from '@nuxt/test-utils/runtime'
 import { defineComponent } from 'vue'
-import { describe, expect, it } from 'vitest'
+import { beforeEach, describe, expect, it } from 'vitest'
 
 import {
   createInitialPgmlDocument,
@@ -11,6 +11,7 @@ import {
   replacePgmlColumnSchemaMetadataEntries,
   replacePgmlTableSchemaMetadataEntries
 } from '../../app/utils/pgml-schema-metadata'
+import { resetStudioWorkspaceState } from '../../app/composables/useStudioWorkspaceState'
 
 const baseWorkspaceSource = `Table public.users {
   id uuid [pk]
@@ -90,6 +91,10 @@ const createSerializedImplementationDocument = (workspaceSource = importedWorksp
 }
 
 describe('usePgmlStudioVersionHistory', () => {
+  beforeEach(() => {
+    resetStudioWorkspaceState()
+  })
+
   it('normalizes malformed workspace indentation when the history composable boots', async () => {
     const malformedWorkspaceSource = `TableGroup Core {
                                                                                                         public.tenants
