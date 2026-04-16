@@ -1217,8 +1217,11 @@ const normalizeConstraintComparisonGrouping = (value: string) => {
   while (true) {
     const normalizedValue = nextValue
       .replace(/\(\s*([^()]+?\s(?:=|<>|!=|<=|>=|<|>)\s[^()]+?)\s*\)/gu, '$1')
+      .replace(/\(\s*([^()]+?\s+is\s+(?:not\s+)?null)\s*\)/giu, '$1')
+      .replace(/\(\s*([^()]+?\s+is\s+(?:not\s+)?(?:true|false))\s*\)/giu, '$1')
       .replace(/\(\s*([^()]+?\s(?:IN|NOT IN)\s(?:ENUM_RANGE\([^)]+\)|\([^()]+\)))\s*\)/giu, '$1')
       .replace(/\(\s*([^()]+?\sAND\s[^()]+?)\s*\)/giu, '$1')
+      .replace(/\(\s*([^()]+?\sOR\s[^()]+?)\s*\)/giu, '$1')
 
     if (normalizedValue === nextValue) {
       return normalizedValue
@@ -1226,6 +1229,50 @@ const normalizeConstraintComparisonGrouping = (value: string) => {
 
     nextValue = normalizedValue
   }
+}
+
+const normalizeConstraintBooleanLiterals = (value: string) => {
+  let normalizedValue = ''
+  let inString = false
+
+  for (let index = 0; index < value.length; index += 1) {
+    const character = value[index] || ''
+    const nextCharacter = value[index + 1] || ''
+
+    if (inString) {
+      normalizedValue += character
+
+      if (character === '\'' && nextCharacter === '\'') {
+        normalizedValue += nextCharacter
+        index += 1
+        continue
+      }
+
+      if (character === '\'') {
+        inString = false
+      }
+
+      continue
+    }
+
+    if (character === '\'') {
+      inString = true
+      normalizedValue += character
+      continue
+    }
+
+    const booleanLiteralMatch = value.slice(index).match(/^(true|false)\b/iu)
+
+    if (booleanLiteralMatch?.[1]) {
+      normalizedValue += booleanLiteralMatch[1].toLowerCase()
+      index += booleanLiteralMatch[1].length - 1
+      continue
+    }
+
+    normalizedValue += character
+  }
+
+  return normalizedValue
 }
 
 const stripDanglingOuterParentheses = (value: string) => {
@@ -1308,7 +1355,9 @@ const normalizeMembershipExpression = (
 export const normalizePgmlCompareConstraintExpression = (value: string) => {
   const normalizedValue = normalizeConstraintComparisonGrouping(
     normalizeConstraintEnumRangeMemberships(
-      normalizeWhitespace(stripSqlLiteralCasts(value))
+      normalizeConstraintBooleanLiterals(
+        normalizeWhitespace(stripSqlLiteralCasts(value))
+      )
     )
   )
   const trimmedNormalizedValue = stripDanglingOuterParentheses(normalizedValue)

@@ -284,6 +284,36 @@ Table public.common_entity {
     expect(diff.constraints).toEqual([])
   })
 
+  it('suppresses equivalent composite refs and foreign-key constraints for review set setup relationships', () => {
+    const diff = diffPgmlSchemaModels(
+      parsePgml(`Table public.common_review_set_setup {
+  id uuid [pk]
+  egcs_cn_entitytype text
+}
+
+Table public.common_review_set {
+  egcs_cn_reviewsetsetup uuid
+  egcs_cn_entitytype text
+}
+
+Ref cn_ref_reviewsetreviewsetsetupentitytype: public.common_review_set.(egcs_cn_reviewsetsetup, egcs_cn_entitytype) > public.common_review_set_setup.(id, egcs_cn_entitytype)`),
+      parsePgml(`Table public.Common_Review_Set_Setup {
+  id uuid [pk]
+  egcs_cn_entitytype text
+}
+
+Table public.common_review_set {
+  egcs_cn_reviewsetsetup uuid
+  egcs_cn_entitytype text
+
+  Constraint cn_fk_reviewset_setup: foreign key (egcs_cn_reviewsetsetup, egcs_cn_entitytype) references public.Common_Review_Set_Setup (id, egcs_cn_entitytype) on delete restrict
+}`)
+    )
+
+    expect(diff.references).toEqual([])
+    expect(diff.constraints).toEqual([])
+  })
+
   it('suppresses equivalent enum-range constraint expressions across IN SELECT and = ANY forms', () => {
     const diff = diffPgmlSchemaModels(
       parsePgml(`Table public.common_entity {
@@ -902,6 +932,51 @@ Enum public.Entity_Type {
     expect(diff.summary.modified).toBe(0)
     expect(migrationBundle.meta.hasChanges).toBe(false)
     expect(migrationBundle.sql.migration.content).not.toContain('DROP CONSTRAINT')
+  })
+
+  it('treats equivalent check constraints with extra predicate parentheses as the same constraint', () => {
+    const beforeModel = parsePgml(`Table public.common_approval {
+  egcs_cn_approvalpositiontitle text
+  egcs_cn_approvalvalue boolean
+  egcs_cn_defaultuser uuid
+  egcs_cn_assigneduser uuid
+  egcs_cn_onbehalf uuid
+
+  Constraint cn_chk_approvalapprovalvalueapprovalpositiontitlenull: NOT (egcs_cn_approvalpositiontitle IS NULL AND egcs_cn_approvalvalue IS NOT NULL)
+  Constraint cn_chk_approvalassigneduseronbehalfapprovalpositiontitlenotnull: NOT (egcs_cn_defaultuser = egcs_cn_assigneduser AND egcs_cn_onbehalf IS NOT NULL)
+}
+
+Table public.common_review {
+  egcs_cn_reviewalignment boolean
+  egcs_cn_reviewalignmentnarrative text
+  egcs_cn_reviewalignresult numeric(10, 2)
+
+  Constraint cn_chk_reviewreviewresult: NOT (egcs_cn_reviewalignment = TRUE AND (egcs_cn_reviewalignmentnarrative IS NULL OR egcs_cn_reviewalignresult IS NULL))
+}`)
+    const afterModel = parsePgml(`Table public.common_approval {
+  egcs_cn_approvalpositiontitle text
+  egcs_cn_approvalvalue boolean
+  egcs_cn_defaultuser uuid
+  egcs_cn_assigneduser uuid
+  egcs_cn_onbehalf uuid
+
+  Constraint cn_chk_approvalapprovalvalueapprovalpositiontitlenull: NOT ((egcs_cn_approvalpositiontitle IS NULL) AND (egcs_cn_approvalvalue IS NOT NULL))
+  Constraint cn_chk_approvalassigneduseronbehalfapprovalpositiontitlenotnull: NOT ((egcs_cn_defaultuser = egcs_cn_assigneduser) AND (egcs_cn_onbehalf IS NOT NULL))
+}
+
+Table public.common_review {
+  egcs_cn_reviewalignment boolean
+  egcs_cn_reviewalignmentnarrative text
+  egcs_cn_reviewalignresult numeric(10, 2)
+
+  Constraint cn_chk_reviewreviewresult: NOT ((egcs_cn_reviewalignment = true) AND ((egcs_cn_reviewalignmentnarrative IS NULL) OR (egcs_cn_reviewalignresult IS NULL)))
+}`)
+    const diff = diffPgmlSchemaModels(beforeModel, afterModel)
+    const migrationBundle = buildPgmlMigrationDiffBundle(beforeModel, afterModel)
+
+    expect(diff.constraints).toEqual([])
+    expect(diff.summary.modified).toBe(0)
+    expect(migrationBundle.meta.hasChanges).toBe(false)
   })
 
   it('ignores explicit bigint sequence metadata when it only restates the default sequence type', () => {

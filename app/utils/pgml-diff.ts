@@ -129,13 +129,37 @@ const buildSortedDiffIds = <T>(
   })
 }
 
+const getReferenceFromColumns = (reference: PgmlReference) => {
+  return reference.fromColumns && reference.fromColumns.length > 0
+    ? [...reference.fromColumns]
+    : [reference.fromColumn]
+}
+
+const getReferenceToColumns = (reference: PgmlReference) => {
+  return reference.toColumns && reference.toColumns.length > 0
+    ? [...reference.toColumns]
+    : [reference.toColumn]
+}
+
+const formatReferenceEndpoint = (tableName: string, columnNames: string[]) => {
+  if (columnNames.length <= 1) {
+    return `${tableName}.${columnNames[0] || ''}`
+  }
+
+  return `${tableName}.(${columnNames.join(', ')})`
+}
+
+const buildReferenceLabel = (reference: PgmlReference) => {
+  return `${formatReferenceEndpoint(reference.fromTable, getReferenceFromColumns(reference))} -> ${formatReferenceEndpoint(reference.toTable, getReferenceToColumns(reference))}`
+}
+
 const normalizeReferenceKey = (reference: PgmlReference) => {
   return [
     reference.relation,
-    reference.fromTable,
-    (reference.fromColumns && reference.fromColumns.length > 0 ? reference.fromColumns : [reference.fromColumn]).join(','),
-    reference.toTable,
-    (reference.toColumns && reference.toColumns.length > 0 ? reference.toColumns : [reference.toColumn]).join(',')
+    normalizeQualifiedEntityName(reference.fromTable),
+    getReferenceFromColumns(reference).map(columnName => columnName.toLowerCase()).join(','),
+    normalizeQualifiedEntityName(reference.toTable),
+    getReferenceToColumns(reference).map(columnName => columnName.toLowerCase()).join(',')
   ].join('::')
 }
 
@@ -364,19 +388,18 @@ const normalizeConstraintMaterialValue = (value: {
 }
 
 const normalizeReferenceValue = (reference: PgmlReference) => {
+  const fromColumns = getReferenceFromColumns(reference)
+  const toColumns = getReferenceToColumns(reference)
+
   return {
-    fromColumn: reference.fromColumn,
-    fromColumns: reference.fromColumns && reference.fromColumns.length > 0
-      ? [...reference.fromColumns]
-      : [reference.fromColumn],
+    fromColumn: fromColumns[0] || '',
+    fromColumns,
     fromTable: reference.fromTable,
     onDelete: reference.onDelete,
     onUpdate: reference.onUpdate,
     relation: reference.relation,
-    toColumn: reference.toColumn,
-    toColumns: reference.toColumns && reference.toColumns.length > 0
-      ? [...reference.toColumns]
-      : [reference.toColumn],
+    toColumn: toColumns[0] || '',
+    toColumns,
     toTable: reference.toTable
   }
 }
@@ -389,6 +412,8 @@ const normalizeReferenceValueForSuppression = (reference: PgmlReference) => {
     fromColumn: normalizedReference.fromColumn.toLowerCase(),
     fromColumns: normalizedReference.fromColumns.map(columnName => columnName.toLowerCase()),
     fromTable: normalizeQualifiedEntityName(normalizedReference.fromTable),
+    onDelete: normalizeReferenceActionForSuppression(normalizedReference.onDelete),
+    onUpdate: normalizeReferenceActionForSuppression(normalizedReference.onUpdate),
     toColumn: normalizedReference.toColumn.toLowerCase(),
     toColumns: normalizedReference.toColumns.map(columnName => columnName.toLowerCase()),
     toTable: normalizeQualifiedEntityName(normalizedReference.toTable)
@@ -422,6 +447,10 @@ const parseForeignKeyReferenceAction = (
   return matched[1].trim().toLowerCase()
 }
 
+const normalizeReferenceActionForSuppression = (value: string | null) => {
+  return value === 'restrict' ? null : value
+}
+
 const normalizeForeignKeyConstraintAsReferenceValue = (value: {
   constraint: PgmlConstraint
   tableId: string
@@ -433,11 +462,20 @@ const normalizeForeignKeyConstraintAsReferenceValue = (value: {
     return null
   }
 
-  const fromColumns = matched[1]
+  const fromColumnList = matched[1]
+  const toColumnList = matched[3]
+  const targetTableName = matched[2]
+  const actionClause = matched[4]
+
+  if (!fromColumnList || !toColumnList || !targetTableName) {
+    return null
+  }
+
+  const fromColumns = fromColumnList
     .split(',')
     .map(columnName => columnName.replaceAll('"', '').trim().toLowerCase())
     .filter(columnName => columnName.length > 0)
-  const toColumns = matched[3]
+  const toColumns = toColumnList
     .split(',')
     .map(columnName => columnName.replaceAll('"', '').trim().toLowerCase())
     .filter(columnName => columnName.length > 0)
@@ -451,13 +489,12 @@ const normalizeForeignKeyConstraintAsReferenceValue = (value: {
     fromColumns,
     fromTable: normalizeQualifiedEntityName(value.tableId),
     name: value.constraint.name,
-    onDelete: parseForeignKeyReferenceAction(matched[4] || '', 'delete'),
-    onUpdate: parseForeignKeyReferenceAction(matched[4] || '', 'update'),
+    onDelete: normalizeReferenceActionForSuppression(parseForeignKeyReferenceAction(actionClause || '', 'delete')),
+    onUpdate: normalizeReferenceActionForSuppression(parseForeignKeyReferenceAction(actionClause || '', 'update')),
     relation: '>',
-    sourceRange: undefined,
     toColumn: toColumns[0] || '',
     toColumns,
-    toTable: normalizeQualifiedEntityName(matched[2] || '')
+    toTable: normalizeQualifiedEntityName(targetTableName)
   })
 }
 
@@ -1072,7 +1109,7 @@ export const diffPgmlSchemaModels = (
   const references = buildDiffEntries(
     buildReferenceMap(beforeModel.references),
     buildReferenceMap(afterModel.references),
-    (_id, value) => `${value.fromTable}.${value.fromColumn} -> ${value.toTable}.${value.toColumn}`,
+    (_id, value) => buildReferenceLabel(value),
     normalizeReferenceValue
   )
   const columns = buildDiffEntries(

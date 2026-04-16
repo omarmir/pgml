@@ -87,6 +87,7 @@ import {
   clonePgmlDocumentSchemaMetadata,
   type PgmlDocumentSchemaMetadata
 } from '~/utils/pgml-schema-metadata'
+import { reconcilePgmlCompareNotesWithEntryIds } from '~/utils/pgml-diagram-compare'
 import { useStudioWorkspaceVersionHistoryState } from './useStudioWorkspaceState'
 
 export type PgmlVersionPreviewTarget = 'workspace' | string
@@ -1183,11 +1184,20 @@ export const usePgmlStudioVersionHistory = (
       return true
     }
 
-    const validEntryIdSet = new Set(validEntryIds)
     const currentNotes = selectedComparison.value?.notes || []
-    const nextNotes = currentNotes.filter(note => validEntryIdSet.has(note.entryId))
+    const nextNotes = reconcilePgmlCompareNotesWithEntryIds(currentNotes, validEntryIds)
 
-    if (nextNotes.length === currentNotes.length) {
+    const notesChanged = nextNotes.length !== currentNotes.length
+      || nextNotes.some((note, index) => {
+        const currentNote = currentNotes[index]
+
+        return !currentNote
+          || currentNote.entryId !== note.entryId
+          || currentNote.flag !== note.flag
+          || currentNote.note !== note.note
+      })
+
+    if (!notesChanged) {
       return true
     }
 

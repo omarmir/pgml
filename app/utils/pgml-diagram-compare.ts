@@ -8,8 +8,10 @@ import {
 } from './pgml-compare-normalization'
 import {
   clonePgmlCompareExclusions,
+  clonePgmlCompareNotes,
   clonePgmlCompareNoiseFilters,
   type PgmlCompareExclusions,
+  type PgmlCompareNote,
   type PgmlCompareNoiseFilters,
   type PgmlCustomType,
   type PgmlRoutine,
@@ -21,6 +23,7 @@ import type {
   PgmlDiffEntry,
   PgmlSchemaDiff
 } from './pgml-diff'
+import { normalizeImportedQualifiedName } from './pgml-import-normalization'
 
 export type PgmlDiagramCompareEntityKind
   = | 'column'
@@ -902,6 +905,117 @@ export const getPgmlDiagramCompareEntityKindFromEntryId = (
   }
 
   return compareEntryIdPrefixKindMap[entryId.slice(0, separatorIndex)] || null
+}
+
+const normalizeCompareQualifiedName = (value: string) => {
+  return normalizeImportedQualifiedName(value, {
+    foldIdentifiersToLowercase: true
+  })
+}
+
+const normalizeCompareSimpleName = (value: string) => {
+  return value.trim().toLowerCase()
+}
+
+const normalizeCompareColumnList = (value: string) => {
+  return value
+    .split(',')
+    .map(columnName => normalizeCompareSimpleName(columnName))
+    .filter(columnName => columnName.length > 0)
+    .join(',')
+}
+
+export const normalizePgmlDiagramCompareEntryIdForMatching = (
+  entryId: string
+) => {
+  const separatorIndex = entryId.indexOf(':')
+
+  if (separatorIndex <= 0) {
+    return entryId
+  }
+
+  const entityKind = getPgmlDiagramCompareEntityKindFromEntryId(entryId)
+  const suffix = entryId.slice(separatorIndex + 1)
+
+  if (!entityKind || suffix.length === 0) {
+    return entryId
+  }
+
+  if (entityKind === 'table') {
+    return `table:${normalizeCompareQualifiedName(suffix)}`
+  }
+
+  if (entityKind === 'column' || entityKind === 'constraint' || entityKind === 'index' || entityKind === 'trigger') {
+    const [tableId, objectName] = suffix.split('::')
+
+    if (!tableId || !objectName) {
+      return entryId
+    }
+
+    return `${entityKind}:${normalizeCompareQualifiedName(tableId)}::${normalizeCompareSimpleName(objectName)}`
+  }
+
+  if (entityKind === 'reference') {
+    const [relation, fromTable, fromColumns, toTable, toColumns] = suffix.split('::')
+
+    if (!relation || !fromTable || !fromColumns || !toTable || !toColumns) {
+      return entryId
+    }
+
+    return `reference:${relation}::${normalizeCompareQualifiedName(fromTable)}::${normalizeCompareColumnList(fromColumns)}::${normalizeCompareQualifiedName(toTable)}::${normalizeCompareColumnList(toColumns)}`
+  }
+
+  if (entityKind === 'function' || entityKind === 'procedure' || entityKind === 'sequence') {
+    return `${entityKind}:${normalizeCompareQualifiedName(suffix)}`
+  }
+
+  if (entityKind === 'custom-type') {
+    const [customTypeKind, typeName] = suffix.split('::')
+
+    if (!customTypeKind || !typeName) {
+      return entryId
+    }
+
+    return `custom-type:${normalizeCompareSimpleName(customTypeKind)}::${normalizeCompareQualifiedName(typeName)}`
+  }
+
+  return entryId
+}
+
+export const reconcilePgmlCompareNotesWithEntryIds = (
+  notes: PgmlCompareNote[],
+  entryIds: string[]
+) => {
+  const validEntryIdSet = new Set(entryIds)
+  const aliasMap = entryIds.reduce<Map<string, string>>((entries, currentEntryId) => {
+    const normalizedEntryId = normalizePgmlDiagramCompareEntryIdForMatching(currentEntryId)
+
+    entries.set(currentEntryId, currentEntryId)
+
+    if (!entries.has(normalizedEntryId)) {
+      entries.set(normalizedEntryId, currentEntryId)
+    }
+
+    return entries
+  }, new Map<string, string>())
+
+  return clonePgmlCompareNotes(notes.flatMap((note) => {
+    if (validEntryIdSet.has(note.entryId)) {
+      return [note]
+    }
+
+    const normalizedEntryId = normalizePgmlDiagramCompareEntryIdForMatching(note.entryId)
+    const resolvedEntryId = aliasMap.get(normalizedEntryId) || null
+
+    if (!resolvedEntryId) {
+      return []
+    }
+
+    return [{
+      ...note,
+      entryId: resolvedEntryId
+    }]
+  }))
 }
 
 export const getPgmlDiagramCompareChangeVerb = (kind: PgmlDiffChangeKind) => {

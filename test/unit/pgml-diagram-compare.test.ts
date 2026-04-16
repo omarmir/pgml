@@ -6,7 +6,9 @@ import {
   filterPgmlDiagramCompareEntriesForNoise,
   getPgmlDiagramCompareChangeColor,
   getPgmlDiagramCompareChangeVerb,
-  getPgmlDiagramCompareEntityKindLabel
+  getPgmlDiagramCompareEntityKindLabel,
+  normalizePgmlDiagramCompareEntryIdForMatching,
+  reconcilePgmlCompareNotesWithEntryIds
 } from '../../app/utils/pgml-diagram-compare'
 import { diffPgmlSchemaModels } from '../../app/utils/pgml-diff'
 import { parsePgml } from '../../app/utils/pgml'
@@ -510,6 +512,85 @@ Table public.orders {
     )
 
     expect(entries).toEqual([])
+  })
+
+  it('formats composite reference labels with full column tuples', () => {
+    const baseModel = parseSnapshotModel(`Table public.common_review_set_setup {
+  id uuid [pk]
+  egcs_cn_entitytype text
+}
+
+Table public.common_review_set {
+  egcs_cn_reviewsetsetup uuid
+  egcs_cn_entitytype text
+}`)
+    const targetModel = parseSnapshotModel(`Table public.common_review_set_setup {
+  id uuid [pk]
+  egcs_cn_entitytype text
+}
+
+Table public.common_review_set {
+  egcs_cn_reviewsetsetup uuid
+  egcs_cn_entitytype text
+}
+
+Ref cn_ref_reviewsetreviewsetsetupentitytype: public.common_review_set.(egcs_cn_reviewsetsetup, egcs_cn_entitytype) > public.common_review_set_setup.(id, egcs_cn_entitytype)`)
+    const entries = buildPgmlDiagramCompareEntries(
+      diffPgmlSchemaModels(baseModel, targetModel),
+      baseModel,
+      targetModel
+    )
+    const addedReference = entries.find((entry) => {
+      return entry.id === 'reference:>::public.common_review_set::egcs_cn_reviewsetsetup,egcs_cn_entitytype::public.common_review_set_setup::id,egcs_cn_entitytype'
+    }) || null
+
+    expect(addedReference).toMatchObject({
+      changeKind: 'added',
+      description: 'Added reference public.common_review_set.(egcs_cn_reviewsetsetup, egcs_cn_entitytype) -> public.common_review_set_setup.(id, egcs_cn_entitytype).',
+      entityKind: 'reference',
+      label: 'public.common_review_set.(egcs_cn_reviewsetsetup, egcs_cn_entitytype) -> public.common_review_set_setup.(id, egcs_cn_entitytype)',
+      rowKey: 'public.common_review_set.egcs_cn_reviewsetsetup'
+    })
+  })
+
+  it('normalizes compare entry ids for matching across identifier casing differences', () => {
+    expect(normalizePgmlDiagramCompareEntryIdForMatching(
+      'constraint:public.Common_Approval::CN_CHK_APPROVAL'
+    )).toBe('constraint:public.common_approval::cn_chk_approval')
+    expect(normalizePgmlDiagramCompareEntryIdForMatching(
+      'reference:>::public.Common_Review_Set::egcs_cn_reviewsetsetup,egcs_cn_entitytype::public.Common_Review_Set_Setup::id,egcs_cn_entitytype'
+    )).toBe('reference:>::public.common_review_set::egcs_cn_reviewsetsetup,egcs_cn_entitytype::public.common_review_set_setup::id,egcs_cn_entitytype')
+  })
+
+  it('reconciles saved compare notes to current entry ids before pruning them', () => {
+    const nextNotes = reconcilePgmlCompareNotesWithEntryIds([
+      {
+        entryId: 'constraint:public.Common_Approval::CN_CHK_APPROVAL',
+        flag: 'pending',
+        note: 'Keep this'
+      },
+      {
+        entryId: 'reference:>::public.Common_Review_Set::egcs_cn_reviewsetsetup,egcs_cn_entitytype::public.Common_Review_Set_Setup::id,egcs_cn_entitytype',
+        flag: 'fixed',
+        note: 'Still applies'
+      }
+    ], [
+      'constraint:public.common_approval::cn_chk_approval',
+      'reference:>::public.common_review_set::egcs_cn_reviewsetsetup,egcs_cn_entitytype::public.common_review_set_setup::id,egcs_cn_entitytype'
+    ])
+
+    expect(nextNotes).toEqual([
+      {
+        entryId: 'constraint:public.common_approval::cn_chk_approval',
+        flag: 'pending',
+        note: 'Keep this'
+      },
+      {
+        entryId: 'reference:>::public.common_review_set::egcs_cn_reviewsetsetup,egcs_cn_entitytype::public.common_review_set_setup::id,egcs_cn_entitytype',
+        flag: 'fixed',
+        note: 'Still applies'
+      }
+    ])
   })
 
   it('builds layout compare entries with diagram-target selections', () => {
