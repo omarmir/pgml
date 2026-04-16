@@ -1,7 +1,7 @@
 ---
 name: PGML
-description: This skill should be used when the user asks to parse or understand versioned PGML, explain checkpoints, SchemaMetadata, or saved Comparison blocks, review compare notes or exclusions, translate PGML to PostgreSQL SQL, write PostgreSQL queries from PGML, review a PGML schema, diff PGML versions, export compare summaries, or generate ordered SQL or Kysely migrations from PGML.
-version: 0.4.0
+description: This skill should be used when the user asks to parse or understand versioned PGML, explain checkpoints, SchemaMetadata, or saved Comparison blocks, review compare notes or exclusions, translate PGML to PostgreSQL SQL, write PostgreSQL queries from PGML, review a PGML schema, diff PGML versions, export compare summaries, generate ordered SQL or Kysely migrations from PGML, create or update scripts that export spreadsheets, DBML, pg_dump-derived SQL, or other schema sources directly into PGML, or infer canonical PGML output shape by comparing local source artifacts with importer-generated `.pgml` samples.
+version: 0.5.0
 ---
 
 # PGML
@@ -35,10 +35,15 @@ Load this skill when the task involves any of the following:
 - Summarize or export the visible compare state as Markdown or HTML.
 - Plan migrations from one PGML version to another.
 - Create ordered SQL or Kysely migration files from PGML deltas.
+- Create or update scripts that export spreadsheets, DBML, pg_dump-derived SQL, or other schema sources directly into PGML.
+- Infer canonical PGML output shape by comparing local source artifacts with importer-generated `.pgml` samples.
+- Reverse-engineer the importer-produced PGML shape from local samples.
+- Build direct-export paths that skip an existing intermediate format such as DBML.
+- Compare a source export artifact and an imported PGML artifact to infer canonical output structure.
 
 ## Working Model
 
-Start by classifying the request into one of six modes:
+Start by classifying the request into one of seven modes:
 
 1. Schema understanding: explain tables, types, routines, triggers, relationships, or domain boundaries.
 2. Version-history understanding: explain `VersionSet`, `Workspace`, `Version`, `Snapshot`, lineage, checkpoints, compare scope, or `SchemaMetadata`.
@@ -46,6 +51,7 @@ Start by classifying the request into one of six modes:
 4. DDL generation: produce `CREATE TYPE`, `CREATE TABLE`, `ALTER TABLE`, `CREATE FUNCTION`, `CREATE TRIGGER`, and related SQL.
 5. Query authoring: write `SELECT`, `INSERT`, `UPDATE`, `DELETE`, or `CALL` statements grounded in the schema.
 6. Diff or migration planning: compare PGML states, identify semantic schema changes, and generate delta SQL or Kysely when requested.
+7. PGML generation/tooling: infer canonical PGML structure from samples, importer outputs, parser expectations, or source artifacts, then generate PGML or implement tooling that emits it directly.
 
 State the chosen mode when ambiguity matters. If the user asks for "SQL from PGML", resolve whether the requested output is:
 
@@ -60,6 +66,11 @@ If the mode is unclear and the difference changes the result materially, ask a s
 
 Follow this sequence:
 
+0. For PGML generation or exporter tasks, discover local conversion artifacts first:
+   - existing export scripts such as `*.gs`, `*.ts`, or CLI tools
+   - sample `.pgml`, `.dbml`, and `.sql` files
+   - importer-produced `.pgml` snapshots that reveal canonical serialized output
+   If local samples exist, prefer matching those shapes over generic examples.
 1. Read the PGML source.
 2. Detect the document scope:
    - full `VersionSet` document
@@ -101,6 +112,18 @@ Follow this sequence:
 10. Generate or explain SQL from the normalized object inventory.
 11. Validate dependencies before finalizing the answer.
 
+When local source-format samples and imported PGML samples both exist, build an object mapping between them before implementing exporter changes:
+
+- enums and custom types
+- table naming and schema qualification
+- refs and FK actions
+- indexes and constraints
+- sequences and ownership
+- functions, procedures, and triggers
+- versioned document wrappers
+
+Use that mapping to implement direct export rather than inventing a fresh PGML layout.
+
 When the task is a diff, compare-report, or migration task, insert this extra step between inventory and SQL generation:
 
 1. If the request names a saved `Comparison`, resolve its exact `base`, `target`, exclusions, note filters, notes, and noise filters first.
@@ -122,8 +145,25 @@ Use these precedence rules:
 - Prefer `docs {}` and `affects {}` to infer intent, graph edges, and operational semantics.
 - Prefer named `Comparison` blocks when the user references a saved comparison by name or asks for the studio's persisted compare view.
 - Prefer exact names from PGML over idiomatic renaming.
+- Prefer local importer-produced `.pgml` output shape over generic serializer assumptions when the task is PGML generation or exporter work.
 
 When reconstructing SQL from declarative PGML instead of embedded source, mark that SQL as inferred. When reusing embedded `source:` text, treat it as authored truth and preserve behavior unless the task explicitly asks for a rewrite.
+
+## Importer-Shaped PGML
+
+When the task is to generate PGML rather than only read it, look for importer-produced `.pgml` files in the local repo and treat them as authoritative serialization examples.
+
+In generation tasks, prefer matching the imported output shape for:
+
+- `VersionSet`, `Workspace`, and initial `Version` structure
+- schema-qualified object names
+- placement of `Ref:` lines versus inline `ref:` modifiers
+- inline `Index` and `Constraint` lines inside tables
+- sequence metadata such as `owned_by`
+- function, procedure, and trigger `source:` blocks
+- table-group placement and membership formatting
+
+Do not assume rich PGML generation means DBML-like table syntax wrapped in a `VersionSet`. If local canonical samples model executable objects as native `Function`, `Procedure`, or `Trigger` blocks, emit those objects directly and preserve SQL in `source: $sql$ ... $sql$` when that is how the samples serialize them.
 
 ## PGML Semantics That Matter
 
@@ -240,6 +280,46 @@ When the user asks for a migration file from PGML changes:
 - Mark ambiguous rename-like changes as needing confirmation instead of silently treating them as renames.
 - Use saved comparison filters and notes for compare review or export output only; do not silently drop migration statements unless the user explicitly asks for a filtered review artifact instead of executable migration SQL.
 
+For spreadsheet-to-PGML tasks, inspect the local exporter and sample sheet conventions before implementing changes.
+
+Specifically verify:
+
+- which columns hold description, default value, relation, and constraints
+- whether relation cells can carry FK settings such as `delete:` and `update:`
+- whether table header rows carry options such as soft-delete suppression
+- how executable-object sheets label function bodies, trigger SQL, references, or helper columns
+
+Do not assume a stable spreadsheet column layout across repositories or over time. Confirm the current contract from the local exporter or sample data before changing parser or export logic.
+
+Exporter workflow example:
+
+1. Read the existing source exporter, such as a spreadsheet-to-DBML script.
+2. Read a sample of that exporter's output.
+3. Read a corresponding importer-generated `.pgml` file.
+4. Infer object-by-object mapping into PGML:
+   - `Enum`
+   - `Sequence`
+   - `Table ... in Group`
+   - `Constraint`
+   - `Ref:`
+   - `Function` / `Procedure` / `Trigger`
+   - `TableGroup`
+   - `VersionSet` / `Workspace` / `Version`
+5. Implement the direct exporter to match the local PGML serialization shape.
+6. Validate with a syntax pass and spot-check against the sample `.pgml`.
+
+Spreadsheet exporter workflow example:
+
+1. Read the local spreadsheet exporter first.
+2. Confirm the current column contract from code, not from memory.
+3. Look for special parsing rules such as:
+   - dedicated default-value columns
+   - FK settings embedded in relation cells
+   - table-level options such as `_deleted` suppression
+   - flexible headers for function and trigger sheets
+4. Port those parsing rules into the PGML exporter before changing the output shape.
+5. Then align the emitted PGML to the local importer-produced `.pgml` samples.
+
 ## Guardrails
 
 Do not do the following:
@@ -252,6 +332,10 @@ Do not do the following:
 - Do not emit duplicate foreign keys when PGML repeats an edge inline and at top level.
 - Do not let compare note filters or noise filters hide real migration work unless the user explicitly wants a filtered compare summary.
 - Do not confuse documentation text with executable behavior.
+- Do not assume that wrapping DBML-like table syntax in `VersionSet` is sufficient for PGML generation tasks.
+- Do not emit executable SQL as comments when local canonical PGML samples model those objects as native executable blocks.
+- Do not ignore local importer-produced `.pgml` files when they exist; they are often the most reliable serialization target.
+- Do not hard-code spreadsheet column semantics from memory when a local exporter script already defines the real sheet contract.
 
 When ambiguity remains, call it out directly and explain which result is certain versus inferred.
 
@@ -267,6 +351,13 @@ Use repo sources in this order when the language behavior is uncertain:
 6. `test/unit/pgml-model.test.ts`, `test/unit/pgml-document.test.ts`, and related PGML tests for supported edge cases.
 
 Keep the parser first because the app behavior is what downstream agents will actually hit in this repository.
+
+If the canonical PGML app files are not present in the current workspace, fall back to:
+
+1. local `.pgml` samples
+2. local import/export scripts
+3. local `.dbml` and `.sql` samples that can be paired with `.pgml` outputs
+4. bundled `references/*.md`
 
 ## Additional Resources
 
