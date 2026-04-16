@@ -74,7 +74,7 @@ export const studioCodeMirrorTheme = EditorView.theme({
     backgroundColor: 'var(--studio-shell-bg)',
     color: 'var(--studio-shell-text)',
     fontFamily: 'var(--font-geist-mono, ui-monospace, SFMono-Regular, Menlo, monospace)',
-    fontSize: '0.84rem'
+    fontSize: 'calc(0.84rem / var(--pgml-ui-font-scale, 1))'
   },
   '.cm-scroller': {
     overflow: 'auto',

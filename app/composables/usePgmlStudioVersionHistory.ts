@@ -124,6 +124,39 @@ const normalizeSnapshotSource = (value: string, includeLayout: boolean) => {
   return normalizePgmlSnapshotSource(normalizedSource)
 }
 
+const selectedComparisonSessionStorageKey = 'pgml-studio-selected-comparison-id-v1'
+
+const readPersistedSelectedComparisonId = () => {
+  if (!import.meta.client || typeof globalThis.sessionStorage === 'undefined') {
+    return null
+  }
+
+  try {
+    const value = globalThis.sessionStorage.getItem(selectedComparisonSessionStorageKey)
+
+    return value && value.trim().length > 0 ? value : null
+  } catch {
+    return null
+  }
+}
+
+const writePersistedSelectedComparisonId = (value: string | null) => {
+  if (!import.meta.client || typeof globalThis.sessionStorage === 'undefined') {
+    return
+  }
+
+  try {
+    if (value === null) {
+      globalThis.sessionStorage.removeItem(selectedComparisonSessionStorageKey)
+      return
+    }
+
+    globalThis.sessionStorage.setItem(selectedComparisonSessionStorageKey, value)
+  } catch {
+    return
+  }
+}
+
 const buildDefaultCompareBaseId = (document: PgmlVersionSetDocument) => {
   // Prefer the workspace base when it exists so compare opens on the most
   // common "locked predecessor -> current draft" workflow by default.
@@ -530,6 +563,7 @@ export const usePgmlStudioVersionHistory = (
     source: Ref<string>
   }
 ) => {
+  const initialSelectedComparisonId = readPersistedSelectedComparisonId()
   const initialWorkspaceSource = normalizeSnapshotSource(input.source.value, true)
 
   if (input.source.value !== initialWorkspaceSource) {
@@ -549,7 +583,7 @@ export const usePgmlStudioVersionHistory = (
     documentEditorScope: 'all',
     editorMode: 'head',
     previewTargetId: 'workspace',
-    selectedComparisonId: null
+    selectedComparisonId: initialSelectedComparisonId
   })
   const documentState = sharedVersionHistoryState.document
   const previewTargetId = sharedVersionHistoryState.previewTargetId
@@ -561,6 +595,11 @@ export const usePgmlStudioVersionHistory = (
   const compareNoteFilters = sharedVersionHistoryState.compareNoteFilters
   const compareNoiseFilters = sharedVersionHistoryState.compareNoiseFilters
   const selectedComparisonId = sharedVersionHistoryState.selectedComparisonId
+
+  if (import.meta.client && selectedComparisonId.value === null && initialSelectedComparisonId) {
+    selectedComparisonId.value = initialSelectedComparisonId
+  }
+
   const document: ComputedRef<PgmlVersionSetDocument> = computed(() => {
     return buildWorkspaceSyncedDocument(documentState.value, input.source.value)
   })
@@ -580,6 +619,44 @@ export const usePgmlStudioVersionHistory = (
     workingDocument.name = input.documentName.value
 
     return workingDocument
+  }
+
+  const applyComparisonSelectionState = (
+    targetDocument: PgmlVersionSetDocument,
+    comparisonId: string | null
+  ) => {
+    if (comparisonId === null) {
+      selectedComparisonId.value = null
+      compareBaseId.value = buildDefaultCompareBaseId(targetDocument)
+      compareTargetId.value = buildDefaultCompareTargetId(targetDocument)
+      compareExclusions.value = createEmptyPgmlCompareExclusions()
+      compareNoteFilters.value = createDefaultPgmlCompareNoteFilters()
+      compareNoiseFilters.value = createDefaultPgmlCompareNoiseFilters()
+
+      return false
+    }
+
+    const comparison = getPgmlDocumentComparison(targetDocument, comparisonId)
+
+    if (!comparison) {
+      selectedComparisonId.value = null
+      compareBaseId.value = buildDefaultCompareBaseId(targetDocument)
+      compareTargetId.value = buildDefaultCompareTargetId(targetDocument)
+      compareExclusions.value = createEmptyPgmlCompareExclusions()
+      compareNoteFilters.value = createDefaultPgmlCompareNoteFilters()
+      compareNoiseFilters.value = createDefaultPgmlCompareNoiseFilters()
+
+      return false
+    }
+
+    selectedComparisonId.value = comparison.id
+    compareBaseId.value = normalizeCompareBaseSelection(targetDocument, comparison.baseId)
+    compareTargetId.value = normalizeCompareTargetSelection(targetDocument, comparison.targetId)
+    compareExclusions.value = clonePgmlCompareExclusions(comparison.exclusions)
+    compareNoteFilters.value = clonePgmlCompareNoteFilters(comparison.noteFilters)
+    compareNoiseFilters.value = clonePgmlCompareNoiseFilters(comparison.noiseFilters)
+
+    return true
   }
 
   const setDocument = (nextDocument: PgmlVersionSetDocument) => {
@@ -610,16 +687,12 @@ export const usePgmlStudioVersionHistory = (
         views: nextDocument.workspace.views.map(clonePgmlDocumentView)
       }
     }
+    const preferredSelectedComparisonId = selectedComparisonId.value
     documentState.value = normalizedDocument
     input.source.value = getPgmlDocumentBlockPreviewSource(normalizedDocument.workspace)
     previewTargetId.value = 'workspace'
     documentEditorScope.value = normalizePgmlDocumentEditorScope(normalizedDocument, documentEditorScope.value)
-    selectedComparisonId.value = null
-    compareBaseId.value = buildDefaultCompareBaseId(normalizedDocument)
-    compareTargetId.value = buildDefaultCompareTargetId(normalizedDocument)
-    compareExclusions.value = createEmptyPgmlCompareExclusions()
-    compareNoteFilters.value = createDefaultPgmlCompareNoteFilters()
-    compareNoiseFilters.value = createDefaultPgmlCompareNoiseFilters()
+    applyComparisonSelectionState(normalizedDocument, preferredSelectedComparisonId)
   }
 
   const normalizeSelectionState = () => {
@@ -632,6 +705,14 @@ export const usePgmlStudioVersionHistory = (
     }
     compareBaseId.value = normalizeCompareBaseSelection(documentState.value, compareBaseId.value)
     compareTargetId.value = normalizeCompareTargetSelection(documentState.value, compareTargetId.value)
+  }
+
+  if (import.meta.client) {
+    watch(selectedComparisonId, (value) => {
+      writePersistedSelectedComparisonId(value)
+    }, {
+      immediate: true
+    })
   }
 
   const resetDocument = (workspaceSource = '') => {

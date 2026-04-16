@@ -5,6 +5,7 @@
 @theme static {
   --font-sans: 'Manrope', sans-serif;
   --font-mono: 'IBM Plex Mono', monospace;
+  --pgml-ui-font-scale: 1.1;
 
   --color-amber-50: #fff8ec;
   --color-amber-100: #ffefcf;
@@ -22,6 +23,7 @@
 html {
   background: var(--studio-shell-bg, #0a151d);
   color: #e2edf3;
+  font-size: calc(16px * var(--pgml-ui-font-scale));
   overflow-x: clip;
 }
 

@@ -194,6 +194,31 @@ test('diagram panel reuses the PGML editor scrollbar styling', async ({ goto, pa
   expect(scrollbarStyles?.panelScrollbarColor).toBe(scrollbarStyles?.editorScrollbarColor)
 })
 
+test('studio increases general UI typography without enlarging the PGML editor text', async ({ goto, page }) => {
+  await goto('/diagram')
+  await expect(page.locator('.cm-editor')).toBeVisible()
+
+  const typographyMetrics = await page.evaluate(() => {
+    const documentFontSize = Number.parseFloat(window.getComputedStyle(document.documentElement).fontSize)
+    const editorElement = document.querySelector('.cm-editor')
+
+    if (!(editorElement instanceof HTMLElement)) {
+      return null
+    }
+
+    const editorFontSize = Number.parseFloat(window.getComputedStyle(editorElement).fontSize)
+
+    return {
+      documentFontSize,
+      editorFontSize
+    }
+  })
+
+  expect(typographyMetrics).not.toBeNull()
+  expect(typographyMetrics?.documentFontSize || 0).toBeGreaterThan(17)
+  expect(typographyMetrics?.editorFontSize || 0).toBeCloseTo(13.44, 1)
+})
+
 test('diagram toolbar can hide fields and executable attachments', async ({ goto, page }) => {
   await goto('/diagram')
 

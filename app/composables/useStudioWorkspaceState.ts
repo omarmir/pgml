@@ -38,6 +38,7 @@ const studioWorkspaceStateKeys = Object.freeze({
   schemaSnapshot: 'studio-workspace-schema-snapshot-v1',
   schemaUpdatedAt: 'studio-workspace-schema-updated-at-v1',
   selectedComparisonId: 'studio-workspace-selected-comparison-id-v1',
+  sessionInitialized: 'studio-workspace-session-initialized-v1',
   source: 'studio-workspace-source-v1',
   versionDocumentName: 'studio-workspace-version-document-name-v1',
   versionHistoryDocumentState: 'studio-workspace-version-history-document-state-v1'
@@ -59,6 +60,10 @@ export const useStudioWorkspaceSourceState = (initialSource: string) => {
 
 export const useStudioWorkspaceDocumentNameState = (initialName: string) => {
   return useStateWithDefault<string>(studioWorkspaceStateKeys.versionDocumentName, () => initialName)
+}
+
+export const useStudioWorkspaceSessionInitializedState = () => {
+  return useStateWithDefault<boolean>(studioWorkspaceStateKeys.sessionInitialized, () => false)
 }
 
 export const useStudioWorkspaceVersionHistoryState = (defaults: {
@@ -140,6 +145,7 @@ export const resetStudioWorkspaceState = () => {
   useState<string | null>(studioWorkspaceStateKeys.schemaSnapshot, () => null).value = null
   useState<string | null>(studioWorkspaceStateKeys.schemaUpdatedAt, () => null).value = null
   useState<string | null>(studioWorkspaceStateKeys.selectedComparisonId, () => null).value = null
+  useState<boolean>(studioWorkspaceStateKeys.sessionInitialized, () => false).value = false
   useState<string>(studioWorkspaceStateKeys.source, () => '').value = ''
   useState<string>(studioWorkspaceStateKeys.versionDocumentName, () => 'Untitled schema').value = 'Untitled schema'
   useState<PgmlVersionSetDocument>(

@@ -27,6 +27,7 @@ import {
 import {
   resetStudioWorkspaceState,
   useStudioWorkspaceDocumentNameState,
+  useStudioWorkspaceSessionInitializedState,
   useStudioWorkspaceSourceState
 } from '~/composables/useStudioWorkspaceState'
 import type { PgmlSourceEditorHandle } from '~/composables/usePgmlSourceEditor'
@@ -307,8 +308,8 @@ const shouldBootstrapBundledExample = computed(() => {
     && studioLaunchRequest.value.launch === 'example'
 })
 const initialWorkspaceSource = shouldBootstrapBundledExample.value ? pgmlExample : ''
-const initialVersionedSource = shouldBootstrapBundledExample.value ? pgmlVersionedExample : ''
 const source: Ref<string> = useStudioWorkspaceSourceState(initialWorkspaceSource)
+const studioWorkspaceSessionInitialized: Ref<boolean> = useStudioWorkspaceSessionInitializedState()
 const editorDisplaySource: Ref<string> = ref(initialWorkspaceSource)
 const canvasRef: Ref<PgmlDiagramCanvasExposed | null> = ref(null)
 const canvasViewportResetKey: Ref<number> = ref(0)
@@ -462,10 +463,6 @@ const {
   documentName: computed(() => versionDocumentName.value),
   source
 })
-
-if (initialVersionedSource.length > 0) {
-  loadVersionedDocument(initialVersionedSource)
-}
 const largeDocumentCharThreshold = 50000
 const largeDocumentLineThreshold = 1500
 const workspaceAnalysisDiagnostics: Ref<PgmlAnalysisWorkerResponse['diagnostics']> = ref([])
@@ -891,6 +888,16 @@ const markBrowserSchemaStatusEligible = () => {
   browserSchemaStatusEligible.value = true
 }
 
+const persistBrowserWorkspaceMutation = async () => {
+  if (currentPersistenceSource.value !== 'browser') {
+    return true
+  }
+
+  markBrowserSchemaStatusEligible()
+
+  return await saveSchemaToBrowser()
+}
+
 const resetBrowserSchemaStatusEligibility = () => {
   browserSchemaStatusEligible.value = false
 }
@@ -997,9 +1004,11 @@ const {
   buildSchemaText,
   canEmbedLayout,
   initialSource: pgmlVersionedExample,
-  restoreLatestOnSetup: studioLaunchRequest.value === null,
+  restoreLatestOnSetup: studioLaunchRequest.value === null && !studioWorkspaceSessionInitialized.value,
   source
 })
+
+studioWorkspaceSessionInitialized.value = true
 const {
   computerFileSaveError,
   currentComputerFileName,
@@ -1629,7 +1638,9 @@ const canSaveCompareNote = computed(() => {
 })
 watch([
   () => selectedComparisonId.value,
-  () => compareRawEntries.value.map(entry => entry.id).sort().join('|')
+  () => compareRawEntries.value.map(entry => entry.id).sort().join('|'),
+  () => workspaceAnalysisRevision.value,
+  () => workspaceAnalysisRequestRevision.value
 ], () => {
   if (!selectedComparison.value) {
     if (compareNoteDialogOpen.value) {
@@ -1638,6 +1649,14 @@ watch([
       compareNoteDraftFlag.value = 'pending'
       compareNoteDraftText.value = ''
     }
+    return
+  }
+
+  if (!isAnalysisWorkspace.value) {
+    return
+  }
+
+  if (workspaceAnalysisRevision.value < workspaceAnalysisRequestRevision.value) {
     return
   }
 
@@ -2395,7 +2414,7 @@ const navigateToWorkspaceMode = async (page: StudioWorkspacePage) => {
 
   await navigateTo({
     path: getStudioWorkspacePath(page),
-    query: route.query
+    query: currentPersistenceSource.value === 'file' ? route.query : undefined
   })
 }
 const closeCheckpointDialog = () => {
@@ -2485,7 +2504,7 @@ const removeCompareExclusionOption = (option: CompareExclusionOption) => {
 const clearCompareExclusionsDraft = () => {
   compareExclusionsDraft.value = createEmptyPgmlCompareExclusions()
 }
-const saveCompareExclusionsDialog = () => {
+const saveCompareExclusionsDialog = async () => {
   if (!compareExclusionsDraft.value) {
     return
   }
@@ -2497,7 +2516,7 @@ const saveCompareExclusionsDialog = () => {
   }
 
   if (selectedComparison.value) {
-    markBrowserSchemaStatusEligible()
+    await persistBrowserWorkspaceMutation()
   }
 
   closeCompareExclusionsDialog()
@@ -2536,7 +2555,7 @@ const openCompareNoteDialog = (entryId: string) => {
   compareNoteDraftText.value = existingNote?.note || ''
   compareNoteDialogOpen.value = true
 }
-const saveCompareNoteDialog = () => {
+const saveCompareNoteDialog = async () => {
   if (!compareNoteDraftEntryId.value || compareNoteDraftText.value.trim().length === 0) {
     return
   }
@@ -2551,7 +2570,7 @@ const saveCompareNoteDialog = () => {
     return
   }
 
-  markBrowserSchemaStatusEligible()
+  await persistBrowserWorkspaceMutation()
   closeCompareNoteDialog()
   toast.add({
     title: 'Compare note saved',
@@ -2560,7 +2579,7 @@ const saveCompareNoteDialog = () => {
     icon: 'i-lucide-check'
   })
 }
-const deleteCompareNoteDialog = () => {
+const deleteCompareNoteDialog = async () => {
   if (!compareNoteDraftEntryId.value) {
     return
   }
@@ -2571,7 +2590,7 @@ const deleteCompareNoteDialog = () => {
     return
   }
 
-  markBrowserSchemaStatusEligible()
+  await persistBrowserWorkspaceMutation()
   closeCompareNoteDialog()
   toast.add({
     title: 'Compare note removed',
@@ -2607,7 +2626,7 @@ const closeComparisonDialog = () => {
   comparisonDialogOpen.value = false
   comparisonDraftName.value = ''
 }
-const saveComparisonDialog = () => {
+const saveComparisonDialog = async () => {
   if (comparisonNameError.value) {
     return
   }
@@ -2617,7 +2636,7 @@ const saveComparisonDialog = () => {
       return
     }
 
-    markBrowserSchemaStatusEligible()
+    await persistBrowserWorkspaceMutation()
     closeComparisonDialog()
     toast.add({
       title: 'Comparison renamed',
@@ -2634,7 +2653,7 @@ const saveComparisonDialog = () => {
     return
   }
 
-  markBrowserSchemaStatusEligible()
+  await persistBrowserWorkspaceMutation()
   closeComparisonDialog()
   toast.add({
     title: 'Comparison created',
@@ -2648,7 +2667,7 @@ const deleteSelectedComparisonPreset = () => {
     return
   }
 
-  markBrowserSchemaStatusEligible()
+  void persistBrowserWorkspaceMutation()
   toast.add({
     title: 'Comparison deleted',
     description: 'The saved comparison preset was removed from this PGML document.',
@@ -3302,7 +3321,7 @@ const updateVersionCompareSelection = (input: {
   })
 
   if (didUpdate && selectedComparisonId.value) {
-    markBrowserSchemaStatusEligible()
+    void persistBrowserWorkspaceMutation()
     toast.add({
       title: 'Saved comparison updated',
       description: `${compareComparisonLabel.value} now compares the selected base and target while keeping its saved exclusions, note flags, notes, and noise filters.`,
@@ -3327,14 +3346,14 @@ const updateVersionCompareNoiseFilters = (value: PgmlCompareNoiseFilters) => {
   const didUpdate = setCurrentCompareNoiseFilters(value)
 
   if (didUpdate && selectedComparisonId.value) {
-    markBrowserSchemaStatusEligible()
+    void persistBrowserWorkspaceMutation()
   }
 }
 const updateVersionCompareNoteFilters = (value: PgmlCompareNoteFilters) => {
   const didUpdate = setCurrentCompareNoteFilters(value)
 
   if (didUpdate && selectedComparisonId.value) {
-    markBrowserSchemaStatusEligible()
+    void persistBrowserWorkspaceMutation()
   }
 }
 const normalizeVersionedEditorMode = (value: string) => {
