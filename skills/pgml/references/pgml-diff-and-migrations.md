@@ -8,10 +8,12 @@ Prefer in-document version history before falling back to git history.
 
 Use these rules:
 
+- saved `Comparison` named by the user = resolve its `base` and `target`
 - explicit base and target chosen by the user = exact diff baseline
 - `VersionSet` with a workspace base = `Workspace.based_on` vs `Workspace`
 - two locked versions selected in the studio = compare those exact versions
 - repo diff request with no version pair = working tree vs `HEAD`
+- `Comparison` with `base: empty` = empty source vs selected target snapshot
 - untracked `.pgml` file = all-added schema
 - deleted `.pgml` file = all-removed schema
 - renamed file with the same schema content = file move, not schema change
@@ -47,12 +49,16 @@ Use the raw diff as supporting evidence, not as the final schema analysis. A use
 
 Follow this sequence:
 
-1. Resolve the old and new snapshots.
+1. Resolve saved compare state first when the task names a root-level `Comparison`.
+   - Capture its `base`, `target`, `CompareExclusions`, `CompareNote`, note filters, and noise filters.
+   - Treat those settings as report and review state unless the user explicitly asks about the compare configuration itself.
+2. Resolve the old and new snapshots.
    - For versioned PGML, use the selected base and target snapshots.
    - For repo diff tasks, use committed vs working-tree sources.
-2. Strip `View` blocks, `active_view` metadata, and legacy snapshot-level `Properties` blocks from both sources unless the user explicitly asks about layout or diagram changes.
-3. Parse or inventory both PGML states by object kind.
-4. Compare the following categories:
+3. Strip `View` blocks, `active_view` metadata, `snap_to_grid`, and legacy snapshot-level `Properties` blocks from both sources unless the user explicitly asks about layout or diagram changes.
+4. Keep `Comparison`, `CompareExclusions`, `CompareNote`, `hide_*`, and `show_*_notes` out of schema diffing unless the user explicitly asks about saved compare state.
+5. Parse or inventory both PGML states by object kind.
+6. Compare the following categories:
    - custom types
    - sequences
    - tables
@@ -63,14 +69,27 @@ Follow this sequence:
    - functions
    - procedures
    - triggers
-5. Classify each change as one of:
+7. Classify each change as one of:
    - added
    - removed
    - modified
    - documentation-only
    - schema-metadata-only
+   - compare-review-only
    - layout-only
-6. Call out destructive changes separately from additive or compatible changes.
+8. Call out destructive changes separately from additive or compatible changes.
+
+## Saved Comparison Reporting
+
+When the user asks for the meaning of a saved comparison or for a compare export, use this workflow:
+
+1. Resolve the named `Comparison` block and its exact base and target ids.
+2. Build the semantic diff from those snapshots first.
+3. Apply `CompareExclusions` to the compare entries after the semantic diff exists.
+4. Apply `hide_*` noise filters to the compare entries after exclusions are applied.
+5. Treat `show_*_notes` as note-visibility controls only, not schema-diff controls.
+6. Treat each `CompareNote` flag and note body as reviewer annotation, not schema change.
+7. For Markdown or HTML compare exports, match the currently visible compare state after exclusions, noise filters, change-kind filters, entity-kind filters, search query, and detail mode (`structured`, `snapshot`, or `both`).
 
 ## Ignore Non-Database Deltas By Default
 
@@ -78,15 +97,20 @@ Do not generate migration SQL for these changes unless the user explicitly asks 
 
 - `View` block additions, removals, renames, or reordering
 - `active_view` changes
-- `show_lines`, `show_execs`, or `show_fields` changes
+- `show_lines`, `snap_to_grid`, `show_execs`, or `show_fields` changes
 - `Properties` block changes
+- `Comparison` block additions, removals, renames, or reordering
+- `CompareExclusions` changes
+- `CompareNote` changes
+- `hide_*` or `show_*_notes` filter changes
 - `docs {}` changes by themselves
 - `affects {}` changes by themselves
 - `SchemaMetadata` changes by themselves
 
 Those changes matter for understanding intent and graph shape, but they do not change PostgreSQL schema state on their own.
 
-Treat view-scoped layout changes such as node positions, hidden executable objects, hidden fields, hidden lines, and selected view changes as `layout-only` unless the user explicitly wants a diagram-state diff.
+Treat view-scoped layout changes such as node positions, hidden executable objects, hidden fields, hidden lines, snap-to-grid toggles, and selected view changes as `layout-only` unless the user explicitly wants a diagram-state diff.
+Treat saved comparison additions, note edits, exclusion edits, and note/noise filter changes as `compare-review-only` unless the user explicitly wants that review-state diff.
 
 ## Change Classification Rules
 
@@ -184,6 +208,7 @@ When generating migrations from version history in this repo:
 - The replayable artifact is the ordered set of per-step files, not only a combined preview.
 - A combined history file can be useful for review, but it is secondary to the numbered step files.
 - If the selected compare pair is not a forward lineage, call out the fallback and generate an aggregate diff with a warning instead of pretending there is a valid step-by-step history.
+- Saved comparison filters and compare notes can shape the visible review report, but they should not silently suppress migration statements unless the user explicitly asks for a filtered review artifact instead of executable migration files.
 
 ## Repo Convention Discovery
 
@@ -246,6 +271,7 @@ When the user asks for a change summary rather than a migration file, report cha
 - modified schema objects
 - documentation-only changes
 - schema-metadata-only changes
+- compare-review-only changes
 - layout-only changes
 - risky or destructive changes
 

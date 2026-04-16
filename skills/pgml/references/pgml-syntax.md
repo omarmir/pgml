@@ -4,10 +4,11 @@ Use this file when the task needs the currently supported PGML surface area rath
 
 ## Canonical Sources
 
-In this repo, PGML behavior is defined by three complementary sources:
+In this repo, PGML behavior is defined by these complementary sources:
 
 - `app/utils/pgml.ts`: current parser behavior
 - `app/utils/pgml-document.ts`: versioned document grammar and root-level metadata
+- `app/utils/pgml-language.ts`: editor keywords, completions, and validation rules
 - `README.md`: draft language spec
 - `app/pages/spec.vue`: public examples and narrative spec
 
@@ -21,6 +22,7 @@ The document root only allows these nested blocks:
 
 - `SchemaMetadata { ... }`
 - `Workspace { ... }`
+- `Comparison "..." { ... }`
 - `Version <id> { ... }`
 
 Lines starting with `//` are ignored as comments.
@@ -52,6 +54,7 @@ VersionSet "Billing schema" {
 
     View "Review" {
       id: view_review
+      snap_to_grid: false
       show_execs: false
 
       Properties "table:public.orders" {
@@ -59,6 +62,13 @@ VersionSet "Billing schema" {
         y: 140
       }
     }
+  }
+
+  Comparison "Implemented scope" {
+    id: cmp_implemented
+    base: v_programs
+    target: workspace
+    hide_metadata: false
   }
 
   Version v_programs {
@@ -90,10 +100,13 @@ Important:
 - `Version` blocks are immutable checkpoints in studio behavior.
 - `Version` blocks carry `role`, `created_at`, and optional `name`, `parent`, and `active_view` metadata lines ahead of their nested blocks.
 - `Workspace.based_on` is required when versions exist.
+- `Comparison` blocks are optional saved compare presets at the `VersionSet` root.
 - `Snapshot` is required exactly once inside each `Workspace` and `Version`.
 - `Workspace` and `Version` can each contain zero or more `View "..." { ... }` blocks after `Snapshot`.
-- `View` blocks require a quoted name and support only `id`, `show_lines`, `show_execs`, `show_fields`, and nested `Properties` blocks.
+- `View` blocks require a quoted name and support only `id`, `show_lines`, `snap_to_grid`, `show_execs`, `show_fields`, and nested `Properties` blocks.
 - `SchemaMetadata` is optional and lives outside version history.
+- `Comparison.base` may be a version id, `workspace`, or `empty`.
+- `Comparison.target` may be a version id or `workspace`.
 - Legacy snapshot-level `Properties` blocks still parse, but canonical persisted `VersionSet` documents move them into the active or default `View`.
 
 ## SchemaMetadata
@@ -163,6 +176,7 @@ Workspace {
   View "Review" {
     id: view_review
     show_lines: false
+    snap_to_grid: false
     show_execs: false
     show_fields: false
 
@@ -179,12 +193,103 @@ Supported view metadata:
 
 - `id`
 - `show_lines`
+- `snap_to_grid`
 - `show_execs`
 - `show_fields`
 
-Legacy aliases `lines`, `execs`, and `fields` are also accepted by the parser.
+Legacy aliases `lines`, `snap`, `execs`, and `fields` are also accepted by the parser.
 
 Only nested `Properties "..." { ... }` blocks are allowed inside a `View`. `active_view` on the containing `Workspace` or `Version` selects the current view id. If no `active_view` is present, the first view becomes active in studio behavior.
+
+## Saved Comparisons
+
+`Comparison "..." { ... }` stores a named compare preset at the `VersionSet` root.
+
+Example:
+
+```pgml
+Comparison "Tracked rollout" {
+  id: cmp_tracked
+  base: v_programs
+  target: workspace
+  hide_metadata: false
+  hide_order_only: false
+  show_fixed_notes: false
+
+  CompareExclusions {
+    entity: "function:public.refresh_users"
+    group: "Deferred"
+    include_table: "public.users"
+  }
+
+  CompareNote "index:public.users::public.users_name_idx" {
+    flag: pending
+    note: "Validate the renamed index before cutover.\\nNeeds production data check."
+  }
+}
+```
+
+Comparison metadata supports:
+
+- `id`
+- `base`
+- `target`
+- `hide_defaults`
+- `hide_executable_name_only`
+- `hide_structural_name_only`
+- `hide_metadata`
+- `hide_order_only`
+- `show_pending_notes`
+- `show_ignore_notes`
+- `show_fixed_notes`
+- `show_blocked_notes`
+
+Important:
+
+- Comparison headers must use `Comparison "Name" {`.
+- `base` accepts a version id, `workspace`, or `empty`.
+- `target` accepts a version id or `workspace`.
+- Only one nested `CompareExclusions` block is allowed per `Comparison`.
+- Zero or more nested `CompareNote "entry-id" { ... }` blocks are allowed per `Comparison`.
+- Comparison ids and names must be unique within the document.
+- Comparison blocks persist studio compare state; they are not schema DDL.
+
+### CompareExclusions
+
+`CompareExclusions { ... }` stores persisted compare exclusions and inclusion overrides.
+
+Supported metadata keys:
+
+- `entity`
+- `group`
+- `table`
+- `include_entity`
+- `include_group`
+- `include_table`
+
+These keys map to compare entity ids, table-group labels, or fully qualified table ids used by the compare model.
+
+### CompareNote
+
+`CompareNote "entry-id" { ... }` stores a flagged reviewer note for one compare entry.
+
+Supported metadata keys:
+
+- `flag`
+- `note`
+
+Valid `flag` values are:
+
+- `pending`
+- `ignore`
+- `fixed`
+- `blocked`
+
+`note` stores text with escaped newlines such as `\\n`, which the document model decodes back into real line breaks.
+
+### Legacy Compare Exclusions
+
+`Workspace` and `Version` blocks can still contain `CompareExclusions { ... }` as legacy persisted input. The document model keeps reading those blocks and can migrate that state into root-level `Comparison` blocks when no saved comparisons already exist.
 
 ## Naming Rules
 
