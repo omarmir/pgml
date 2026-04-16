@@ -1139,17 +1139,34 @@ export const filterPgmlSchemaModelForCompareExclusions = (
     triggers
   } satisfies PgmlSchemaModel
   const allowedStandaloneNodeIds = new Set(getPersistableStandaloneObjectPropertyTargetIds(filteredModelWithoutNodeProperties))
-  const nodeProperties = Object.fromEntries(Object.entries(model.nodeProperties).filter(([nodeId]) => {
+  const standalonePropertyTargetAliases = buildStandalonePropertyTargetAliasMap(filteredModelWithoutNodeProperties)
+  const nodeProperties = Object.entries(model.nodeProperties).reduce<Record<string, PgmlNodeProperties>>((entries, [nodeId, properties]) => {
     if (nodeId.startsWith('group:')) {
-      return !excludedGroupNames.has(nodeId.replace(/^group:/, ''))
+      if (!excludedGroupNames.has(nodeId.replace(/^group:/, ''))) {
+        entries[nodeId] = properties
+      }
+
+      return entries
     }
 
     if (allTableIds.has(nodeId)) {
-      return !excludedTableIds.has(nodeId) && includedTableIds.has(nodeId)
+      if (!excludedTableIds.has(nodeId) && includedTableIds.has(nodeId)) {
+        entries[nodeId] = properties
+      }
+
+      return entries
     }
 
-    return allowedStandaloneNodeIds.has(nodeId)
-  }))
+    const resolvedNodeId = allowedStandaloneNodeIds.has(nodeId)
+      ? nodeId
+      : standalonePropertyTargetAliases.get(nodeId)
+
+    if (resolvedNodeId) {
+      entries[resolvedNodeId] = properties
+    }
+
+    return entries
+  }, {})
 
   return {
     ...filteredModelWithoutNodeProperties,
@@ -1192,6 +1209,42 @@ const getPersistableStandaloneObjectPropertyTargetIds = (model: PgmlSchemaModel)
     ...standaloneTriggerIds,
     ...standaloneSequenceIds
   ]
+}
+
+const buildStandalonePropertyTargetAliasMap = (model: PgmlSchemaModel) => {
+  const aliases = new Map<string, string>()
+  const ambiguousAliases = new Set<string>()
+
+  getPersistableStandaloneObjectPropertyTargetIds(model).forEach((targetId) => {
+    aliases.set(targetId, targetId)
+
+    const separatorIndex = targetId.lastIndexOf(':')
+
+    if (separatorIndex < 0) {
+      return
+    }
+
+    const prefix = targetId.slice(0, separatorIndex)
+    const name = targetId.slice(separatorIndex + 1)
+    const bareName = name.split('.').at(-1) || name
+    const bareTargetId = `${prefix}:${bareName}`
+    const existingTargetId = aliases.get(bareTargetId)
+
+    if (!existingTargetId) {
+      aliases.set(bareTargetId, targetId)
+      return
+    }
+
+    if (existingTargetId !== targetId) {
+      ambiguousAliases.add(bareTargetId)
+    }
+  })
+
+  ambiguousAliases.forEach((targetId) => {
+    aliases.delete(targetId)
+  })
+
+  return aliases
 }
 
 export const getOrderedGroupTables = (model: PgmlSchemaModel, groupName: string) => {
@@ -3515,10 +3568,19 @@ export const buildPgmlWithNodeProperties = (
     ...parsedModel.groups.map(group => `group:${group.name}`),
     ...getPersistableStandaloneObjectPropertyTargetIds(parsedModel)
   ])
-  const propertyBlocks = Object.entries(nodeProperties)
-    .filter(([id]) => {
-      return persistablePropertyTargetIds.has(id)
-    })
+  const standalonePropertyTargetAliases = buildStandalonePropertyTargetAliasMap(parsedModel)
+  const resolvedNodeProperties = Object.entries(nodeProperties).reduce<Record<string, PgmlNodeProperties>>((entries, [id, properties]) => {
+    const resolvedId = persistablePropertyTargetIds.has(id)
+      ? id
+      : standalonePropertyTargetAliases.get(id)
+
+    if (resolvedId) {
+      entries[resolvedId] = properties
+    }
+
+    return entries
+  }, {})
+  const propertyBlocks = Object.entries(resolvedNodeProperties)
     .filter(([, properties]) => {
       return [
         typeof properties.x === 'number',
@@ -3708,7 +3770,18 @@ export const parsePgml = (source: string) => {
     nodeProperties
   } satisfies PgmlSchemaModel
 
-  return applyRoutineSourceAffectsInference(model)
+  const standalonePropertyTargetAliases = buildStandalonePropertyTargetAliasMap(model)
+  const normalizedNodeProperties = Object.entries(model.nodeProperties).reduce<Record<string, PgmlNodeProperties>>((entries, [nodeId, properties]) => {
+    const resolvedNodeId = standalonePropertyTargetAliases.get(nodeId) || nodeId
+
+    entries[resolvedNodeId] = properties
+    return entries
+  }, {})
+
+  return applyRoutineSourceAffectsInference({
+    ...model,
+    nodeProperties: normalizedNodeProperties
+  })
 }
 
 const pgmlExampleFoundationSnapshot = `TableGroup Core {
@@ -4150,27 +4223,27 @@ Properties "group:Analytics" {
   table_columns: 2
 }
 
-Properties "custom-type:Enum:role_kind" {
+Properties "custom-type:Enum:public.role_kind" {
   x: 40
   y: 20
 }
 
-Properties "custom-type:Domain:email_address" {
+Properties "custom-type:Domain:public.email_address" {
   x: 220
   y: 20
 }
 
-Properties "custom-type:Enum:order_status" {
+Properties "custom-type:Enum:public.order_status" {
   x: 520
   y: 20
 }
 
-Properties "custom-type:Enum:entity_type" {
+Properties "custom-type:Enum:public.entity_type" {
   x: 220
   y: 360
 }
 
-Properties "custom-type:Composite:address_record" {
+Properties "custom-type:Composite:public.address_record" {
   x: 1080
   y: 620
   color: #0891b2

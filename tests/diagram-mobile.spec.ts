@@ -353,18 +353,6 @@ test('mobile GPU group drags keep both node and line state stable after drop', a
     throw new Error('Diagram debug state is not available for the mobile group drag test.')
   }
 
-  const client = await page.context().newCDPSession(page)
-  const buildTouchPoint = (id: number, x: number, y: number) => {
-    return {
-      force: 1,
-      id,
-      radiusX: 14,
-      radiusY: 14,
-      x: Math.round(x),
-      y: Math.round(y)
-    }
-  }
-
   const startX = viewportBox.x
     + initialState.renderer.panX
     + initialState.renderedGroup.x * initialState.renderer.scale
@@ -373,30 +361,61 @@ test('mobile GPU group drags keep both node and line state stable after drop', a
     + initialState.renderer.panY
     + initialState.renderedGroup.y * initialState.renderer.scale
     + Math.min(24, initialState.group.height * 0.18) * initialState.renderer.scale
-  const endX = startX + 92
-  const endY = startY + 46
+  const endX = startX + 132
+  const endY = startY + 68
+  const touchMovePoints = [
+    {
+      x: startX + 24,
+      y: startY + 12
+    },
+    {
+      x: startX + 72,
+      y: startY + 36
+    },
+    {
+      x: endX,
+      y: endY
+    }
+  ]
 
-  await client.send('Input.dispatchTouchEvent', {
-    touchPoints: [
-      buildTouchPoint(1, startX, startY)
-    ],
-    type: 'touchStart'
-  })
-  await client.send('Input.dispatchTouchEvent', {
-    touchPoints: [
-      buildTouchPoint(1, startX + 48, startY + 24)
-    ],
-    type: 'touchMove'
-  })
-  await client.send('Input.dispatchTouchEvent', {
-    touchPoints: [
-      buildTouchPoint(1, endX, endY)
-    ],
-    type: 'touchMove'
-  })
-  await client.send('Input.dispatchTouchEvent', {
-    touchPoints: [],
-    type: 'touchEnd'
+  await page.evaluate(async ({ endX, endY, startX, startY, touchMovePoints }) => {
+    const overlay = document.querySelector('.touch-none')
+
+    if (!(overlay instanceof HTMLElement)) {
+      throw new Error('Diagram overlay is not available.')
+    }
+
+    const dispatchPointerEvent = (type: 'pointerdown' | 'pointermove' | 'pointerup', x: number, y: number) => {
+      overlay.dispatchEvent(new PointerEvent(type, {
+        bubbles: true,
+        button: 0,
+        buttons: type === 'pointerup' ? 0 : 1,
+        clientX: Math.round(x),
+        clientY: Math.round(y),
+        isPrimary: true,
+        pointerId: 1,
+        pointerType: 'touch'
+      }))
+    }
+    const waitForFrame = () => new Promise<void>((resolve) => {
+      requestAnimationFrame(() => resolve())
+    })
+
+    dispatchPointerEvent('pointerdown', startX, startY)
+    await waitForFrame()
+
+    for (const point of touchMovePoints) {
+      dispatchPointerEvent('pointermove', point.x, point.y)
+      await waitForFrame()
+    }
+
+    dispatchPointerEvent('pointerup', endX, endY)
+  }, {
+    endX,
+    endY,
+    startX,
+    startY,
+    touchMovePoints
   })
 
   await expect.poll(async () => {

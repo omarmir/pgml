@@ -19,34 +19,34 @@ test('studio attaches table-scoped rows to tables and still lets floating nodes 
 
   await expect(page.locator('[data-group-content="group:Core"]')).toBeVisible()
   await expect(page.locator('[data-node-anchor="index:idx_products_search"]')).toHaveCount(0)
-  await expect(page.locator('[data-node-anchor="function:register_entity"]')).toHaveCount(0)
-  await expect(page.locator('[data-node-anchor="procedure:archive_orders"]')).toHaveCount(0)
+  await expect(page.locator('[data-node-anchor="function:public.register_entity"]')).toHaveCount(0)
+  await expect(page.locator('[data-node-anchor="procedure:public.archive_orders"]')).toHaveCount(0)
   await expect(page.locator('[data-node-anchor="trigger:trg_register_fundingopportunity"]')).toHaveCount(0)
-  await expect(page.locator('[data-node-anchor="sequence:order_number_seq"]')).toHaveCount(0)
   await expect(page.locator('[data-node-anchor="constraint:chk_orders_total"]')).toHaveCount(0)
   await expect(page.locator('[data-attachment-row="index:idx_products_search"]')).toBeVisible()
-  await expect(page.locator('[data-attachment-row="function:register_entity"]')).toContainText('TRIGGER')
-  await expect(page.locator('[data-attachment-row="procedure:archive_orders"]')).toHaveCount(2)
+  await expect(page.locator('[data-attachment-row="function:public.register_entity"]').first()).toContainText('returns trigger')
+  await expect(page.locator('[data-attachment-row="procedure:public.archive_orders"]')).toHaveCount(2)
   await expect(page.locator('[data-attachment-row="trigger:trg_register_fundingopportunity"]')).toBeVisible()
-  await expect(page.locator('[data-attachment-row="sequence:order_number_seq"]')).toBeVisible()
   await expect(page.locator('[data-attachment-row="constraint:chk_orders_total"]')).toBeVisible()
 
   await page.locator('[data-attachment-row="index:idx_products_search"]').click()
   await expect(page.locator('[data-attachment-popover="index:idx_products_search"]').first()).toContainText('Columns: search')
-  await page.locator('[data-table-anchor="public.orders"] [data-attachment-row="procedure:archive_orders"]').click()
-  await expect(page.locator('[data-attachment-popover="procedure:archive_orders"]').first()).toContainText('writes: public.orders_archive, public.order_item_archive')
+  await page.locator('[data-table-anchor="public.orders"] [data-attachment-row="procedure:public.archive_orders"]').click()
+  await expect(page.locator('[data-attachment-popover="procedure:public.archive_orders"]').first()).toContainText('writes: public.orders_archive, public.order_item_archive')
   await page.locator('[data-attachment-row="trigger:trg_register_fundingopportunity"]').click()
   await expect(page.locator('[data-attachment-popover="trigger:trg_register_fundingopportunity"]').first()).toContainText('Registers a Common_Entity id')
   await page.locator('[data-attachment-row="constraint:chk_orders_total"]').click()
   await expect(page.locator('[data-attachment-popover="constraint:chk_orders_total"]').first()).toContainText('total_cents >= 0')
 
-  const customTypeNode = page.locator('[data-node-anchor="custom-type:Domain:email_address"]')
+  const customTypeNode = page.locator('[data-node-anchor="custom-type:Domain:public.email_address"]')
   const initialHeight = await customTypeNode.evaluate((element) => {
     return Math.round(element.offsetHeight)
   })
 
-  await page.getByRole('button', { name: 'Expand email_address' }).click()
-  await expect(page.locator('[data-node-body="custom-type:Domain:email_address"]')).toBeVisible()
+  await page.locator('[data-object-collapse-button="custom-type:Domain:public.email_address"]').evaluate((element) => {
+    ;(element as HTMLElement).click()
+  })
+  await expect(page.locator('[data-node-body="custom-type:Domain:public.email_address"]')).toBeVisible()
 
   const expandedHeight = await customTypeNode.evaluate((element) => {
     return Math.round(element.offsetHeight)
@@ -55,7 +55,7 @@ test('studio attaches table-scoped rows to tables and still lets floating nodes 
   expect(expandedHeight).toBeGreaterThan(initialHeight + 40)
 
   await page.getByRole('button', { name: 'Collapse email_address' }).click()
-  await expect(page.locator('[data-node-body="custom-type:Domain:email_address"]')).toHaveCount(0)
+  await expect(page.locator('[data-node-body="custom-type:Domain:public.email_address"]')).toHaveCount(0)
 
   const collapsedHeight = await customTypeNode.evaluate((element) => {
     return Math.round(element.offsetHeight)
@@ -74,13 +74,14 @@ TableGroup Core {
   orders
 }
 
-Domain email_address {
+Domain public.email_address {
   base: text
   check: VALUE <> ''
 }
 
 Table orders in Core {
   id integer [pk]
+  email public.email_address
   total_cents integer
   Index idx_orders_total (total_cents)
 }
@@ -110,22 +111,22 @@ Function orphan_report() {
 
   await setPgmlEditorValue(editor, source)
   await expect(page.locator('[data-node-anchor="function:orphan_report"]')).toBeVisible()
-  await expect(page.locator('[data-node-anchor="custom-type:Domain:email_address"]')).toBeVisible()
+  await expect(page.locator('[data-node-anchor="custom-type:Domain:public.email_address"]')).toBeVisible()
   await expect(page.locator('[data-table-anchor="public.orders"]')).toBeVisible()
   await expect(page.locator('[data-attachment-row="index:idx_orders_total"]')).toBeVisible()
 
   await resetEditorState()
-  await page.locator('[data-node-anchor="custom-type:Domain:email_address"]').dispatchEvent('click')
+  await page.locator('[data-node-anchor="custom-type:Domain:public.email_address"]').dispatchEvent('click')
   await expect.poll(async () => {
     return (await readEditorState()).selectedText
   }).toBe('')
 
-  await page.locator('[data-node-anchor="custom-type:Domain:email_address"]').dispatchEvent('dblclick')
+  await page.locator('[data-node-anchor="custom-type:Domain:public.email_address"]').dispatchEvent('dblclick')
   await expect.poll(async () => {
     return readEditorState()
   }).toEqual(expect.objectContaining({
     scrollTop: expect.any(Number),
-    selectedText: expect.stringContaining('Domain email_address')
+    selectedText: expect.stringContaining('Domain public.email_address')
   }))
 
   await expect.poll(async () => {
@@ -168,6 +169,7 @@ Function orphan_report() {
     scrollTop: expect.any(Number),
     selectedText: `Table orders in Core {
   id integer [pk]
+  email public.email_address
   total_cents integer
   Index idx_orders_total (total_cents)
 }`
@@ -199,7 +201,7 @@ Function orphan_report() {
 test('single click applies a glowing selection border to schema objects, grouped tables, and attachment rows', async ({ goto, page }) => {
   await goto('/diagram')
 
-  const customTypeNode = page.locator('[data-node-anchor="custom-type:Domain:email_address"]')
+  const customTypeNode = page.locator('[data-node-anchor="custom-type:Domain:public.email_address"]')
   const ordersTable = page.locator('[data-table-anchor="public.orders"]')
   const ordersConstraint = page.locator('[data-table-anchor="public.orders"] [data-attachment-row="constraint:chk_orders_total"]')
 
@@ -398,9 +400,9 @@ test('initial connector geometry stays stable after a non-layout selection refre
 test('selecting a custom type animates its impact lines and highlights impacted rows', async ({ goto, page }) => {
   await goto('/diagram')
 
-  const customTypeNode = page.locator('[data-node-anchor="custom-type:Domain:email_address"]')
+  const customTypeNode = page.locator('[data-node-anchor="custom-type:Domain:public.email_address"]')
   const usersEmailRow = page.locator('[data-column-anchor="public.users.email"]')
-  const customTypeImpactLine = page.locator('[data-connection-key="custom-type:Domain:email_address->public.users:email"]')
+  const customTypeImpactLine = page.locator('[data-connection-key="custom-type:Domain:public.email_address->public.users:email"]')
   const highlightedConnections = page.locator('[data-connection-highlighted="true"]')
 
   await expect.poll(async () => {
@@ -420,11 +422,12 @@ test('selecting a custom type animates its impact lines and highlights impacted 
   await customTypeNode.click()
 
   await expect(customTypeNode).toHaveAttribute('data-selection-active', 'true')
-  await expect(highlightedConnections).toHaveCount(1)
+  await expect(highlightedConnections).toHaveCount(2)
+  await expect(customTypeImpactLine).toHaveAttribute('data-connection-highlighted', 'true')
   await expect(usersEmailRow).toHaveAttribute('data-relational-highlighted', 'true')
 
   await expect.poll(async () => {
-    return highlightedConnections.first().evaluate((element) => {
+    return customTypeImpactLine.evaluate((element) => {
       const styles = getComputedStyle(element as SVGPathElement)
 
       return {

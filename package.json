@@ -7,7 +7,7 @@
     "build:pages": "NITRO_PRESET=github_pages nuxt build",
     "dev": "nuxt dev",
     "preview": "nuxt preview",
-    "postinstall": "nuxt prepare",
+    "postinstall": "node ./scripts/patch-vue-router-volar-compat.mjs && nuxt prepare",
     "lint": "eslint .",
     "typecheck": "nuxt typecheck",
     "test": "vitest",

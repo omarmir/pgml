@@ -1069,8 +1069,8 @@ test('canvas interactions keep the PGML editor source in sync', async ({ goto, p
 
   await expect.poll(async () => readPgmlEditorValue(editor)).toContain(`Properties "group:Core" {\n  x: ${groupPosition.x}\n  y: ${groupPosition.y}`)
 
-  const customTypeNode = page.locator('[data-node-anchor="custom-type:Domain:email_address"]')
-  const customTypeHeader = page.locator('[data-node-header="custom-type:Domain:email_address"]')
+  const customTypeNode = page.locator('[data-node-anchor="custom-type:Domain:public.email_address"]')
+  const customTypeHeader = page.locator('[data-node-header="custom-type:Domain:public.email_address"]')
 
   await page.getByRole('button', { name: 'Expand email_address' }).click()
 
@@ -1092,7 +1092,7 @@ test('canvas interactions keep the PGML editor source in sync', async ({ goto, p
     }
   })
 
-  await expect.poll(async () => readPgmlEditorValue(editor)).toMatch(new RegExp(`Properties "custom-type:Domain:email_address" \\{[\\s\\S]*x: ${customTypePosition.x}[\\s\\S]*y: ${customTypePosition.y}[\\s\\S]*collapsed: false`))
+  await expect.poll(async () => readPgmlEditorValue(editor)).toMatch(new RegExp(`Properties "custom-type:Domain:public\\.email_address" \\{[\\s\\S]*x: ${customTypePosition.x}[\\s\\S]*y: ${customTypePosition.y}[\\s\\S]*collapsed: false`))
 })
 
 test('side panel can switch tabs, hide entities, and restore them from saved properties', async ({ goto, page }) => {
@@ -1131,9 +1131,9 @@ test('side panel can switch tabs, hide entities, and restore them from saved pro
 
   await expect(page.locator('[data-browser-entity-row="public.users"]')).not.toHaveAttribute('data-browser-search-match', 'true')
   await expect(page.locator('[data-browser-entity-row="public.users.email"]')).toHaveAttribute('data-browser-search-match', 'true')
-  await expect(page.locator('[data-browser-entity-row="custom-type:Domain:email_address"]')).toHaveAttribute('data-browser-search-match', 'true')
+  await expect(page.locator('[data-browser-entity-row="custom-type:Domain:public.email_address"]')).toHaveAttribute('data-browser-search-match', 'true')
   await expect(page.locator('[data-browser-entity-row="public.users.email"]')).toHaveAttribute('style', /--pgml-browser-match-color:/)
-  await expect(page.locator('[data-browser-entity-row="custom-type:Domain:email_address"]')).toHaveAttribute('style', /--pgml-browser-match-color:/)
+  await expect(page.locator('[data-browser-entity-row="custom-type:Domain:public.email_address"]')).toHaveAttribute('style', /--pgml-browser-match-color:/)
 
   const groupBox = await page.locator('[data-browser-entity-row="group:Core"]').boundingBox()
   const tableBox = await page.locator('[data-browser-entity-row="public.users"]').boundingBox()
@@ -1307,7 +1307,7 @@ test('double clicking entity panel items focuses the matching PGML source block'
   }))
 
   await resetEditorState()
-  await page.locator('[data-browser-entity-row="custom-type:Domain:email_address"] button').first().dblclick()
+  await page.locator('[data-browser-entity-row="custom-type:Domain:public.email_address"] button').first().dblclick()
   await expect.poll(async () => {
     return readEditorState()
   }).toEqual(expect.objectContaining({
@@ -1401,7 +1401,7 @@ test('dragging a group or custom type preserves the current zoom and pan', async
 
   await expect.poll(async () => page.locator('[data-connection-layer="true"] path').count()).toBe(connectionPathCount)
 
-  await dragNodeBy('custom-type:Domain:email_address', 48, 42)
+  await dragNodeBy('custom-type:Domain:public.email_address', 48, 42)
 
   await expect.poll(async () => {
     return plane.evaluate((element) => {

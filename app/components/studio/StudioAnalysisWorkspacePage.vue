@@ -857,6 +857,16 @@ const markBrowserSchemaStatusEligible = () => {
   browserSchemaStatusEligible.value = true
 }
 
+const persistBrowserWorkspaceMutation = async () => {
+  if (currentPersistenceSource.value !== 'browser') {
+    return true
+  }
+
+  markBrowserSchemaStatusEligible()
+
+  return await saveSchemaToBrowser()
+}
+
 const resetBrowserSchemaStatusEligibility = () => {
   browserSchemaStatusEligible.value = false
 }
@@ -1596,6 +1606,10 @@ watch([
       compareNoteDraftFlag.value = 'pending'
       compareNoteDraftText.value = ''
     }
+    return
+  }
+
+  if (!compareDiff.value || !compareBaseModel.value || !compareTargetModel.value) {
     return
   }
 
@@ -2443,7 +2457,7 @@ const removeCompareExclusionOption = (option: CompareExclusionOption) => {
 const clearCompareExclusionsDraft = () => {
   compareExclusionsDraft.value = createEmptyPgmlCompareExclusions()
 }
-const saveCompareExclusionsDialog = () => {
+const saveCompareExclusionsDialog = async () => {
   if (!compareExclusionsDraft.value) {
     return
   }
@@ -2455,7 +2469,7 @@ const saveCompareExclusionsDialog = () => {
   }
 
   if (selectedComparison.value) {
-    markBrowserSchemaStatusEligible()
+    await persistBrowserWorkspaceMutation()
   }
 
   closeCompareExclusionsDialog()
@@ -2494,7 +2508,7 @@ const openCompareNoteDialog = (entryId: string) => {
   compareNoteDraftText.value = existingNote?.note || ''
   compareNoteDialogOpen.value = true
 }
-const saveCompareNoteDialog = () => {
+const saveCompareNoteDialog = async () => {
   if (!compareNoteDraftEntryId.value || compareNoteDraftText.value.trim().length === 0) {
     return
   }
@@ -2509,7 +2523,7 @@ const saveCompareNoteDialog = () => {
     return
   }
 
-  markBrowserSchemaStatusEligible()
+  await persistBrowserWorkspaceMutation()
   closeCompareNoteDialog()
   toast.add({
     title: 'Compare note saved',
@@ -2518,7 +2532,7 @@ const saveCompareNoteDialog = () => {
     icon: 'i-lucide-check'
   })
 }
-const deleteCompareNoteDialog = () => {
+const deleteCompareNoteDialog = async () => {
   if (!compareNoteDraftEntryId.value) {
     return
   }
@@ -2529,7 +2543,7 @@ const deleteCompareNoteDialog = () => {
     return
   }
 
-  markBrowserSchemaStatusEligible()
+  await persistBrowserWorkspaceMutation()
   closeCompareNoteDialog()
   toast.add({
     title: 'Compare note removed',
@@ -2565,7 +2579,7 @@ const closeComparisonDialog = () => {
   comparisonDialogOpen.value = false
   comparisonDraftName.value = ''
 }
-const saveComparisonDialog = () => {
+const saveComparisonDialog = async () => {
   if (comparisonNameError.value) {
     return
   }
@@ -2575,7 +2589,7 @@ const saveComparisonDialog = () => {
       return
     }
 
-    markBrowserSchemaStatusEligible()
+    await persistBrowserWorkspaceMutation()
     closeComparisonDialog()
     toast.add({
       title: 'Comparison renamed',
@@ -2592,7 +2606,7 @@ const saveComparisonDialog = () => {
     return
   }
 
-  markBrowserSchemaStatusEligible()
+  await persistBrowserWorkspaceMutation()
   closeComparisonDialog()
   toast.add({
     title: 'Comparison created',
@@ -2606,7 +2620,7 @@ const deleteSelectedComparisonPreset = () => {
     return
   }
 
-  markBrowserSchemaStatusEligible()
+  void persistBrowserWorkspaceMutation()
   toast.add({
     title: 'Comparison deleted',
     description: 'The saved comparison preset was removed from this PGML document.',

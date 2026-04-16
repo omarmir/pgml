@@ -3,8 +3,13 @@ import { describe, expect, it } from 'vitest'
 import {
   buildPgmlWithNodeProperties,
   parsePgml,
+  pgmlVersionedExample,
   stripPgmlPropertiesBlocks
 } from '../../app/utils/pgml'
+import {
+  getPgmlDocumentBlockPreviewSource,
+  parsePgmlDocument
+} from '../../app/utils/pgml-document'
 
 const baseSource = `TableGroup Core {
   users
@@ -104,6 +109,16 @@ Properties "custom-type:Domain:email_address" {
       y: 612,
       collapsed: false
     })
+  })
+
+  it('maps legacy bare custom type property targets onto schema-qualified custom types in versioned previews', () => {
+    const document = parsePgmlDocument(pgmlVersionedExample)
+    const model = parsePgml(getPgmlDocumentBlockPreviewSource(document.workspace))
+
+    expect(model.nodeProperties['custom-type:Domain:public.email_address']).toBeDefined()
+    expect(model.nodeProperties['custom-type:Domain:public.email_address']?.x).toBeTypeOf('number')
+    expect(model.nodeProperties['custom-type:Domain:public.email_address']?.y).toBeTypeOf('number')
+    expect(model.nodeProperties['custom-type:Domain:email_address']).toBeUndefined()
   })
 
   it('parses visibility-only properties blocks for non-node entities', () => {

@@ -2469,6 +2469,8 @@ const getAutomationGroupContentStyle = (groupId: string): CSSProperties => {
 
   return {
     height: `${Math.max(0, Math.round(contentHeight))}px`,
+    marginLeft: 'auto',
+    marginRight: 'auto',
     position: 'relative',
     width: `${Math.max(0, Math.round(contentWidth))}px`
   }

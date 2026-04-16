@@ -236,7 +236,7 @@ Trigger trg_register_fundingopportunity on public.funding_opportunity_profile {
     table_columns: 1
   }
 
-  Properties "custom-type:Domain:email_address" {
+  Properties "custom-type:Domain:public.email_address" {
     x: 1180
     y: 460
     color: #14b8a6

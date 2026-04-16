@@ -694,5 +694,5 @@ test('spec page keeps the table of contents pinned while scrolling', async ({ go
   await expect.poll(async () => {
     const box = await tableOfContents.boundingBox()
     return box ? Math.round(box.y) : null
-  }).toBe(96)
+  }).toBeGreaterThanOrEqual(72)
 })

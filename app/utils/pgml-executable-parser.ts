@@ -141,11 +141,11 @@ const toStableJson = (value: unknown): string => {
 const loadVersionParserModule = async (version: PgmlExecutableParserVersion): Promise<PgsqlParserModule> => {
   switch (version) {
     case 15:
-      return import('@pgsql/parser/v15')
+      return import('./pgsql-parser-v15').then(module => module.default)
     case 16:
-      return import('@pgsql/parser/v16')
+      return import('./pgsql-parser-v16').then(module => module.default)
     case 17:
-      return import('@pgsql/parser/v17')
+      return import('./pgsql-parser-v17').then(module => module.default)
   }
 }
 

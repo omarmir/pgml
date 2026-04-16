@@ -472,6 +472,28 @@ const buildNextDiagramViewName = (
   return `View ${index}`
 }
 
+const ensureBlockHasActiveView = (
+  block: PgmlVersionSetDocument['workspace'] | PgmlVersionDocumentBlock
+) => {
+  if (block.views.length === 0) {
+    const defaultView = createPgmlDocumentView()
+
+    block.views = [defaultView]
+    block.activeViewId = defaultView.id
+
+    return defaultView
+  }
+
+  const activeViewId = block.activeViewId || block.views[0]?.id || null
+  const activeView = block.views.find(view => view.id === activeViewId) || block.views[0] || null
+
+  if (activeView && block.activeViewId !== activeView.id) {
+    block.activeViewId = activeView.id
+  }
+
+  return activeView
+}
+
 const normalizeDiagramViewName = (value: string | null | undefined) => {
   return value?.trim() || ''
 }
@@ -596,10 +618,6 @@ export const usePgmlStudioVersionHistory = (
   const compareNoiseFilters = sharedVersionHistoryState.compareNoiseFilters
   const selectedComparisonId = sharedVersionHistoryState.selectedComparisonId
 
-  if (import.meta.client && selectedComparisonId.value === null && initialSelectedComparisonId) {
-    selectedComparisonId.value = initialSelectedComparisonId
-  }
-
   const document: ComputedRef<PgmlVersionSetDocument> = computed(() => {
     return buildWorkspaceSyncedDocument(documentState.value, input.source.value)
   })
@@ -659,7 +677,20 @@ export const usePgmlStudioVersionHistory = (
     return true
   }
 
-  const setDocument = (nextDocument: PgmlVersionSetDocument) => {
+  if (
+    import.meta.client
+      && selectedComparisonId.value === null
+      && initialSelectedComparisonId
+  ) {
+    applyComparisonSelectionState(documentState.value, initialSelectedComparisonId)
+  }
+
+  const setDocument = (
+    nextDocument: PgmlVersionSetDocument,
+    options?: {
+      preserveSelectedComparison?: boolean
+    }
+  ) => {
     // Normalize every entry point through one setter so browser loads, file
     // loads, restores, and imports all reset the workspace/editor state with
     // the same canonical snapshot formatting and compare defaults.
@@ -687,7 +718,9 @@ export const usePgmlStudioVersionHistory = (
         views: nextDocument.workspace.views.map(clonePgmlDocumentView)
       }
     }
-    const preferredSelectedComparisonId = selectedComparisonId.value
+    const preferredSelectedComparisonId = options?.preserveSelectedComparison
+      ? selectedComparisonId.value
+      : null
     documentState.value = normalizedDocument
     input.source.value = getPgmlDocumentBlockPreviewSource(normalizedDocument.workspace)
     previewTargetId.value = 'workspace'
@@ -741,6 +774,8 @@ export const usePgmlStudioVersionHistory = (
     setDocument({
       ...parsedDocument,
       name: input.documentName.value
+    }, {
+      preserveSelectedComparison: true
     })
   }
 
@@ -980,10 +1015,14 @@ export const usePgmlStudioVersionHistory = (
     settings: Partial<PgmlDiagramViewSettings>
   ) => {
     return updatePreviewBlockViews((block) => {
-      const activeViewId = block.activeViewId || block.views[0]?.id || null
+      const activeView = ensureBlockHasActiveView(block)
+
+      if (!activeView) {
+        return
+      }
 
       block.views = block.views.map((view) => {
-        if (view.id !== activeViewId) {
+        if (view.id !== activeView.id) {
           return clonePgmlDocumentView(view)
         }
 
@@ -1036,10 +1075,14 @@ export const usePgmlStudioVersionHistory = (
     nodeProperties: Record<string, PgmlNodeProperties>
   ) => {
     return updatePreviewBlockViews((block) => {
-      const activeViewId = block.activeViewId || block.views[0]?.id || null
+      const activeView = ensureBlockHasActiveView(block)
+
+      if (!activeView) {
+        return
+      }
 
       block.views = block.views.map((view) => {
-        if (view.id !== activeViewId) {
+        if (view.id !== activeView.id) {
           return clonePgmlDocumentView(view)
         }
 

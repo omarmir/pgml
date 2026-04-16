@@ -79,10 +79,10 @@ const mobileMenuGroups = computed<DropdownMenuItem[][]>(() => {
               >
                 <button
                   type="button"
-                  class="cursor-default border-b border-transparent px-3 py-1.5 text-[0.7rem] font-medium uppercase tracking-[0.12em] text-[color:var(--studio-shell-muted)] transition-colors duration-150 hover:border-[color:var(--studio-shell-label)] hover:bg-[color:var(--studio-surface-hover)] hover:text-[color:var(--studio-shell-text)] data-[state=open]:border-[color:var(--studio-shell-label)] data-[state=open]:bg-[color:var(--studio-surface-hover)] data-[state=open]:text-[color:var(--studio-shell-text)]"
+                  class="cursor-default border-b border-transparent px-2 py-1.5 text-[0.7rem] font-medium uppercase tracking-[0.1em] text-[color:var(--studio-shell-muted)] transition-colors duration-150 hover:border-[color:var(--studio-shell-label)] hover:bg-[color:var(--studio-surface-hover)] hover:text-[color:var(--studio-shell-text)] data-[state=open]:border-[color:var(--studio-shell-label)] data-[state=open]:bg-[color:var(--studio-surface-hover)] data-[state=open]:text-[color:var(--studio-shell-text)]"
                   :title="menu.label"
                 >
-                  <span class="inline-flex items-center gap-2">
+                  <span class="inline-flex items-center gap-1.5">
                     <UIcon
                       :name="menu.icon"
                       class="h-3.5 w-3.5 shrink-0 text-[color:var(--studio-shell-muted)]"

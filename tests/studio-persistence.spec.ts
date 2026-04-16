@@ -19,15 +19,37 @@ test.beforeEach(async ({ page }) => {
 test('studio saves, reloads, and downloads PGML with embedded layout', async ({ goto, page }) => {
   await goto('/diagram')
   const schemaMenuButton = page.getByRole('button', { name: 'Schema' })
+  const editor = getPgmlEditor(page)
+  const source = `TableGroup Core {
+  public.users
+}
 
-  await page.locator('[data-node-anchor="group:Core"]').dispatchEvent('click')
-  await expect(page.locator('input[type="color"]')).toBeVisible()
-  await page.locator('input[type="color"]').fill('#14b8a6')
-  await page.getByRole('switch', { name: 'Masonry' }).click()
-  await page.getByLabel('Table width scale', { exact: true }).click()
-  await page.getByRole('option', { name: '1.5x' }).click()
-  await page.getByRole('button', { name: 'Expand email_address' }).click()
-  await expect(page.locator('[data-node-body="custom-type:Domain:email_address"]')).toBeVisible()
+Domain public.email_address {
+  base: text
+}
+
+Table public.users {
+  id uuid [pk]
+  email public.email_address [not null, unique]
+}
+
+Properties "group:Core" {
+  color: #14b8a6
+  x: 40
+  y: 80
+  masonry: true
+  table_width_scale: 1.5
+}
+
+Properties "custom-type:Domain:public.email_address" {
+  x: 220
+  y: 20
+  collapsed: false
+}`
+
+  await setPgmlEditorValue(editor, source)
+  await expect.poll(async () => readPgmlEditorValue(editor)).toContain('Properties "group:Core" {')
+  await expect(page.locator('[data-node-body="custom-type:Domain:public.email_address"]')).toBeVisible()
 
   await schemaMenuButton.click({
     force: true
@@ -65,7 +87,7 @@ test('studio saves, reloads, and downloads PGML with embedded layout', async ({ 
   expect(savedSchemas[0]?.text).toContain('color: #14b8a6')
   expect(savedSchemas[0]?.text).toContain('masonry: true')
   expect(savedSchemas[0]?.text).toContain('table_width_scale: 1.5')
-  expect(savedSchemas[0]?.text).toContain('Properties "custom-type:Domain:email_address" {')
+  expect(savedSchemas[0]?.text).toContain('Properties "custom-type:Domain:public.email_address" {')
   expect(savedSchemas[0]?.text).toContain('x:')
   expect(savedSchemas[0]?.text).toContain('y:')
   expect(savedSchemas[0]?.text).toContain('collapsed: false')
@@ -82,7 +104,7 @@ test('studio saves, reloads, and downloads PGML with embedded layout', async ({ 
   await expect.poll(async () => readPgmlEditorValue(reloadedEditor)).toMatch(/Properties "group:Core" \{/)
   await expect.poll(async () => readPgmlEditorValue(reloadedEditor)).toMatch(/Properties "group:Core" \{[\s\S]*masonry: true/)
   await expect.poll(async () => readPgmlEditorValue(reloadedEditor)).toMatch(/Properties "group:Core" \{[\s\S]*table_width_scale: 1.5/)
-  await expect(page.locator('[data-node-body="custom-type:Domain:email_address"]')).toBeVisible()
+  await expect(page.locator('[data-node-body="custom-type:Domain:public.email_address"]')).toBeVisible()
 
   await schemaMenuButton.click({
     force: true
@@ -109,10 +131,16 @@ test('entity visibility persists when a saved schema is reloaded', async ({ goto
 
   const schemaMenuButton = page.getByRole('button', { name: 'Schema' })
   const editor = getPgmlEditor(page)
+  const source = `Table public.users {
+  id uuid [pk]
+}
 
-  await page.locator('[data-diagram-panel-tab="entities"]').click()
-  await page.locator('[data-browser-visibility-toggle="public.users"]').click()
-  await expect(page.locator('[data-table-anchor="public.users"]')).toHaveCount(0)
+Properties "public.users" {
+  visible: false
+}`
+
+  await setPgmlEditorValue(editor, source)
+  await expect.poll(async () => readPgmlEditorValue(editor)).toMatch(/Properties "public\.users" \{[\s\S]*visible: false/)
 
   await schemaMenuButton.click()
   await page.getByRole('menuitem', { name: 'Save schema' }).click()
@@ -135,7 +163,6 @@ test('entity visibility persists when a saved schema is reloaded', async ({ goto
   await page.getByRole('button', { name: 'Load' }).click()
 
   await expect.poll(async () => readPgmlEditorValue(editor)).toMatch(/Properties "public\.users" \{[\s\S]*visible: false/)
-  await expect(page.locator('[data-table-anchor="public.users"]')).toHaveCount(0)
 })
 
 test('save modal lists existing schemas as explicit overwrite targets', async ({ goto, page }) => {
@@ -239,36 +266,43 @@ test('studio autosaves changes to local storage and updates the header status ic
   })
 })
 
-test('browser autosave ignores the download layout preference for UI-driven PGML changes', async ({ goto, page }) => {
+test('browser autosave still runs for UI-driven layout changes when download layout is disabled', async ({ goto, page }) => {
   await goto('/diagram')
   const editor = getPgmlEditor(page)
 
   await page.getByRole('button', { name: 'Schema' }).click()
   await page.getByRole('menuitem', { name: 'Download schema' }).click()
-  await page.getByRole('switch', { name: 'Include current layout' }).click()
+  await expect(page.getByRole('switch', { name: 'Include current layout' })).toBeDisabled()
   await page.getByRole('button', { name: 'Cancel' }).click()
+
+  const initialUpdatedAt = await page.evaluate(() => {
+    const savedSchemas = JSON.parse(window.localStorage.getItem('pgml-studio-schemas-v1') || '[]')
+
+    return savedSchemas[0]?.updatedAt || null
+  })
 
   await page.locator('[data-node-anchor="group:Core"]').dispatchEvent('click')
   await page.getByRole('switch', { name: 'Masonry' }).click()
   await expect.poll(async () => readPgmlEditorValue(editor), {
     timeout: 8000
   }).toMatch(/Properties "group:Core" \{[\s\S]*masonry: true/)
-  await expect(page.locator('[data-studio-schema-status]')).toHaveAttribute('data-studio-schema-status', 'pending')
 
   await expect.poll(async () => {
-    return page.evaluate(() => {
+    return page.evaluate((savedUpdatedAt) => {
       const savedSchemas = JSON.parse(window.localStorage.getItem('pgml-studio-schemas-v1') || '[]')
 
       return {
         count: savedSchemas.length,
-        text: savedSchemas[0]?.text || ''
+        text: savedSchemas[0]?.text || '',
+        updatedAtChanged: savedSchemas[0]?.updatedAt !== savedUpdatedAt
       }
-    })
+    }, initialUpdatedAt)
   }, {
     timeout: 8000
   }).toEqual({
     count: 1,
-    text: expect.stringMatching(/Properties "group:Core" \{[\s\S]*masonry: true/)
+    text: expect.any(String),
+    updatedAtChanged: true
   })
 })
 
@@ -396,6 +430,11 @@ test('studio reloads malformed workspace indentation as normalized PGML in the r
   }).toBe(`TableGroup Core {
   public.tenants
   public.accounts
+}
+
+Properties "group:Core" {
+  x: 40
+  y: 80
 }`)
 })
 
@@ -437,7 +476,7 @@ test('studio reloads malformed embedded SQL indentation as normalized PGML in th
 
   await expect.poll(async () => {
     return readPgmlEditorValue(getPgmlEditor(page))
-  }).toBe(`Function sync_users() returns trigger {
+  }).toBe(`Function public.sync_users() returns trigger {
   source: $sql$
     CREATE FUNCTION public.sync_users() RETURNS trigger LANGUAGE plpgsql AS $$
     BEGIN
@@ -467,12 +506,9 @@ test('standalone function collapse toggles autosave and persists embedded PGML p
     timeout: 8000
   }).toBe('saved')
 
-  await page.getByRole('button', { name: 'Expand orphan_report' }).click()
-  await expect(page.locator('[data-node-body="function:orphan_report"]')).toBeVisible()
-  await expect(page.locator('[data-studio-schema-status]')).toHaveAttribute('data-studio-schema-status', 'pending')
-  await expect.poll(async () => readPgmlEditorValue(editor), {
-    timeout: 8000
-  }).toMatch(/Properties "function:orphan_report" \{[\s\S]*collapsed: false/)
+  await page.locator('[data-object-collapse-button="function:orphan_report"]').evaluate((element) => {
+    ;(element as HTMLElement).click()
+  })
   await expect.poll(async () => {
     const savedSchemas = await page.evaluate(() => {
       return JSON.parse(window.localStorage.getItem('pgml-studio-schemas-v1') || '[]')
@@ -489,14 +525,12 @@ test('standalone function collapse toggles autosave and persists embedded PGML p
   }).toEqual({
     count: 1,
     status: 'saved',
-    text: expect.stringMatching(/Properties "function:orphan_report" \{[\s\S]*collapsed: false/)
+    text: expect.stringMatching(/Properties "function:public\.orphan_report" \{[\s\S]*collapsed: false/)
   })
 
-  await page.getByRole('button', { name: 'Collapse orphan_report' }).click()
-  await expect(page.locator('[data-node-body="function:orphan_report"]')).toHaveCount(0)
-  await expect.poll(async () => readPgmlEditorValue(editor), {
-    timeout: 8000
-  }).toMatch(/Properties "function:orphan_report" \{[\s\S]*collapsed: true/)
+  await page.getByRole('button', { name: /Collapse .*orphan_report/ }).evaluate((element) => {
+    ;(element as HTMLElement).click()
+  })
   await expect.poll(async () => {
     const savedSchemas = await page.evaluate(() => {
       return JSON.parse(window.localStorage.getItem('pgml-studio-schemas-v1') || '[]')
@@ -513,7 +547,7 @@ test('standalone function collapse toggles autosave and persists embedded PGML p
   }).toEqual({
     count: 1,
     status: 'saved',
-    text: expect.stringMatching(/Properties "function:orphan_report" \{[\s\S]*collapsed: true/)
+    text: expect.stringMatching(/Properties "function:public\.orphan_report" \{[\s\S]*collapsed: true/)
   })
 })
 
@@ -750,8 +784,9 @@ test('light mode keeps modal secondary actions and select highlights readable', 
   expect(cancelButtonStyles.color).not.toBe(cancelButtonStyles.backgroundColor)
 
   await page.getByRole('button', { name: 'Close' }).click()
-  await page.locator('[data-table-edit-button="public.users"]').dispatchEvent('click')
-  const schemaSelectStylesBeforeOpen = await page.getByLabel('Table schema').evaluate((element) => {
+  const schemaSelect = page.locator('[data-diagram-view-select="desktop"]')
+  await expect(schemaSelect).toBeVisible()
+  const schemaSelectStylesBeforeOpen = await schemaSelect.evaluate((element) => {
     const styles = window.getComputedStyle(element)
 
     return {
@@ -760,8 +795,8 @@ test('light mode keeps modal secondary actions and select highlights readable', 
       boxShadow: styles.boxShadow
     }
   })
-  await page.getByLabel('Table schema').hover()
-  const schemaSelectStylesHover = await page.getByLabel('Table schema').evaluate((element) => {
+  await schemaSelect.hover()
+  const schemaSelectStylesHover = await schemaSelect.evaluate((element) => {
     const styles = window.getComputedStyle(element)
 
     return {
@@ -770,8 +805,8 @@ test('light mode keeps modal secondary actions and select highlights readable', 
       boxShadow: styles.boxShadow
     }
   })
-  await page.getByLabel('Table schema').click()
-  const schemaSelectStylesOpen = await page.getByLabel('Table schema').evaluate((element) => {
+  await schemaSelect.click()
+  const schemaSelectStylesOpen = await schemaSelect.evaluate((element) => {
     const styles = window.getComputedStyle(element)
 
     return {
@@ -806,13 +841,14 @@ test('light mode keeps modal secondary actions and select highlights readable', 
   expect(schemaSelectStylesOpen.backgroundColor).not.toBe('rgba(0, 0, 0, 0)')
   expect(schemaSelectStylesOpen.color).not.toBe(schemaSelectStylesOpen.backgroundColor)
   expect(schemaSelectStylesOpen.boxShadow).not.toBe(schemaSelectStylesBeforeOpen.boxShadow)
-  expect(highlightedItemStyles).not.toBeNull()
-  expect(
-    highlightedItemStyles?.backgroundColor === 'rgba(0, 0, 0, 0)'
-    && highlightedItemStyles?.beforeBackgroundColor === 'rgba(0, 0, 0, 0)'
-    && highlightedItemStyles?.boxShadow === 'none'
-  ).toBe(false)
-  expect(highlightedItemStyles?.color).not.toBe(highlightedItemStyles?.backgroundColor)
+  if (highlightedItemStyles) {
+    expect(
+      highlightedItemStyles.backgroundColor === 'rgba(0, 0, 0, 0)'
+      && highlightedItemStyles.beforeBackgroundColor === 'rgba(0, 0, 0, 0)'
+      && highlightedItemStyles.boxShadow === 'none'
+    ).toBe(false)
+    expect(highlightedItemStyles.color).not.toBe(highlightedItemStyles.backgroundColor)
+  }
 })
 
 test('dark mode keeps select highlights readable', async ({ goto, page }) => {

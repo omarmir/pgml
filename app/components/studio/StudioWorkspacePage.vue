@@ -1660,6 +1660,10 @@ watch([
     return
   }
 
+  if (!compareDiff.value || !compareBaseModel.value || !compareTargetModel.value) {
+    return
+  }
+
   const previousNoteCount = selectedComparison.value.notes.length
   const didPrune = pruneSelectedComparisonNotes(compareRawEntries.value.map(entry => entry.id))
   const nextNoteCount = selectedComparison.value.notes.length
