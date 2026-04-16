@@ -1,5 +1,8 @@
 import { describe, expect, it } from 'vitest'
-import { buildPgmlCompareDiffLines } from '../../app/utils/pgml-compare-diff'
+import {
+  buildPgmlCompareDiffLines,
+  getPgmlCompareDiffPrefixLabel
+} from '../../app/utils/pgml-compare-diff'
 
 describe('pgml compare diff', () => {
   it('builds unified diff lines for changed text blocks', () => {
@@ -96,5 +99,11 @@ describe('pgml compare diff', () => {
         prefix: ' '
       }
     ])
+  })
+
+  it('renders explicit side labels for compare diff prefixes', () => {
+    expect(getPgmlCompareDiffPrefixLabel('removed', 'EGCS5', 'GCS')).toBe('Only in EGCS5')
+    expect(getPgmlCompareDiffPrefixLabel('added', 'EGCS5', 'GCS')).toBe('Only in GCS')
+    expect(getPgmlCompareDiffPrefixLabel('context', 'EGCS5', 'GCS')).toBe('')
   })
 })

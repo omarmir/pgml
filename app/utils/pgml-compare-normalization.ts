@@ -656,7 +656,9 @@ const normalizeRoutineSourceForCompare = (source: string | null) => {
   }
 
   const extractedBody = extractDollarQuotedBody(remainder)
-  const body = extractedBody?.body || null
+  const body = extractedBody?.body
+    ? normalizeRoutineBodyIdentifierQuotes(extractedBody.body)
+    : null
   let clauseRemainder = normalizeWhitespace(`${extractedBody?.prefix || remainder} ${extractedBody?.suffix || ''}`)
 
   clauseRemainder = clauseRemainder
@@ -670,6 +672,38 @@ const normalizeRoutineSourceForCompare = (source: string | null) => {
     body,
     clauses: clauseRemainder.length > 0 ? clauseRemainder : null
   }
+}
+
+const normalizeRoutineIdentifierToken = (value: string) => {
+  const trimmedValue = value.trim()
+  const unquotedValue = /^['"].*['"]$/u.test(trimmedValue)
+    ? trimmedValue.slice(1, -1)
+    : trimmedValue
+
+  if (!/^[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*$/u.test(unquotedValue)) {
+    return trimmedValue
+  }
+
+  const normalizedValue = normalizeImportedQualifiedName(unquotedValue, {
+    foldIdentifiersToLowercase: true
+  })
+
+  return normalizedValue.startsWith('public.')
+    ? normalizedValue.slice('public.'.length)
+    : normalizedValue
+}
+
+const normalizeRoutineBodyIdentifierQuotes = (value: string) => {
+  return value
+    .replace(
+      /\b(insert\s+into|update|from|join|into|table)\s+(['"][A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*['"]|[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*)/gu,
+      (_match, keyword: string, identifier: string) => `${keyword} ${normalizeRoutineIdentifierToken(identifier)}`
+    )
+    .replace(
+      /::\s*(['"][A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*['"]|[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*)/gu,
+      (_match, identifier: string) => `::${normalizeRoutineIdentifierToken(identifier)}`
+    )
+    .replace(/\s+([;,])/gu, '$1')
 }
 
 const normalizeRoutineExecutableObjectName = (value: string) => {
@@ -699,8 +733,23 @@ const normalizeRoutineSignatureForCompare = (value: string) => {
 const normalizeRoutineSemanticFingerprint = (
   fingerprint: Record<string, unknown>
 ) => {
+  const body = fingerprint.body
+  const normalizedBody = body && typeof body === 'object' && !Array.isArray(body)
+    ? (() => {
+        const normalizedBodyValue = body as Record<string, unknown>
+
+        return {
+          ...normalizedBodyValue,
+          value: typeof normalizedBodyValue.value === 'string'
+            ? normalizeRoutineBodyIdentifierQuotes(normalizedBodyValue.value)
+            : normalizedBodyValue.value
+        }
+      })()
+    : body
+
   return {
     ...fingerprint,
+    body: normalizedBody,
     language: typeof fingerprint.language === 'string'
       ? fingerprint.language.toLowerCase()
       : fingerprint.language,

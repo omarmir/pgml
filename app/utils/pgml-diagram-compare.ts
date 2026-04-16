@@ -1,5 +1,12 @@
 import { getStoredGroupId, type DiagramGpuSelection } from './diagram-gpu-scene'
 import {
+  createPgmlCompareTypeExpressionNormalizer,
+  normalizePgmlCompareRoutinePairValues,
+  normalizePgmlCompareRoutineValue,
+  normalizePgmlCompareSequenceValue,
+  normalizePgmlCompareTriggerValue
+} from './pgml-compare-normalization'
+import {
   clonePgmlCompareExclusions,
   clonePgmlCompareNoiseFilters,
   type PgmlCompareExclusions,
@@ -763,6 +770,8 @@ const buildEntryFromDiff = <T>(input: {
 const buildStandaloneObjectEntry = <T>(input: {
   buildObjectId: (value: T) => string
   buildRowKey?: (value: T) => string | null
+  displayAfter?: unknown
+  displayBefore?: unknown
   entry: PgmlDiffEntry<T>
   entityKind: 'custom-type' | 'function' | 'procedure' | 'sequence'
   idPrefix: string
@@ -774,23 +783,29 @@ const buildStandaloneObjectEntry = <T>(input: {
   // not drift apart over time.
   const afterObjectId = input.entry.after ? input.buildObjectId(input.entry.after) : null
   const beforeObjectId = input.entry.before ? input.buildObjectId(input.entry.before) : null
+  const beforeDisplayValue = (input.displayBefore ?? input.entry.before) || null
+  const afterDisplayValue = (input.displayAfter ?? input.entry.after) || null
 
   return {
-    afterSnapshot: formatCompareSnapshot(input.entry.after),
+    afterSnapshot: formatCompareSnapshot(afterDisplayValue),
     baseNodeIds: buildNodeIds(beforeObjectId),
-    beforeSnapshot: formatCompareSnapshot(input.entry.before),
+    beforeSnapshot: formatCompareSnapshot(beforeDisplayValue),
     changeKind: input.entry.kind,
     changedFields: input.entry.changes || [],
     description: buildEntryDescription(
       input.entry.kind,
       input.entityKind,
       input.entry.label,
-      input.entry.before || null,
-      input.entry.after || null,
+      beforeDisplayValue,
+      afterDisplayValue,
       input.entry.changes || []
     ),
     entityKind: input.entityKind,
-    fields: buildFieldRecords(input.entry.before || null, input.entry.after || null, input.entry.changes || []),
+    fields: buildFieldRecords(
+      beforeDisplayValue,
+      afterDisplayValue,
+      input.entry.changes || []
+    ),
     id: `${input.idPrefix}:${input.entry.id}`,
     label: input.entry.label,
     rowKey: input.entry.after && input.buildRowKey ? input.buildRowKey(input.entry.after) : null,
@@ -956,6 +971,8 @@ export const buildPgmlDiagramCompareEntries = (
   baseModel: PgmlSchemaModel,
   targetModel: PgmlSchemaModel
 ) => {
+  const normalizeType = createPgmlCompareTypeExpressionNormalizer([baseModel, targetModel])
+
   // The compare panel works from one flattened list so diagram clicks, search,
   // and inspector details can all talk about the same change identity.
   const entries: PgmlDiagramCompareEntry[] = []
@@ -1232,9 +1249,18 @@ export const buildPgmlDiagramCompareEntries = (
     entityKind: 'function' | 'procedure',
     entry: PgmlDiffEntry<PgmlRoutine>
   ) => {
+    const normalizedRoutinePair = entry.before && entry.after
+      ? normalizePgmlCompareRoutinePairValues(entry.before, entry.after)
+      : {
+          after: entry.after ? normalizePgmlCompareRoutineValue(entry.after) : null,
+          before: entry.before ? normalizePgmlCompareRoutineValue(entry.before) : null
+        }
+
     return buildStandaloneObjectEntry({
       buildObjectId: value => buildRoutineObjectId(kind, value.name),
       buildRowKey: value => buildRoutineObjectId(kind, value.name),
+      displayAfter: normalizedRoutinePair.after,
+      displayBefore: normalizedRoutinePair.before,
       entry,
       entityKind,
       idPrefix: entityKind,
@@ -1244,30 +1270,59 @@ export const buildPgmlDiagramCompareEntries = (
 
   entries.push(...buildEntryFromDiff({
     buildEntry: entry => buildRoutineEntry('function', 'function', entry),
-    entries: diff.functions
+    entries: diff.functions,
+    getNoiseComparisonValues: (entry) => {
+      if (entry.before && entry.after) {
+        return normalizePgmlCompareRoutinePairValues(entry.before, entry.after)
+      }
+
+      return {
+        after: entry.after ? normalizePgmlCompareRoutineValue(entry.after) : null,
+        before: entry.before ? normalizePgmlCompareRoutineValue(entry.before) : null
+      }
+    }
   }))
 
   entries.push(...buildEntryFromDiff({
     buildEntry: entry => buildRoutineEntry('procedure', 'procedure', entry),
-    entries: diff.procedures
+    entries: diff.procedures,
+    getNoiseComparisonValues: (entry) => {
+      if (entry.before && entry.after) {
+        return normalizePgmlCompareRoutinePairValues(entry.before, entry.after)
+      }
+
+      return {
+        after: entry.after ? normalizePgmlCompareRoutineValue(entry.after) : null,
+        before: entry.before ? normalizePgmlCompareRoutineValue(entry.before) : null
+      }
+    }
   }))
 
   entries.push(...buildEntryFromDiff({
     buildEntry: (entry) => {
+      const normalizedBefore = entry.before ? normalizePgmlCompareTriggerValue(entry.before) : null
+      const normalizedAfter = entry.after ? normalizePgmlCompareTriggerValue(entry.after) : null
       const trigger = entry.after || entry.before
       const objectId = trigger ? buildRoutineObjectId('trigger', trigger.name) : null
       const tableId = entry.after?.tableName || entry.before?.tableName || null
       const targetTable = findTableById(targetModel, tableId)
 
       return {
-        afterSnapshot: formatCompareSnapshot(entry.after),
+        afterSnapshot: formatCompareSnapshot(normalizedAfter),
         baseNodeIds: buildNodeIds(entry.before?.tableName, entry.before ? buildRoutineObjectId('trigger', entry.before.name) : null),
-        beforeSnapshot: formatCompareSnapshot(entry.before),
+        beforeSnapshot: formatCompareSnapshot(normalizedBefore),
         changeKind: entry.kind,
         changedFields: entry.changes || [],
-        description: buildEntryDescription(entry.kind, 'trigger', entry.label, entry.before || null, entry.after || null, entry.changes || []),
+        description: buildEntryDescription(
+          entry.kind,
+          'trigger',
+          entry.label,
+          normalizedBefore,
+          normalizedAfter,
+          entry.changes || []
+        ),
         entityKind: 'trigger',
-        fields: buildFieldRecords(entry.before || null, entry.after || null, entry.changes || []),
+        fields: buildFieldRecords(normalizedBefore, normalizedAfter, entry.changes || []),
         id: `trigger:${entry.id}`,
         label: entry.label,
         rowKey: entry.after && trigger ? buildRoutineObjectId('trigger', trigger.name) : null,
@@ -1289,21 +1344,38 @@ export const buildPgmlDiagramCompareEntries = (
         targetNodeIds: buildNodeIds(entry.after?.tableName, targetTable?.fullName, entry.after ? objectId : null)
       } satisfies Omit<PgmlDiagramCompareEntry, 'noiseKinds'>
     },
-    entries: diff.triggers
+    entries: diff.triggers,
+    getNoiseComparisonValues: entry => ({
+      after: entry.after ? normalizePgmlCompareTriggerValue(entry.after) : null,
+      before: entry.before ? normalizePgmlCompareTriggerValue(entry.before) : null
+    })
   }))
 
   entries.push(...buildEntryFromDiff({
     buildEntry: (entry) => {
+      const normalizedBefore = entry.before
+        ? normalizePgmlCompareSequenceValue(entry.before, normalizeType)
+        : null
+      const normalizedAfter = entry.after
+        ? normalizePgmlCompareSequenceValue(entry.after, normalizeType)
+        : null
+
       return buildStandaloneObjectEntry({
         buildObjectId: value => buildRoutineObjectId('sequence', value.name),
         buildRowKey: value => buildRoutineObjectId('sequence', value.name),
+        displayAfter: normalizedAfter,
+        displayBefore: normalizedBefore,
         entry,
         entityKind: 'sequence',
         idPrefix: 'sequence',
         sourceRange: value => value.sourceRange
       })
     },
-    entries: diff.sequences
+    entries: diff.sequences,
+    getNoiseComparisonValues: entry => ({
+      after: entry.after ? normalizePgmlCompareSequenceValue(entry.after, normalizeType) : null,
+      before: entry.before ? normalizePgmlCompareSequenceValue(entry.before, normalizeType) : null
+    })
   }))
 
   entries.push(...buildEntryFromDiff({

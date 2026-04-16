@@ -219,6 +219,63 @@ Function public.refresh_users() returns void {
     }).some(entry => entry.id === 'function:refresh_orders')).toBe(true)
   })
 
+  it('renders executable affects graphs with stable ordering in compare snapshots', () => {
+    const baseModel = parseSnapshotModel(`Function public.register_entity() returns trigger {
+  affects {
+    writes: [public.common_entity]
+    sets: [public.transfer_payment_stream.id, public.common_review.id, public.funding_opportunity_profile.id, public.applicant_recipient_profile.id, public.funding_case_agreement_profile.id, public.funding_case_intake_profile.id]
+    depends_on: [public.common_entity, public.transfer_payment_stream, public.common_review, public.funding_opportunity_profile, public.applicant_recipient_profile, public.funding_case_agreement_profile, public.funding_case_intake_profile, public.entity_type]
+    owned_by: [public.transfer_payment_stream, public.common_review, public.funding_opportunity_profile, public.applicant_recipient_profile, public.funding_case_agreement_profile, public.funding_case_intake_profile]
+  }
+
+  source: $sql$
+    CREATE OR REPLACE FUNCTION register_entity() RETURNS trigger AS $$
+    BEGIN
+      RETURN NEW;
+    END;
+    $$ LANGUAGE plpgsql;
+  $sql$
+}`)
+    const targetModel = parseSnapshotModel(`Function public.register_entity() returns trigger {
+  affects {
+    writes: [public.common_entity]
+    sets: [public.common_review.id, public.transfer_payment_stream.id, public.applicant_recipient_profile.id]
+    depends_on: [public.common_entity, public.applicant_recipient_profile, public.common_review, public.transfer_payment_stream, public.entity_type]
+    owned_by: [public.applicant_recipient_profile, public.common_review, public.transfer_payment_stream]
+  }
+
+  source: $sql$
+    CREATE FUNCTION public.register_entity() RETURNS trigger AS $$
+    BEGIN
+      RETURN NEW;
+    END;
+    $$ LANGUAGE plpgsql;
+  $sql$
+}`)
+    const entries = buildPgmlDiagramCompareEntries(
+      diffPgmlSchemaModels(baseModel, targetModel),
+      baseModel,
+      targetModel
+    )
+    const routineEntry = entries.find(entry => entry.id === 'function:register_entity') || null
+
+    expect(routineEntry?.changedFields).toEqual(['affects'])
+    expect(routineEntry?.beforeSnapshot).toContain('"dependsOn": [\n      "public.applicant_recipient_profile",')
+    expect(routineEntry?.beforeSnapshot).toContain('"public.common_review"')
+    expect(routineEntry?.beforeSnapshot).toContain('"public.transfer_payment_stream"')
+    expect(routineEntry?.beforeSnapshot).toContain('"public.funding_opportunity_profile"')
+    expect(routineEntry?.afterSnapshot).toContain('"dependsOn": [\n      "public.applicant_recipient_profile",')
+    expect(routineEntry?.afterSnapshot).toContain('"public.common_review"')
+    expect(routineEntry?.afterSnapshot).toContain('"public.transfer_payment_stream"')
+    expect(routineEntry?.afterSnapshot).not.toContain('"public.funding_opportunity_profile"')
+    expect(routineEntry?.fields).toContainEqual({
+      after: expect.stringContaining('"ownedBy"'),
+      before: expect.stringContaining('"ownedBy"'),
+      id: 'affects',
+      label: 'affects'
+    })
+  })
+
   it('classifies executable rename-only diffs as optional compare noise', () => {
     const baseModel = parseSnapshotModel(`Function public.refresh_orders() returns void {
   source: $sql$

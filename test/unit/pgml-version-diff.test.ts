@@ -589,6 +589,114 @@ Sequence public.common_review_set_id_seq {
     expect(migrationBundle.meta.statementCount).toBe(0)
   })
 
+  it('ignores function source differences when only or-replace, public qualification, and quoted identifier style change', () => {
+    const beforeModel = parsePgml(`Function register_entity() returns trigger {
+  source: $sql$
+    CREATE OR REPLACE FUNCTION register_entity() RETURNS trigger AS $$
+    DECLARE
+      allocated_id bigint;
+    BEGIN
+      INSERT INTO 'Common_Entity' (egcs_cn_entitytype)
+      VALUES (TG_ARGV[0]::'Entity_Type')
+      RETURNING id INTO allocated_id;
+
+      NEW.id := allocated_id;
+      RETURN NEW;
+    END;
+    $$ LANGUAGE plpgsql;
+  $sql$
+}`)
+    const afterModel = parsePgml(`Function public.register_entity() returns trigger {
+  source: $sql$
+    CREATE FUNCTION public.register_entity() RETURNS trigger
+        LANGUAGE plpgsql
+        AS $$
+        DECLARE
+          allocated_id bigint;
+        BEGIN
+          INSERT INTO "Common_Entity" (egcs_cn_entitytype)
+          VALUES (TG_ARGV[0]::"Entity_Type")
+          RETURNING id INTO allocated_id;
+
+          NEW.id := allocated_id;
+          RETURN NEW;
+        END;
+        $$;
+  $sql$
+}`)
+    const diff = diffPgmlSchemaModels(beforeModel, afterModel)
+    const migrationBundle = buildPgmlMigrationDiffBundle(beforeModel, afterModel)
+
+    expect(diff.functions).toEqual([])
+    expect(diff.summary.modified).toBe(0)
+    expect(migrationBundle.meta.hasChanges).toBe(false)
+    expect(migrationBundle.meta.statementCount).toBe(0)
+  })
+
+  it('ignores function source differences when only public qualification, comments, and quoted table identifiers change', () => {
+    const beforeModel = parsePgml(`Function trg_fn_autopopulate_self_approval() returns trigger {
+  source: $sql$
+    CREATE FUNCTION trg_fn_autopopulate_self_approval() RETURNS trigger AS $$
+    DECLARE
+      user_position_title text;
+    BEGIN
+      -- Only applies when approvalvalue is being set for the first time
+      IF NEW.egcs_cn_approvalvalue IS NULL OR OLD.egcs_cn_approvalvalue IS NOT NULL THEN
+        RETURN NEW;
+      END IF;
+
+      -- Only applies when acting as self (no delegation)
+      IF NEW.egcs_cn_defaultuser <> NEW.egcs_cn_assigneduser THEN
+        RETURN NEW;
+      END IF;
+
+      SELECT egcs_cn_position_title INTO user_position_title
+      FROM Common_User
+      WHERE id = NEW.egcs_cn_assigneduser;
+
+      NEW.egcs_cn_approvaldate := NOW();
+      NEW.egcs_cn_approvalpositiontitle := user_position_title;
+      RETURN NEW;
+    END;
+    $$ LANGUAGE plpgsql;
+  $sql$
+}`)
+    const afterModel = parsePgml(`Function public.trg_fn_autopopulate_self_approval() returns trigger {
+  source: $sql$
+    CREATE FUNCTION public.trg_fn_autopopulate_self_approval() RETURNS trigger
+        LANGUAGE plpgsql
+        AS $$
+        DECLARE
+          user_position_title text;
+        BEGIN
+          IF NEW.egcs_cn_approvalvalue IS NULL OR OLD.egcs_cn_approvalvalue IS NOT NULL THEN
+            RETURN NEW;
+          END IF;
+
+          IF NEW.egcs_cn_defaultuser <> NEW.egcs_cn_assigneduser THEN
+            RETURN NEW;
+          END IF;
+
+          SELECT egcs_cn_position_title INTO user_position_title
+          FROM "Common_User"
+          WHERE id = NEW.egcs_cn_assigneduser;
+
+          NEW.egcs_cn_approvaldate := NOW();
+          NEW.egcs_cn_approvalpositiontitle := user_position_title;
+          RETURN NEW;
+        END;
+        $$;
+  $sql$
+}`)
+    const diff = diffPgmlSchemaModels(beforeModel, afterModel)
+    const migrationBundle = buildPgmlMigrationDiffBundle(beforeModel, afterModel)
+
+    expect(diff.functions).toEqual([])
+    expect(diff.summary.modified).toBe(0)
+    expect(migrationBundle.meta.hasChanges).toBe(false)
+    expect(migrationBundle.meta.statementCount).toBe(0)
+  })
+
   it('ignores trigger source differences when only when-clause parentheses and public qualification change', () => {
     const beforeModel = parsePgml(`Trigger trg_cascade_routingslip_status on Common_Approval {
   source: $sql$
@@ -608,6 +716,71 @@ Sequence public.common_review_set_id_seq {
     const migrationBundle = buildPgmlMigrationDiffBundle(beforeModel, afterModel)
 
     expect(diff.triggers).toEqual([])
+    expect(diff.summary.modified).toBe(0)
+    expect(migrationBundle.meta.hasChanges).toBe(false)
+    expect(migrationBundle.meta.statementCount).toBe(0)
+  })
+
+  it('ignores function source differences when only public qualification, quoted table identifiers, and whitespace before semicolons change', () => {
+    const beforeModel = parsePgml(`Function trg_fn_validate_added_step_sequence() returns trigger {
+  source: $sql$
+CREATE FUNCTION trg_fn_validate_added_step_sequence() RETURNS trigger AS $$
+    DECLARE
+      max_actioned_sequence decimal;
+    BEGIN
+      IF NEW.egcs_cn_isadded = false THEN
+        RETURN NEW;
+      END IF;
+
+      SELECT MAX(egcs_cn_sequence) INTO max_actioned_sequence
+      FROM Common_Approval
+      WHERE egcs_cn_routingslip = NEW.egcs_cn_routingslip
+        AND egcs_cn_approvalvalue IS NOT NULL;
+
+      IF max_actioned_sequence IS NOT NULL
+        AND NEW.egcs_cn_sequence <= max_actioned_sequence THEN
+        RAISE EXCEPTION
+          'Added approval step sequence % must be greater than last actioned sequence %',
+          NEW.egcs_cn_sequence, max_actioned_sequence;
+      END IF;
+
+      RETURN NEW;
+    END;
+    $$ LANGUAGE plpgsql;
+  $sql$
+}`)
+    const afterModel = parsePgml(`Function public.trg_fn_validate_added_step_sequence() returns trigger {
+  source: $sql$
+CREATE FUNCTION public.trg_fn_validate_added_step_sequence() RETURNS trigger
+        LANGUAGE plpgsql
+        AS $$
+        DECLARE
+          max_actioned_sequence decimal;
+        BEGIN
+          IF NEW.egcs_cn_isadded = false THEN
+            RETURN NEW;
+          END IF;
+
+          SELECT MAX(egcs_cn_sequence) INTO max_actioned_sequence
+          FROM "Common_Approval"
+          WHERE egcs_cn_routingslip = NEW.egcs_cn_routingslip
+            AND egcs_cn_approvalvalue IS NOT NULL
+          ;
+
+          IF max_actioned_sequence IS NOT NULL AND NEW.egcs_cn_sequence <= max_actioned_sequence THEN
+            RAISE EXCEPTION 'Added approval step sequence % must be greater than last actioned sequence %',
+              NEW.egcs_cn_sequence, max_actioned_sequence;
+          END IF;
+
+          RETURN NEW;
+        END;
+        $$;
+  $sql$
+}`)
+    const diff = diffPgmlSchemaModels(beforeModel, afterModel)
+    const migrationBundle = buildPgmlMigrationDiffBundle(beforeModel, afterModel)
+
+    expect(diff.functions).toEqual([])
     expect(diff.summary.modified).toBe(0)
     expect(migrationBundle.meta.hasChanges).toBe(false)
     expect(migrationBundle.meta.statementCount).toBe(0)

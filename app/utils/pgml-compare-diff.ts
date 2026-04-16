@@ -7,6 +7,22 @@ export type PgmlCompareDiffLine = {
   prefix: '+' | '-' | ' '
 }
 
+export const getPgmlCompareDiffPrefixLabel = (
+  kind: PgmlCompareDiffLineKind,
+  baseLabel: string,
+  targetLabel: string
+) => {
+  if (kind === 'removed') {
+    return `Only in ${baseLabel}`
+  }
+
+  if (kind === 'added') {
+    return `Only in ${targetLabel}`
+  }
+
+  return ''
+}
+
 const splitDiffLines = (value: string) => {
   return value.replaceAll('\r\n', '\n').split('\n')
 }

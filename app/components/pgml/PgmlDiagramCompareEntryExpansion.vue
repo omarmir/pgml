@@ -102,14 +102,14 @@ const getCompareNoteFlagClass = (flag: PgmlCompareNote['flag']) => {
           :class="joinStudioClasses(diffLegendBadgeClass, 'text-rose-300 sm:text-rose-400')"
         >
           <span>-</span>
-          <span>{{ baseLabel }}</span>
+          <span>Only in {{ baseLabel }}</span>
         </span>
         <span
           data-compare-diff-legend="added"
           :class="joinStudioClasses(diffLegendBadgeClass, 'text-emerald-300 sm:text-emerald-400')"
         >
           <span>+</span>
-          <span>{{ targetLabel }}</span>
+          <span>Only in {{ targetLabel }}</span>
         </span>
       </div>
 
