@@ -11,7 +11,7 @@ import {
 } from '../utils/studio-launch'
 
 export type PgmlStudioSchemaDialogMode = 'save' | 'download'
-export type StudioSourceKind = 'browser' | 'file' | 'hosted'
+export type StudioSourceKind = 'browser' | 'file' | 'gist'
 
 export const useStudioSessionStore = defineStore('studio-session', () => {
   const appliedLaunchKey: Ref<string | null> = ref(null)

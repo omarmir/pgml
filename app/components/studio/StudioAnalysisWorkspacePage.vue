@@ -16,6 +16,7 @@ import PgmlDiagramMigrationsPanel from '~/components/pgml/PgmlDiagramMigrationsP
 import PgmlDiagramVersionsPanel from '~/components/pgml/PgmlDiagramVersionsPanel.vue'
 import { usePgmlColumnDefaultSuggestions } from '~/composables/usePgmlColumnDefaultSuggestions'
 import { usePgmlStudioComputerFiles } from '~/composables/usePgmlStudioComputerFiles'
+import { usePgmlStudioGists } from '~/composables/usePgmlStudioGists'
 import {
   usePgmlStudioVersionHistory,
   type PgmlVersionedDocumentEditorMode,
@@ -375,7 +376,11 @@ const {
   schemaDialogMode,
   schemaDialogOpen
 } = storeToRefs(studioSessionStore)
-currentPersistenceSource.value = studioLaunchRequest.value?.source === 'file' ? 'file' : 'browser'
+currentPersistenceSource.value = studioLaunchRequest.value?.source === 'file'
+  ? 'file'
+  : studioLaunchRequest.value?.source === 'gist'
+    ? 'gist'
+    : 'browser'
 const {
   activeDiagramViewName,
   activeDiagramViewId,
@@ -999,6 +1004,24 @@ const {
   enabled: computed(() => currentPersistenceSource.value === 'file'),
   source
 })
+const {
+  currentGistFileName,
+  currentGistFileUpdatedAt,
+  formatSavedAt: formatGistFileSavedAt,
+  gistFileSaveError,
+  githubGistFiles,
+  hasPendingGistFileChanges,
+  hasSavedGistFileInSession,
+  hasSelectedGistFile,
+  isSavedToGistFile,
+  isSavingToGistFile,
+  loadGistPgmlFileByName,
+  saveSchemaToGistFile
+} = usePgmlStudioGists({
+  applyLoadedFileText: loadVersionedDocument,
+  buildSchemaText,
+  source
+})
 
 const requestCanvasViewportReset = () => {
   canvasViewportResetKey.value += 1
@@ -1042,6 +1065,19 @@ const loadRecentComputerFile = async (recentFileId: string) => {
   requestCanvasViewportReset()
 }
 
+const loadGistFile = async (filename: string) => {
+  const didLoadGistFile = await loadGistPgmlFileByName(filename)
+
+  if (!didLoadGistFile) {
+    return
+  }
+
+  currentPersistenceSource.value = 'gist'
+  resetBrowserSchemaStatusEligibility()
+  loadDialogOpen.value = false
+  requestCanvasViewportReset()
+}
+
 const chooseComputerFileFromLoadDialog = async () => {
   const didOpenComputerFile = await openComputerFileFromPicker()
 
@@ -1068,19 +1104,37 @@ const removeRecentComputerFile = async (recentFileId: string) => {
 }
 
 const activeSchemaName = computed(() => {
-  return currentPersistenceSource.value === 'file'
-    ? (currentComputerFileName.value || 'Untitled schema')
-    : currentSchemaName.value
+  if (currentPersistenceSource.value === 'file') {
+    return currentComputerFileName.value || 'Untitled schema'
+  }
+
+  if (currentPersistenceSource.value === 'gist') {
+    return currentGistFileName.value || 'Untitled schema'
+  }
+
+  return currentSchemaName.value
 })
 const activeSchemaUpdatedAt = computed(() => {
-  return currentPersistenceSource.value === 'file'
-    ? currentComputerFileUpdatedAt.value
-    : currentSchemaUpdatedAt.value
+  if (currentPersistenceSource.value === 'file') {
+    return currentComputerFileUpdatedAt.value
+  }
+
+  if (currentPersistenceSource.value === 'gist') {
+    return currentGistFileUpdatedAt.value
+  }
+
+  return currentSchemaUpdatedAt.value
 })
 const activeSaveError = computed(() => {
-  return currentPersistenceSource.value === 'file'
-    ? computerFileSaveError.value
-    : localStorageSaveError.value
+  if (currentPersistenceSource.value === 'file') {
+    return computerFileSaveError.value
+  }
+
+  if (currentPersistenceSource.value === 'gist') {
+    return gistFileSaveError.value
+  }
+
+  return localStorageSaveError.value
 })
 const pushSaveErrorToast = (description: string) => {
   lastSaveErrorToastMessage.value = description
@@ -1108,35 +1162,81 @@ const pushComputerFileActionErrorToast = (description: string) => {
   })
 }
 const getSaveSuccessToastDescription = () => {
-  return currentPersistenceSource.value === 'file'
-    ? 'Saved to the selected file.'
-    : 'Saved to browser local storage.'
+  if (currentPersistenceSource.value === 'file') {
+    return 'Saved to the selected file.'
+  }
+
+  if (currentPersistenceSource.value === 'gist') {
+    return 'Saved to GitHub Gist.'
+  }
+
+  return 'Saved to browser local storage.'
 }
 const activeIsSaving = computed(() => {
-  return currentPersistenceSource.value === 'file'
-    ? isSavingToComputerFile.value
-    : isSavingToLocalStorage.value
+  if (currentPersistenceSource.value === 'file') {
+    return isSavingToComputerFile.value
+  }
+
+  if (currentPersistenceSource.value === 'gist') {
+    return isSavingToGistFile.value
+  }
+
+  return isSavingToLocalStorage.value
 })
 const activeHasPendingChanges = computed(() => {
-  return currentPersistenceSource.value === 'file'
-    ? hasPendingComputerFileChanges.value
-    : hasPendingLocalChanges.value
+  if (currentPersistenceSource.value === 'file') {
+    return hasPendingComputerFileChanges.value
+  }
+
+  if (currentPersistenceSource.value === 'gist') {
+    return hasPendingGistFileChanges.value
+  }
+
+  return hasPendingLocalChanges.value
 })
 const activeIsSaved = computed(() => {
-  return currentPersistenceSource.value === 'file'
-    ? isSavedToComputerFile.value
-    : isSavedToLocalStorage.value
+  if (currentPersistenceSource.value === 'file') {
+    return isSavedToComputerFile.value
+  }
+
+  if (currentPersistenceSource.value === 'gist') {
+    return isSavedToGistFile.value
+  }
+
+  return isSavedToLocalStorage.value
 })
 const activeHasSavedInSession = computed(() => {
-  return currentPersistenceSource.value === 'file'
-    ? hasSavedComputerFileInSession.value
-    : hasSavedSchemaInSession.value
+  if (currentPersistenceSource.value === 'file') {
+    return hasSavedComputerFileInSession.value
+  }
+
+  if (currentPersistenceSource.value === 'gist') {
+    return hasSavedGistFileInSession.value
+  }
+
+  return hasSavedSchemaInSession.value
 })
 const activeSavedAtFormatter = computed(() => {
-  return currentPersistenceSource.value === 'file' ? formatComputerFileSavedAt : formatSavedAt
+  if (currentPersistenceSource.value === 'file') {
+    return formatComputerFileSavedAt
+  }
+
+  if (currentPersistenceSource.value === 'gist') {
+    return formatGistFileSavedAt
+  }
+
+  return formatSavedAt
 })
 const saveDialogActionLabel = computed(() => {
-  return currentPersistenceSource.value === 'file' ? 'Save to file' : saveSchemaActionLabel.value
+  if (currentPersistenceSource.value === 'file') {
+    return 'Save to file'
+  }
+
+  if (currentPersistenceSource.value === 'gist') {
+    return 'Save to Gist'
+  }
+
+  return saveSchemaActionLabel.value
 })
 const schemaActionDescriptionText = computed(() => {
   if (schemaDialogMode.value === 'download') {
@@ -1155,15 +1255,35 @@ const schemaActionDescriptionText = computed(() => {
         : 'Mobile Chrome requires explicit saves for `.pgml` files, and the current PGML has a parse error, so only the raw text can be written back to the selected file right now.'
   }
 
+  if (currentPersistenceSource.value === 'gist') {
+    return canEmbedLayout.value
+      ? 'Save the current PGML back to the selected file in the connected GitHub Gist. Gist-backed files use manual saves only.'
+      : 'The current PGML has a parse error, so only the raw text can be written back to the selected Gist file right now.'
+  }
+
   return schemaActionDescription.value
 })
 const loadDialogTitle = computed(() => {
-  return currentPersistenceSource.value === 'file' ? 'Open file' : 'Load saved schema'
+  if (currentPersistenceSource.value === 'file') {
+    return 'Open file'
+  }
+
+  if (currentPersistenceSource.value === 'gist') {
+    return 'Open Gist file'
+  }
+
+  return 'Load saved schema'
 })
 const loadDialogDescription = computed(() => {
-  return currentPersistenceSource.value === 'file'
-    ? 'Recent `.pgml` files you opened or created on this computer.'
-    : 'Saved PGML files stored in this browser.'
+  if (currentPersistenceSource.value === 'file') {
+    return 'Recent `.pgml` files you opened or created on this computer.'
+  }
+
+  if (currentPersistenceSource.value === 'gist') {
+    return 'Remote `.pgml` files in the connected GitHub Gist.'
+  }
+
+  return 'Saved PGML files stored in this browser.'
 })
 const exportBaseName = computed(() => slugifySchemaName(activeSchemaName.value))
 const _exportPreferenceKey = computed(() => `name:${slugifySchemaName(activeSchemaName.value)}`)
@@ -2259,6 +2379,21 @@ watch([studioLaunchRequest, orderedSavedSchemas], async ([request]) => {
     return
   }
 
+  if (request.source === 'gist') {
+    const didLoadGistFile = await loadGistPgmlFileByName(request.filename)
+
+    if (!didLoadGistFile) {
+      return
+    }
+
+    currentPersistenceSource.value = 'gist'
+    resetBrowserSchemaStatusEligibility()
+    loadDialogOpen.value = false
+    appliedStudioLaunchKey.value = requestKey
+    requestCanvasViewportReset()
+    return
+  }
+
   currentPersistenceSource.value = 'browser'
 
   if (request.launch === 'example') {
@@ -2310,6 +2445,17 @@ const saveCurrentSchema = async () => {
     return
   }
 
+  if (currentPersistenceSource.value === 'gist') {
+    const didSave = await saveSchemaToGistFile()
+
+    if (didSave) {
+      schemaDialogOpen.value = false
+      pushSaveSuccessToast(getSaveSuccessToastDescription())
+    }
+
+    return
+  }
+
   markBrowserSchemaStatusEligible()
   const didSave = await saveSchemaToBrowser()
 
@@ -2350,6 +2496,16 @@ const persistWorkspaceBeforeRouteSwitch = async () => {
     return await saveSchemaToComputerFile()
   }
 
+  if (currentPersistenceSource.value === 'gist') {
+    const canLeave = window.confirm('This Gist-backed PGML file has unsaved changes. Leave without saving?')
+
+    if (!canLeave) {
+      openSchemaDialog('save')
+    }
+
+    return canLeave
+  }
+
   markBrowserSchemaStatusEligible()
 
   return await saveSchemaToBrowser()
@@ -2367,7 +2523,7 @@ const navigateToWorkspaceMode = async (page: StudioWorkspacePage) => {
 
   await navigateTo({
     path: getStudioWorkspacePath(page),
-    query: route.query
+    query: currentPersistenceSource.value === 'file' || currentPersistenceSource.value === 'gist' ? route.query : undefined
   })
 }
 const closeCheckpointDialog = () => {
@@ -3395,14 +3551,15 @@ const actionMenus = computed<StudioHeaderMenu[]>(() => {
         [
           {
             label: 'Save schema',
-            disabled: currentPersistenceSource.value === 'file' && !hasSelectedComputerFile.value,
+            disabled: (currentPersistenceSource.value === 'file' && !hasSelectedComputerFile.value)
+              || (currentPersistenceSource.value === 'gist' && !hasSelectedGistFile.value),
             icon: 'i-lucide-save',
             onSelect: () => {
               openSchemaDialog('save')
             }
           },
           {
-            label: currentPersistenceSource.value === 'file' ? 'Open file' : 'Load saved schema',
+            label: loadDialogTitle.value,
             icon: 'i-lucide-folder-open',
             onSelect: () => {
               loadDialogOpen.value = true
@@ -4089,8 +4246,11 @@ watchEffect(() => {
 
 watchEffect(() => {
   const isWaitingToSave = activeHasPendingChanges.value && !activeIsSaving.value
+  const isManualGistPending = currentPersistenceSource.value === 'gist' && isWaitingToSave
   const hasSavedInSession = activeHasSavedInSession.value && activeIsSaved.value && !isWaitingToSave
-  const canShowBrowserSchemaStatus = currentPersistenceSource.value === 'file' || browserSchemaStatusEligible.value
+  const canShowBrowserSchemaStatus = currentPersistenceSource.value === 'file'
+    || currentPersistenceSource.value === 'gist'
+    || browserSchemaStatusEligible.value
   const showsManualMobileChromeSaveState = currentPersistenceSource.value === 'file'
     && !passiveComputerFileWritesSupported.value
     && activeHasPendingChanges.value
@@ -4100,7 +4260,11 @@ watchEffect(() => {
     || activeIsSaving.value
     || hasSavedInSession
   )
-  const persistenceLabel = currentPersistenceSource.value === 'file' ? 'file' : 'local storage'
+  const persistenceLabel = currentPersistenceSource.value === 'file'
+    ? 'file'
+    : currentPersistenceSource.value === 'gist'
+      ? 'Gist'
+      : 'local storage'
   let detail = ''
 
   if (activeSaveError.value) {
@@ -4109,6 +4273,8 @@ watchEffect(() => {
     detail = `Saving to ${persistenceLabel}...`
   } else if (showsManualMobileChromeSaveState) {
     detail = 'Changes are pending. Use Save to write them to the selected file on mobile Chrome.'
+  } else if (isManualGistPending) {
+    detail = 'Unsaved changes. Use Save to write them to Gist.'
   } else if (isWaitingToSave) {
     detail = `Waiting to save to ${persistenceLabel}...`
   } else if (hasSavedInSession && activeSchemaUpdatedAt.value) {
@@ -4118,6 +4284,17 @@ watchEffect(() => {
   }
 
   setStudioSchemaStatus({
+    action: currentPersistenceSource.value === 'gist'
+      ? {
+          disabled: !hasSelectedGistFile.value || activeIsSaving.value,
+          icon: 'i-lucide-save',
+          label: 'Save',
+          loading: activeIsSaving.value,
+          onSelect: () => {
+            void saveCurrentSchema()
+          }
+        }
+      : null,
     detail,
     name: activeSchemaName.value,
     saveState: activeSaveError.value
@@ -4131,9 +4308,30 @@ watchEffect(() => {
   })
 })
 
+const handleBeforeUnload = (event: BeforeUnloadEvent) => {
+  if (currentPersistenceSource.value !== 'gist' || !activeHasPendingChanges.value) {
+    return
+  }
+
+  event.preventDefault()
+  event.returnValue = ''
+}
+
+onMounted(() => {
+  window.addEventListener('beforeunload', handleBeforeUnload)
+})
+
 onBeforeRouteLeave((to) => {
   if (isStudioWorkspacePath(to.path)) {
     return
+  }
+
+  if (
+    currentPersistenceSource.value === 'gist'
+    && activeHasPendingChanges.value
+    && !window.confirm('This Gist-backed PGML file has unsaved changes. Leave without saving?')
+  ) {
+    return false
   }
 
   clearStudioHeaderActions()
@@ -4142,6 +4340,7 @@ onBeforeRouteLeave((to) => {
 })
 
 onBeforeUnmount(() => {
+  window.removeEventListener('beforeunload', handleBeforeUnload)
   pgmlAnalysisWorker?.terminate()
   pgmlAnalysisWorker = null
 })
@@ -5327,7 +5526,7 @@ onBeforeUnmount(() => {
             </label>
 
             <label
-              v-else
+              v-else-if="currentPersistenceSource === 'file'"
               class="grid gap-1"
             >
               <span :class="studioFieldKickerClass">
@@ -5336,6 +5535,24 @@ onBeforeUnmount(() => {
               <UInput
                 :model-value="currentComputerFileName"
                 placeholder="No file selected"
+                color="neutral"
+                variant="outline"
+                size="sm"
+                readonly
+                :ui="studioFieldUi"
+              />
+            </label>
+
+            <label
+              v-else
+              class="grid gap-1"
+            >
+              <span :class="studioFieldKickerClass">
+                Gist File
+              </span>
+              <UInput
+                :model-value="currentGistFileName"
+                placeholder="No Gist file selected"
                 color="neutral"
                 variant="outline"
                 size="sm"
@@ -5413,7 +5630,7 @@ onBeforeUnmount(() => {
           </div>
 
           <div
-            v-else
+            v-else-if="currentPersistenceSource === 'file'"
             class="grid gap-3 border border-[color:var(--studio-shell-border)] bg-[color:var(--studio-control-bg)] px-3 py-3"
           >
             <div>
@@ -5444,6 +5661,39 @@ onBeforeUnmount(() => {
               Choose or create a computer file before saving from this mode.
             </div>
           </div>
+
+          <div
+            v-else
+            class="grid gap-3 border border-[color:var(--studio-shell-border)] bg-[color:var(--studio-control-bg)] px-3 py-3"
+          >
+            <div>
+              <div :class="studioFieldKickerClass">
+                Target Gist
+              </div>
+              <p class="mt-1 text-[0.7rem] leading-5 text-[color:var(--studio-shell-muted)]">
+                This schema writes back to the selected `.pgml` file in the connected GitHub Gist only when you save.
+              </p>
+            </div>
+
+            <div
+              v-if="hasSelectedGistFile"
+              class="grid gap-1 border border-[color:var(--studio-shell-border)] bg-[color:var(--studio-input-bg)] px-3 py-3"
+            >
+              <div class="truncate text-[0.78rem] font-semibold text-[color:var(--studio-shell-text)]">
+                {{ currentGistFileName }}
+              </div>
+              <div class="font-mono text-[0.62rem] uppercase tracking-[0.08em] text-[color:var(--studio-shell-muted)]">
+                {{ currentGistFileUpdatedAt ? formatGistFileSavedAt(currentGistFileUpdatedAt) : 'Ready to save' }}
+              </div>
+            </div>
+
+            <div
+              v-else
+              :class="studioEmptyStateClass"
+            >
+              Open a Gist file before saving from this mode.
+            </div>
+          </div>
         </div>
 
         <template #footer>
@@ -5460,7 +5710,7 @@ onBeforeUnmount(() => {
             color="neutral"
             variant="soft"
             :class="primaryModalButtonClass"
-            :disabled="currentPersistenceSource === 'file' && !hasSelectedComputerFile"
+            :disabled="(currentPersistenceSource === 'file' && !hasSelectedComputerFile) || (currentPersistenceSource === 'gist' && !hasSelectedGistFile)"
             @click="saveCurrentSchema"
           />
           <UButton
@@ -5536,7 +5786,7 @@ onBeforeUnmount(() => {
         </div>
 
         <div
-          v-else
+          v-else-if="currentPersistenceSource === 'file'"
           class="grid gap-3"
         >
           <UButton
@@ -5594,6 +5844,49 @@ onBeforeUnmount(() => {
             :class="studioEmptyStateClass"
           >
             No recent computer files yet.
+          </div>
+        </div>
+
+        <div
+          v-else
+          class="grid gap-3"
+        >
+          <div
+            v-if="githubGistFiles.length"
+            class="grid gap-2"
+          >
+            <div
+              v-for="gistFile in githubGistFiles"
+              :key="gistFile.filename"
+              class="grid gap-2 border border-[color:var(--studio-shell-border)] bg-[color:var(--studio-control-bg)] px-3 py-3"
+            >
+              <div class="flex items-start justify-between gap-3">
+                <div class="min-w-0">
+                  <div class="truncate text-[0.82rem] font-semibold text-[color:var(--studio-shell-text)]">
+                    {{ gistFile.filename }}
+                  </div>
+                  <div class="font-mono text-[0.64rem] uppercase tracking-[0.08em] text-[color:var(--studio-shell-muted)]">
+                    {{ formatGistFileSavedAt(gistFile.updatedAt) }}
+                  </div>
+                </div>
+
+                <UButton
+                  label="Open"
+                  color="neutral"
+                  variant="outline"
+                  size="xs"
+                  :class="secondaryModalButtonClass"
+                  @click="loadGistFile(gistFile.filename)"
+                />
+              </div>
+            </div>
+          </div>
+
+          <div
+            v-else
+            :class="studioEmptyStateClass"
+          >
+            No PGML files are loaded from the connected Gist.
           </div>
         </div>
 

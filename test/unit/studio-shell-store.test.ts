@@ -1,5 +1,5 @@
 import { createPinia, setActivePinia } from 'pinia'
-import { beforeEach, describe, expect, it } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { useStudioShellStore } from '../../app/stores/studio-shell'
 
@@ -35,8 +35,16 @@ describe('studio shell store', () => {
 
   it('stores and clears schema status state', () => {
     const store = useStudioShellStore()
+    const onSelect = vi.fn()
 
     store.setSchemaStatus({
+      action: {
+        disabled: false,
+        icon: 'i-lucide-save',
+        label: 'Save',
+        loading: false,
+        onSelect
+      },
       detail: 'Saved to local storage',
       name: 'Example schema',
       saveState: 'saved',
@@ -47,9 +55,15 @@ describe('studio shell store', () => {
     expect(store.schemaStatusName).toBe('Example schema')
     expect(store.schemaStatusSaveState).toBe('saved')
     expect(store.schemaStatusVisible).toBe(true)
+    expect(store.schemaStatusAction?.label).toBe('Save')
+
+    store.schemaStatusAction?.onSelect()
+
+    expect(onSelect).toHaveBeenCalledOnce()
 
     store.clearSchemaStatus()
 
+    expect(store.schemaStatusAction).toBe(null)
     expect(store.schemaStatusDetail).toBe('')
     expect(store.schemaStatusName).toBe('')
     expect(store.schemaStatusSaveState).toBe('pending')

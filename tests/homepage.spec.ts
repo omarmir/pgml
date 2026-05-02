@@ -39,20 +39,35 @@ test('home page exposes the three schema-source lanes and the import actions', a
   await expect(page.getByRole('heading', { name: 'Choose where this schema starts.' })).toHaveCount(0)
   await expect(page.locator('[data-source-card="browser-local-storage"]')).toContainText('Browser local storage')
   await expect(page.locator('[data-source-card="computer-saved-file"]')).toContainText('Computer saved file')
-  await expect(page.locator('[data-source-card="hosted-database"]')).toContainText('Hosted database')
+  await expect(page.locator('[data-source-card="github-gist"]')).toContainText('GitHub Gists')
   await expect(page.locator('[data-source-card="browser-local-storage"]')).toContainText('Open bundled example')
   await expect(page.locator('[data-source-card="computer-saved-file"]')).toContainText('Save example to a new file')
-  await expect(page.locator('[data-source-card="hosted-database"]')).toContainText('Preview hosted example')
+  await expect(page.locator('[data-source-card="github-gist"]')).toContainText('Connect GitHub Gist')
   await expect(page.getByText('Imports', { exact: true })).toHaveCount(3)
   await expect(page.getByRole('button', { name: 'Import into browser storage' })).toHaveCount(1)
   await expect(page.getByRole('button', { name: 'Import DBML into browser storage' })).toHaveCount(1)
   await expect(page.getByRole('button', { name: 'Import into a new file' })).toHaveCount(1)
   await expect(page.getByRole('button', { name: 'Import DBML into a new file' })).toHaveCount(1)
-  await expect(page.getByRole('button', { name: 'Import from hosted lane' })).toHaveCount(1)
-  await expect(page.getByRole('button', { name: 'Import DBML from hosted lane' })).toHaveCount(1)
+  await expect(page.getByRole('button', { name: 'Import into Gist' })).toHaveCount(1)
+  await expect(page.getByRole('button', { name: 'Import DBML into Gist' })).toHaveCount(1)
   await expect(page.locator('[data-spec-banner="true"]')).toContainText('Need the PGML spec before you open analysis, compare, and migrations?')
   await expect(page.locator('[data-spec-banner="true"]')).toContainText('DBML and pg_dump imports')
   await expect(page.getByRole('link', { name: 'Jump to spec' })).toHaveCount(1)
+})
+
+test('home page opens a password-manager friendly GitHub Gist connection form', async ({ goto, page }) => {
+  await goto('/')
+
+  await page.locator('[data-source-card="github-gist"]').getByRole('button', { name: 'Connect GitHub Gist' }).click()
+
+  const connectDialog = page.locator('[data-studio-modal-surface="github-gist-connect"]')
+
+  await expect(connectDialog).toContainText('Connect GitHub Gist')
+  await expect(connectDialog.locator('input[name="username"]')).toHaveAttribute('autocomplete', 'username')
+  await expect(connectDialog.locator('input[name="password"]')).toHaveAttribute('type', 'password')
+  await expect(connectDialog.locator('input[name="password"]')).toHaveAttribute('autocomplete', 'current-password')
+  await expect(connectDialog.locator('input[name="gist-id"]')).toHaveCount(1)
+  await expect(connectDialog.getByRole('link', { name: 'Create GitHub token' })).toHaveAttribute('href', /gists=write/)
 })
 
 test('home page keeps source inventory visible on mobile cards', async ({ goto, page }) => {
