@@ -58,10 +58,6 @@ const normalizeGistId = (value: string) => {
   return value.trim()
 }
 
-const normalizeAccountLabel = (value: string) => {
-  return value.trim()
-}
-
 const isPgmlFilename = (value: string) => {
   return value.toLowerCase().endsWith('.pgml')
 }
@@ -154,7 +150,17 @@ export const readPgmlGistConnectionMetadata = () => {
   try {
     const parsedValue = JSON.parse(rawValue) as unknown
 
-    return isPgmlGistConnectionMetadata(parsedValue) ? parsedValue : null
+    if (!isPgmlGistConnectionMetadata(parsedValue)) {
+      return null
+    }
+
+    const gistId = normalizeGistId(parsedValue.gistId)
+
+    return {
+      ...parsedValue,
+      accountLabel: gistId,
+      gistId
+    }
   } catch {
     return null
   }
@@ -169,13 +175,14 @@ export const persistPgmlGistConnectionMetadata = (metadata: PgmlGistConnectionMe
 }
 
 export const createPgmlGistConnectionMetadata = (input: {
-  accountLabel: string
   gistId: string
   selectedFilename?: string | null
 }) => {
+  const gistId = normalizeGistId(input.gistId)
+
   return {
-    accountLabel: normalizeAccountLabel(input.accountLabel),
-    gistId: normalizeGistId(input.gistId),
+    accountLabel: gistId,
+    gistId,
     lastConnectedAt: new Date().toISOString(),
     selectedFilename: input.selectedFilename || null
   } satisfies PgmlGistConnectionMetadata

@@ -28,11 +28,10 @@ describe('GitHub Gist utilities', () => {
 
   it('builds Gist connection metadata without storing token material', () => {
     expect(createPgmlGistConnectionMetadata({
-      accountLabel: '  team-user  ',
       gistId: '  abc123  ',
       selectedFilename: 'schema.pgml'
     })).toEqual({
-      accountLabel: 'team-user',
+      accountLabel: 'abc123',
       gistId: 'abc123',
       lastConnectedAt: '2026-04-02T12:00:00.000Z',
       selectedFilename: 'schema.pgml'

@@ -64,9 +64,10 @@ test('home page opens a password-manager friendly GitHub Gist connection form', 
 
   await expect(connectDialog).toContainText('Connect GitHub Gist')
   await expect(connectDialog.locator('input[name="username"]')).toHaveAttribute('autocomplete', 'username')
+  await expect(connectDialog.locator('input[name="username"]')).toHaveAttribute('placeholder', 'GitHub Gist ID')
   await expect(connectDialog.locator('input[name="password"]')).toHaveAttribute('type', 'password')
   await expect(connectDialog.locator('input[name="password"]')).toHaveAttribute('autocomplete', 'current-password')
-  await expect(connectDialog.locator('input[name="gist-id"]')).toHaveCount(1)
+  await expect(connectDialog.locator('input[name="gist-id"]')).toHaveCount(0)
   await expect(connectDialog.getByRole('link', { name: 'Create GitHub token' })).toHaveAttribute('href', /gists=write/)
 
   await connectDialog.locator('input[name="password"]').fill('ghp_example_token')

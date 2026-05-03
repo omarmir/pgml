@@ -173,7 +173,6 @@ export const useStudioSourcesStore = defineStore('studio-sources', () => {
   }
 
   const connectGithubGist = async (input: {
-    accountLabel: string
     gistId: string
     token: string
   }) => {
@@ -183,7 +182,6 @@ export const useStudioSourcesStore = defineStore('studio-sources', () => {
         token: input.token
       })
       const metadata = createPgmlGistConnectionMetadata({
-        accountLabel: input.accountLabel,
         gistId: input.gistId,
         selectedFilename: files[0]?.filename || null
       })

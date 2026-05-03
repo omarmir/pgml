@@ -220,12 +220,11 @@ describe('studio sources store', () => {
     const store = useStudioSourcesStore()
 
     expect(await store.connectGithubGist({
-      accountLabel: 'Omar',
       gistId: 'gist-1',
       token: 'gist-token'
     })).toBe(true)
     expect(persistPgmlGistConnectionMetadata).toHaveBeenCalledWith({
-      accountLabel: 'Omar',
+      accountLabel: 'gist-1',
       gistId: 'gist-1',
       lastConnectedAt: expect.any(String),
       selectedFilename: null

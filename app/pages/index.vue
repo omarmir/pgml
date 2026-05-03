@@ -160,7 +160,6 @@ const pgDumpImportTarget: Ref<PgDumpImportTarget | null> = ref(null)
 const pgDumpImportText: Ref<string> = ref('')
 const importedSchemaLaunchDialogOpen: Ref<boolean> = ref(false)
 const githubGistConnectDialogOpen: Ref<boolean> = ref(false)
-const githubGistAccountLabel: Ref<string> = ref('')
 const githubGistId: Ref<string> = ref('')
 const githubGistTokenInput: Ref<string> = ref('')
 const githubGistConnectError: Ref<string | null> = ref(null)
@@ -810,7 +809,6 @@ const launchImportedSchemaIntoWorkspace = async (workspacePage: StudioWorkspaceP
   }
 }
 const openGithubGistConnectDialog = () => {
-  githubGistAccountLabel.value = githubGistConnection.value?.accountLabel || ''
   githubGistId.value = githubGistConnection.value?.gistId || ''
   githubGistTokenInput.value = ''
   githubGistConnectError.value = null
@@ -832,7 +830,6 @@ const submitGithubGistConnection = async () => {
 
   try {
     const didConnect = await studioSourcesStore.connectGithubGist({
-      accountLabel: githubGistAccountLabel.value,
       gistId: githubGistId.value,
       token: githubGistTokenInput.value
     })
@@ -1442,13 +1439,11 @@ onBeforeRouteLeave((to) => {
 
       <AppGithubGistConnectModal
         :open="githubGistConnectDialogOpen"
-        :account-label="githubGistAccountLabel"
         :gist-id="githubGistId"
         :token="githubGistTokenInput"
         :error-message="githubGistConnectError"
         :is-submitting="isSubmittingGithubGistConnection"
         @update:open="handleGithubGistConnectDialogOpenChange"
-        @update:account-label="githubGistAccountLabel = $event"
         @update:gist-id="githubGistId = $event"
         @update:token="githubGistTokenInput = $event"
         @submit="submitGithubGistConnection"

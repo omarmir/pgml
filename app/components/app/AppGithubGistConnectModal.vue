@@ -10,14 +10,12 @@ import {
 import { studioFieldUi } from '~/constants/ui'
 
 const {
-  accountLabel,
   errorMessage = null,
   gistId,
   isSubmitting = false,
   open,
   token
 } = defineProps<{
-  accountLabel: string
   errorMessage?: string | null
   gistId: string
   isSubmitting?: boolean
@@ -27,7 +25,6 @@ const {
 
 const emit = defineEmits<{
   'submit': []
-  'update:accountLabel': [value: string]
   'update:gistId': [value: string]
   'update:open': [value: boolean]
   'update:token': [value: string]
@@ -64,7 +61,7 @@ const handleSubmit = () => {
           Password manager
         </div>
         <p :class="studioBodyCopyClass">
-          Save the token in your browser password manager or Bitwarden when prompted. PGML stores only the Gist ID and account label locally.
+          Save the token in your browser password manager or Bitwarden when prompted. PGML stores only the Gist ID locally and uses it as the username for saved credentials.
         </p>
         <a
           :href="githubFineGrainedTokenUrl"
@@ -82,30 +79,12 @@ const handleSubmit = () => {
 
       <label class="grid gap-1">
         <span :class="studioFieldKickerClass">
-          Account label
-        </span>
-        <UInput
-          :model-value="accountLabel"
-          name="username"
-          autocomplete="username"
-          placeholder="GitHub username or account label"
-          color="neutral"
-          variant="outline"
-          size="sm"
-          :ui="studioFieldUi"
-          :disabled="isSubmitting"
-          @update:model-value="emit('update:accountLabel', String($event))"
-        />
-      </label>
-
-      <label class="grid gap-1">
-        <span :class="studioFieldKickerClass">
           Gist ID
         </span>
         <UInput
           :model-value="gistId"
-          name="gist-id"
-          autocomplete="off"
+          name="username"
+          autocomplete="username"
           placeholder="GitHub Gist ID"
           color="neutral"
           variant="outline"
