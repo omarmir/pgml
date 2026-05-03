@@ -1,6 +1,7 @@
 import { nanoid } from 'nanoid'
 import { ref, type Ref } from 'vue'
 import { defineStore } from 'pinia'
+import { useStudioSessionStore } from './studio-session'
 import type { PgmlRecentComputerFile } from '../utils/computer-files'
 import {
   deleteRecentComputerPgmlFile,
@@ -51,6 +52,7 @@ const orderGithubGistFiles = (files: PgmlGistFile[]) => {
 }
 
 export const useStudioSourcesStore = defineStore('studio-sources', () => {
+  const studioSessionStore = useStudioSessionStore()
   const browserSchemas: Ref<SavedPgmlSchema[]> = ref([])
   const browserSchemasError: Ref<string | null> = ref(null)
   const githubGistConnection: Ref<PgmlGistConnectionMetadata | null> = ref(readPgmlGistConnectionMetadata())
@@ -81,6 +83,11 @@ export const useStudioSourcesStore = defineStore('studio-sources', () => {
   }
 
   const persistBrowserSchemas = (schemas: SavedPgmlSchema[]) => {
+    if (studioSessionStore.currentSourceKind !== 'browser') {
+      browserSchemasError.value = browserSchemaSaveErrorMessage
+      return false
+    }
+
     const nextSchemas = orderSavedSchemas(schemas)
 
     if (!persistSavedPgmlSchemasToBrowserStorage(nextSchemas)) {
@@ -102,6 +109,11 @@ export const useStudioSourcesStore = defineStore('studio-sources', () => {
     name: string
     text: string
   }) => {
+    if (studioSessionStore.currentSourceKind !== 'browser') {
+      browserSchemasError.value = browserSchemaSaveErrorMessage
+      return null
+    }
+
     const nextSchema: SavedPgmlSchema = {
       id: nanoid(),
       name: normalizeSchemaName(input.name),

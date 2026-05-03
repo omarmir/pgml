@@ -5,6 +5,7 @@ import {
   listRecentComputerPgmlFiles
 } from '../../app/utils/computer-files'
 import { useStudioSourcesStore } from '../../app/stores/studio-sources'
+import { useStudioSessionStore } from '../../app/stores/studio-session'
 import {
   persistSavedPgmlSchemasToBrowserStorage,
   readSavedPgmlSchemasFromBrowserStorage
@@ -155,6 +156,28 @@ describe('studio sources store', () => {
     ]))
 
     vi.useRealTimers()
+  })
+
+  it('blocks browser schema writes when the active source is not browser-backed', () => {
+    const sessionStore = useStudioSessionStore()
+    const store = useStudioSourcesStore()
+
+    sessionStore.currentSourceKind = 'gist'
+
+    expect(store.persistBrowserSchemas([
+      {
+        id: 'leaked-schema',
+        name: 'Leaked schema',
+        text: 'Table public.leaked {\n  id uuid [pk]\n}',
+        updatedAt: '2026-03-21T13:00:00.000Z'
+      }
+    ])).toBe(false)
+    expect(store.createBrowserSchema({
+      name: 'Leaked schema',
+      text: 'Table public.leaked {\n  id uuid [pk]\n}'
+    })).toBeNull()
+    expect(store.browserSchemas).toEqual([])
+    expect(persistSavedPgmlSchemasToBrowserStorage).not.toHaveBeenCalled()
   })
 
   it('refreshes the recent computer file inventory', async () => {
