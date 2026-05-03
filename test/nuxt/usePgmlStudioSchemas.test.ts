@@ -226,7 +226,6 @@ describe('usePgmlStudioSchemas', () => {
     await mountSuspended(defineComponent({
       setup() {
         api = usePgmlStudioSchemas({
-          autosaveEnabled: computed(() => false),
           browserPersistenceEnabled: computed(() => false),
           buildSchemaText: () => source.value,
           canEmbedLayout: computed(() => true),

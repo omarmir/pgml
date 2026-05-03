@@ -1,10 +1,18 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { $fetch } from 'ofetch'
 import {
   buildUniquePgmlGistFilename,
   createPgmlGistConnectionMetadata,
   githubFineGrainedTokenUrl,
-  listPgmlGistFilesFromResponse
+  listPgmlGistFilesFromResponse,
+  loadPgmlGistFile
 } from '../../app/utils/github-gists'
+
+vi.mock('ofetch', () => {
+  return {
+    $fetch: vi.fn()
+  }
+})
 
 describe('GitHub Gist utilities', () => {
   beforeEach(() => {
@@ -14,6 +22,8 @@ describe('GitHub Gist utilities', () => {
 
   afterEach(() => {
     vi.useRealTimers()
+    vi.clearAllMocks()
+    vi.unstubAllGlobals()
   })
 
   it('builds Gist connection metadata without storing token material', () => {
@@ -83,5 +93,47 @@ describe('GitHub Gist utilities', () => {
       name: 'Team Schema'
     })).toBe('team-schema-3.pgml')
     expect(githubFineGrainedTokenUrl).toContain('gists=write')
+  })
+
+  it('loads full Gist file content from raw_url when the API content is truncated', async () => {
+    const fetchMock = vi.fn(async () => {
+      return {
+        ok: true,
+        text: async () => 'Table public.large {\n  id uuid [pk]\n}'
+      }
+    })
+
+    vi.stubGlobal('fetch', fetchMock)
+    vi.mocked($fetch)
+      .mockResolvedValueOnce({
+        files: {
+          'large.pgml': {
+            content: 'Table public.large {',
+            filename: 'large.pgml',
+            raw_url: 'https://gist.githubusercontent.com/raw/large.pgml',
+            truncated: true
+          }
+        },
+        id: 'gist-1',
+        updated_at: '2026-04-02T12:30:00.000Z'
+      })
+      .mockResolvedValueOnce('Table public.large {\n  id uuid [pk]\n}')
+
+    await expect(loadPgmlGistFile({
+      filename: 'large.pgml',
+      gistId: 'gist-1',
+      token: 'gist-token'
+    })).resolves.toEqual({
+      filename: 'large.pgml',
+      gistId: 'gist-1',
+      size: 37,
+      text: 'Table public.large {\n  id uuid [pk]\n}',
+      updatedAt: '2026-04-02T12:30:00.000Z'
+    })
+    expect(fetchMock).toHaveBeenCalledWith('https://gist.githubusercontent.com/raw/large.pgml', expect.objectContaining({
+      headers: expect.objectContaining({
+        authorization: 'Bearer gist-token'
+      })
+    }))
   })
 })

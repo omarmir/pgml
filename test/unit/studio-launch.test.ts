@@ -109,6 +109,12 @@ describe('studio launch utilities', () => {
       launch: 'file',
       source: 'gist'
     })).toBeNull()
+    expect(parseStudioLaunchQuery({
+      file: 'team.pgml',
+      gist: '',
+      launch: 'file',
+      source: 'gist'
+    })).toBeNull()
   })
 
   it('serializes launch requests into stable keys', () => {

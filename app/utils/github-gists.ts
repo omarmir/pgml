@@ -119,6 +119,31 @@ const readGistApiResponse = async (options: GithubGistRequestOptions) => {
   })
 }
 
+const loadGistRawFileContent = async (
+  file: GitHubGistApiFile,
+  token: string
+) => {
+  if (!file.raw_url) {
+    throw new Error('That PGML file is too large to load from the Gist API response.')
+  }
+
+  try {
+    const response = await fetch(file.raw_url, {
+      headers: getGithubHeaders(token)
+    })
+
+    if (!response.ok) {
+      throw new Error(String(response.status))
+    }
+
+    return await response.text()
+  } catch (error) {
+    const status = error instanceof Error && /^\d+$/.test(error.message) ? ` (${error.message})` : ''
+
+    throw new Error(`Unable to load the full Gist file content${status}.`)
+  }
+}
+
 export const readPgmlGistConnectionMetadata = () => {
   const rawValue = readBrowserStorageItem(githubGistConnectionStorageKey)
 
@@ -190,11 +215,11 @@ export const loadPgmlGistFile = async (options: GithubGistRequestOptions & {
     throw new Error('That PGML file was not found in the connected Gist.')
   }
 
-  if (file.truncated) {
-    throw new Error('That PGML file is too large to load from the Gist API response.')
-  }
+  const content = file.truncated
+    ? await loadGistRawFileContent(file, options.token)
+    : file.content
 
-  if (typeof file.content !== 'string') {
+  if (typeof content !== 'string') {
     throw new Error('That PGML file did not include readable content.')
   }
 
@@ -203,8 +228,8 @@ export const loadPgmlGistFile = async (options: GithubGistRequestOptions & {
   return {
     filename,
     gistId,
-    size: file.content.length,
-    text: file.content,
+    size: content.length,
+    text: content,
     updatedAt: gist.updated_at || new Date().toISOString()
   } satisfies LoadedPgmlGistFile
 }

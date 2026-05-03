@@ -68,6 +68,11 @@ test('home page opens a password-manager friendly GitHub Gist connection form', 
   await expect(connectDialog.locator('input[name="password"]')).toHaveAttribute('autocomplete', 'current-password')
   await expect(connectDialog.locator('input[name="gist-id"]')).toHaveCount(1)
   await expect(connectDialog.getByRole('link', { name: 'Create GitHub token' })).toHaveAttribute('href', /gists=write/)
+
+  await connectDialog.locator('input[name="password"]').fill('ghp_example_token')
+  await connectDialog.getByRole('button', { name: 'Cancel' }).click()
+  await page.locator('[data-source-card="github-gist"]').getByRole('button', { name: 'Connect GitHub Gist' }).click()
+  await expect(connectDialog.locator('input[name="password"]')).toHaveValue('')
 })
 
 test('home page keeps source inventory visible on mobile cards', async ({ goto, page }) => {

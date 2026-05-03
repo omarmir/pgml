@@ -172,27 +172,6 @@ export const useStudioSourcesStore = defineStore('studio-sources', () => {
     return githubGistToken.value !== null && githubGistToken.value.trim().length > 0
   }
 
-  const setGithubGistSelection = (filename: string | null) => {
-    if (!githubGistConnection.value) {
-      return false
-    }
-
-    const nextConnection: PgmlGistConnectionMetadata = {
-      ...githubGistConnection.value,
-      selectedFilename: filename
-    }
-
-    if (!persistPgmlGistConnectionMetadata(nextConnection)) {
-      githubGistError.value = githubGistSaveErrorMessage
-      return false
-    }
-
-    githubGistConnection.value = nextConnection
-    githubGistError.value = null
-
-    return true
-  }
-
   const connectGithubGist = async (input: {
     accountLabel: string
     gistId: string
@@ -342,7 +321,6 @@ export const useStudioSourcesStore = defineStore('studio-sources', () => {
     refreshBrowserSchemas,
     refreshGithubGistFiles,
     refreshRecentComputerFiles,
-    saveGithubGistPgmlFile,
-    setGithubGistSelection
+    saveGithubGistPgmlFile
   }
 })

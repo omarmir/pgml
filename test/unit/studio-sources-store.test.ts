@@ -224,6 +224,13 @@ describe('studio sources store', () => {
       gistId: 'gist-1',
       token: 'gist-token'
     })).toBe(true)
+    expect(persistPgmlGistConnectionMetadata).toHaveBeenCalledWith({
+      accountLabel: 'Omar',
+      gistId: 'gist-1',
+      lastConnectedAt: expect.any(String),
+      selectedFilename: null
+    })
+    expect(JSON.stringify(vi.mocked(persistPgmlGistConnectionMetadata).mock.calls)).not.toContain('gist-token')
 
     vi.mocked(persistPgmlGistConnectionMetadata).mockClear()
     vi.mocked(persistSavedPgmlSchemasToBrowserStorage).mockClear()
