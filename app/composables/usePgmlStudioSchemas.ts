@@ -21,6 +21,7 @@ const localStorageSaveErrorMessage = 'Unable to save to local storage.'
 type UsePgmlStudioSchemasOptions = {
   applyLoadedSchemaText?: (value: string) => void
   autosaveEnabled?: ComputedRef<boolean>
+  browserPersistenceEnabled?: ComputedRef<boolean>
   buildSchemaText: (includeLayout: boolean) => string
   canEmbedLayout: ComputedRef<boolean>
   initialSource: string
@@ -35,6 +36,7 @@ type PersistSchemaOptions = {
 export const usePgmlStudioSchemas = ({
   applyLoadedSchemaText,
   autosaveEnabled,
+  browserPersistenceEnabled,
   buildSchemaText,
   canEmbedLayout,
   initialSource,
@@ -42,6 +44,7 @@ export const usePgmlStudioSchemas = ({
   source
 }: UsePgmlStudioSchemasOptions) => {
   const isAutosaveEnabled = autosaveEnabled ?? computed(() => true)
+  const isBrowserPersistenceEnabled = browserPersistenceEnabled ?? computed(() => true)
   const studioSessionStore = useStudioSessionStore()
   const studioSourcesStore = useStudioSourcesStore()
   const { browserSchemas: savedSchemas } = storeToRefs(studioSourcesStore)
@@ -254,6 +257,10 @@ export const usePgmlStudioSchemas = ({
     snapshot: string,
     options: PersistSchemaOptions
   ) => {
+    if (!isBrowserPersistenceEnabled.value) {
+      return false
+    }
+
     const { name, text } = parseSnapshot(snapshot)
     isSavingToLocalStorage.value = true
     try {
@@ -290,6 +297,10 @@ export const usePgmlStudioSchemas = ({
   }
 
   const saveSchemaToBrowser = async () => {
+    if (!isBrowserPersistenceEnabled.value) {
+      return false
+    }
+
     return persistCurrentSchemaToBrowser({
       closeDialog: true
     })
@@ -317,6 +328,10 @@ export const usePgmlStudioSchemas = ({
   }
 
   const deleteSavedSchema = (schemaId: string) => {
+    if (!isBrowserPersistenceEnabled.value) {
+      return
+    }
+
     const nextSavedSchemas = savedSchemas.value.filter(entry => entry.id !== schemaId)
 
     if (!persistSavedSchemas(nextSavedSchemas)) {

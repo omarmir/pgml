@@ -975,6 +975,7 @@ const {
 } = usePgmlStudioSchemas({
   applyLoadedSchemaText: loadVersionedDocument,
   autosaveEnabled: computed(() => currentPersistenceSource.value === 'browser'),
+  browserPersistenceEnabled: computed(() => currentPersistenceSource.value === 'browser'),
   buildSchemaText,
   canEmbedLayout,
   initialSource: pgmlVersionedExample,
