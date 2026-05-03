@@ -265,7 +265,6 @@ export const useStudioSourcesStore = defineStore('studio-sources', () => {
       })
 
       githubGistError.value = null
-      setGithubGistSelection(filename)
 
       return loadedFile
     } catch (error) {
@@ -297,7 +296,6 @@ export const useStudioSourcesStore = defineStore('studio-sources', () => {
         ...githubGistFiles.value.filter(file => file.filename !== savedFile.filename)
       ])
       githubGistError.value = null
-      setGithubGistSelection(savedFile.filename)
 
       return savedFile
     } catch (error) {

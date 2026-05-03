@@ -30,4 +30,14 @@ describe('GitHub Gist source', () => {
     expect(analysisWorkspaceFile).toContain('Unsaved changes. Use Save to write them to Gist.')
     expect(analysisWorkspaceFile).toContain('label: \'Save\'')
   })
+
+  it('disables queued browser persistence before resetting source state on route leave', () => {
+    const diagramWorkspaceFile = readSourceFile('app/components/studio/StudioWorkspacePage.vue')
+    const analysisWorkspaceFile = readSourceFile('app/components/studio/StudioAnalysisWorkspacePage.vue')
+
+    expect(diagramWorkspaceFile).toContain('workspacePersistenceActive.value && currentPersistenceSource.value === \'browser\'')
+    expect(diagramWorkspaceFile).toContain('workspacePersistenceActive.value = false\n  clearStudioHeaderActions()')
+    expect(analysisWorkspaceFile).toContain('workspacePersistenceActive.value && currentPersistenceSource.value === \'browser\'')
+    expect(analysisWorkspaceFile).toContain('workspacePersistenceActive.value = false\n  clearStudioHeaderActions()')
+  })
 })

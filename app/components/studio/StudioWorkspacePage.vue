@@ -383,6 +383,7 @@ const groupEditorOpen: Ref<boolean> = ref(false)
 const exportScales = [...diagramRasterExportScaleFactors]
 const lastSaveErrorToastMessage: Ref<string | null> = ref(null)
 const browserSchemaStatusEligible: Ref<boolean> = ref(false)
+const workspacePersistenceActive: Ref<boolean> = ref(true)
 const { clearStudioHeaderActions, setStudioHeaderActions } = useStudioHeaderActions()
 const { clearStudioSchemaStatus, setStudioSchemaStatus } = useStudioSchemaStatus()
 const { getColumnDefaultPlaceholder, getColumnDefaultSuggestions } = usePgmlColumnDefaultSuggestions()
@@ -1005,8 +1006,8 @@ const {
   schemaActionTitle
 } = usePgmlStudioSchemas({
   applyLoadedSchemaText: loadVersionedDocument,
-  autosaveEnabled: computed(() => currentPersistenceSource.value === 'browser'),
-  browserPersistenceEnabled: computed(() => currentPersistenceSource.value === 'browser'),
+  autosaveEnabled: computed(() => workspacePersistenceActive.value && currentPersistenceSource.value === 'browser'),
+  browserPersistenceEnabled: computed(() => workspacePersistenceActive.value && currentPersistenceSource.value === 'browser'),
   buildSchemaText,
   canEmbedLayout,
   initialSource: pgmlVersionedExample,
@@ -4398,6 +4399,7 @@ onBeforeRouteLeave((to) => {
     return false
   }
 
+  workspacePersistenceActive.value = false
   clearStudioHeaderActions()
   clearStudioSchemaStatus()
   studioSessionStore.resetStudioUiState()
@@ -4405,6 +4407,7 @@ onBeforeRouteLeave((to) => {
 })
 
 onBeforeUnmount(() => {
+  workspacePersistenceActive.value = false
   window.removeEventListener('beforeunload', handleBeforeUnload)
   pgmlAnalysisWorker?.terminate()
   pgmlAnalysisWorker = null
