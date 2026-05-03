@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { readSourceFile } from './source-test-utils'
 
 describe('Index page source', () => {
-  it('wires the launch flows and routes DBML and pg_dump imports through the modals for browser, file, and hosted lanes', () => {
+  it('wires the launch flows and routes DBML and pg_dump imports through the modals for browser, file, and Gist lanes', () => {
     const file = readSourceFile('app/pages/index.vue')
 
     expect(file).toContain('const sourceCards = computed<SourceCardDefinition[]>(() => {')
@@ -16,6 +16,7 @@ describe('Index page source', () => {
     expect(file).toContain('buildBrowserStudioNewQuery')
     expect(file).toContain('buildBrowserStudioSavedQuery')
     expect(file).toContain('buildFileStudioRecentQuery')
+    expect(file).toContain('buildGistStudioFileQuery')
     expect(file).toContain('convertDbmlToPgml')
     expect(file).toContain('convertPgDumpToPgml')
     expect(file).toContain('prepareImportedExecutableAttachments')
@@ -34,7 +35,9 @@ describe('Index page source', () => {
     expect(file).toContain('studioSessionStore.primePreloadedFileLaunch(')
     expect(file).toContain('studioSourcesStore.refreshBrowserSchemas()')
     expect(file).toContain('studioSourcesStore.refreshRecentComputerFiles()')
+    expect(file).toContain('studioSourcesStore.refreshGithubGistFiles()')
     expect(file).toContain('studioSourcesStore.createBrowserSchema(')
+    expect(file).toContain('studioSourcesStore.createGithubGistPgmlFile(')
     expect(file).toContain('onBeforeRouteLeave((to) => {')
     expect(file).toContain('delete-saved-schema')
     expect(file).toContain('delete-recent-computer-file')
@@ -47,11 +50,12 @@ describe('Index page source', () => {
     expect(file).toContain('pgDumpImportDialogOpen')
     expect(file).toContain('pgDumpImportFoldIdentifiersToLowercase')
     expect(file).toContain('Allow computer file access')
+    expect(file).toContain('Connect GitHub Gist')
     expect(file).toContain('@action="handleSourceCardAction"')
     expect(file).toContain('const specBannerButtonClass = studioButtonClasses.ghost')
     expect(file).toContain('data-spec-banner="true"')
     expect(file).toContain('importActions')
     expect(file).toContain('Choose a .pgml file from your computer')
-    expect(file).toContain('Hosted database')
+    expect(file).toContain('GitHub Gists')
   })
 })

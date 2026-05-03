@@ -8,6 +8,7 @@ import {
 export const useStudioSchemaStatus = () => {
   const studioShellStore = useStudioShellStore()
   const {
+    schemaStatusAction,
     schemaStatusDetail,
     schemaStatusName,
     schemaStatusSaveState,
@@ -15,6 +16,7 @@ export const useStudioSchemaStatus = () => {
   } = storeToRefs(studioShellStore)
   const state = computed<StudioSchemaStatusState>(() => {
     return {
+      action: schemaStatusAction.value,
       detail: schemaStatusDetail.value,
       name: schemaStatusName.value,
       saveState: schemaStatusSaveState.value,

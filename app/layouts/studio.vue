@@ -113,7 +113,20 @@ const mobileMenuGroups = computed<DropdownMenuItem[][]>(() => {
             :data-studio-schema-status="schemaStatusData.state"
             :title="schemaStatusData.detail"
           >
+            <UButton
+              v-if="schemaStatusData.action"
+              :disabled="schemaStatusData.action.disabled"
+              :icon="schemaStatusData.action.icon"
+              :label="schemaStatusData.action.label"
+              :loading="schemaStatusData.action.loading"
+              color="neutral"
+              size="xs"
+              variant="soft"
+              class="cursor-default"
+              @click="schemaStatusData.action?.onSelect()"
+            />
             <UIcon
+              v-else
               :name="schemaStatusIcon"
               class="h-3.5 w-3.5 shrink-0"
               :class="schemaStatusIconClass"

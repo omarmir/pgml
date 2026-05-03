@@ -1636,6 +1636,24 @@ export const parsePgmlDocument = (source: string): PgmlVersionSetDocument => {
   return document
 }
 
+export const preparePgmlDocumentForLoad = (input: {
+  documentName: string
+  rawText: string
+}) => {
+  const normalizedSource = input.rawText.trim()
+  const parsedDocument = normalizedSource.length === 0 || !normalizedSource.startsWith('VersionSet')
+    ? createInitialPgmlDocument({
+        name: input.documentName,
+        workspaceSource: input.rawText
+      })
+    : parsePgmlDocument(input.rawText)
+
+  return {
+    ...parsedDocument,
+    name: input.documentName
+  } satisfies PgmlVersionSetDocument
+}
+
 const buildSnapshotBlock = (snapshot: PgmlDocumentSnapshot, level: number) => {
   const normalizedSource = normalizePgmlSnapshotSource(snapshot.source)
   const lines = [`${'  '.repeat(level)}Snapshot {`]

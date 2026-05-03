@@ -16,7 +16,16 @@ export type StudioHeaderActionState = {
 
 export type StudioSchemaSaveState = 'saved' | 'pending' | 'saving' | 'error'
 
+export type StudioSchemaStatusAction = {
+  disabled: boolean
+  icon: string
+  label: string
+  loading: boolean
+  onSelect: () => void
+}
+
 export type StudioSchemaStatusState = {
+  action: StudioSchemaStatusAction | null
   detail: string
   name: string
   saveState: StudioSchemaSaveState
@@ -30,6 +39,7 @@ export const useStudioShellStore = defineStore('studio-shell', () => {
   const schemaStatusName: Ref<string> = ref('')
   const schemaStatusSaveState: Ref<StudioSchemaSaveState> = ref('pending')
   const schemaStatusVisible: Ref<boolean> = ref(false)
+  const schemaStatusAction: Ref<StudioSchemaStatusAction | null> = shallowRef(null)
 
   const setHeaderActions = (nextState: StudioHeaderActionState) => {
     headerMenus.value = nextState.menus
@@ -42,6 +52,7 @@ export const useStudioShellStore = defineStore('studio-shell', () => {
   }
 
   const setSchemaStatus = (nextState: StudioSchemaStatusState) => {
+    schemaStatusAction.value = nextState.action
     schemaStatusDetail.value = nextState.detail
     schemaStatusName.value = nextState.name
     schemaStatusSaveState.value = nextState.saveState
@@ -49,6 +60,7 @@ export const useStudioShellStore = defineStore('studio-shell', () => {
   }
 
   const clearSchemaStatus = () => {
+    schemaStatusAction.value = null
     schemaStatusDetail.value = ''
     schemaStatusName.value = ''
     schemaStatusSaveState.value = 'pending'
@@ -60,6 +72,7 @@ export const useStudioShellStore = defineStore('studio-shell', () => {
     clearSchemaStatus,
     headerMenus,
     isHeaderLoading,
+    schemaStatusAction,
     schemaStatusDetail,
     schemaStatusName,
     schemaStatusSaveState,

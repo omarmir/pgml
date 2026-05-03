@@ -33,9 +33,18 @@ type FileStudioRecentLaunchRequest = {
   source: 'file'
 }
 
+type GistStudioFileLaunchRequest = {
+  filename: string
+  gistId: string
+  launch: 'file'
+  source: 'gist'
+}
+
 export type FileStudioLaunchRequest = FileStudioRecentLaunchRequest
 
-export type StudioLaunchRequest = BrowserStudioLaunchRequest | FileStudioLaunchRequest
+export type GistStudioLaunchRequest = GistStudioFileLaunchRequest
+
+export type StudioLaunchRequest = BrowserStudioLaunchRequest | FileStudioLaunchRequest | GistStudioLaunchRequest
 
 export type PreloadedFileStudioLaunchPayload = {
   entry: PgmlRecentComputerFile
@@ -93,6 +102,18 @@ export const buildFileStudioRecentQuery = (recentFileId: string) => {
   }
 }
 
+export const buildGistStudioFileQuery = (input: {
+  filename: string
+  gistId: string
+}) => {
+  return {
+    file: input.filename,
+    gist: input.gistId,
+    launch: 'file',
+    source: 'gist'
+  }
+}
+
 export const getStudioWorkspacePath = (page: StudioWorkspacePage) => {
   return studioWorkspacePathByPage[page]
 }
@@ -122,6 +143,10 @@ export const getBrowserStudioLaunchRequestKey = (request: BrowserStudioLaunchReq
 export const getStudioLaunchRequestKey = (request: StudioLaunchRequest) => {
   if (request.source === 'browser') {
     return getBrowserStudioLaunchRequestKey(request)
+  }
+
+  if (request.source === 'gist') {
+    return `gist:file:${request.gistId}:${request.filename}`
   }
 
   return `file:recent:${request.recentFileId}`
@@ -259,7 +284,34 @@ export const parseStudioLaunchQuery = (query: StudioLaunchQuery): StudioLaunchRe
   const source = getSingleStudioLaunchQueryValue(query.source)
 
   if (source !== 'file') {
-    return null
+    if (source !== 'gist') {
+      return null
+    }
+
+    const launch = getSingleStudioLaunchQueryValue(query.launch)
+
+    if (launch !== 'file') {
+      return null
+    }
+
+    const gistId = getSingleStudioLaunchQueryValue(query.gist)
+    const filename = getSingleStudioLaunchQueryValue(query.file)
+
+    if (
+      !gistId
+      || gistId.trim().length === 0
+      || !filename
+      || filename.trim().length === 0
+    ) {
+      return null
+    }
+
+    return {
+      filename,
+      gistId,
+      launch,
+      source
+    }
   }
 
   const launch = getSingleStudioLaunchQueryValue(query.launch)

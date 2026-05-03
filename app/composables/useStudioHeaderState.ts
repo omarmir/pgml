@@ -4,6 +4,7 @@ import { useStudioHeaderActions } from './useStudioHeaderActions'
 import { useStudioSchemaStatus } from './useStudioSchemaStatus'
 
 export type StudioHeaderSchemaStatusData = {
+  action: StudioSchemaStatusState['action']
   detail: string
   state: StudioSchemaSaveState
   visible: boolean
@@ -27,6 +28,7 @@ export const useStudioHeaderState = () => {
 
   const schemaStatusData = computed<StudioHeaderSchemaStatusData>(() => {
     return {
+      action: studioSchemaStatus.value.action,
       detail: studioSchemaStatus.value.detail,
       state: studioSchemaStatus.value.saveState,
       visible: studioSchemaStatus.value.visible

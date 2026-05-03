@@ -1,5 +1,5 @@
 import { mountSuspended } from '@nuxt/test-utils/runtime'
-import { defineComponent } from 'vue'
+import { defineComponent, type Ref } from 'vue'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { usePgmlStudioSchemas } from '../../app/composables/usePgmlStudioSchemas'
@@ -211,6 +211,65 @@ describe('usePgmlStudioSchemas', () => {
     expect(api.hasPendingLocalChanges.value).toBe(false)
     expect(api.currentSchemaName.value).toBe('Untitled schema')
     expect(api.isSavedToLocalStorage.value).toBe(false)
+
+    await vi.advanceTimersByTimeAsync(5000)
+
+    expect(window.localStorage.getItem('pgml-studio-schemas-v1')).toBeNull()
+  })
+
+  it('does not write browser schemas when browser persistence is disabled', async () => {
+    vi.useFakeTimers()
+
+    const source = ref('Table public.gist_backed {\n  id uuid [pk]\n}')
+    let api!: ReturnType<typeof usePgmlStudioSchemas>
+
+    await mountSuspended(defineComponent({
+      setup() {
+        api = usePgmlStudioSchemas({
+          browserPersistenceEnabled: computed(() => false),
+          buildSchemaText: () => source.value,
+          canEmbedLayout: computed(() => true),
+          initialSource: 'Table public.example {\n  id uuid [pk]\n}',
+          source
+        })
+
+        return () => null
+      }
+    }))
+
+    await expect(api.saveSchemaToBrowser()).resolves.toBe(false)
+
+    source.value = 'Table public.gist_backed {\n  id uuid [pk]\n  name text\n}'
+    await vi.advanceTimersByTimeAsync(5000)
+
+    expect(window.localStorage.getItem('pgml-studio-schemas-v1')).toBeNull()
+  })
+
+  it('does not flush a queued non-browser autosave after source reset on route leave', async () => {
+    vi.useFakeTimers()
+
+    const persistenceActive = ref(true)
+    const sourceKind: Ref<'browser' | 'gist'> = ref('gist')
+    const source = ref('Table public.gist_backed {\n  id uuid [pk]\n}')
+
+    await mountSuspended(defineComponent({
+      setup() {
+        usePgmlStudioSchemas({
+          autosaveEnabled: computed(() => persistenceActive.value && sourceKind.value === 'browser'),
+          browserPersistenceEnabled: computed(() => persistenceActive.value && sourceKind.value === 'browser'),
+          buildSchemaText: () => source.value,
+          canEmbedLayout: computed(() => true),
+          initialSource: 'Table public.example {\n  id uuid [pk]\n}',
+          source
+        })
+
+        return () => null
+      }
+    }))
+
+    source.value = 'Table public.gist_backed {\n  id uuid [pk]\n  name text\n}'
+    persistenceActive.value = false
+    sourceKind.value = 'browser'
 
     await vi.advanceTimersByTimeAsync(5000)
 

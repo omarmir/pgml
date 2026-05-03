@@ -2,6 +2,7 @@
 import type { Ref } from 'vue'
 import { storeToRefs } from 'pinia'
 import AppDbmlImportModal from '~/components/app/AppDbmlImportModal.vue'
+import AppGithubGistConnectModal from '~/components/app/AppGithubGistConnectModal.vue'
 import {
   exampleSchemaName,
   formatSavedPgmlSchemaTime,
@@ -36,14 +37,15 @@ import {
   buildBrowserStudioNewQuery,
   buildBrowserStudioSavedQuery,
   buildFileStudioRecentQuery,
+  buildGistStudioFileQuery,
   getStudioWorkspacePath,
   isStudioWorkspacePath,
   type FileStudioLaunchRequest,
   type StudioWorkspacePage
 } from '~/utils/studio-launch'
 
-type SourceCardId = 'browser-local-storage' | 'computer-saved-file' | 'hosted-database'
-type PgDumpImportTarget = 'browser' | 'file' | 'hosted'
+type SourceCardId = 'browser-local-storage' | 'computer-saved-file' | 'github-gist'
+type PgDumpImportTarget = 'browser' | 'file' | 'gist'
 
 type SourceCardOperationItem = {
   action?: {
@@ -145,6 +147,7 @@ const dbmlImportTarget: Ref<PgDumpImportTarget | null> = ref(null)
 const dbmlImportText: Ref<string> = ref('')
 const isConfirmingComputerFileAction: Ref<boolean> = ref(false)
 const isSubmittingDbmlImport: Ref<boolean> = ref(false)
+const isSubmittingGithubGistConnection: Ref<boolean> = ref(false)
 const isSubmittingPgDumpImport: Ref<boolean> = ref(false)
 const isSubmittingImportedSchemaLaunch: Ref<boolean> = ref(false)
 const pendingComputerFileAction: Ref<PendingComputerFileAction | null> = ref(null)
@@ -156,12 +159,21 @@ const pgDumpImportSelectedFile: Ref<File | null> = ref(null)
 const pgDumpImportTarget: Ref<PgDumpImportTarget | null> = ref(null)
 const pgDumpImportText: Ref<string> = ref('')
 const importedSchemaLaunchDialogOpen: Ref<boolean> = ref(false)
+const githubGistConnectDialogOpen: Ref<boolean> = ref(false)
+const githubGistAccountLabel: Ref<string> = ref('')
+const githubGistId: Ref<string> = ref('')
+const githubGistTokenInput: Ref<string> = ref('')
+const githubGistConnectError: Ref<string | null> = ref(null)
 const browserNewQuery = buildBrowserStudioNewQuery()
 const browserExampleQuery = buildBrowserStudioExampleQuery()
 const studioSessionStore = useStudioSessionStore()
 const studioSourcesStore = useStudioSourcesStore()
 const {
   browserSchemas: savedSchemas,
+  githubGistConnection,
+  githubGistError,
+  githubGistFiles,
+  githubGistToken,
   recentComputerFiles
 } = storeToRefs(studioSourcesStore)
 const router = useRouter()
@@ -182,7 +194,7 @@ const pgDumpImportMissingInputErrorMessage = 'Paste pg_dump text or choose a tex
 const sourceImportTargetByCardId: Record<SourceCardId, PgDumpImportTarget> = {
   'browser-local-storage': 'browser',
   'computer-saved-file': 'file',
-  'hosted-database': 'hosted'
+  'github-gist': 'gist'
 }
 const dbmlImportState: ImportDialogState = {
   dialogOpen: dbmlImportDialogOpen,
@@ -394,6 +406,9 @@ const refreshSavedSchemas = () => {
 const refreshRecentComputerFiles = async () => {
   await studioSourcesStore.refreshRecentComputerFiles()
 }
+const refreshGithubGistFiles = async () => {
+  await studioSourcesStore.refreshGithubGistFiles()
+}
 const closeImportedSchemaLaunchDialog = () => {
   if (isSubmittingImportedSchemaLaunch.value) {
     return
@@ -421,6 +436,15 @@ const finishImportedSchemaLaunch = async (input: {
         role: 'implementation',
         snapshotSource: input.snapshotSource
       }),
+      workspacePage: input.workspacePage
+    })
+    return
+  }
+
+  if (input.importTarget === 'gist') {
+    await createGithubGistFileFromImport({
+      name: input.schemaName,
+      snapshotSource: input.snapshotSource,
       workspacePage: input.workspacePage
     })
     return
@@ -458,6 +482,52 @@ const createBrowserSchemaFromImport = async (input: {
   })
 
   return true
+}
+const createGithubGistFile = async (input: {
+  name: string
+  text: string
+  workspacePage?: StudioWorkspacePage
+}) => {
+  if (!githubGistConnection.value || !githubGistToken.value) {
+    openGithubGistConnectDialog()
+    return false
+  }
+
+  const createdFile = await studioSourcesStore.createGithubGistPgmlFile({
+    name: input.name,
+    text: input.text
+  })
+
+  if (!createdFile) {
+    pushSaveErrorToast(studioSourcesStore.githubGistError || 'Unable to save to the connected GitHub Gist.')
+    return false
+  }
+
+  await router.push({
+    path: getStudioWorkspacePath(input.workspacePage || 'diagram'),
+    query: buildGistStudioFileQuery({
+      filename: createdFile.filename,
+      gistId: createdFile.gistId
+    })
+  })
+
+  return true
+}
+const createGithubGistFileFromImport = async (input: {
+  name: string
+  snapshotSource: string
+  workspacePage: StudioWorkspacePage
+}) => {
+  return await createGithubGistFile({
+    name: input.name,
+    text: buildVersionedPgmlText({
+      initialVersionName: 'Initial implementation',
+      name: input.name,
+      role: 'implementation',
+      snapshotSource: input.snapshotSource
+    }),
+    workspacePage: input.workspacePage
+  })
 }
 const deleteBrowserSavedSchema = (schemaId: string) => {
   if (!studioSourcesStore.deleteBrowserSchema(schemaId)) {
@@ -537,6 +607,22 @@ const createComputerFile = async (input: {
 }
 const createComputerFileFromLaunch = async (launchType: 'example' | 'new') => {
   await createComputerFile({
+    name: launchType === 'example' ? exampleSchemaName : untitledSchemaName,
+    text: launchType === 'example'
+      ? pgmlVersionedExample
+      : buildVersionedPgmlText({
+          name: untitledSchemaName,
+          snapshotSource: ''
+        })
+  })
+}
+const createGithubGistFileFromLaunch = async (launchType: 'example' | 'new') => {
+  if (!githubGistConnection.value || !githubGistToken.value) {
+    openGithubGistConnectDialog()
+    return
+  }
+
+  await createGithubGistFile({
     name: launchType === 'example' ? exampleSchemaName : untitledSchemaName,
     text: launchType === 'example'
       ? pgmlVersionedExample
@@ -723,23 +809,96 @@ const launchImportedSchemaIntoWorkspace = async (workspacePage: StudioWorkspaceP
     isSubmittingImportedSchemaLaunch.value = false
   }
 }
+const openGithubGistConnectDialog = () => {
+  githubGistAccountLabel.value = githubGistConnection.value?.accountLabel || ''
+  githubGistId.value = githubGistConnection.value?.gistId || ''
+  githubGistTokenInput.value = ''
+  githubGistConnectError.value = null
+  githubGistConnectDialogOpen.value = true
+}
+const handleGithubGistConnectDialogOpenChange = (nextOpen: boolean) => {
+  githubGistConnectDialogOpen.value = nextOpen
+
+  if (nextOpen) {
+    return
+  }
+
+  githubGistTokenInput.value = ''
+  githubGistConnectError.value = null
+}
+const submitGithubGistConnection = async () => {
+  isSubmittingGithubGistConnection.value = true
+  githubGistConnectError.value = null
+
+  try {
+    const didConnect = await studioSourcesStore.connectGithubGist({
+      accountLabel: githubGistAccountLabel.value,
+      gistId: githubGistId.value,
+      token: githubGistTokenInput.value
+    })
+
+    if (!didConnect) {
+      githubGistConnectError.value = studioSourcesStore.githubGistError || 'Unable to connect to that GitHub Gist.'
+      return
+    }
+
+    githubGistTokenInput.value = ''
+    githubGistConnectDialogOpen.value = false
+  } finally {
+    isSubmittingGithubGistConnection.value = false
+  }
+}
 const handleSourceCardAction = async (payload: {
   actionId: string
   cardId: string
   value: string
 }) => {
   if (payload.actionId === 'open-dbml-import') {
+    if (payload.value === 'github-gist' && (!githubGistConnection.value || !githubGistToken.value)) {
+      openGithubGistConnectDialog()
+      return
+    }
+
     openDbmlImportDialog(payload.value as SourceCardId)
     return
   }
 
   if (payload.actionId === 'open-pg-dump-import') {
+    if (payload.value === 'github-gist' && (!githubGistConnection.value || !githubGistToken.value)) {
+      openGithubGistConnectDialog()
+      return
+    }
+
     openPgDumpImportDialog(payload.value as SourceCardId)
     return
   }
 
   if (payload.cardId === 'browser-local-storage' && payload.actionId === 'delete-saved-schema') {
     deleteBrowserSavedSchema(payload.value)
+    return
+  }
+
+  if (payload.cardId === 'github-gist') {
+    if (payload.actionId === 'connect-github-gist') {
+      openGithubGistConnectDialog()
+      return
+    }
+
+    if (payload.actionId === 'refresh-github-gist') {
+      await refreshGithubGistFiles()
+      return
+    }
+
+    if (payload.actionId === 'create-github-gist-file:new') {
+      await createGithubGistFileFromLaunch('new')
+      return
+    }
+
+    if (payload.actionId === 'create-github-gist-file:example') {
+      await createGithubGistFileFromLaunch('example')
+      return
+    }
+
     return
   }
 
@@ -848,11 +1007,11 @@ const dbmlImportDialogCopy = computed(() => {
       inputDescription: 'Use one input method only. PGML imports the DBML-compatible table, enum, and ref surface it already understands. You can also opt into comment parsing for functions, triggers, procedures, sequences, and simple indexes when they are embedded in block comments. If an imported executable still has ambiguous placement, PGML pauses for a table-selection review before replacing the workspace.',
       title: 'Import DBML into a new computer file'
     },
-    hosted: {
-      confirmLabel: 'Import into browser storage',
-      description: 'Paste DBML text or upload a DBML file. Hosted persistence is still a placeholder, so this import opens as a browser-backed PGML schema for now after validating the schema surface, optionally extracting recognized SQL entities from block comments, inferring obvious executable attachments, and showing progress while the import is prepared.',
+    gist: {
+      confirmLabel: 'Import into Gist',
+      description: 'Paste DBML text or upload a DBML file. PGML will validate the schema surface, optionally extract recognized SQL entities from block comments, infer obvious executable attachments, show progress while the import is prepared, and save the result as a new `.pgml` file in the connected Gist.',
       inputDescription: 'Use one input method only. PGML imports the DBML-compatible table, enum, and ref surface it already understands. You can also opt into comment parsing for functions, triggers, procedures, sequences, and simple indexes when they are embedded in block comments. If an imported executable still has ambiguous placement, PGML pauses for a table-selection review before replacing the workspace.',
-      title: 'Import DBML from the hosted lane'
+      title: 'Import DBML into GitHub Gist'
     }
   }
 
@@ -875,11 +1034,11 @@ const pgDumpImportDialogCopy = computed(() => {
       inputDescription: 'Use one input method only. PGML imports schema objects from SQL and skips table data from COPY sections. If an imported executable still has ambiguous placement, PGML pauses for a table-selection review before replacing the workspace.',
       title: 'Import pg_dump into a new computer file'
     },
-    hosted: {
-      confirmLabel: 'Import into browser storage',
-      description: 'Paste a text pg_dump or upload a text dump file. Hosted persistence is still a placeholder, so this import opens as a browser-backed PGML schema for now after converting the schema objects, inferring obvious executable attachments, and showing progress while the import is prepared.',
+    gist: {
+      confirmLabel: 'Import into Gist',
+      description: 'Paste a text pg_dump or upload a text dump file. PGML will convert the schema objects, infer obvious executable table attachments, show progress while the import is prepared, and save the result as a new `.pgml` file in the connected Gist.',
       inputDescription: 'Use one input method only. PGML imports schema objects from SQL and skips table data from COPY sections. If an imported executable still has ambiguous placement, PGML pauses for a table-selection review before replacing the workspace.',
-      title: 'Import pg_dump from the hosted lane'
+      title: 'Import pg_dump into GitHub Gist'
     }
   }
 
@@ -895,6 +1054,19 @@ const computerFileCountLabel = computed(() => {
   const fileCount = recentComputerFiles.value.length
 
   return `${fileCount} recent file${fileCount === 1 ? '' : 's'}`
+})
+const githubGistInventoryLabel = computed(() => {
+  if (!githubGistConnection.value) {
+    return 'Not connected'
+  }
+
+  if (!githubGistToken.value) {
+    return 'Token required'
+  }
+
+  const fileCount = githubGistFiles.value.length
+
+  return `${fileCount} PGML file${fileCount === 1 ? '' : 's'}`
 })
 const browserExistingItems = computed<SourceCardOperationItem[]>(() => {
   if (savedSchemas.value.length === 0) {
@@ -956,6 +1128,55 @@ const computerFileItems = computed<SourceCardOperationItem[]>(() => {
         triggerAction: {
           id: 'open-recent-computer-file',
           value: file.id
+        }
+      }
+    })
+  ]
+})
+const githubGistItems = computed<SourceCardOperationItem[]>(() => {
+  const connectItem: SourceCardOperationItem = {
+    description: githubGistConnection.value
+      ? 'Reconnect this Gist with a token from your password manager.'
+      : 'Enter a Gist ID and a GitHub token. The token stays in memory only.',
+    label: githubGistConnection.value ? 'Reconnect GitHub Gist' : 'Connect GitHub Gist',
+    triggerAction: {
+      id: 'connect-github-gist',
+      value: 'connect'
+    }
+  }
+
+  if (!githubGistConnection.value || !githubGistToken.value) {
+    return [
+      connectItem,
+      {
+        description: 'PGML files are fetched from GitHub after you connect.',
+        label: 'No Gist files loaded.'
+      }
+    ]
+  }
+
+  if (githubGistFiles.value.length === 0) {
+    return [
+      connectItem,
+      {
+        description: 'Create a new PGML file or import DBML/pg_dump into this Gist.',
+        label: 'No PGML files in this Gist yet.'
+      }
+    ]
+  }
+
+  return [
+    connectItem,
+    ...githubGistFiles.value.map((file) => {
+      return {
+        description: `Remote file updated ${formatSavedPgmlSchemaTime(file.updatedAt)}`,
+        label: file.filename,
+        to: {
+          path: '/diagram',
+          query: buildGistStudioFileQuery({
+            filename: file.filename,
+            gistId: file.gistId
+          })
         }
       }
     })
@@ -1064,51 +1285,54 @@ const sourceCards = computed<SourceCardDefinition[]>(() => {
       title: 'Computer saved file'
     },
     {
-      cardId: 'hosted-database',
-      description: 'Use this lane for hosted database sources, whether that means resuming an import, starting blank, or opening a hosted example once the hosted workflow is wired in.',
-      inventory: 'Placeholder',
+      cardId: 'github-gist',
+      description: 'Use this lane for remote PGML files stored in a GitHub Gist. PGML fetches the Gist each time and saves only when you explicitly choose Save.',
+      inventory: githubGistInventoryLabel.value,
       operations: [
         {
-          description: 'Saved hosted connections and imported schemas will appear here once the hosted workflow is implemented.',
+          description: githubGistError.value || 'Connect a Gist or open a remote `.pgml` file from the connected Gist.',
           icon: 'i-lucide-folder-open',
-          items: [{
-            description: 'Placeholder only.',
-            label: 'Hosted database sources will be listed here.'
-          }],
+          items: githubGistItems.value,
           label: 'Open existing'
         },
         {
-          description: 'Open a blank PGML document for a hosted workflow once database connection support is wired in.',
+          description: 'Create a blank versioned `.pgml` file in the connected Gist, then open it in the studio.',
           icon: 'i-lucide-square-pen',
           label: 'Start new',
-          placeholder: true
+          triggerAction: {
+            id: 'create-github-gist-file:new',
+            value: 'new'
+          }
         },
         {
-          description: 'Load a bundled example for the hosted workflow once database connection support is wired in.',
+          description: 'Save the bundled multi-version PGML example as a new `.pgml` file in the connected Gist.',
           icon: 'i-lucide-flask-conical',
-          label: 'Preview hosted example',
-          placeholder: true
+          label: 'Save example to Gist',
+          triggerAction: {
+            id: 'create-github-gist-file:example',
+            value: 'example'
+          }
         }
       ],
       importActions: [
         {
-          description: 'Convert a text pg_dump from this lane now, show progress while it is prepared, and open it in browser storage as a versioned PGML document while hosted persistence stays in progress.',
+          description: 'Convert a text pg_dump into a new versioned `.pgml` file in the connected Gist, then open it in the studio.',
           id: 'open-pg-dump-import',
-          label: 'Import from hosted lane',
+          label: 'Import into Gist',
           title: 'pg_dump',
-          value: 'hosted-database'
+          value: 'github-gist'
         },
         {
-          description: 'Import DBML from this lane now, extract supported executable objects, and open it in browser storage as a versioned PGML document while hosted persistence stays in progress.',
+          description: 'Import DBML into a new versioned `.pgml` file in the connected Gist, with attachment review only when placement is ambiguous.',
           id: 'open-dbml-import',
-          label: 'Import DBML from hosted lane',
+          label: 'Import DBML into Gist',
           title: 'DBML',
-          value: 'hosted-database'
+          value: 'github-gist'
         }
       ],
-      statusLabel: 'Placeholder',
-      statusTone: 'placeholder',
-      title: 'Hosted database'
+      statusLabel: githubGistConnection.value ? 'Remote' : 'Connect',
+      statusTone: githubGistConnection.value ? 'live' : 'placeholder',
+      title: 'GitHub Gists'
     }
   ]
 })
@@ -1116,6 +1340,7 @@ const sourceCards = computed<SourceCardDefinition[]>(() => {
 onMounted(() => {
   refreshSavedSchemas()
   void refreshRecentComputerFiles()
+  void refreshGithubGistFiles()
 })
 
 onBeforeRouteLeave((to) => {
@@ -1213,6 +1438,20 @@ onBeforeRouteLeave((to) => {
         @select-file="setPgDumpImportFile"
         @clear-file="clearPgDumpImportFile"
         @submit="submitPgDumpImport"
+      />
+
+      <AppGithubGistConnectModal
+        :open="githubGistConnectDialogOpen"
+        :account-label="githubGistAccountLabel"
+        :gist-id="githubGistId"
+        :token="githubGistTokenInput"
+        :error-message="githubGistConnectError"
+        :is-submitting="isSubmittingGithubGistConnection"
+        @update:open="handleGithubGistConnectDialogOpenChange"
+        @update:account-label="githubGistAccountLabel = $event"
+        @update:gist-id="githubGistId = $event"
+        @update:token="githubGistTokenInput = $event"
+        @submit="submitGithubGistConnection"
       />
 
       <StudioModalFrame

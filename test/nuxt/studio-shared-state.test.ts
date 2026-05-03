@@ -40,6 +40,7 @@ describe('studio shared state composables', () => {
     const { clearStudioSchemaStatus, setStudioSchemaStatus, state } = useStudioSchemaStatus()
 
     setStudioSchemaStatus({
+      action: null,
       detail: 'Saved to local storage',
       name: 'Example schema',
       saveState: 'saved',
@@ -47,6 +48,7 @@ describe('studio shared state composables', () => {
     })
 
     expect(state.value).toEqual({
+      action: null,
       detail: 'Saved to local storage',
       name: 'Example schema',
       saveState: 'saved',
@@ -56,6 +58,7 @@ describe('studio shared state composables', () => {
     clearStudioSchemaStatus()
 
     expect(state.value).toEqual({
+      action: null,
       detail: '',
       name: '',
       saveState: 'pending',

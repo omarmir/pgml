@@ -26,9 +26,16 @@ const studioWorkspaceStateKeys = Object.freeze({
   computerFileUpdatedAt: 'studio-workspace-computer-file-updated-at-v1',
   documentEditorScope: 'studio-workspace-document-editor-scope-v1',
   editorMode: 'studio-workspace-editor-mode-v1',
+  gistFileName: 'studio-workspace-gist-file-name-v1',
+  gistFileSnapshot: 'studio-workspace-gist-file-snapshot-v1',
+  gistFileUpdatedAt: 'studio-workspace-gist-file-updated-at-v1',
+  gistId: 'studio-workspace-gist-id-v1',
+  gistSaveError: 'studio-workspace-gist-save-error-v1',
   hasSavedComputerFileInSession: 'studio-workspace-has-saved-computer-file-in-session-v1',
+  hasSavedGistFileInSession: 'studio-workspace-has-saved-gist-file-in-session-v1',
   hasSavedSchemaInSession: 'studio-workspace-has-saved-schema-in-session-v1',
   isSavingToComputerFile: 'studio-workspace-is-saving-to-computer-file-v1',
+  isSavingToGistFile: 'studio-workspace-is-saving-to-gist-file-v1',
   isSavingToLocalStorage: 'studio-workspace-is-saving-to-local-storage-v1',
   localStorageSaveError: 'studio-workspace-local-storage-save-error-v1',
   previewTargetId: 'studio-workspace-preview-target-id-v1',
@@ -120,6 +127,18 @@ export const useStudioWorkspaceComputerFileState = () => {
   }
 }
 
+export const useStudioWorkspaceGistFileState = () => {
+  return {
+    currentGistFileName: useStateWithDefault<string>(studioWorkspaceStateKeys.gistFileName, () => ''),
+    currentGistFileUpdatedAt: useStateWithDefault<string | null>(studioWorkspaceStateKeys.gistFileUpdatedAt, () => null),
+    currentGistId: useStateWithDefault<string | null>(studioWorkspaceStateKeys.gistId, () => null),
+    gistFileSaveError: useStateWithDefault<string | null>(studioWorkspaceStateKeys.gistSaveError, () => null),
+    hasSavedGistFileInSession: useStateWithDefault<boolean>(studioWorkspaceStateKeys.hasSavedGistFileInSession, () => false),
+    isSavingToGistFile: useStateWithDefault<boolean>(studioWorkspaceStateKeys.isSavingToGistFile, () => false),
+    lastPersistedSnapshot: useStateWithDefault<string | null>(studioWorkspaceStateKeys.gistFileSnapshot, () => null)
+  }
+}
+
 export const resetStudioWorkspaceState = () => {
   useState<string | null>(studioWorkspaceStateKeys.compareBaseId, () => null).value = null
   useState<PgmlCompareExclusions>(studioWorkspaceStateKeys.compareExclusions, createEmptyPgmlCompareExclusions).value = createEmptyPgmlCompareExclusions()
@@ -133,9 +152,16 @@ export const resetStudioWorkspaceState = () => {
   useState<string | null>(studioWorkspaceStateKeys.computerFileUpdatedAt, () => null).value = null
   useState<PgmlDocumentEditorScope>(studioWorkspaceStateKeys.documentEditorScope, () => 'all').value = 'all'
   useState<PgmlVersionedDocumentEditorMode>(studioWorkspaceStateKeys.editorMode, () => 'head').value = 'head'
+  useState<string>(studioWorkspaceStateKeys.gistFileName, () => '').value = ''
+  useState<string | null>(studioWorkspaceStateKeys.gistFileSnapshot, () => null).value = null
+  useState<string | null>(studioWorkspaceStateKeys.gistFileUpdatedAt, () => null).value = null
+  useState<string | null>(studioWorkspaceStateKeys.gistId, () => null).value = null
+  useState<string | null>(studioWorkspaceStateKeys.gistSaveError, () => null).value = null
   useState<boolean>(studioWorkspaceStateKeys.hasSavedComputerFileInSession, () => false).value = false
+  useState<boolean>(studioWorkspaceStateKeys.hasSavedGistFileInSession, () => false).value = false
   useState<boolean>(studioWorkspaceStateKeys.hasSavedSchemaInSession, () => false).value = false
   useState<boolean>(studioWorkspaceStateKeys.isSavingToComputerFile, () => false).value = false
+  useState<boolean>(studioWorkspaceStateKeys.isSavingToGistFile, () => false).value = false
   useState<boolean>(studioWorkspaceStateKeys.isSavingToLocalStorage, () => false).value = false
   useState<string | null>(studioWorkspaceStateKeys.localStorageSaveError, () => null).value = null
   useState<PgmlVersionPreviewTarget>(studioWorkspaceStateKeys.previewTargetId, () => 'workspace').value = 'workspace'

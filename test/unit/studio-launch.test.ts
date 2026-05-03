@@ -7,6 +7,7 @@ import {
   buildBrowserStudioSavedQuery,
   clearStudioLaunchAccess,
   buildFileStudioRecentQuery,
+  buildGistStudioFileQuery,
   consumePreloadedFileStudioLaunch,
   getBrowserStudioLaunchRequestKey,
   getStudioLaunchRequestKey,
@@ -35,6 +36,15 @@ describe('studio launch utilities', () => {
       file: 'recent-file-1',
       launch: 'recent',
       source: 'file'
+    })
+    expect(buildGistStudioFileQuery({
+      filename: 'team.pgml',
+      gistId: 'gist-1'
+    })).toEqual({
+      file: 'team.pgml',
+      gist: 'gist-1',
+      launch: 'file',
+      source: 'gist'
     })
   })
 
@@ -82,6 +92,29 @@ describe('studio launch utilities', () => {
       launch: 'recent',
       source: 'file'
     })).toBeNull()
+    expect(parseStudioLaunchQuery({
+      file: 'team.pgml',
+      gist: 'gist-1',
+      launch: 'file',
+      source: 'gist'
+    })).toEqual({
+      filename: 'team.pgml',
+      gistId: 'gist-1',
+      launch: 'file',
+      source: 'gist'
+    })
+    expect(parseStudioLaunchQuery({
+      file: '',
+      gist: 'gist-1',
+      launch: 'file',
+      source: 'gist'
+    })).toBeNull()
+    expect(parseStudioLaunchQuery({
+      file: 'team.pgml',
+      gist: '',
+      launch: 'file',
+      source: 'gist'
+    })).toBeNull()
   })
 
   it('serializes launch requests into stable keys', () => {
@@ -103,6 +136,12 @@ describe('studio launch utilities', () => {
       recentFileId: 'recent-file-1',
       source: 'file'
     })).toBe('file:recent:recent-file-1')
+    expect(getStudioLaunchRequestKey({
+      filename: 'team.pgml',
+      gistId: 'gist-1',
+      launch: 'file',
+      source: 'gist'
+    })).toBe('gist:file:gist-1:team.pgml')
   })
 
   it('stores and consumes a preloaded file launch payload for the matching request', () => {
