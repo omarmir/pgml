@@ -89,6 +89,8 @@ describe('diagram performance source', () => {
     expect(sceneFile).toContain('await restartPixi()')
     expect(sceneFile).toContain('shouldDisableConnectionCulling = /Android/i.test(navigator.userAgent) || window.matchMedia(\'(pointer: coarse)\').matches')
     expect(pageFile).toContain('new Worker(new URL(\'../../workers/pgml-analysis.worker.ts\', import.meta.url), {')
+    expect(pageFile).toContain('new Worker(new URL(\'../../workers/pgml-document-load.worker.ts\', import.meta.url), {')
+    expect(pageFile).toContain('data-pgml-open-loading="true"')
     expect(pageFile).toContain('const shouldBuildVersionArtifacts = computed(() => {')
     expect(pageFile).toContain('const compareMigrationBundle = computed(() => {')
   })

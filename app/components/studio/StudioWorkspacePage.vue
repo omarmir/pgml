@@ -85,7 +85,9 @@ import {
   buildPgmlCheckpointName,
   getPgmlVersionDisplayLabel,
   getLatestPgmlVersion,
-  serializePgmlDocumentScope
+  preparePgmlDocumentForLoad,
+  serializePgmlDocumentScope,
+  type PgmlVersionSetDocument
 } from '~/utils/pgml-document'
 import {
   buildPgmlVersionMigrationBundle,
@@ -315,6 +317,7 @@ const editorDisplaySource: Ref<string> = ref(initialWorkspaceSource)
 const canvasRef: Ref<PgmlDiagramCanvasExposed | null> = ref(null)
 const canvasViewportResetKey: Ref<number> = ref(0)
 const isExporting: Ref<boolean> = ref(false)
+const isOpeningPgmlDocument: Ref<boolean> = ref(false)
 const versionDocumentName: Ref<string> = useStudioWorkspaceDocumentNameState('Untitled schema')
 const mobileWorkspaceView: Ref<StudioMobileWorkspaceView> = ref(
   workspaceMode === 'analysis' ? 'tool-panel' : 'diagram'
@@ -436,7 +439,7 @@ const {
   editorMode: versionedEditorMode,
   isWorkspacePreview,
   latestImplementationVersion,
-  loadDocument: loadVersionedDocument,
+  loadPreparedDocument,
   previewSource,
   previewTargetId,
   replaceWorkspaceFromImportedSnapshot,
@@ -482,6 +485,88 @@ const lastRenderableWorkspaceModel: ShallowRef<PgmlSchemaModel> = shallowRef(app
   versionDocument.value.schemaMetadata
 ))
 let pgmlAnalysisWorker: Worker | null = null
+let documentLoadRevision = 0
+
+type PgmlDocumentLoadWorkerResponse = {
+  document: PgmlVersionSetDocument | null
+  error: string | null
+  revision: number
+}
+
+const prepareLoadedDocumentOffThread = async (
+  rawText: string,
+  revision: number
+) => {
+  if (!import.meta.client) {
+    return preparePgmlDocumentForLoad({
+      documentName: versionDocumentName.value,
+      rawText
+    })
+  }
+
+  return await new Promise<PgmlVersionSetDocument>((resolve, reject) => {
+    const worker = new Worker(new URL('../../workers/pgml-document-load.worker.ts', import.meta.url), {
+      type: 'module'
+    })
+
+    worker.onmessage = (event: MessageEvent<PgmlDocumentLoadWorkerResponse>) => {
+      worker.terminate()
+
+      if (event.data.revision !== revision) {
+        reject(new Error('Skipped stale PGML open request.'))
+        return
+      }
+
+      if (event.data.error || !event.data.document) {
+        reject(new Error(event.data.error || 'Unable to open that PGML document.'))
+        return
+      }
+
+      resolve(event.data.document)
+    }
+    worker.onerror = () => {
+      worker.terminate()
+      reject(new Error('Unable to open that PGML document.'))
+    }
+    worker.postMessage({
+      documentName: versionDocumentName.value,
+      rawText,
+      revision
+    })
+  })
+}
+
+const loadWorkspaceDocument = async (rawText: string) => {
+  const revision = documentLoadRevision + 1
+
+  documentLoadRevision = revision
+  isOpeningPgmlDocument.value = true
+
+  try {
+    const document = await prepareLoadedDocumentOffThread(rawText, revision)
+
+    if (revision !== documentLoadRevision) {
+      return
+    }
+
+    loadPreparedDocument(document)
+  } catch (error) {
+    if (revision !== documentLoadRevision) {
+      return
+    }
+
+    toast.add({
+      title: 'Open failed',
+      description: error instanceof Error ? error.message : 'Unable to open that PGML document.',
+      color: 'error',
+      icon: 'i-lucide-x'
+    })
+  } finally {
+    if (revision === documentLoadRevision) {
+      isOpeningPgmlDocument.value = false
+    }
+  }
+}
 
 const syncWorkspaceAnalysisLocally = (
   nextSource: string,
@@ -1005,7 +1090,7 @@ const {
   schemaActionDescription,
   schemaActionTitle
 } = usePgmlStudioSchemas({
-  applyLoadedSchemaText: loadVersionedDocument,
+  applyLoadedSchemaText: loadWorkspaceDocument,
   autosaveEnabled: computed(() => workspacePersistenceActive.value && currentPersistenceSource.value === 'browser'),
   browserPersistenceEnabled: computed(() => workspacePersistenceActive.value && currentPersistenceSource.value === 'browser'),
   buildSchemaText,
@@ -1034,7 +1119,7 @@ const {
   saveSchemaToComputerFile,
   syncLoadedComputerFile
 } = usePgmlStudioComputerFiles({
-  applyLoadedFileText: loadVersionedDocument,
+  applyLoadedFileText: loadWorkspaceDocument,
   buildSchemaText,
   enabled: computed(() => currentPersistenceSource.value === 'file'),
   source
@@ -1053,7 +1138,7 @@ const {
   loadGistPgmlFileByName,
   saveSchemaToGistFile
 } = usePgmlStudioGists({
-  applyLoadedFileText: loadVersionedDocument,
+  applyLoadedFileText: loadWorkspaceDocument,
   buildSchemaText,
   source
 })
@@ -4415,7 +4500,21 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <div class="h-full min-h-0">
+  <div class="relative h-full min-h-0">
+    <div
+      v-if="isOpeningPgmlDocument"
+      data-pgml-open-loading="true"
+      class="absolute inset-0 z-40 grid place-items-center bg-[color:var(--studio-shell-bg)]/88 backdrop-blur-sm"
+    >
+      <div class="flex items-center gap-2 border border-[color:var(--studio-shell-border)] bg-[color:var(--studio-control-bg)] px-3 py-2 text-[0.72rem] font-medium text-[color:var(--studio-shell-text)] shadow-sm">
+        <UIcon
+          name="i-lucide-loader-circle"
+          class="h-4 w-4 animate-spin text-[color:var(--studio-shell-label)]"
+        />
+        <span>Opening PGML...</span>
+      </div>
+    </div>
+
     <template v-if="isDiagramWorkspace">
       <StudioMobileWorkspace
         v-if="isCompactStudioLayout"

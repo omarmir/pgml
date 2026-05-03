@@ -20,6 +20,7 @@ import {
   createPgmlDocumentComparison,
   createPgmlDocumentView,
   createInitialPgmlDocument,
+  preparePgmlDocumentForLoad,
   createPgmlVersionFromWorkspace,
   buildPgmlVersionLineageLabel,
   getPgmlDocumentBlockPreviewSource,
@@ -50,7 +51,6 @@ import {
   isPgmlLeafVersion,
   getPgmlDocumentPreviewSource,
   isPgmlWorkspaceDirty,
-  parsePgmlDocument,
   replacePgmlDocumentSchemaMetadata,
   replacePgmlWorkspaceFromSnapshot,
   serializePgmlDocumentScope,
@@ -756,25 +756,13 @@ export const usePgmlStudioVersionHistory = (
   }
 
   const loadDocument = (rawText: string) => {
-    const normalizedSource = rawText.trim()
-    let parsedDocument: PgmlVersionSetDocument
-
-    // Empty text or a non-VersionSet source becomes a fresh versioned document
-    // with that text in the workspace. This keeps the studio resilient while
-    // still treating grammar-native VersionSet documents as the persisted form.
-    if (normalizedSource.length === 0 || !normalizedSource.startsWith('VersionSet')) {
-      parsedDocument = createInitialPgmlDocument({
-        name: input.documentName.value,
-        workspaceSource: rawText
-      })
-    } else {
-      parsedDocument = parsePgmlDocument(rawText)
-    }
-
-    setDocument({
-      ...parsedDocument,
-      name: input.documentName.value
-    }, {
+    loadPreparedDocument(preparePgmlDocumentForLoad({
+      documentName: input.documentName.value,
+      rawText
+    }))
+  }
+  const loadPreparedDocument = (document: PgmlVersionSetDocument) => {
+    setDocument(document, {
       preserveSelectedComparison: true
     })
   }
@@ -1582,6 +1570,7 @@ export const usePgmlStudioVersionHistory = (
     hasVersions,
     isWorkspacePreview,
     loadDocument,
+    loadPreparedDocument,
     leafVersions,
     previewSource,
     previewTargetId,
