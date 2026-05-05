@@ -38,9 +38,18 @@ type DiagramViewItem = {
 
 type DiagramViewSettings = {
   snapToGrid: boolean
+  showConstraints: boolean
+  showCustomTypes: boolean
   showExecutableObjects: boolean
+  showFunctions: boolean
+  showGroups: boolean
+  showIndexes: boolean
+  showProcedures: boolean
   showRelationshipLines: boolean
+  showSequences: boolean
   showTableFields: boolean
+  showTables: boolean
+  showTriggers: boolean
 }
 
 type VersionMigrationArtifactsProps = {

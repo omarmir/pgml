@@ -113,9 +113,18 @@ export type PgmlComparisonItem = {
 
 export type PgmlDiagramViewSettings = {
   snapToGrid: boolean
+  showConstraints: boolean
+  showCustomTypes: boolean
   showExecutableObjects: boolean
+  showFunctions: boolean
+  showGroups: boolean
+  showIndexes: boolean
+  showProcedures: boolean
   showRelationshipLines: boolean
+  showSequences: boolean
   showTableFields: boolean
+  showTables: boolean
+  showTriggers: boolean
 }
 
 const normalizeSnapshotSource = (value: string, includeLayout: boolean) => {
@@ -844,9 +853,18 @@ export const usePgmlStudioVersionHistory = (
   const diagramViewSettings = computed<PgmlDiagramViewSettings>(() => {
     return {
       snapToGrid: activeDiagramView.value?.snapToGrid ?? true,
+      showConstraints: activeDiagramView.value?.showConstraints ?? true,
+      showCustomTypes: activeDiagramView.value?.showCustomTypes ?? true,
       showExecutableObjects: activeDiagramView.value?.showExecutableObjects ?? true,
+      showFunctions: activeDiagramView.value?.showFunctions ?? activeDiagramView.value?.showExecutableObjects ?? true,
+      showGroups: activeDiagramView.value?.showGroups ?? true,
+      showIndexes: activeDiagramView.value?.showIndexes ?? true,
+      showProcedures: activeDiagramView.value?.showProcedures ?? activeDiagramView.value?.showExecutableObjects ?? true,
       showRelationshipLines: activeDiagramView.value?.showRelationshipLines ?? true,
-      showTableFields: activeDiagramView.value?.showTableFields ?? true
+      showSequences: activeDiagramView.value?.showSequences ?? activeDiagramView.value?.showExecutableObjects ?? true,
+      showTableFields: activeDiagramView.value?.showTableFields ?? true,
+      showTables: activeDiagramView.value?.showTables ?? true,
+      showTriggers: activeDiagramView.value?.showTriggers ?? activeDiagramView.value?.showExecutableObjects ?? true
     }
   })
   const canDeleteDiagramView = computed(() => {
@@ -941,9 +959,18 @@ export const usePgmlStudioVersionHistory = (
         name: buildNextDiagramViewName(block.views),
         nodeProperties: currentView?.nodeProperties || {},
         snapToGrid: currentView?.snapToGrid ?? true,
+        showConstraints: currentView?.showConstraints ?? true,
+        showCustomTypes: currentView?.showCustomTypes ?? true,
         showExecutableObjects: currentView?.showExecutableObjects ?? true,
+        showFunctions: currentView?.showFunctions ?? currentView?.showExecutableObjects ?? true,
+        showGroups: currentView?.showGroups ?? true,
+        showIndexes: currentView?.showIndexes ?? true,
+        showProcedures: currentView?.showProcedures ?? currentView?.showExecutableObjects ?? true,
         showRelationshipLines: currentView?.showRelationshipLines ?? true,
-        showTableFields: currentView?.showTableFields ?? true
+        showSequences: currentView?.showSequences ?? currentView?.showExecutableObjects ?? true,
+        showTableFields: currentView?.showTableFields ?? true,
+        showTables: currentView?.showTables ?? true,
+        showTriggers: currentView?.showTriggers ?? currentView?.showExecutableObjects ?? true
       })
 
       block.views = [...block.views.map(clonePgmlDocumentView), nextView]
@@ -970,9 +997,18 @@ export const usePgmlStudioVersionHistory = (
         name: normalizedName,
         nodeProperties: currentView?.nodeProperties || {},
         snapToGrid: currentView?.snapToGrid ?? true,
+        showConstraints: currentView?.showConstraints ?? true,
+        showCustomTypes: currentView?.showCustomTypes ?? true,
         showExecutableObjects: currentView?.showExecutableObjects ?? true,
+        showFunctions: currentView?.showFunctions ?? currentView?.showExecutableObjects ?? true,
+        showGroups: currentView?.showGroups ?? true,
+        showIndexes: currentView?.showIndexes ?? true,
+        showProcedures: currentView?.showProcedures ?? currentView?.showExecutableObjects ?? true,
         showRelationshipLines: currentView?.showRelationshipLines ?? true,
-        showTableFields: currentView?.showTableFields ?? true
+        showSequences: currentView?.showSequences ?? currentView?.showExecutableObjects ?? true,
+        showTableFields: currentView?.showTableFields ?? true,
+        showTables: currentView?.showTables ?? true,
+        showTriggers: currentView?.showTriggers ?? currentView?.showExecutableObjects ?? true
       })
 
       block.views = [...block.views.map(clonePgmlDocumentView), nextView]
@@ -1014,12 +1050,23 @@ export const usePgmlStudioVersionHistory = (
           return clonePgmlDocumentView(view)
         }
 
+        const executableFallback = settings.showExecutableObjects
+
         return createPgmlDocumentView({
           ...view,
           snapToGrid: settings.snapToGrid ?? view.snapToGrid,
+          showConstraints: settings.showConstraints ?? view.showConstraints,
+          showCustomTypes: settings.showCustomTypes ?? view.showCustomTypes,
           showExecutableObjects: settings.showExecutableObjects ?? view.showExecutableObjects,
+          showFunctions: settings.showFunctions ?? executableFallback ?? view.showFunctions,
+          showGroups: settings.showGroups ?? view.showGroups,
+          showIndexes: settings.showIndexes ?? view.showIndexes,
+          showProcedures: settings.showProcedures ?? executableFallback ?? view.showProcedures,
           showRelationshipLines: settings.showRelationshipLines ?? view.showRelationshipLines,
-          showTableFields: settings.showTableFields ?? view.showTableFields
+          showSequences: settings.showSequences ?? executableFallback ?? view.showSequences,
+          showTableFields: settings.showTableFields ?? view.showTableFields,
+          showTables: settings.showTables ?? view.showTables,
+          showTriggers: settings.showTriggers ?? executableFallback ?? view.showTriggers
         })
       })
     })

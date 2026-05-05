@@ -1,4 +1,5 @@
 import { expect, test } from '@nuxt/test-utils/playwright'
+import type { Page } from '@playwright/test'
 import { diagramMaxScale, diagramMinScale } from '../app/utils/diagram-gpu-scene'
 import { getPgmlEditor, readPgmlEditorValue, setPgmlEditorValue } from './helpers/pgml-editor'
 import { authorizeStudioLaunchAccess } from './helpers/studio-launch'
@@ -8,6 +9,35 @@ test.setTimeout(120_000)
 test.beforeEach(async ({ page }) => {
   await authorizeStudioLaunchAccess(page)
 })
+
+const openDiagramViewSettings = async (page: Page) => {
+  await page.locator('[data-diagram-view-settings="desktop"]').click()
+  await expect(page.locator('[data-diagram-view-settings-dialog="true"]')).toBeVisible()
+}
+
+const setDiagramViewSetting = async (
+  page: Page,
+  name: string,
+  checked: boolean
+) => {
+  const escapedName = name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+  const setting = page.getByRole('switch', {
+    name: new RegExp(`^${escapedName}(\\s|$)`)
+  })
+
+  await expect(setting).toBeVisible()
+
+  const currentValue = await setting.getAttribute('aria-checked')
+
+  if ((currentValue === 'true') !== checked) {
+    await setting.click()
+  }
+}
+
+const saveDiagramViewSettings = async (page: Page) => {
+  await page.locator('[data-diagram-view-settings-save="true"]').click()
+  await expect(page.locator('[data-diagram-view-settings-dialog="true"]')).toHaveCount(0)
+}
 
 test('studio editor panel can expand beyond its default width', async ({ goto, page }) => {
   await goto('/diagram')
@@ -77,6 +107,50 @@ test('studio editor panel can be hidden and shown again', async ({ goto, page })
   expect(toggleStyles.borderRadius).toBe('0px')
   expect(toggleStyles.fontFamily).toContain('IBM Plex Mono')
   expect(toggleStyles.textTransform).toBe('uppercase')
+})
+
+test('diagram view settings dialog saves element visibility for the active view', async ({ goto, page }) => {
+  await goto('/diagram')
+
+  const settingsButton = page.locator('[data-diagram-view-settings="desktop"]')
+  const editor = getPgmlEditor(page)
+
+  await expect(settingsButton).toBeVisible()
+  await settingsButton.click()
+
+  const dialog = page.locator('[data-diagram-view-settings-dialog="true"]')
+
+  await expect(dialog).toBeVisible()
+  await expect(dialog).toContainText('Relationship lines')
+  await expect(dialog).toContainText('Custom types')
+  await expect(dialog).toContainText('Indexes')
+  await expect(dialog).toContainText('Constraints')
+  await expect(dialog).toContainText('Sequences')
+  await expect(dialog).toContainText('Functions')
+  await expect(dialog).toContainText('Procedures')
+  await expect(dialog).toContainText('Triggers')
+  await expect(dialog).toContainText('Tables')
+  await expect(dialog).toContainText('Groups')
+
+  await setDiagramViewSetting(page, 'Indexes', false)
+  await setDiagramViewSetting(page, 'Tables', false)
+  await page.locator('[data-diagram-view-settings-cancel="true"]').click()
+
+  await expect(dialog).toHaveCount(0)
+  expect(await readPgmlEditorValue(editor)).not.toContain('show_indexes: false')
+
+  await settingsButton.click()
+  await setDiagramViewSetting(page, 'Indexes', false)
+  await setDiagramViewSetting(page, 'Tables', false)
+  await saveDiagramViewSettings(page)
+
+  await expect.poll(async () => readPgmlEditorValue(editor)).toContain('show_indexes: false')
+  expect(await readPgmlEditorValue(editor)).toContain('show_tables: false')
+
+  await openDiagramViewSettings(page)
+  await setDiagramViewSetting(page, 'Indexes', true)
+  await setDiagramViewSetting(page, 'Tables', true)
+  await saveDiagramViewSettings(page)
 })
 
 test('studio editor resize grip stays centered on a single divider line', async ({ goto, page }) => {
@@ -224,8 +298,6 @@ test('studio increases general UI typography without enlarging the PGML editor t
 test('diagram toolbar can hide fields and executable attachments', async ({ goto, page }) => {
   await goto('/diagram')
 
-  const fieldsToggle = page.locator('[data-table-fields-toggle="true"]')
-  const executableObjectsToggle = page.locator('[data-executable-objects-toggle="true"]')
   const columnRows = page.locator('[data-table-row-kind="column"]')
   const commerceGroup = page.locator('[data-node-anchor="group:Commerce"]')
   const executableAttachmentRow = page.locator('[data-attachment-row="function:public.register_entity"]').first()
@@ -239,47 +311,46 @@ test('diagram toolbar can hide fields and executable attachments', async ({ goto
     return Math.round(box.height)
   }
 
-  await expect(fieldsToggle).toHaveAttribute('aria-pressed', 'true')
-  await expect(executableObjectsToggle).toHaveAttribute('aria-pressed', 'true')
+  await openDiagramViewSettings(page)
+  await setDiagramViewSetting(page, 'Table fields', true)
+  await setDiagramViewSetting(page, 'Functions', true)
+  await saveDiagramViewSettings(page)
+
   await expect(commerceGroup).toBeVisible()
   await expect(columnRows.first()).toBeVisible()
   await expect(executableAttachmentRow).toHaveCount(1)
 
   const baselineGroupHeight = await measureHeight()
 
-  await fieldsToggle.click({
-    force: true
-  })
+  await openDiagramViewSettings(page)
+  await setDiagramViewSetting(page, 'Table fields', false)
+  await saveDiagramViewSettings(page)
 
-  await expect(fieldsToggle).toHaveAttribute('aria-pressed', 'false')
   await expect(columnRows).toHaveCount(0)
   await expect.poll(measureHeight).toBeLessThan(baselineGroupHeight)
 
   const fieldsHiddenGroupHeight = await measureHeight()
 
-  await fieldsToggle.click({
-    force: true
-  })
+  await openDiagramViewSettings(page)
+  await setDiagramViewSetting(page, 'Table fields', true)
+  await saveDiagramViewSettings(page)
 
-  await expect(fieldsToggle).toHaveAttribute('aria-pressed', 'true')
   await expect(columnRows.first()).toBeVisible()
   await expect.poll(measureHeight).toBeGreaterThan(fieldsHiddenGroupHeight)
 
   const restoredGroupHeight = await measureHeight()
 
-  await executableObjectsToggle.click({
-    force: true
-  })
+  await openDiagramViewSettings(page)
+  await setDiagramViewSetting(page, 'Functions', false)
+  await saveDiagramViewSettings(page)
 
-  await expect(executableObjectsToggle).toHaveAttribute('aria-pressed', 'false')
   await expect(executableAttachmentRow).toHaveCount(0)
   await expect.poll(measureHeight).toBeLessThan(restoredGroupHeight)
 
-  await executableObjectsToggle.click({
-    force: true
-  })
+  await openDiagramViewSettings(page)
+  await setDiagramViewSetting(page, 'Functions', true)
+  await saveDiagramViewSettings(page)
 
-  await expect(executableObjectsToggle).toHaveAttribute('aria-pressed', 'true')
   await expect(executableAttachmentRow).toHaveCount(1)
 })
 
@@ -287,8 +358,6 @@ test('relationship lines stay visible when fields are hidden', async ({ goto, pa
   await goto('/diagram')
 
   const editor = getPgmlEditor(page)
-  const fieldsToggle = page.locator('[data-table-fields-toggle="true"]')
-  const linesToggle = page.locator('[data-relationship-lines-toggle="true"]')
   const source = `Table public.accounts {
   id uuid [pk]
 }
@@ -309,13 +378,11 @@ Table public.invoices {
     return debugWindow.__pgmlSceneDebug?.connectionCount === 1
   })
 
-  await expect(linesToggle).toHaveAttribute('aria-pressed', 'true')
-  await expect(fieldsToggle).toHaveAttribute('aria-pressed', 'true')
+  await openDiagramViewSettings(page)
+  await setDiagramViewSetting(page, 'Relationship lines', true)
+  await setDiagramViewSetting(page, 'Table fields', false)
+  await saveDiagramViewSettings(page)
 
-  await fieldsToggle.click()
-
-  await expect(linesToggle).toHaveAttribute('aria-pressed', 'true')
-  await expect(fieldsToggle).toHaveAttribute('aria-pressed', 'false')
   await page.waitForFunction(() => {
     const debugWindow = window as Window & {
       __pgmlSceneDebug?: {
@@ -325,6 +392,10 @@ Table public.invoices {
 
     return debugWindow.__pgmlSceneDebug?.connectionCount === 1
   })
+
+  await openDiagramViewSettings(page)
+  await setDiagramViewSetting(page, 'Table fields', true)
+  await saveDiagramViewSettings(page)
 })
 
 test('gpu scene prunes stale sprites when the schema changes so current lines stay visible', async ({ goto, page }) => {
@@ -381,8 +452,6 @@ test('diagram views persist toolbar visibility settings independently', async ({
   const viewDialog = page.locator('[data-studio-modal-surface="diagram-view"]')
   const viewNameInput = viewDialog.locator('[data-diagram-view-name-input="true"]')
   const saveViewButton = viewDialog.locator('[data-diagram-view-save="true"]')
-  const linesToggle = page.locator('[data-relationship-lines-toggle="true"]')
-  const fieldsToggle = page.locator('[data-table-fields-toggle="true"]')
   const snapToggle = page.locator('[data-grid-snap-toggle="true"]')
   const columnRows = page.locator('[data-table-row-kind="column"]')
 
@@ -390,8 +459,10 @@ test('diagram views persist toolbar visibility settings independently', async ({
   await expect(createViewButton).toBeVisible()
   await expect(renameViewButton).toBeVisible()
   await expect(viewSelect).toContainText('Default')
-  await expect(linesToggle).toHaveAttribute('aria-pressed', 'true')
-  await expect(fieldsToggle).toHaveAttribute('aria-pressed', 'true')
+  await openDiagramViewSettings(page)
+  await setDiagramViewSetting(page, 'Relationship lines', true)
+  await setDiagramViewSetting(page, 'Table fields', true)
+  await saveDiagramViewSettings(page)
   await expect(snapToggle).toHaveAttribute('aria-pressed', 'true')
 
   await createViewButton.click()
@@ -405,12 +476,12 @@ test('diagram views persist toolbar visibility settings independently', async ({
   await expect.poll(async () => readPgmlEditorValue(editor)).toContain('Workspace {')
   await expect.poll(async () => readPgmlEditorValue(editor)).toContain('View "Review"')
 
-  await linesToggle.click()
-  await fieldsToggle.click()
+  await openDiagramViewSettings(page)
+  await setDiagramViewSetting(page, 'Relationship lines', false)
+  await setDiagramViewSetting(page, 'Table fields', false)
+  await saveDiagramViewSettings(page)
   await snapToggle.click()
 
-  await expect(linesToggle).toHaveAttribute('aria-pressed', 'false')
-  await expect(fieldsToggle).toHaveAttribute('aria-pressed', 'false')
   await expect(snapToggle).toHaveAttribute('aria-pressed', 'false')
   await expect(columnRows).toHaveCount(0)
   await expect.poll(async () => readPgmlEditorValue(editor)).toContain('show_lines: false')
@@ -421,8 +492,10 @@ test('diagram views persist toolbar visibility settings independently', async ({
   await page.getByRole('option', { exact: true, name: 'Default' }).click()
 
   await expect(viewSelect).toContainText('Default')
-  await expect(linesToggle).toHaveAttribute('aria-pressed', 'true')
-  await expect(fieldsToggle).toHaveAttribute('aria-pressed', 'true')
+  await openDiagramViewSettings(page)
+  await setDiagramViewSetting(page, 'Relationship lines', true)
+  await setDiagramViewSetting(page, 'Table fields', true)
+  await saveDiagramViewSettings(page)
   await expect(snapToggle).toHaveAttribute('aria-pressed', 'true')
   await expect(columnRows.first()).toBeVisible()
 })

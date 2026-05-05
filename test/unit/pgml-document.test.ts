@@ -259,6 +259,10 @@ Table public.orders {
     expect(parsed.workspace.views[1]?.showRelationshipLines).toBe(false)
     expect(parsed.workspace.views[1]?.snapToGrid).toBe(false)
     expect(parsed.workspace.views[1]?.showExecutableObjects).toBe(false)
+    expect(parsed.workspace.views[1]?.showFunctions).toBe(false)
+    expect(parsed.workspace.views[1]?.showProcedures).toBe(false)
+    expect(parsed.workspace.views[1]?.showSequences).toBe(false)
+    expect(parsed.workspace.views[1]?.showTriggers).toBe(false)
     expect(parsed.workspace.views[1]?.showTableFields).toBe(false)
     expect(getPgmlDocumentBlockPreviewSource(parsed.workspace)).toContain('Properties "public.users"')
     expect(parsed.versions[0]?.activeViewId).toBe('version_compact')
@@ -268,6 +272,57 @@ Table public.orders {
     expect(serialized).toContain('snap_to_grid: false')
     expect(serialized).toContain('show_execs: false')
     expect(serialized).toContain('active_view: version_compact')
+  })
+
+  it('persists granular diagram view element visibility metadata', () => {
+    const document = createInitialPgmlDocument({
+      name: 'Visibility',
+      workspaceSource: baseSnapshotSource
+    })
+    const viewId = document.workspace.views[0]?.id || null
+
+    document.workspace = {
+      ...document.workspace,
+      activeViewId: viewId,
+      views: [
+        createPgmlDocumentView({
+          ...document.workspace.views[0],
+          id: viewId,
+          showConstraints: false,
+          showCustomTypes: false,
+          showFunctions: false,
+          showGroups: false,
+          showIndexes: false,
+          showProcedures: false,
+          showSequences: false,
+          showTables: false,
+          showTriggers: false
+        })
+      ]
+    }
+
+    const serialized = serializePgmlDocument(document)
+    const parsed = parsePgmlDocument(serialized)
+    const parsedView = parsed.workspace.views[0]
+
+    expect(serialized).toContain('show_custom_types: false')
+    expect(serialized).toContain('show_indexes: false')
+    expect(serialized).toContain('show_constraints: false')
+    expect(serialized).toContain('show_functions: false')
+    expect(serialized).toContain('show_procedures: false')
+    expect(serialized).toContain('show_sequences: false')
+    expect(serialized).toContain('show_triggers: false')
+    expect(serialized).toContain('show_tables: false')
+    expect(serialized).toContain('show_groups: false')
+    expect(parsedView?.showCustomTypes).toBe(false)
+    expect(parsedView?.showIndexes).toBe(false)
+    expect(parsedView?.showConstraints).toBe(false)
+    expect(parsedView?.showFunctions).toBe(false)
+    expect(parsedView?.showProcedures).toBe(false)
+    expect(parsedView?.showSequences).toBe(false)
+    expect(parsedView?.showTriggers).toBe(false)
+    expect(parsedView?.showTables).toBe(false)
+    expect(parsedView?.showGroups).toBe(false)
   })
 
   it('serializes and parses saved comparisons with root-level compare exclusions', () => {

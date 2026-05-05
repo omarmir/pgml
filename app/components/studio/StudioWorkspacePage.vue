@@ -1004,9 +1004,18 @@ const syncSourceWithNodeProperties = (nodeProperties: Record<string, PgmlNodePro
 
 const updateDiagramViewSettings = (settings: {
   snapToGrid?: boolean
+  showConstraints?: boolean
+  showCustomTypes?: boolean
   showExecutableObjects?: boolean
+  showFunctions?: boolean
+  showGroups?: boolean
+  showIndexes?: boolean
+  showProcedures?: boolean
   showRelationshipLines?: boolean
+  showSequences?: boolean
   showTableFields?: boolean
+  showTables?: boolean
+  showTriggers?: boolean
 }) => {
   markBrowserSchemaStatusEligible()
   const didUpdate = updateCurrentDiagramViewSettings(settings)

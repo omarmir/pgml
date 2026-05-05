@@ -3,6 +3,7 @@ import { useResizeObserver } from '@vueuse/core'
 import type { ComponentPublicInstance, CSSProperties, Ref } from 'vue'
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { studioSelectUi, studioSwitchUi } from '~/constants/ui'
+import StudioModalFrame from '~/components/studio/StudioModalFrame.vue'
 import PgmlDiagramConnectionCanvas from '~/components/pgml/PgmlDiagramConnectionCanvas.vue'
 import PgmlDiagramComparePanel from '~/components/pgml/PgmlDiagramComparePanel.vue'
 import PgmlDetailPopoverMetadataEditor from '~/components/pgml/PgmlDetailPopoverMetadataEditor.vue'
@@ -263,9 +264,28 @@ type DiagramViewItem = {
 
 type DiagramViewSettings = {
   snapToGrid: boolean
+  showConstraints: boolean
+  showCustomTypes: boolean
   showExecutableObjects: boolean
+  showFunctions: boolean
+  showGroups: boolean
+  showIndexes: boolean
+  showProcedures: boolean
   showRelationshipLines: boolean
+  showSequences: boolean
   showTableFields: boolean
+  showTables: boolean
+  showTriggers: boolean
+}
+
+type DiagramVisibilitySettings = Omit<DiagramViewSettings, 'snapToGrid' | 'showExecutableObjects'>
+
+type DiagramVisibilitySettingKey = keyof DiagramVisibilitySettings
+
+type DiagramVisibilitySettingItem = {
+  description: string
+  key: DiagramVisibilitySettingKey
+  label: string
 }
 
 type DiagramRendererOption = {
@@ -536,6 +556,17 @@ const isDesktopToolPanelViewportExpanded: Ref<boolean> = ref(false)
 const showRelationshipLines: Ref<boolean> = ref(true)
 const showExecutableObjects: Ref<boolean> = ref(true)
 const showTableFields: Ref<boolean> = ref(true)
+const showCustomTypes: Ref<boolean> = ref(true)
+const showIndexes: Ref<boolean> = ref(true)
+const showConstraints: Ref<boolean> = ref(true)
+const showSequences: Ref<boolean> = ref(true)
+const showFunctions: Ref<boolean> = ref(true)
+const showProcedures: Ref<boolean> = ref(true)
+const showTriggers: Ref<boolean> = ref(true)
+const showTables: Ref<boolean> = ref(true)
+const showGroups: Ref<boolean> = ref(true)
+const isDiagramVisibilityDialogOpen: Ref<boolean> = ref(false)
+const diagramVisibilityDraft: Ref<DiagramVisibilitySettings | null> = ref(null)
 const shouldRenderSvgConnectionOverlay: Ref<boolean> = ref(false)
 const shouldPreferMainThreadConnectionRouting: Ref<boolean> = ref(false)
 const snapToGrid: Ref<boolean> = ref(true)
@@ -652,6 +683,63 @@ const diagramViewToolbarSelectClass = 'w-[10.75rem]'
 const diagramViewToolbarButtonClass = getStudioStateButtonClass({
   extraClass: 'inline-flex h-7 w-7 items-center justify-center px-0'
 })
+const diagramVisibilitySettingItems: DiagramVisibilitySettingItem[] = [
+  {
+    description: 'Reference paths between columns, objects, and impacted tables.',
+    key: 'showRelationshipLines',
+    label: 'Relationship lines'
+  },
+  {
+    description: 'Table cards and their visible rows.',
+    key: 'showTables',
+    label: 'Tables'
+  },
+  {
+    description: 'Group containers for tables that belong together.',
+    key: 'showGroups',
+    label: 'Groups'
+  },
+  {
+    description: 'Column rows inside visible table cards.',
+    key: 'showTableFields',
+    label: 'Table fields'
+  },
+  {
+    description: 'Custom enum, domain, composite, and range type nodes.',
+    key: 'showCustomTypes',
+    label: 'Custom types'
+  },
+  {
+    description: 'Index rows attached to tables.',
+    key: 'showIndexes',
+    label: 'Indexes'
+  },
+  {
+    description: 'Constraint rows attached to tables.',
+    key: 'showConstraints',
+    label: 'Constraints'
+  },
+  {
+    description: 'Sequence rows and standalone sequence nodes.',
+    key: 'showSequences',
+    label: 'Sequences'
+  },
+  {
+    description: 'Function rows and standalone function nodes.',
+    key: 'showFunctions',
+    label: 'Functions'
+  },
+  {
+    description: 'Procedure rows and standalone procedure nodes.',
+    key: 'showProcedures',
+    label: 'Procedures'
+  },
+  {
+    description: 'Trigger rows and standalone trigger nodes.',
+    key: 'showTriggers',
+    label: 'Triggers'
+  }
+]
 const selectedCanvasStackZIndex = 2147483644
 const tableWidthScaleItems = pgmlTableWidthScaleValues.map((value) => {
   return {
@@ -1114,8 +1202,6 @@ const tableGroupById = computed(() => {
   }, {})
 })
 
-const executableAttachmentKinds = new Set<TableAttachmentKind>(['Function', 'Procedure', 'Sequence', 'Trigger'])
-
 const isEntityDirectlyVisible = (id: string) => model.nodeProperties[id]?.visible !== false
 const isExecutableObjectId = (id: string) => {
   return id.startsWith('function:')
@@ -1123,8 +1209,39 @@ const isExecutableObjectId = (id: string) => {
     || id.startsWith('sequence:')
     || id.startsWith('trigger:')
 }
+const getExecutableObjectVisibility = (id: string) => {
+  if (id.startsWith('function:')) {
+    return showFunctions.value
+  }
+
+  if (id.startsWith('procedure:')) {
+    return showProcedures.value
+  }
+
+  if (id.startsWith('sequence:')) {
+    return showSequences.value
+  }
+
+  if (id.startsWith('trigger:')) {
+    return showTriggers.value
+  }
+
+  return true
+}
+const getAttachmentKindVisibility = (kind: TableAttachmentKind) => {
+  const visibilityByKind: Record<TableAttachmentKind, boolean> = {
+    Constraint: showConstraints.value,
+    Function: showFunctions.value,
+    Index: showIndexes.value,
+    Procedure: showProcedures.value,
+    Sequence: showSequences.value,
+    Trigger: showTriggers.value
+  }
+
+  return visibilityByKind[kind]
+}
 const isAttachmentGloballyVisible = (attachment: TableAttachment) => {
-  return showExecutableObjects.value || !executableAttachmentKinds.has(attachment.kind)
+  return getAttachmentKindVisibility(attachment.kind)
 }
 const isColumnGloballyVisible = () => showTableFields.value
 
@@ -1585,7 +1702,7 @@ const filteredStandaloneBrowserItemsSource = computed<EntityBrowserItem[]>(() =>
   model.functions.forEach((routine) => {
     const id = `function:${routine.name}`
 
-    if (showExecutableObjects.value && !attachedObjectIds.has(id)) {
+    if (showFunctions.value && !attachedObjectIds.has(id)) {
       pushNodeItem(id, routine.name, 'Function', routine.signature, routine.sourceRange)
     }
   })
@@ -1593,7 +1710,7 @@ const filteredStandaloneBrowserItemsSource = computed<EntityBrowserItem[]>(() =>
   model.procedures.forEach((routine) => {
     const id = `procedure:${routine.name}`
 
-    if (showExecutableObjects.value && !attachedObjectIds.has(id)) {
+    if (showProcedures.value && !attachedObjectIds.has(id)) {
       pushNodeItem(id, routine.name, 'Procedure', routine.signature, routine.sourceRange)
     }
   })
@@ -1601,7 +1718,7 @@ const filteredStandaloneBrowserItemsSource = computed<EntityBrowserItem[]>(() =>
   model.triggers.forEach((trigger) => {
     const id = `trigger:${trigger.name}`
 
-    if (showExecutableObjects.value && !attachedObjectIds.has(id)) {
+    if (showTriggers.value && !attachedObjectIds.has(id)) {
       pushNodeItem(id, trigger.name, 'Trigger', buildTriggerSubtitle(trigger), trigger.sourceRange)
     }
   })
@@ -1609,20 +1726,22 @@ const filteredStandaloneBrowserItemsSource = computed<EntityBrowserItem[]>(() =>
   model.sequences.forEach((sequence) => {
     const id = `sequence:${sequence.name}`
 
-    if (showExecutableObjects.value && !attachedObjectIds.has(id)) {
+    if (showSequences.value && !attachedObjectIds.has(id)) {
       pushNodeItem(id, sequence.name, 'Sequence', buildSequenceSubtitle(sequence), sequence.sourceRange)
     }
   })
 
-  model.customTypes.forEach((customType) => {
-    pushNodeItem(
-      `custom-type:${customType.kind}:${customType.name}`,
-      customType.name,
-      customType.kind,
-      customType.details.join(' '),
-      customType.sourceRange
-    )
-  })
+  if (showCustomTypes.value) {
+    model.customTypes.forEach((customType) => {
+      pushNodeItem(
+        `custom-type:${customType.kind}:${customType.name}`,
+        customType.name,
+        customType.kind,
+        customType.details.join(' '),
+        customType.sourceRange
+      )
+    })
+  }
 
   return items.sort((left, right) => {
     const kindDelta = left.kindLabel.localeCompare(right.kindLabel)
@@ -1721,26 +1840,30 @@ const hiddenEntityCount = computed(() => {
   return Object.values(model.nodeProperties).filter(properties => properties.visible === false).length
 })
 
-const isGroupVisible = (groupName: string) => isEntityDirectlyVisible(getStoredGroupId(groupName))
+const isGroupVisible = (groupName: string) => showGroups.value && isEntityDirectlyVisible(getStoredGroupId(groupName))
 const isTableVisible = (table: PgmlSchemaModel['tables'][number]) => {
+  if (!showTables.value) {
+    return false
+  }
+
   const directVisible = isEntityDirectlyVisible(table.fullName)
 
   if (!directVisible) {
     return false
   }
 
-  return table.groupName ? isGroupVisible(table.groupName) : true
+  return table.groupName && showGroups.value ? isGroupVisible(table.groupName) : true
 }
 
 const orderedTablesByGroup = computed(() => {
   return model.groups.reduce<Record<string, PgmlSchemaModel['tables']>>((entries, group) => {
-    entries[group.name] = getOrderedGroupTables(model, group.name).filter(table => isTableVisible(table))
+    entries[group.name] = showGroups.value ? getOrderedGroupTables(model, group.name).filter(table => isTableVisible(table)) : []
     return entries
   }, {})
 })
 
 const visibleStandaloneTables = computed(() => {
-  return model.tables.filter(table => !table.groupName && isTableVisible(table))
+  return model.tables.filter(table => (!table.groupName || !showGroups.value) && isTableVisible(table))
 })
 
 const computeGroupLayout = (
@@ -1896,7 +2019,7 @@ const syncLayoutStates = () => {
   }> = [
     ...model.functions
       .filter((entry) => {
-        return showExecutableObjects.value
+        return showFunctions.value
           && isEntityDirectlyVisible(`function:${entry.name}`)
           && !tableAttachmentState.value.attachedObjectIds.has(`function:${entry.name}`)
       })
@@ -1919,7 +2042,7 @@ const syncLayoutStates = () => {
       }),
     ...model.procedures
       .filter((entry) => {
-        return showExecutableObjects.value
+        return showProcedures.value
           && isEntityDirectlyVisible(`procedure:${entry.name}`)
           && !tableAttachmentState.value.attachedObjectIds.has(`procedure:${entry.name}`)
       })
@@ -1942,7 +2065,7 @@ const syncLayoutStates = () => {
       }),
     ...model.triggers
       .filter((entry) => {
-        return showExecutableObjects.value
+        return showTriggers.value
           && isEntityDirectlyVisible(`trigger:${entry.name}`)
           && !tableAttachmentState.value.attachedObjectIds.has(`trigger:${entry.name}`)
       })
@@ -1966,7 +2089,7 @@ const syncLayoutStates = () => {
       }),
     ...model.sequences
       .filter((entry) => {
-        return showExecutableObjects.value
+        return showSequences.value
           && isEntityDirectlyVisible(`sequence:${entry.name}`)
           && !tableAttachmentState.value.attachedObjectIds.has(`sequence:${entry.name}`)
       })
@@ -1987,7 +2110,7 @@ const syncLayoutStates = () => {
           width: 308
         }
       }),
-    ...model.customTypes.filter(entry => isEntityDirectlyVisible(`custom-type:${entry.kind}:${entry.name}`)).map((entry: PgmlCustomType) => {
+    ...model.customTypes.filter(entry => showCustomTypes.value && isEntityDirectlyVisible(`custom-type:${entry.kind}:${entry.name}`)).map((entry: PgmlCustomType) => {
       const impactTargets = inferCustomTypeTargets(entry)
 
       return {
@@ -5203,7 +5326,7 @@ const isBrowserItemDirectlyVisible = (item: EntityBrowserItem) => {
     return !!attachment && isAttachmentGloballyVisible(attachment) && isEntityDirectlyVisible(selection.attachmentId)
   }
 
-  return (!isExecutableObjectId(item.selection.id) || showExecutableObjects.value) && isEntityDirectlyVisible(item.selection.id)
+  return (!isExecutableObjectId(item.selection.id) || getExecutableObjectVisibility(item.selection.id)) && isEntityDirectlyVisible(item.selection.id)
 }
 
 const isBrowserItemEffectivelyVisible = (item: EntityBrowserItem) => {
@@ -5249,7 +5372,19 @@ const isSelectionVisibleUnderGlobalToggles = (selection: DiagramGpuSelection | n
   }
 
   if (selection.kind === 'object') {
-    return !isExecutableObjectId(selection.id) || showExecutableObjects.value
+    if (selection.id.startsWith('custom-type:')) {
+      return showCustomTypes.value
+    }
+
+    return !isExecutableObjectId(selection.id) || getExecutableObjectVisibility(selection.id)
+  }
+
+  if (selection.kind === 'table') {
+    return showTables.value
+  }
+
+  if (selection.kind === 'group') {
+    return showGroups.value
   }
 
   return true
@@ -5263,38 +5398,87 @@ const syncDiagramViewSettings = (settings: DiagramViewSettings | null | undefine
   snapToGrid.value = settings?.snapToGrid ?? true
   showRelationshipLines.value = settings?.showRelationshipLines ?? true
   showExecutableObjects.value = settings?.showExecutableObjects ?? true
+  showCustomTypes.value = settings?.showCustomTypes ?? true
+  showIndexes.value = settings?.showIndexes ?? true
+  showConstraints.value = settings?.showConstraints ?? true
+  showFunctions.value = settings?.showFunctions ?? settings?.showExecutableObjects ?? true
+  showProcedures.value = settings?.showProcedures ?? settings?.showExecutableObjects ?? true
+  showSequences.value = settings?.showSequences ?? settings?.showExecutableObjects ?? true
+  showTriggers.value = settings?.showTriggers ?? settings?.showExecutableObjects ?? true
   showTableFields.value = settings?.showTableFields ?? true
+  showTables.value = settings?.showTables ?? true
+  showGroups.value = settings?.showGroups ?? true
 }
 
 const updatePersistedDiagramViewSettings = (settings: Partial<DiagramViewSettings>) => {
   emit('updateDiagramViewSettings', settings)
 }
 
-const toggleRelationshipLines = () => {
-  const nextValue = !showRelationshipLines.value
-
-  showRelationshipLines.value = nextValue
-  updatePersistedDiagramViewSettings({
-    showRelationshipLines: nextValue
-  })
+const getCurrentDiagramVisibilitySettings = (): DiagramVisibilitySettings => {
+  return {
+    showConstraints: showConstraints.value,
+    showCustomTypes: showCustomTypes.value,
+    showFunctions: showFunctions.value,
+    showGroups: showGroups.value,
+    showIndexes: showIndexes.value,
+    showProcedures: showProcedures.value,
+    showRelationshipLines: showRelationshipLines.value,
+    showSequences: showSequences.value,
+    showTableFields: showTableFields.value,
+    showTables: showTables.value,
+    showTriggers: showTriggers.value
+  }
 }
 
-const toggleExecutableObjects = () => {
-  const nextValue = !showExecutableObjects.value
-
-  showExecutableObjects.value = nextValue
-  updatePersistedDiagramViewSettings({
-    showExecutableObjects: nextValue
-  })
+const openDiagramVisibilityDialog = () => {
+  diagramVisibilityDraft.value = getCurrentDiagramVisibilitySettings()
+  isDiagramVisibilityDialogOpen.value = true
 }
 
-const toggleTableFields = () => {
-  const nextValue = !showTableFields.value
+const closeDiagramVisibilityDialog = () => {
+  isDiagramVisibilityDialogOpen.value = false
+}
 
-  showTableFields.value = nextValue
-  updatePersistedDiagramViewSettings({
-    showTableFields: nextValue
-  })
+const updateDiagramVisibilityDraft = (key: DiagramVisibilitySettingKey, value: boolean) => {
+  if (!diagramVisibilityDraft.value) {
+    return
+  }
+
+  diagramVisibilityDraft.value = {
+    ...diagramVisibilityDraft.value,
+    [key]: value
+  }
+}
+
+const applyDiagramVisibilityDraft = () => {
+  if (!diagramVisibilityDraft.value) {
+    closeDiagramVisibilityDialog()
+    return
+  }
+
+  const nextSettings = {
+    ...diagramVisibilityDraft.value,
+    showExecutableObjects: diagramVisibilityDraft.value.showFunctions
+      || diagramVisibilityDraft.value.showProcedures
+      || diagramVisibilityDraft.value.showSequences
+      || diagramVisibilityDraft.value.showTriggers
+  }
+
+  showRelationshipLines.value = nextSettings.showRelationshipLines
+  showCustomTypes.value = nextSettings.showCustomTypes
+  showIndexes.value = nextSettings.showIndexes
+  showConstraints.value = nextSettings.showConstraints
+  showFunctions.value = nextSettings.showFunctions
+  showProcedures.value = nextSettings.showProcedures
+  showSequences.value = nextSettings.showSequences
+  showTriggers.value = nextSettings.showTriggers
+  showExecutableObjects.value = nextSettings.showExecutableObjects
+  showTableFields.value = nextSettings.showTableFields
+  showTables.value = nextSettings.showTables
+  showGroups.value = nextSettings.showGroups
+
+  updatePersistedDiagramViewSettings(nextSettings)
+  closeDiagramVisibilityDialog()
 }
 
 const toggleSnapToGrid = () => {
@@ -5325,7 +5509,18 @@ watch(
   }
 )
 
-watch([showExecutableObjects, showTableFields], () => {
+watch([
+  showConstraints,
+  showCustomTypes,
+  showFunctions,
+  showGroups,
+  showIndexes,
+  showProcedures,
+  showSequences,
+  showTableFields,
+  showTables,
+  showTriggers
+], () => {
   syncLayoutStates()
 
   if (!isSelectionVisibleUnderGlobalToggles(selectedSelection.value)) {
@@ -7216,6 +7411,18 @@ defineExpose<{
         </label>
         <button
           type="button"
+          data-diagram-view-settings="desktop"
+          aria-label="Diagram view settings"
+          :class="diagramViewToolbarButtonClass"
+          @click="openDiagramVisibilityDialog"
+        >
+          <UIcon
+            name="i-lucide-settings"
+            class="h-3.5 w-3.5"
+          />
+        </button>
+        <button
+          type="button"
           data-diagram-view-create="desktop"
           aria-label="Create view"
           :class="diagramViewToolbarButtonClass"
@@ -7251,54 +7458,6 @@ defineExpose<{
             name="i-lucide-trash-2"
             class="h-3.5 w-3.5"
           />
-        </button>
-        <button
-          type="button"
-          data-relationship-lines-toggle="true"
-          :aria-pressed="showRelationshipLines"
-          :class="getStudioStateButtonClass({
-            emphasized: showRelationshipLines,
-            extraClass: 'inline-flex items-center gap-1.5 text-[0.62rem]'
-          })"
-          @click="toggleRelationshipLines"
-        >
-          <UIcon
-            :name="showRelationshipLines ? 'i-lucide-eye' : 'i-lucide-eye-off'"
-            class="h-3.5 w-3.5"
-          />
-          Lines
-        </button>
-        <button
-          type="button"
-          data-executable-objects-toggle="true"
-          :aria-pressed="showExecutableObjects"
-          :class="getStudioStateButtonClass({
-            emphasized: showExecutableObjects,
-            extraClass: 'inline-flex items-center gap-1.5 text-[0.62rem]'
-          })"
-          @click="toggleExecutableObjects"
-        >
-          <UIcon
-            :name="showExecutableObjects ? 'i-lucide-eye' : 'i-lucide-eye-off'"
-            class="h-3.5 w-3.5"
-          />
-          Execs
-        </button>
-        <button
-          type="button"
-          data-table-fields-toggle="true"
-          :aria-pressed="showTableFields"
-          :class="getStudioStateButtonClass({
-            emphasized: showTableFields,
-            extraClass: 'inline-flex items-center gap-1.5 text-[0.62rem]'
-          })"
-          @click="toggleTableFields"
-        >
-          <UIcon
-            :name="showTableFields ? 'i-lucide-eye' : 'i-lucide-eye-off'"
-            class="h-3.5 w-3.5"
-          />
-          Fields
         </button>
         <button
           type="button"
@@ -7484,6 +7643,16 @@ defineExpose<{
                   class="min-w-0 flex-1"
                   :ui="studioSelectUi"
                   @update:model-value="handleDiagramViewModelUpdate"
+                />
+                <UButton
+                  data-diagram-view-settings="mobile"
+                  aria-label="Diagram view settings"
+                  icon="i-lucide-settings"
+                  color="neutral"
+                  variant="outline"
+                  size="sm"
+                  :class="sidePanelActionButtonClass"
+                  @click="openDiagramVisibilityDialog"
                 />
                 <UButton
                   data-diagram-view-create="mobile"
@@ -8604,6 +8773,58 @@ defineExpose<{
         :migration-warnings="migrationWarnings"
       />
     </aside>
+
+    <StudioModalFrame
+      :open="isDiagramVisibilityDialogOpen"
+      title="Diagram view settings"
+      description="Choose which element categories render for the active view."
+      surface-id="diagram-view-settings"
+      width-class="max-w-xl"
+      body-class="px-4 py-4"
+      @update:open="isDiagramVisibilityDialogOpen = $event"
+      @close="diagramVisibilityDraft = null"
+      @after-leave="diagramVisibilityDraft = null"
+    >
+      <div
+        v-if="diagramVisibilityDraft"
+        data-diagram-view-settings-dialog="true"
+        class="grid gap-2"
+      >
+        <USwitch
+          v-for="item in diagramVisibilitySettingItems"
+          :key="item.key"
+          :model-value="diagramVisibilityDraft[item.key]"
+          color="neutral"
+          size="sm"
+          :label="item.label"
+          :description="item.description"
+          :ui="studioSwitchUi"
+          @update:model-value="updateDiagramVisibilityDraft(item.key, Boolean($event))"
+        />
+      </div>
+
+      <template #footer>
+        <div class="flex w-full flex-wrap justify-end gap-2">
+          <UButton
+            data-diagram-view-settings-cancel="true"
+            label="Cancel"
+            color="neutral"
+            variant="ghost"
+            :class="studioButtonClasses.secondary"
+            @click="closeDiagramVisibilityDialog"
+          />
+          <UButton
+            data-diagram-view-settings-save="true"
+            label="Save settings"
+            leading-icon="i-lucide-save"
+            color="primary"
+            variant="solid"
+            :class="studioButtonClasses.primary"
+            @click="applyDiagramVisibilityDraft"
+          />
+        </div>
+      </template>
+    </StudioModalFrame>
   </div>
 </template>
 

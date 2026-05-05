@@ -38,9 +38,18 @@ export type PgmlDocumentDiagramView = {
   name: string
   nodeProperties: Record<string, PgmlNodeProperties>
   snapToGrid: boolean
+  showConstraints: boolean
+  showCustomTypes: boolean
   showExecutableObjects: boolean
+  showFunctions: boolean
+  showGroups: boolean
+  showIndexes: boolean
+  showProcedures: boolean
   showRelationshipLines: boolean
+  showSequences: boolean
   showTableFields: boolean
+  showTables: boolean
+  showTriggers: boolean
 }
 
 export type PgmlDocumentComparison = {
@@ -143,18 +152,42 @@ export const createPgmlDocumentView = (input?: {
   name?: string | null
   nodeProperties?: Record<string, PgmlNodeProperties>
   snapToGrid?: boolean
+  showConstraints?: boolean
+  showCustomTypes?: boolean
   showExecutableObjects?: boolean
+  showFunctions?: boolean
+  showGroups?: boolean
+  showIndexes?: boolean
+  showProcedures?: boolean
   showRelationshipLines?: boolean
+  showSequences?: boolean
   showTableFields?: boolean
+  showTables?: boolean
+  showTriggers?: boolean
 }) => {
+  const showExecutableObjects = input?.showExecutableObjects ?? true
+  const showFunctions = input?.showFunctions ?? showExecutableObjects
+  const showProcedures = input?.showProcedures ?? showExecutableObjects
+  const showSequences = input?.showSequences ?? showExecutableObjects
+  const showTriggers = input?.showTriggers ?? showExecutableObjects
+
   return {
     id: input?.id && input.id.trim().length > 0 ? input.id.trim() : createPgmlDocumentViewId(),
     name: input?.name && input.name.trim().length > 0 ? input.name.trim() : defaultPgmlDocumentViewName,
     nodeProperties: clonePgmlNodePropertiesRecord(input?.nodeProperties || {}),
     snapToGrid: input?.snapToGrid ?? true,
-    showExecutableObjects: input?.showExecutableObjects ?? true,
+    showConstraints: input?.showConstraints ?? true,
+    showCustomTypes: input?.showCustomTypes ?? true,
+    showExecutableObjects: showFunctions || showProcedures || showSequences || showTriggers,
+    showFunctions,
+    showGroups: input?.showGroups ?? true,
+    showIndexes: input?.showIndexes ?? true,
+    showProcedures,
     showRelationshipLines: input?.showRelationshipLines ?? true,
-    showTableFields: input?.showTableFields ?? true
+    showSequences,
+    showTableFields: input?.showTableFields ?? true,
+    showTables: input?.showTables ?? true,
+    showTriggers
   } satisfies PgmlDocumentDiagramView
 }
 
@@ -382,9 +415,18 @@ const normalizePgmlDocumentViewForComparison = (view: PgmlDocumentDiagramView) =
     name: view.name,
     nodePropertiesSource: buildPgmlWithNodeProperties('', view.nodeProperties),
     snapToGrid: view.snapToGrid,
+    showConstraints: view.showConstraints,
+    showCustomTypes: view.showCustomTypes,
     showExecutableObjects: view.showExecutableObjects,
+    showFunctions: view.showFunctions,
+    showGroups: view.showGroups,
+    showIndexes: view.showIndexes,
+    showProcedures: view.showProcedures,
     showRelationshipLines: view.showRelationshipLines,
-    showTableFields: view.showTableFields
+    showSequences: view.showSequences,
+    showTableFields: view.showTableFields,
+    showTables: view.showTables,
+    showTriggers: view.showTriggers
   }
 }
 
@@ -413,8 +455,17 @@ const hasMeaningfulPgmlDocumentViewState = (owner: PgmlViewOwnerBlock) => {
 
   if (
     !firstView.showRelationshipLines
+    || !firstView.showCustomTypes
+    || !firstView.showIndexes
+    || !firstView.showConstraints
     || !firstView.showExecutableObjects
+    || !firstView.showFunctions
+    || !firstView.showProcedures
+    || !firstView.showSequences
+    || !firstView.showTriggers
     || !firstView.showTableFields
+    || !firstView.showTables
+    || !firstView.showGroups
     || !firstView.snapToGrid
   ) {
     return true
@@ -1082,16 +1133,52 @@ const parseViewBlock = (block: PgmlNamedBlock, context: string): PgmlDocumentDia
       metadata.snap_to_grid || metadata.snap,
       true
     ),
+    showConstraints: parseViewBooleanMetadata(
+      metadata.show_constraints || metadata.constraints,
+      true
+    ),
+    showCustomTypes: parseViewBooleanMetadata(
+      metadata.show_custom_types || metadata.custom_types,
+      true
+    ),
     showExecutableObjects: parseViewBooleanMetadata(
       metadata.show_execs || metadata.execs,
+      true
+    ),
+    showFunctions: parseViewBooleanMetadata(
+      metadata.show_functions || metadata.functions || metadata.show_execs || metadata.execs,
+      true
+    ),
+    showGroups: parseViewBooleanMetadata(
+      metadata.show_groups || metadata.groups,
+      true
+    ),
+    showIndexes: parseViewBooleanMetadata(
+      metadata.show_indexes || metadata.indexes,
+      true
+    ),
+    showProcedures: parseViewBooleanMetadata(
+      metadata.show_procedures || metadata.procedures || metadata.show_execs || metadata.execs,
       true
     ),
     showRelationshipLines: parseViewBooleanMetadata(
       metadata.show_lines || metadata.lines,
       true
     ),
+    showSequences: parseViewBooleanMetadata(
+      metadata.show_sequences || metadata.sequences || metadata.show_execs || metadata.execs,
+      true
+    ),
     showTableFields: parseViewBooleanMetadata(
       metadata.show_fields || metadata.fields,
+      true
+    ),
+    showTables: parseViewBooleanMetadata(
+      metadata.show_tables || metadata.tables,
+      true
+    ),
+    showTriggers: parseViewBooleanMetadata(
+      metadata.show_triggers || metadata.triggers || metadata.show_execs || metadata.execs,
       true
     )
   })
@@ -1722,12 +1809,48 @@ const buildViewBlock = (
     lines.push(buildMetadataLine('snap_to_grid', 'false', level + 1))
   }
 
+  if (!view.showCustomTypes) {
+    lines.push(buildMetadataLine('show_custom_types', 'false', level + 1))
+  }
+
+  if (!view.showIndexes) {
+    lines.push(buildMetadataLine('show_indexes', 'false', level + 1))
+  }
+
+  if (!view.showConstraints) {
+    lines.push(buildMetadataLine('show_constraints', 'false', level + 1))
+  }
+
   if (!view.showExecutableObjects) {
     lines.push(buildMetadataLine('show_execs', 'false', level + 1))
   }
 
+  if (!view.showFunctions) {
+    lines.push(buildMetadataLine('show_functions', 'false', level + 1))
+  }
+
+  if (!view.showProcedures) {
+    lines.push(buildMetadataLine('show_procedures', 'false', level + 1))
+  }
+
+  if (!view.showSequences) {
+    lines.push(buildMetadataLine('show_sequences', 'false', level + 1))
+  }
+
+  if (!view.showTriggers) {
+    lines.push(buildMetadataLine('show_triggers', 'false', level + 1))
+  }
+
   if (!view.showTableFields) {
     lines.push(buildMetadataLine('show_fields', 'false', level + 1))
+  }
+
+  if (!view.showTables) {
+    lines.push(buildMetadataLine('show_tables', 'false', level + 1))
+  }
+
+  if (!view.showGroups) {
+    lines.push(buildMetadataLine('show_groups', 'false', level + 1))
   }
 
   if (propertiesSource.length > 0) {

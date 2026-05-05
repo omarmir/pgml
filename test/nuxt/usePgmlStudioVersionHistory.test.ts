@@ -353,18 +353,36 @@ Table public.audit_log {
     })
     api.updateCurrentDiagramViewSettings({
       snapToGrid: false,
+      showConstraints: false,
+      showCustomTypes: false,
       showExecutableObjects: false,
+      showFunctions: false,
+      showGroups: false,
+      showIndexes: false,
+      showProcedures: false,
       showRelationshipLines: false,
-      showTableFields: false
+      showSequences: false,
+      showTableFields: false,
+      showTables: false,
+      showTriggers: false
     })
 
     expect(source.value).toContain('Properties "public.users"')
     expect(source.value).toContain('x: 120')
-    expect(api.diagramViewSettings.value).toEqual({
+    expect(api.diagramViewSettings.value).toMatchObject({
       snapToGrid: false,
+      showConstraints: false,
+      showCustomTypes: false,
       showExecutableObjects: false,
+      showFunctions: false,
+      showGroups: false,
+      showIndexes: false,
+      showProcedures: false,
       showRelationshipLines: false,
-      showTableFields: false
+      showSequences: false,
+      showTableFields: false,
+      showTables: false,
+      showTriggers: false
     })
 
     expect(api.createNamedDiagramView('Schema focus')).toBe(true)
@@ -397,7 +415,7 @@ Table public.audit_log {
     api.selectDiagramView(defaultViewId)
 
     expect(api.activeDiagramViewId.value).toBe(defaultViewId)
-    expect(api.diagramViewSettings.value).toEqual({
+    expect(api.diagramViewSettings.value).toMatchObject({
       snapToGrid: false,
       showExecutableObjects: false,
       showRelationshipLines: false,
@@ -414,7 +432,7 @@ Table public.audit_log {
 
     expect(api.previewSource.value).toContain('x: 420')
     expect(api.diagramViewItems.value.map(item => item.label)).toEqual(['Default', 'Schema focus'])
-    expect(api.diagramViewSettings.value).toEqual({
+    expect(api.diagramViewSettings.value).toMatchObject({
       snapToGrid: true,
       showExecutableObjects: true,
       showRelationshipLines: true,
@@ -430,7 +448,7 @@ Table public.audit_log {
     api.selectDiagramView(defaultViewId)
 
     expect(api.previewSource.value).toContain('x: 120')
-    expect(api.diagramViewSettings.value).toEqual({
+    expect(api.diagramViewSettings.value).toMatchObject({
       snapToGrid: false,
       showExecutableObjects: false,
       showRelationshipLines: false,
