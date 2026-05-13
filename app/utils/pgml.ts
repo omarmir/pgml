@@ -1153,8 +1153,23 @@ export const filterPgmlSchemaModelForCompareExclusions = (
   const excludedGroupNames = new Set(normalizedExclusions.groupNames)
   const excludedSchemaNames = new Set(normalizedExclusions.schemaNames)
   const excludedTableIds = new Set(normalizedExclusions.tableIds)
+  const hasTableScopedExclusions = excludedGroupNames.size > 0 || excludedTableIds.size > 0
   const getQualifiedNameSchema = (value: string) => {
     return value.includes('.') ? value.split('.')[0] || 'public' : 'public'
+  }
+  const normalizeCustomTypeReference = (value: string) => {
+    let normalizedValue = normalizePgmlTypeExpression(value).trim().toLowerCase()
+
+    while (/\s*\[\s*\]$/u.test(normalizedValue)) {
+      normalizedValue = normalizedValue.replace(/\s*\[\s*\]$/u, '').trim()
+    }
+
+    return normalizedValue
+  }
+  const getUnqualifiedTypeReference = (value: string) => {
+    const parts = value.split('.')
+
+    return parts.at(-1) || value
   }
   const isSchemaIncluded = (schemaName: string) => {
     return !excludedSchemaNames.has(schemaName)
@@ -1177,6 +1192,17 @@ export const filterPgmlSchemaModelForCompareExclusions = (
   const includedTableIds = new Set(includedTables.map(table => table.fullName))
   const allTableIds = new Set(model.tables.map(table => table.fullName))
   const originalReferenceLookup = buildGroupTableReferenceLookup(model.tables)
+  const collectTableTypeReferences = (tables: PgmlTable[]) => {
+    return tables.reduce<Set<string>>((references, table) => {
+      table.columns.forEach((column) => {
+        references.add(normalizeCustomTypeReference(column.type))
+      })
+
+      return references
+    }, new Set())
+  }
+  const allTableTypeReferences = collectTableTypeReferences(model.tables)
+  const includedTableTypeReferences = collectTableTypeReferences(includedTables)
 
   const groups = model.groups.flatMap((group) => {
     if (excludedGroupNames.has(group.name)) {
@@ -1228,7 +1254,25 @@ export const filterPgmlSchemaModelForCompareExclusions = (
     return attachedTableIds.length === 0 || attachedTableIds.some(tableId => includedTableIds.has(tableId))
   })
   const customTypes = model.customTypes.filter((customType) => {
-    return isSchemaIncluded(getQualifiedNameSchema(customType.name))
+    if (!isSchemaIncluded(getQualifiedNameSchema(customType.name))) {
+      return false
+    }
+
+    if (!hasTableScopedExclusions) {
+      return true
+    }
+
+    const qualifiedTypeName = normalizeCustomTypeReference(customType.name)
+    const unqualifiedTypeName = getUnqualifiedTypeReference(qualifiedTypeName)
+    const isReferencedByAnyTable = allTableTypeReferences.has(qualifiedTypeName)
+      || allTableTypeReferences.has(unqualifiedTypeName)
+
+    if (!isReferencedByAnyTable) {
+      return true
+    }
+
+    return includedTableTypeReferences.has(qualifiedTypeName)
+      || includedTableTypeReferences.has(unqualifiedTypeName)
   })
   const references = model.references.filter((reference) => {
     return includedTableIds.has(reference.fromTable) && includedTableIds.has(reference.toTable)

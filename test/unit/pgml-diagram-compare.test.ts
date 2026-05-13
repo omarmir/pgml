@@ -11,7 +11,7 @@ import {
   reconcilePgmlCompareNotesWithEntryIds
 } from '../../app/utils/pgml-diagram-compare'
 import { diffPgmlSchemaModels } from '../../app/utils/pgml-diff'
-import { parsePgml } from '../../app/utils/pgml'
+import { filterPgmlSchemaModelForCompareExclusions, parsePgml } from '../../app/utils/pgml'
 
 const parseSnapshotModel = (source: string) => {
   return parsePgml(source)
@@ -169,6 +169,47 @@ Function public.refresh_users() returns void {
 
     expect(filteredEntries.some(entry => entry.id === 'function:refresh_users')).toBe(false)
     expect(filteredEntries.some(entry => entry.id === 'column:public.users::email')).toBe(true)
+  })
+
+  it('removes group child custom type entries from visible compare results', () => {
+    const baseModel = parseSnapshotModel(`Table public.users in Core {
+  id uuid [pk]
+  status public.user_status
+}
+
+Enum public.user_status {
+  active
+}
+
+TableGroup Core {
+  public.users
+}`)
+    const targetModel = parseSnapshotModel(`Table public.users in Core {
+  id uuid [pk]
+  status public.user_status
+}
+
+Enum public.user_status {
+  active
+  inactive
+}
+
+TableGroup Core {
+  public.users
+}`)
+    const exclusions = {
+      groupNames: ['Core']
+    }
+    const entries = buildPgmlDiagramCompareEntries(
+      diffPgmlSchemaModels(
+        filterPgmlSchemaModelForCompareExclusions(baseModel, exclusions),
+        filterPgmlSchemaModelForCompareExclusions(targetModel, exclusions)
+      ),
+      filterPgmlSchemaModelForCompareExclusions(baseModel, exclusions),
+      filterPgmlSchemaModelForCompareExclusions(targetModel, exclusions)
+    )
+
+    expect(entries.some(entry => entry.entityKind === 'custom-type')).toBe(false)
   })
 
   it('classifies default-only column diffs as optional compare noise', () => {

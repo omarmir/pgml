@@ -99,6 +99,7 @@ describe('PGML model parsing', () => {
 
 Table public.users in Core {
   id bigint [pk, default: nextval('public.user_id_seq')]
+  status public.user_status
 }
 
 Table public.orders in Core {
@@ -108,6 +109,15 @@ Table public.orders in Core {
 
 Table public.audit_log {
   id uuid [pk]
+}
+
+Enum public.user_status {
+  active
+  inactive
+}
+
+Enum public.audit_status {
+  logged
 }
 
 TableGroup Core {
@@ -134,6 +144,7 @@ Trigger trg_touch_users on public.users {
     expect(filteredModel.references).toEqual([])
     expect(filteredModel.sequences).toEqual([])
     expect(filteredModel.triggers).toEqual([])
+    expect(filteredModel.customTypes.map(customType => customType.name)).toEqual(['public.audit_status'])
   })
 
   it('filters compare models by excluded schemas', () => {
