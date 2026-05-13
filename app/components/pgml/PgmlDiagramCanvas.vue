@@ -4,6 +4,7 @@ import { ref } from 'vue'
 import PgmlDiagramCanvasGpuShell from '~/components/pgml/PgmlDiagramCanvasGpuShell.vue'
 import type { PgmlDiagramCompareEntry } from '~/utils/pgml-diagram-compare'
 import type {
+  PgmlCompareEntityFilters,
   PgmlCompareNote,
   PgmlCompareNoteFilters,
   PgmlCompareNoiseFilters,
@@ -100,6 +101,9 @@ const {
   compareEntries = [],
   compareExcludedLabels = [],
   compareExcludedSummary = null,
+  compareEntityFilters = {
+    entityKinds: []
+  },
   compareHiddenExcludedLabelCount = 0,
   compareNoteFilters = {
     showBlocked: true,
@@ -153,6 +157,7 @@ const {
   compareEntries?: PgmlDiagramCompareEntry[]
   compareExcludedLabels?: string[]
   compareExcludedSummary?: string | null
+  compareEntityFilters?: PgmlCompareEntityFilters
   compareHiddenExcludedLabelCount?: number
   compareNoteFilters?: PgmlCompareNoteFilters
   compareNotes?: PgmlCompareNote[]
@@ -206,6 +211,7 @@ const emit = defineEmits<{
   restoreVersion: [versionId: string]
   selectCompareComparison: [comparisonId: string | null]
   selectDiagramView: [viewId: string]
+  updateCompareEntityFilters: [value: PgmlCompareEntityFilters]
   updateCompareNoteFilters: [value: PgmlCompareNoteFilters]
   updateDiagramViewSettings: [settings: Partial<DiagramViewSettings>]
   updateCompareNoiseFilters: [value: PgmlCompareNoiseFilters]
@@ -248,6 +254,7 @@ defineExpose<CanvasHandle>({
     :compare-entries="compareEntries"
     :compare-excluded-labels="compareExcludedLabels"
     :compare-excluded-summary="compareExcludedSummary"
+    :compare-entity-filters="compareEntityFilters"
     :compare-hidden-excluded-label-count="compareHiddenExcludedLabelCount"
     :compare-note-filters="compareNoteFilters"
     :compare-notes="compareNotes"
@@ -305,6 +312,7 @@ defineExpose<CanvasHandle>({
     @restore-version="emit('restoreVersion', $event)"
     @select-compare-comparison="emit('selectCompareComparison', $event)"
     @select-diagram-view="emit('selectDiagramView', $event)"
+    @update-compare-entity-filters="emit('updateCompareEntityFilters', $event)"
     @update-compare-note-filters="emit('updateCompareNoteFilters', $event)"
     @update-compare-noise-filters="emit('updateCompareNoiseFilters', $event)"
     @update-diagram-view-settings="emit('updateDiagramViewSettings', $event)"

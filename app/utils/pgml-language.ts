@@ -243,6 +243,7 @@ const comparisonMetadataKeywordTemplates = [
   { label: 'id', detail: 'Persist the stable id for this comparison.', apply: 'id: ' },
   { label: 'base', detail: 'Choose the base version, workspace, or empty state.', apply: 'base: ' },
   { label: 'target', detail: 'Choose the comparison target version or workspace.', apply: 'target: ' },
+  { label: 'entity_kinds', detail: 'Persist selected compare entity-kind filters.', apply: 'entity_kinds: "table,column"' },
   { label: 'hide_defaults', detail: 'Hide default-only compare noise by default.', apply: 'hide_defaults: false' },
   { label: 'hide_executable_name_only', detail: 'Hide executable rename-only compare noise by default.', apply: 'hide_executable_name_only: false' },
   { label: 'hide_structural_name_only', detail: 'Hide index and constraint rename-only compare noise by default.', apply: 'hide_structural_name_only: false' },
@@ -279,6 +280,7 @@ const comparisonMetadataKeys = new Set([
   'id',
   'base',
   'target',
+  'entity_kinds',
   'hide_defaults',
   'hide_executable_name_only',
   'hide_structural_name_only',
@@ -2621,7 +2623,7 @@ const analyzeComparisonBlock = (
     entryCode: 'pgml/comparison-entry',
     entryMessage: 'Comparison only allows metadata entries plus nested CompareExclusions and CompareNote blocks.',
     keyCode: 'pgml/comparison-key',
-    keyMessage: 'Comparison only supports `id`, `base`, `target`, `hide_defaults`, `hide_executable_name_only`, `hide_structural_name_only`, `hide_metadata`, `hide_order_only`, and `show_*_notes` metadata.'
+    keyMessage: 'Comparison only supports `id`, `base`, `target`, `entity_kinds`, `hide_defaults`, `hide_executable_name_only`, `hide_structural_name_only`, `hide_metadata`, `hide_order_only`, and `show_*_notes` metadata.'
   })
 
   nested.blocks.forEach((nestedBlock) => {

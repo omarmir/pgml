@@ -135,6 +135,7 @@ import {
   pgmlExample,
   pgmlVersionedExample,
   replacePgmlSourceRange,
+  type PgmlCompareEntityFilters,
   type PgmlCompareNote,
   type PgmlCompareNoteFlag,
   type PgmlCompareNoteFilters,
@@ -420,6 +421,7 @@ const {
   compareBaseId: versionCompareBaseId,
   compareBaseSource,
   compareExclusions: activeCompareExclusions,
+  compareEntityFilters: activeCompareEntityFilters,
   compareNoteFilters,
   compareNoiseFilters: activeCompareNoiseFilters,
   comparisonItems,
@@ -457,6 +459,7 @@ const {
   serializeCurrentDocument,
   pruneSelectedComparisonNotes,
   setCompareTargets,
+  setCurrentCompareEntityFilters,
   setCurrentCompareExclusions,
   setCurrentCompareNoteFilters,
   setCurrentCompareNoiseFilters,
@@ -1898,7 +1901,7 @@ const compareComparisonLabel = computed(() => {
 })
 const savedComparisonHint = computed(() => {
   return selectedComparison.value
-    ? `${compareComparisonLabel.value} keeps its managed exclusions, note flags, notes, and noise filters when you change the base or target here.`
+    ? `${compareComparisonLabel.value} keeps its managed exclusions, entity kinds, note flags, notes, and noise filters when you change the base or target here.`
     : null
 })
 const compareNoteDialogTitle = computed(() => {
@@ -2581,7 +2584,7 @@ const comparisonDialogTitle = computed(() => {
 const comparisonDialogDescription = computed(() => {
   return comparisonDialogMode.value === 'rename'
     ? 'Update the saved comparison name without changing its base, target, or exclusions.'
-    : 'Save the current compare base, target, and exclusions as a reusable comparison preset.'
+    : 'Save the current compare base, target, filters, and exclusions as a reusable comparison preset.'
 })
 const normalizedComparisonDraftName = computed(() => {
   return comparisonDraftName.value.trim()
@@ -3082,7 +3085,7 @@ const saveComparisonDialog = async () => {
   closeComparisonDialog()
   toast.add({
     title: 'Comparison created',
-    description: `${nextComparison.name} now stores the current base, target, and exclusions.`,
+    description: `${nextComparison.name} now stores the current base, target, filters, and exclusions.`,
     color: 'success',
     icon: 'i-lucide-check'
   })
@@ -3749,7 +3752,7 @@ const updateVersionCompareSelection = (input: {
     void persistBrowserWorkspaceMutation()
     toast.add({
       title: 'Saved comparison updated',
-      description: `${compareComparisonLabel.value} now compares the selected base and target while keeping its saved exclusions, note flags, notes, and noise filters.`,
+      description: `${compareComparisonLabel.value} now compares the selected base and target while keeping its saved exclusions, entity kinds, note flags, notes, and noise filters.`,
       color: 'success',
       icon: 'i-lucide-check'
     })
@@ -3769,6 +3772,13 @@ const updateVersionCompareTargetId = (value: string) => {
 }
 const updateVersionCompareNoiseFilters = (value: PgmlCompareNoiseFilters) => {
   const didUpdate = setCurrentCompareNoiseFilters(value)
+
+  if (didUpdate && selectedComparisonId.value) {
+    void persistBrowserWorkspaceMutation()
+  }
+}
+const updateVersionCompareEntityFilters = (value: PgmlCompareEntityFilters) => {
+  const didUpdate = setCurrentCompareEntityFilters(value)
 
   if (didUpdate && selectedComparisonId.value) {
     void persistBrowserWorkspaceMutation()
@@ -4719,6 +4729,7 @@ onBeforeUnmount(() => {
             :compare-entries="compareEntries"
             :compare-excluded-labels="activeCompareExclusionVisibleLabels"
             :compare-excluded-summary="activeCompareExclusionSummary"
+            :compare-entity-filters="activeCompareEntityFilters"
             :compare-hidden-excluded-label-count="activeCompareExclusionHiddenLabelCount"
             :compare-note-filters="compareNoteFilters"
             :compare-notes="activeCompareNotes"
@@ -4776,6 +4787,7 @@ onBeforeUnmount(() => {
             @restore-version="restoreVersionToWorkspace"
             @select-compare-comparison="selectComparison"
             @select-diagram-view="selectActiveDiagramView"
+            @update-compare-entity-filters="updateVersionCompareEntityFilters"
             @update-compare-note-filters="updateVersionCompareNoteFilters"
             @update-compare-noise-filters="updateVersionCompareNoiseFilters"
             @update-diagram-view-settings="updateDiagramViewSettings"
@@ -4857,6 +4869,7 @@ onBeforeUnmount(() => {
             :compare-entries="compareEntries"
             :compare-excluded-labels="activeCompareExclusionVisibleLabels"
             :compare-excluded-summary="activeCompareExclusionSummary"
+            :compare-entity-filters="activeCompareEntityFilters"
             :compare-hidden-excluded-label-count="activeCompareExclusionHiddenLabelCount"
             :compare-note-filters="compareNoteFilters"
             :compare-notes="activeCompareNotes"
@@ -4911,6 +4924,7 @@ onBeforeUnmount(() => {
             @restore-version="restoreVersionToWorkspace"
             @select-compare-comparison="selectComparison"
             @select-diagram-view="selectActiveDiagramView"
+            @update-compare-entity-filters="updateVersionCompareEntityFilters"
             @update-compare-note-filters="updateVersionCompareNoteFilters"
             @update-compare-noise-filters="updateVersionCompareNoiseFilters"
             @update-diagram-view-settings="updateDiagramViewSettings"
@@ -5028,6 +5042,7 @@ onBeforeUnmount(() => {
           :comparison-label="analysisComparisonLabel"
           :can-edit-notes="selectedComparison !== null"
           :compare-base-id="versionCompareBaseId"
+          :compare-entity-filters="activeCompareEntityFilters"
           :compare-note-filters="compareNoteFilters"
           :compare-notes="activeCompareNotes"
           :compare-noise-filters="activeCompareNoiseFilters"
@@ -5054,6 +5069,7 @@ onBeforeUnmount(() => {
           @select-comparison="selectComparison"
           @select-entry="analysisSelectedCompareEntryId = $event"
           @update:compare-base-id="updateVersionCompareBaseId"
+          @update:compare-entity-filters="updateVersionCompareEntityFilters"
           @update:compare-note-filters="updateVersionCompareNoteFilters"
           @update:compare-noise-filters="updateVersionCompareNoiseFilters"
           @update:compare-target-id="updateVersionCompareTargetId"

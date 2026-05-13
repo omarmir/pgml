@@ -288,6 +288,10 @@ Enum public.language_preference {
         kind: 'property'
       }),
       expect.objectContaining({
+        label: 'entity_kinds',
+        kind: 'property'
+      }),
+      expect.objectContaining({
         label: 'hide_structural_name_only',
         kind: 'property'
       }),
@@ -319,6 +323,7 @@ Enum public.language_preference {
     id: cmp_scope
     base: workspace
     target: workspace
+    entity_kinds: "table,index"
 
     CompareNote "index:public.users::users_name_idx" {
       flag: pending

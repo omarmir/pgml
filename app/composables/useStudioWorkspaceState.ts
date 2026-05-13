@@ -1,7 +1,9 @@
 import {
+  createDefaultPgmlCompareEntityFilters,
   createDefaultPgmlCompareNoteFilters,
   createDefaultPgmlCompareNoiseFilters,
   createEmptyPgmlCompareExclusions,
+  type PgmlCompareEntityFilters,
   type PgmlCompareExclusions,
   type PgmlCompareNoteFilters,
   type PgmlCompareNoiseFilters
@@ -16,6 +18,7 @@ import type { PgmlVersionedDocumentEditorMode, PgmlVersionPreviewTarget } from '
 const studioWorkspaceStateKeys = Object.freeze({
   compareBaseId: 'studio-workspace-compare-base-id-v1',
   compareExclusions: 'studio-workspace-compare-exclusions-v1',
+  compareEntityFilters: 'studio-workspace-compare-entity-filters-v1',
   compareNoteFilters: 'studio-workspace-compare-note-filters-v1',
   compareNoiseFilters: 'studio-workspace-compare-noise-filters-v1',
   compareTargetId: 'studio-workspace-compare-target-id-v1',
@@ -76,6 +79,7 @@ export const useStudioWorkspaceSessionInitializedState = () => {
 export const useStudioWorkspaceVersionHistoryState = (defaults: {
   compareBaseId: string | null
   compareExclusions: PgmlCompareExclusions
+  compareEntityFilters: PgmlCompareEntityFilters
   compareNoteFilters: PgmlCompareNoteFilters
   compareNoiseFilters: PgmlCompareNoiseFilters
   compareTargetId: string
@@ -88,6 +92,7 @@ export const useStudioWorkspaceVersionHistoryState = (defaults: {
   return {
     compareBaseId: useStateWithDefault<string | null>(studioWorkspaceStateKeys.compareBaseId, () => defaults.compareBaseId),
     compareExclusions: useStateWithDefault<PgmlCompareExclusions>(studioWorkspaceStateKeys.compareExclusions, () => defaults.compareExclusions),
+    compareEntityFilters: useStateWithDefault<PgmlCompareEntityFilters>(studioWorkspaceStateKeys.compareEntityFilters, () => defaults.compareEntityFilters),
     compareNoteFilters: useStateWithDefault<PgmlCompareNoteFilters>(studioWorkspaceStateKeys.compareNoteFilters, () => defaults.compareNoteFilters),
     compareNoiseFilters: useStateWithDefault<PgmlCompareNoiseFilters>(studioWorkspaceStateKeys.compareNoiseFilters, () => defaults.compareNoiseFilters),
     compareTargetId: useStateWithDefault<string>(studioWorkspaceStateKeys.compareTargetId, () => defaults.compareTargetId),
@@ -142,6 +147,7 @@ export const useStudioWorkspaceGistFileState = () => {
 export const resetStudioWorkspaceState = () => {
   useState<string | null>(studioWorkspaceStateKeys.compareBaseId, () => null).value = null
   useState<PgmlCompareExclusions>(studioWorkspaceStateKeys.compareExclusions, createEmptyPgmlCompareExclusions).value = createEmptyPgmlCompareExclusions()
+  useState<PgmlCompareEntityFilters>(studioWorkspaceStateKeys.compareEntityFilters, createDefaultPgmlCompareEntityFilters).value = createDefaultPgmlCompareEntityFilters()
   useState<PgmlCompareNoteFilters>(studioWorkspaceStateKeys.compareNoteFilters, createDefaultPgmlCompareNoteFilters).value = createDefaultPgmlCompareNoteFilters()
   useState<PgmlCompareNoiseFilters>(studioWorkspaceStateKeys.compareNoiseFilters, createDefaultPgmlCompareNoiseFilters).value = createDefaultPgmlCompareNoiseFilters()
   useState<string>(studioWorkspaceStateKeys.compareTargetId, () => 'workspace').value = 'workspace'

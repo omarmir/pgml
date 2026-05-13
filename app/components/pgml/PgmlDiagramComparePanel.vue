@@ -15,6 +15,7 @@ import {
   type PgmlDiagramCompareEntry
 } from '~/utils/pgml-diagram-compare'
 import type {
+  PgmlCompareEntityFilters,
   PgmlCompareNote,
   PgmlCompareNoteFilters,
   PgmlCompareNoiseFilters,
@@ -51,6 +52,9 @@ const {
   },
   compareOptions,
   compareTargetId,
+  compareEntityFilters = {
+    entityKinds: []
+  },
   excludedLabels = [],
   excludedSummary = null,
   entries,
@@ -79,6 +83,7 @@ const {
     value: string
   }>
   compareTargetId: string
+  compareEntityFilters?: PgmlCompareEntityFilters
   excludedLabels?: string[]
   excludedSummary?: string | null
   entries: PgmlDiagramCompareEntry[]
@@ -103,6 +108,7 @@ const emit = defineEmits<{
   'select-comparison': [comparisonId: string | null]
   'select-entry': [entryId: string | null]
   'update:compareBaseId': [value: string | null]
+  'update:compare-entity-filters': [value: PgmlCompareEntityFilters]
   'update:compare-note-filters': [value: PgmlCompareNoteFilters]
   'update:compare-noise-filters': [value: PgmlCompareNoiseFilters]
   'update:compareTargetId': [value: string]
@@ -171,7 +177,7 @@ const compareEntityFilterLabelByKind: Readonly<Record<PgmlDiagramCompareEntityKi
 
 const searchQuery: Ref<string> = ref('')
 const selectedChangeKinds: Ref<PgmlCompareStatKind[]> = ref([])
-const selectedEntityKinds: Ref<PgmlDiagramCompareEntityKind[]> = ref([])
+const selectedEntityKinds = computed(() => compareEntityFilters.entityKinds)
 const detailViewMode: Ref<PgmlCompareDetailViewMode> = ref('structured')
 const compareActionButtonClass = joinStudioClasses(studioPanelActionButtonClass, 'justify-center')
 const compareStatLabelClass = 'font-mono text-[0.58rem] uppercase tracking-[0.08em]'
@@ -634,7 +640,9 @@ const clearSearch = () => {
 const clearFilters = () => {
   clearSearch()
   selectedChangeKinds.value = []
-  selectedEntityKinds.value = []
+  emit('update:compare-entity-filters', {
+    entityKinds: []
+  })
   emit('update:compare-note-filters', {
     showBlocked: true,
     showFixed: true,
@@ -644,9 +652,13 @@ const clearFilters = () => {
 }
 
 const toggleCompareEntityKindFilter = (kind: PgmlDiagramCompareEntityKind) => {
-  selectedEntityKinds.value = selectedEntityKinds.value.includes(kind)
+  const entityKinds = selectedEntityKinds.value.includes(kind)
     ? selectedEntityKinds.value.filter(value => value !== kind)
     : [...selectedEntityKinds.value, kind]
+
+  emit('update:compare-entity-filters', {
+    entityKinds
+  })
 }
 
 const getCompareEntityFilterMarkerStyle = (kind: PgmlDiagramCompareEntityKind) => {

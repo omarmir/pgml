@@ -373,6 +373,9 @@ Table public.orders {
     expect(parsed.comparisons).toEqual([
       {
         baseId: 'v1',
+        entityFilters: {
+          entityKinds: []
+        },
         exclusions: {
           entityIds: ['function:public.refresh_users'],
           groupNames: ['Core'],
@@ -486,6 +489,9 @@ Table public.orders {
     expect(parsed.comparisons).toEqual([
       {
         baseId: 'v1',
+        entityFilters: {
+          entityKinds: []
+        },
         exclusions: {
           entityIds: ['custom-type:Enum::public.release_status'],
           groupNames: ['Core', 'Legacy'],
@@ -516,6 +522,9 @@ Table public.orders {
       },
       {
         baseId: null,
+        entityFilters: {
+          entityKinds: []
+        },
         exclusions: {
           entityIds: ['function:public.refresh_users'],
           groupNames: ['Legacy'],
@@ -556,6 +565,7 @@ Table public.orders {
     id: cmp_tracked
     base: v1
     target: workspace
+    entity_kinds: "table,index"
     show_fixed_notes: false
     show_blocked_notes: false
 
@@ -601,6 +611,9 @@ Table public.orders {
       showIgnore: true,
       showPending: true
     })
+    expect(parsed.comparisons[0]?.entityFilters).toEqual({
+      entityKinds: ['table', 'index']
+    })
     expect(parsed.comparisons[0]?.notes).toEqual([
       {
         entryId: 'index:public.users::public.users_name_idx',
@@ -615,6 +628,7 @@ Table public.orders {
     ])
     expect(serialized).toContain('show_fixed_notes: false')
     expect(serialized).toContain('show_blocked_notes: false')
+    expect(serialized).toContain('entity_kinds: "table,index"')
     expect(serialized).toContain('CompareNote "constraint:public.users::users_name_check" {')
     expect(serialized).toContain('note: "Intentional expression normalization\\\\nNo action required."')
   })

@@ -11,6 +11,7 @@ import {
   clonePgmlCompareNotes,
   clonePgmlCompareNoiseFilters,
   type PgmlCompareExclusions,
+  type PgmlCompareEntityKind,
   type PgmlCompareNote,
   type PgmlCompareNoiseFilters,
   type PgmlCustomType,
@@ -25,19 +26,7 @@ import type {
 } from './pgml-diff'
 import { normalizeImportedQualifiedName } from './pgml-import-normalization'
 
-export type PgmlDiagramCompareEntityKind
-  = | 'column'
-    | 'constraint'
-    | 'custom-type'
-    | 'function'
-    | 'group'
-    | 'index'
-    | 'layout'
-    | 'procedure'
-    | 'reference'
-    | 'sequence'
-    | 'table'
-    | 'trigger'
+export type PgmlDiagramCompareEntityKind = PgmlCompareEntityKind
 
 export type PgmlDiagramCompareField = {
   after: string | null

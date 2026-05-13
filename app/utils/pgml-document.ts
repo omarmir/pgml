@@ -1,5 +1,6 @@
 import { nanoid } from 'nanoid'
 import {
+  clonePgmlCompareEntityFilters,
   clonePgmlCompareNoteFilters,
   clonePgmlCompareNotes,
   buildPgmlWithNodeProperties,
@@ -8,6 +9,8 @@ import {
   createEmptyPgmlCompareExclusions,
   dedentPgmlSourceForEditor,
   hasPgmlCompareExclusionOverrides,
+  type PgmlCompareEntityFilters,
+  type PgmlCompareEntityKind,
   type PgmlCompareNote,
   type PgmlCompareNoteFilters,
   type PgmlCompareExclusions,
@@ -54,6 +57,7 @@ export type PgmlDocumentDiagramView = {
 
 export type PgmlDocumentComparison = {
   baseId: string | null
+  entityFilters: PgmlCompareEntityFilters
   exclusions: PgmlCompareExclusions
   id: string
   name: string
@@ -110,6 +114,21 @@ type PgmlViewOwnerBlock = {
 }
 
 type PgmlComparisonReference = 'workspace' | 'empty' | string
+
+const comparisonEntityFilterKinds = new Set<PgmlCompareEntityKind>([
+  'column',
+  'constraint',
+  'custom-type',
+  'function',
+  'group',
+  'index',
+  'layout',
+  'procedure',
+  'reference',
+  'sequence',
+  'table',
+  'trigger'
+])
 
 const workspaceKeyword = 'Workspace'
 const snapshotKeyword = 'Snapshot'
@@ -198,6 +217,7 @@ export const clonePgmlDocumentView = (view: PgmlDocumentDiagramView) => {
 export const createPgmlDocumentComparison = (input?: {
   baseId?: string | null
   exclusions?: Partial<PgmlCompareExclusions>
+  entityFilters?: Partial<PgmlCompareEntityFilters>
   id?: string | null
   name?: string | null
   noteFilters?: Partial<PgmlCompareNoteFilters>
@@ -209,6 +229,7 @@ export const createPgmlDocumentComparison = (input?: {
     baseId: input?.baseId === undefined
       ? null
       : (input.baseId === 'workspace' ? 'workspace' : input.baseId),
+    entityFilters: clonePgmlCompareEntityFilters(input?.entityFilters),
     exclusions: clonePgmlCompareExclusions(input?.exclusions),
     id: input?.id && input.id.trim().length > 0 ? input.id.trim() : createPgmlDocumentComparisonId(),
     name: input?.name && input.name.trim().length > 0 ? input.name.trim() : defaultPgmlDocumentComparisonName,
@@ -1222,6 +1243,17 @@ const parseComparisonReferenceValue = (
   return normalizedValue
 }
 
+const parseComparisonEntityFilterKinds = (value: string | undefined) => {
+  if (!value) {
+    return []
+  }
+
+  return value
+    .split(',')
+    .map(kind => kind.trim())
+    .filter((kind): kind is PgmlCompareEntityKind => comparisonEntityFilterKinds.has(kind as PgmlCompareEntityKind))
+}
+
 const encodePgmlCompareNoteText = (value: string) => {
   return value
     .replaceAll('\\', '\\\\')
@@ -1300,6 +1332,9 @@ const parseComparisonBlock = (block: PgmlNamedBlock): PgmlDocumentComparison => 
     baseId: parseComparisonReferenceValue(metadata.base, `Comparison ${comparisonName} base`, {
       allowEmpty: true
     }),
+    entityFilters: {
+      entityKinds: parseComparisonEntityFilterKinds(metadata.entity_kinds)
+    },
     exclusions: compareExclusionBlocks[0]
       ? parseCompareExclusionsBlock(compareExclusionBlocks[0]!, `Comparison ${comparisonName}`)
       : createEmptyPgmlCompareExclusions(),
@@ -2030,6 +2065,10 @@ const buildComparisonBlock = (
   lines.push(buildMetadataLine('id', comparison.id, level + 1))
   lines.push(buildMetadataLine('base', buildComparisonReferenceValue(comparison.baseId), level + 1))
   lines.push(buildMetadataLine('target', comparison.targetId, level + 1))
+
+  if (comparison.entityFilters.entityKinds.length > 0) {
+    lines.push(buildMetadataLine('entity_kinds', comparison.entityFilters.entityKinds.join(','), level + 1, true))
+  }
 
   if (!comparison.noiseFilters.hideDefaults) {
     lines.push(buildMetadataLine('hide_defaults', 'false', level + 1))

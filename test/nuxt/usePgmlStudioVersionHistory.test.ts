@@ -718,6 +718,9 @@ Properties "public.users" {
       groupNames: ['Core'],
       tableIds: ['public.audit_log']
     })).toBe(true)
+    expect(api.setCurrentCompareEntityFilters({
+      entityKinds: ['table', 'function']
+    })).toBe(true)
     expect(api.setCurrentCompareNoiseFilters({
       hideDefaults: false,
       hideExecutableNameOnly: false,
@@ -750,9 +753,13 @@ Properties "public.users" {
       hideMetadata: false,
       hideOrderOnly: true
     })
+    expect(savedComparison?.entityFilters).toEqual({
+      entityKinds: ['table', 'function']
+    })
     expect(api.comparisons.value).toHaveLength(1)
     expect(api.selectedComparisonId.value).toBe(savedComparison?.id || null)
     expect(api.versionedDocumentSource.value).toContain('Comparison "Implemented scope" {')
+    expect(api.versionedDocumentSource.value).toContain('entity_kinds: "table,function"')
     expect(api.versionedDocumentSource.value).toContain('hide_defaults: false')
     expect(api.versionedDocumentSource.value).toContain('hide_structural_name_only: false')
     expect(api.versionedDocumentSource.value).toContain('hide_metadata: false')
@@ -779,6 +786,9 @@ Properties "public.users" {
       hideMetadata: true,
       hideOrderOnly: true
     })
+    expect(api.compareEntityFilters.value).toEqual({
+      entityKinds: []
+    })
     expect(api.selectComparison(savedComparison?.id || null)).toBe(true)
     expect(api.compareBaseId.value).toBe(initialVersion.id)
     expect(api.compareTargetId.value).toBe('workspace')
@@ -798,6 +808,9 @@ Properties "public.users" {
       hideStructuralNameOnly: false,
       hideMetadata: false,
       hideOrderOnly: true
+    })
+    expect(api.compareEntityFilters.value).toEqual({
+      entityKinds: ['table', 'function']
     })
 
     expect(api.renameComparison(savedComparison?.id || '', 'Implemented today')).toBe(true)

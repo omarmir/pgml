@@ -67,8 +67,10 @@ import {
   type PgmlVersionSetDocument
 } from '~/utils/pgml-document'
 import {
+  clonePgmlCompareEntityFilters,
   clonePgmlCompareNoteFilters,
   clonePgmlCompareNotes,
+  createDefaultPgmlCompareEntityFilters,
   createDefaultPgmlCompareNoteFilters,
   clonePgmlCompareExclusions,
   clonePgmlCompareNoiseFilters,
@@ -77,6 +79,7 @@ import {
   stripPgmlPropertiesBlocks
 } from '~/utils/pgml'
 import type {
+  PgmlCompareEntityFilters,
   PgmlCompareNote,
   PgmlCompareNoteFilters,
   PgmlCompareExclusions,
@@ -605,6 +608,7 @@ export const usePgmlStudioVersionHistory = (
     compareBaseId: null,
     compareExclusions: createEmptyPgmlCompareExclusions(),
     compareNoteFilters: createDefaultPgmlCompareNoteFilters(),
+    compareEntityFilters: createDefaultPgmlCompareEntityFilters(),
     compareNoiseFilters: createDefaultPgmlCompareNoiseFilters(),
     compareTargetId: 'workspace',
     document: createInitialPgmlDocument({
@@ -624,6 +628,7 @@ export const usePgmlStudioVersionHistory = (
   const compareTargetId = sharedVersionHistoryState.compareTargetId
   const compareExclusions = sharedVersionHistoryState.compareExclusions
   const compareNoteFilters = sharedVersionHistoryState.compareNoteFilters
+  const compareEntityFilters = sharedVersionHistoryState.compareEntityFilters
   const compareNoiseFilters = sharedVersionHistoryState.compareNoiseFilters
   const selectedComparisonId = sharedVersionHistoryState.selectedComparisonId
 
@@ -657,6 +662,7 @@ export const usePgmlStudioVersionHistory = (
       compareBaseId.value = buildDefaultCompareBaseId(targetDocument)
       compareTargetId.value = buildDefaultCompareTargetId(targetDocument)
       compareExclusions.value = createEmptyPgmlCompareExclusions()
+      compareEntityFilters.value = createDefaultPgmlCompareEntityFilters()
       compareNoteFilters.value = createDefaultPgmlCompareNoteFilters()
       compareNoiseFilters.value = createDefaultPgmlCompareNoiseFilters()
 
@@ -670,6 +676,7 @@ export const usePgmlStudioVersionHistory = (
       compareBaseId.value = buildDefaultCompareBaseId(targetDocument)
       compareTargetId.value = buildDefaultCompareTargetId(targetDocument)
       compareExclusions.value = createEmptyPgmlCompareExclusions()
+      compareEntityFilters.value = createDefaultPgmlCompareEntityFilters()
       compareNoteFilters.value = createDefaultPgmlCompareNoteFilters()
       compareNoiseFilters.value = createDefaultPgmlCompareNoiseFilters()
 
@@ -680,6 +687,7 @@ export const usePgmlStudioVersionHistory = (
     compareBaseId.value = normalizeCompareBaseSelection(targetDocument, comparison.baseId)
     compareTargetId.value = normalizeCompareTargetSelection(targetDocument, comparison.targetId)
     compareExclusions.value = clonePgmlCompareExclusions(comparison.exclusions)
+    compareEntityFilters.value = clonePgmlCompareEntityFilters(comparison.entityFilters)
     compareNoteFilters.value = clonePgmlCompareNoteFilters(comparison.noteFilters)
     compareNoiseFilters.value = clonePgmlCompareNoiseFilters(comparison.noiseFilters)
 
@@ -1230,6 +1238,7 @@ export const usePgmlStudioVersionHistory = (
 
   const syncSelectedComparison = (inputOptions?: {
     baseId?: string | null
+    entityFilters?: Partial<PgmlCompareEntityFilters>
     exclusions?: Partial<PgmlCompareExclusions>
     noteFilters?: Partial<PgmlCompareNoteFilters>
     notes?: PgmlCompareNote[]
@@ -1260,6 +1269,11 @@ export const usePgmlStudioVersionHistory = (
         ? compareExclusions.value
         : inputOptions.exclusions
     )
+    targetComparison.entityFilters = clonePgmlCompareEntityFilters(
+      inputOptions?.entityFilters === undefined
+        ? compareEntityFilters.value
+        : inputOptions.entityFilters
+    )
     targetComparison.noteFilters = clonePgmlCompareNoteFilters(
       inputOptions?.noteFilters === undefined
         ? compareNoteFilters.value
@@ -1288,6 +1302,16 @@ export const usePgmlStudioVersionHistory = (
 
     return syncSelectedComparison({
       exclusions: compareExclusions.value
+    })
+  }
+
+  const setCurrentCompareEntityFilters = (
+    nextCompareEntityFilters: Partial<PgmlCompareEntityFilters>
+  ) => {
+    compareEntityFilters.value = clonePgmlCompareEntityFilters(nextCompareEntityFilters)
+
+    return syncSelectedComparison({
+      entityFilters: compareEntityFilters.value
     })
   }
 
@@ -1384,6 +1408,7 @@ export const usePgmlStudioVersionHistory = (
     compareBaseId.value = normalizeCompareBaseSelection(documentState.value, comparison.baseId)
     compareTargetId.value = normalizeCompareTargetSelection(documentState.value, comparison.targetId)
     compareExclusions.value = clonePgmlCompareExclusions(comparison.exclusions)
+    compareEntityFilters.value = clonePgmlCompareEntityFilters(comparison.entityFilters)
     compareNoteFilters.value = clonePgmlCompareNoteFilters(comparison.noteFilters)
     compareNoiseFilters.value = clonePgmlCompareNoiseFilters(comparison.noiseFilters)
 
@@ -1402,6 +1427,7 @@ export const usePgmlStudioVersionHistory = (
     )
     const comparison = createPgmlDocumentComparison({
       baseId: compareBaseId.value,
+      entityFilters: compareEntityFilters.value,
       exclusions: compareExclusions.value,
       name: normalizedName,
       noteFilters: compareNoteFilters.value,
@@ -1415,6 +1441,7 @@ export const usePgmlStudioVersionHistory = (
     ]
     documentState.value = nextDocument
     selectedComparisonId.value = comparison.id
+    compareEntityFilters.value = clonePgmlCompareEntityFilters(comparison.entityFilters)
     compareExclusions.value = clonePgmlCompareExclusions(comparison.exclusions)
     compareNoteFilters.value = clonePgmlCompareNoteFilters(comparison.noteFilters)
     compareNoiseFilters.value = clonePgmlCompareNoiseFilters(comparison.noiseFilters)
@@ -1484,6 +1511,7 @@ export const usePgmlStudioVersionHistory = (
     selectedComparisonId.value = null
     compareBaseId.value = baseId
     compareExclusions.value = createEmptyPgmlCompareExclusions()
+    compareEntityFilters.value = createDefaultPgmlCompareEntityFilters()
     compareNoteFilters.value = createDefaultPgmlCompareNoteFilters()
     compareNoiseFilters.value = createDefaultPgmlCompareNoiseFilters()
     compareTargetId.value = 'workspace'
@@ -1587,6 +1615,7 @@ export const usePgmlStudioVersionHistory = (
     activeDiagramViewName,
     compareBaseId,
     compareExclusions,
+    compareEntityFilters,
     compareNoteFilters,
     compareNoiseFilters,
     compareBaseSource,
@@ -1636,6 +1665,7 @@ export const usePgmlStudioVersionHistory = (
     serializeCurrentDocument,
     setSchemaMetadata,
     setCompareTargets,
+    setCurrentCompareEntityFilters,
     setCurrentCompareExclusions,
     setCurrentCompareNoteFilters,
     setCurrentCompareNoiseFilters,

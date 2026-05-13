@@ -113,10 +113,28 @@ export type PgmlCompareExclusions = {
 
 export type PgmlCompareNoteFlag = 'pending' | 'ignore' | 'fixed' | 'blocked'
 
+export type PgmlCompareEntityKind
+  = | 'column'
+    | 'constraint'
+    | 'custom-type'
+    | 'function'
+    | 'group'
+    | 'index'
+    | 'layout'
+    | 'procedure'
+    | 'reference'
+    | 'sequence'
+    | 'table'
+    | 'trigger'
+
 export type PgmlCompareNote = {
   entryId: string
   flag: PgmlCompareNoteFlag
   note: string
+}
+
+export type PgmlCompareEntityFilters = {
+  entityKinds: PgmlCompareEntityKind[]
 }
 
 export type PgmlCompareNoiseFilters = {
@@ -289,6 +307,20 @@ const trimMultiline = (value: string) => value.replace(/^\n+|\n+$/g, '')
 const splitNormalizedLines = (value: string) => value.replaceAll('\r\n', '\n').split('\n')
 const pgmlEmbeddedSourceDelimiterPattern = /^\s*(?:source|definition):\s*(\$(?:[A-Za-z0-9_]+)?\$)(.*)$/
 const nonExcludableCompareEntityPrefixes = new Set(['column'])
+const compareEntityKinds = new Set<PgmlCompareEntityKind>([
+  'column',
+  'constraint',
+  'custom-type',
+  'function',
+  'group',
+  'index',
+  'layout',
+  'procedure',
+  'reference',
+  'sequence',
+  'table',
+  'trigger'
+])
 const normalizeCompareExclusionValue = (value: string) => cleanName(value)
 const isExcludableCompareEntityId = (value: string) => {
   const [prefix] = value.split(':')
@@ -320,12 +352,36 @@ export const createDefaultPgmlCompareNoiseFilters = (): PgmlCompareNoiseFilters 
   }
 }
 
+export const createDefaultPgmlCompareEntityFilters = (): PgmlCompareEntityFilters => {
+  return {
+    entityKinds: []
+  }
+}
+
 export const createDefaultPgmlCompareNoteFilters = (): PgmlCompareNoteFilters => {
   return {
     showBlocked: true,
     showFixed: true,
     showIgnore: true,
     showPending: true
+  }
+}
+
+export const clonePgmlCompareEntityFilters = (
+  filters?: Partial<PgmlCompareEntityFilters> | null
+): PgmlCompareEntityFilters => {
+  const seenKinds = new Set<PgmlCompareEntityKind>()
+  const entityKinds = (filters?.entityKinds || []).flatMap((kind) => {
+    if (!compareEntityKinds.has(kind) || seenKinds.has(kind)) {
+      return []
+    }
+
+    seenKinds.add(kind)
+    return [kind]
+  })
+
+  return {
+    entityKinds
   }
 }
 
