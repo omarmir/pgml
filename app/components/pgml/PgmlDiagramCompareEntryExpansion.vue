@@ -18,6 +18,7 @@ const {
   note = null,
   showFieldDiffs = true,
   showSnapshotDiff = false,
+  sourceActionLabel = 'Focus source',
   targetLabel
 } = defineProps<{
   baseLabel: string
@@ -26,6 +27,7 @@ const {
   note?: PgmlCompareNote | null
   showFieldDiffs?: boolean
   showSnapshotDiff?: boolean
+  sourceActionLabel?: string
   targetLabel: string
 }>()
 
@@ -133,7 +135,7 @@ const getCompareNoteFlagClass = (flag: PgmlCompareNote['flag']) => {
         />
         <UButton
           v-if="entry.sourceRange"
-          label="Focus source"
+          :label="sourceActionLabel"
           color="neutral"
           variant="outline"
           size="sm"

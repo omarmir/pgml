@@ -130,6 +130,7 @@ import {
   createEmptyPgmlCompareExclusions,
   filterPgmlSchemaModelForCompareExclusions,
   getOrderedGroupTables,
+  getPgmlSourceSelectionRange,
   parsePgml,
   pgmlExample,
   pgmlVersionedExample,
@@ -373,6 +374,8 @@ const compareNoteDialogOpen: Ref<boolean> = ref(false)
 const compareNoteDraftEntryId: Ref<string | null> = ref(null)
 const compareNoteDraftFlag: Ref<PgmlCompareNoteFlag> = ref('pending')
 const compareNoteDraftText: Ref<string> = ref('')
+const compareSourceDialogOpen: Ref<boolean> = ref(false)
+const compareSourceDialogRange: Ref<PgmlSourceRange | null> = ref(null)
 const comparisonDialogOpen: Ref<boolean> = ref(false)
 const comparisonDialogMode: Ref<'create' | 'rename'> = ref('create')
 const comparisonDraftName: Ref<string> = ref('')
@@ -1717,6 +1720,13 @@ const compareNoteDraftEntry = computed<PgmlDiagramCompareEntry | null>(() => {
 
   return compareRawEntriesById.value[compareNoteDraftEntryId.value] || null
 })
+const analysisSelectedCompareEntry = computed<PgmlDiagramCompareEntry | null>(() => {
+  if (!analysisSelectedCompareEntryId.value) {
+    return null
+  }
+
+  return compareRawEntriesById.value[analysisSelectedCompareEntryId.value] || null
+})
 const compareBaseLabel = computed(() => {
   if (versionCompareBaseId.value === null) {
     return 'empty'
@@ -1740,6 +1750,53 @@ const compareTargetLabel = computed(() => {
     id: versionCompareTargetId.value,
     name: versions.value.find(version => version.id === versionCompareTargetId.value)?.name || null
   })
+})
+const compareSourceDialogEntry = computed<PgmlDiagramCompareEntry | null>(() => {
+  return analysisSelectedCompareEntry.value
+})
+const compareSourceDialogVersionLabel = computed(() => {
+  return compareSourceDialogEntry.value?.changeKind === 'removed'
+    ? compareBaseLabel.value
+    : compareTargetLabel.value
+})
+const compareSourceDialogSource = computed(() => {
+  return compareSourceDialogEntry.value?.changeKind === 'removed'
+    ? compareBaseSource.value
+    : compareTargetSource.value
+})
+const compareSourceDialogContent = computed(() => {
+  if (!compareSourceDialogRange.value) {
+    return ''
+  }
+
+  const selectionRange = getPgmlSourceSelectionRange(compareSourceDialogSource.value, compareSourceDialogRange.value)
+
+  if (!selectionRange) {
+    return ''
+  }
+
+  return compareSourceDialogSource.value.slice(selectionRange.start, selectionRange.end)
+})
+const compareSourceDialogLineLabel = computed(() => {
+  if (!compareSourceDialogRange.value) {
+    return ''
+  }
+
+  if (compareSourceDialogRange.value.startLine === compareSourceDialogRange.value.endLine) {
+    return `Line ${compareSourceDialogRange.value.startLine}`
+  }
+
+  return `Lines ${compareSourceDialogRange.value.startLine}-${compareSourceDialogRange.value.endLine}`
+})
+const compareSourceDialogTitle = computed(() => {
+  return compareSourceDialogEntry.value
+    ? `View source: ${compareSourceDialogEntry.value.label}`
+    : 'View source'
+})
+const compareSourceDialogDescription = computed(() => {
+  return compareSourceDialogLineLabel.value
+    ? `${compareSourceDialogLineLabel.value} in ${compareSourceDialogVersionLabel.value}.`
+    : `PGML source from ${compareSourceDialogVersionLabel.value}.`
 })
 const analysisComparisonLabel = computed(() => {
   if (selectedComparisonId.value === null) {
@@ -4503,7 +4560,13 @@ const getAnalysisMobileButtonClass = (view: AnalysisWorkspaceTab) => {
     'flex min-w-0 cursor-default items-center justify-center gap-1.5 px-2.5 py-2'
   )
 }
-const handleAnalysisCompareFocusSource = (_sourceRange: PgmlSourceRange) => {
+const closeCompareSourceDialog = () => {
+  compareSourceDialogOpen.value = false
+  compareSourceDialogRange.value = null
+}
+const handleAnalysisCompareFocusSource = (sourceRange: PgmlSourceRange) => {
+  compareSourceDialogRange.value = sourceRange
+  compareSourceDialogOpen.value = true
 }
 const handleAnalysisCompareFocusTarget = (_entryId: string) => {
 }
@@ -4979,6 +5042,7 @@ onBeforeUnmount(() => {
           :selected-comparison-id="selectedComparisonId"
           :selected-diagram-context-ids="[]"
           :selected-entry-id="analysisSelectedCompareEntryId"
+          source-action-label="View source"
           :target-label="compareTargetLabel"
           @create-comparison="openCreateComparisonDialog"
           @delete-comparison="deleteSelectedComparisonPreset"
@@ -5371,6 +5435,43 @@ onBeforeUnmount(() => {
             :class="primaryModalButtonClass"
             :disabled="!canSaveCompareNote"
             @click="saveCompareNoteDialog"
+          />
+        </template>
+      </StudioModalFrame>
+
+      <StudioModalFrame
+        v-model:open="compareSourceDialogOpen"
+        :title="compareSourceDialogTitle"
+        :description="compareSourceDialogDescription"
+        surface-id="compare-source"
+        width-class="max-w-4xl"
+        body-class="grid min-h-0 gap-3 px-4 py-3"
+        @close="closeCompareSourceDialog"
+      >
+        <div
+          v-if="compareSourceDialogLineLabel"
+          class="flex flex-wrap items-center gap-2"
+        >
+          <span class="border border-[color:var(--studio-divider)] px-1.5 py-0.5 font-mono text-[0.52rem] uppercase tracking-[0.08em] text-[color:var(--studio-shell-muted)]">
+            {{ compareSourceDialogVersionLabel }}
+          </span>
+          <span class="border border-[color:var(--studio-divider)] px-1.5 py-0.5 font-mono text-[0.52rem] uppercase tracking-[0.08em] text-[color:var(--studio-shell-muted)]">
+            {{ compareSourceDialogLineLabel }}
+          </span>
+        </div>
+
+        <pre
+          data-compare-source-preview="true"
+          :class="joinStudioClasses('max-h-[32rem] min-h-[12rem] overflow-auto border border-[color:var(--studio-divider)] bg-[color:var(--studio-shell-bg)]/50 px-3 py-3 font-mono text-[0.68rem] leading-6 text-[color:var(--studio-shell-text)] [tab-size:2]', compareSourceDialogContent ? '' : 'grid place-items-center text-[color:var(--studio-shell-muted)]')"
+        >{{ compareSourceDialogContent || 'Source range is no longer available.' }}</pre>
+
+        <template #footer>
+          <UButton
+            label="Close"
+            color="neutral"
+            variant="outline"
+            :class="secondaryModalButtonClass"
+            @click="closeCompareSourceDialog"
           />
         </template>
       </StudioModalFrame>

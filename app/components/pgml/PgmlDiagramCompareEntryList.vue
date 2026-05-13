@@ -23,6 +23,7 @@ const {
   selectedEntryId = null,
   showFieldDiffs = true,
   showSnapshotDiff = false,
+  sourceActionLabel = 'Focus source',
   targetLabel
 } = defineProps<{
   baseLabel: string
@@ -34,6 +35,7 @@ const {
   selectedEntryId?: string | null
   showFieldDiffs?: boolean
   showSnapshotDiff?: boolean
+  sourceActionLabel?: string
   targetLabel: string
 }>()
 
@@ -295,6 +297,7 @@ const toggleScopeExpansion = (
           :show-field-diffs="showFieldDiffs"
           :show-snapshot-diff="showSnapshotDiff"
           :target-label="targetLabel"
+          :source-action-label="sourceActionLabel"
           @edit-note="emit('edit-note', $event)"
           @focus-source="emit('focus-source', $event)"
           @focus-target="emit('focus-target', $event)"
@@ -405,6 +408,7 @@ const toggleScopeExpansion = (
               :show-field-diffs="showFieldDiffs"
               :show-snapshot-diff="showSnapshotDiff"
               :target-label="targetLabel"
+              :source-action-label="sourceActionLabel"
               @edit-note="emit('edit-note', $event)"
               @focus-source="emit('focus-source', $event)"
               @focus-target="emit('focus-target', $event)"

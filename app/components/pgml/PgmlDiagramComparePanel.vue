@@ -60,6 +60,7 @@ const {
   selectedComparisonId = null,
   selectedDiagramContextIds = [],
   selectedEntryId = null,
+  sourceActionLabel = 'Focus source',
   targetLabel
 } = defineProps<{
   baseLabel: string
@@ -87,6 +88,7 @@ const {
   selectedComparisonId?: string | null
   selectedDiagramContextIds?: string[]
   selectedEntryId?: string | null
+  sourceActionLabel?: string
   targetLabel: string
 }>()
 
@@ -1025,6 +1027,7 @@ const toggleCompareNoiseFilter = (key: PgmlCompareNoiseFilterKey) => {
           :selected-entry-id="selectedEntryId"
           :show-field-diffs="showFieldDiffs"
           :show-snapshot-diff="showSnapshotDiff"
+          :source-action-label="sourceActionLabel"
           :target-label="detailTargetLabel"
           @edit-note="emit('edit-entry-note', $event)"
           @focus-source="emit('focus-source', $event)"
@@ -1126,6 +1129,7 @@ const toggleCompareNoiseFilter = (key: PgmlCompareNoiseFilterKey) => {
           :selected-entry-id="selectedEntryId"
           :show-field-diffs="showFieldDiffs"
           :show-snapshot-diff="showSnapshotDiff"
+          :source-action-label="sourceActionLabel"
           :target-label="detailTargetLabel"
           @edit-note="emit('edit-entry-note', $event)"
           @focus-source="emit('focus-source', $event)"

@@ -349,6 +349,35 @@ test('workspace menu switches between diagram and analysis without keeping the e
   await expect.poll(async () => readPgmlEditorValue(getPgmlEditor(page))).toContain('TableGroup Core')
 })
 
+test('analysis compare opens source in a modal', async ({ goto, page }) => {
+  await goto('/')
+
+  await page.locator('[data-source-card="browser-local-storage"]').getByRole('link', { name: 'Open bundled example' }).click()
+  await expect.poll(async () => readPgmlEditorValue(getPgmlEditor(page))).toContain('TableGroup Core')
+
+  await page.getByRole('button', { name: 'Workspace', exact: true }).click()
+  await page.getByRole('menuitem', { name: 'Analysis' }).click()
+
+  await expect(page).toHaveURL(/\/analysis$/)
+  await page.locator('[data-analysis-tab="compare"]').click()
+
+  const comparePanel = page.locator('[data-diagram-compare-panel="true"]')
+  const compareEntries = comparePanel.locator('[data-compare-entry]')
+
+  await expect(comparePanel).toBeVisible()
+  await expect(compareEntries.first()).toBeVisible()
+  await compareEntries.first().click()
+
+  await expect(comparePanel.locator('[data-compare-entry-detail="true"]')).toBeVisible()
+  await expect(page.getByRole('button', { name: 'Focus source' })).toHaveCount(0)
+  await page.getByRole('button', { name: 'View source' }).click()
+
+  const sourceDialog = page.locator('[data-studio-modal-surface="compare-source"]')
+
+  await expect(sourceDialog).toBeVisible()
+  await expect(sourceDialog.locator('[data-compare-source-preview="true"]')).not.toContainText('Source range is no longer available.')
+})
+
 test('workspace route switches keep saved comparison notes intact', async ({ goto, page }) => {
   await goto('/')
 
