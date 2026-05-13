@@ -14,7 +14,7 @@ const gpuBufferUsage = {
 } as const
 
 const previewRoutePointLimit = 8
-const previewRouteDescriptorStride = 144
+export const previewRouteDescriptorStride = 160
 const previewRouteOutputStride = 80
 const previewRouteWorkgroupSize = 64
 const previewPointTolerance = 0.5
