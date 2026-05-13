@@ -330,6 +330,30 @@ Enum public.language_preference {
     expect(analysis.diagnostics).toEqual([])
   })
 
+  it('accepts schema-level CompareExclusions metadata', () => {
+    const source = buildVersionedCompletionFixture(`  Workspace {
+    Snapshot {
+      Table public.users {
+        id uuid [pk]
+      }
+    }
+  }
+
+  Comparison "Tracked scope" {
+    id: cmp_scope
+    base: workspace
+    target: workspace
+
+    CompareExclusions {
+      schema: "audit"
+      include_schema: "public"
+    }
+  }`)
+    const analysis = analyzePgmlDocument(source)
+
+    expect(analysis.diagnostics).toEqual([])
+  })
+
   it('collects no diagnostics for standalone workspace and version document scopes', () => {
     const workspaceScopeSource = `Workspace {
   based_on: v2

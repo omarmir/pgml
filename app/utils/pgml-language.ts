@@ -289,7 +289,7 @@ const comparisonMetadataKeys = new Set([
   'show_fixed_notes',
   'show_blocked_notes'
 ])
-const compareExclusionsMetadataKeys = new Set(['entity', 'group', 'table', 'include_entity', 'include_group', 'include_table'])
+const compareExclusionsMetadataKeys = new Set(['entity', 'group', 'schema', 'table', 'include_entity', 'include_group', 'include_schema', 'include_table'])
 const compareNoteMetadataKeys = new Set(['flag', 'note'])
 const viewMetadataKeys = new Set(['id', 'show_lines', 'lines', 'snap_to_grid', 'snap', 'show_execs', 'execs', 'show_fields', 'fields'])
 
@@ -2535,7 +2535,7 @@ const analyzeCompareExclusionsBlock = (
     entryCode: 'pgml/compare-exclusions-entry',
     entryMessage: 'CompareExclusions only allows metadata entries.',
     keyCode: 'pgml/compare-exclusions-key',
-    keyMessage: 'CompareExclusions only supports `entity`, `group`, `table`, `include_entity`, `include_group`, and `include_table` metadata.'
+    keyMessage: 'CompareExclusions only supports `entity`, `group`, `schema`, `table`, `include_entity`, `include_group`, `include_schema`, and `include_table` metadata.'
   })
 
   nested.blocks.forEach((nestedBlock) => {

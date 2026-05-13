@@ -1481,8 +1481,8 @@ const shouldBuildMigrationArtifacts = computed(() => {
 const shouldBuildVersionArtifacts = computed(() => {
   return shouldBuildCompareArtifacts.value || shouldBuildMigrationArtifacts.value
 })
-type CompareExclusionOptionKind = 'entity' | 'group' | 'table'
-type CompareExclusionTypeFilterValue = 'all' | 'group' | 'table' | PgmlDiagramCompareEntityKind
+type CompareExclusionOptionKind = 'entity' | 'group' | 'schema' | 'table'
+type CompareExclusionTypeFilterValue = 'all' | 'group' | 'schema' | 'table' | PgmlDiagramCompareEntityKind
 
 type CompareExclusionOption = {
   entityKind?: PgmlDiagramCompareEntityKind | null
@@ -1496,6 +1496,11 @@ type CompareExclusionOption = {
 type CompareExclusionGroupSection = {
   id: string
   groupOption: CompareExclusionOption
+  tableOptions: CompareExclusionOption[]
+}
+type CompareExclusionSchemaSection = {
+  id: string
+  schemaOption: CompareExclusionOption
   tableOptions: CompareExclusionOption[]
 }
 type CompareExclusionEntitySection = {
@@ -1566,6 +1571,7 @@ const compareExclusionTypeFilterChipExtraClass = [
 ].join(' ')
 const compareExclusionTypeFilterOrder: CompareExclusionTypeFilterValue[] = [
   'all',
+  'schema',
   'group',
   'table',
   ...compareExclusionEntityKindOrder
@@ -1860,6 +1866,10 @@ const buildCompareExclusionSummary = (
     parts.push(`${normalizedExclusions.groupNames.length} excluded group${normalizedExclusions.groupNames.length === 1 ? '' : 's'}`)
   }
 
+  if (normalizedExclusions.schemaNames.length > 0) {
+    parts.push(`${normalizedExclusions.schemaNames.length} excluded schema${normalizedExclusions.schemaNames.length === 1 ? '' : 's'}`)
+  }
+
   if (normalizedExclusions.tableIds.length > 0) {
     parts.push(`${normalizedExclusions.tableIds.length} excluded table${normalizedExclusions.tableIds.length === 1 ? '' : 's'}`)
   }
@@ -1886,6 +1896,7 @@ const compareExclusionsSelectionCount = computed(() => {
   return (
     compareExclusionsDraft.value.entityIds.length
     + compareExclusionsDraft.value.groupNames.length
+    + compareExclusionsDraft.value.schemaNames.length
     + compareExclusionsDraft.value.tableIds.length
   )
 })
@@ -1953,6 +1964,16 @@ const createCompareExclusionGroupOption = (groupName: string): CompareExclusionO
     label: `Group ${groupName}`,
     searchText: `group ${groupName}`.toLowerCase(),
     value: groupName
+  }
+}
+const createCompareExclusionSchemaOption = (schemaName: string): CompareExclusionOption => {
+  return {
+    entityKind: null,
+    id: `schema:${schemaName}`,
+    kind: 'schema',
+    label: `Schema ${schemaName}`,
+    searchText: `schema ${schemaName}`.toLowerCase(),
+    value: schemaName
   }
 }
 const createCompareExclusionTableOption = (tableId: string): CompareExclusionOption => {
@@ -2032,6 +2053,10 @@ const buildCompareExclusionSummaryLabel = (option: CompareExclusionOption) => {
     return option.label
   }
 
+  if (option.kind === 'schema') {
+    return option.label
+  }
+
   if (option.kind === 'table') {
     return `Table ${option.label}`
   }
@@ -2047,6 +2072,7 @@ const buildCompareExclusionVisibleLabels = (
 
   return [
     ...normalizedExclusions.groupNames.map(groupName => buildCompareExclusionSummaryLabel(createCompareExclusionGroupOption(groupName))),
+    ...normalizedExclusions.schemaNames.map(schemaName => buildCompareExclusionSummaryLabel(createCompareExclusionSchemaOption(schemaName))),
     ...normalizedExclusions.tableIds.map(tableId => buildCompareExclusionSummaryLabel(createCompareExclusionTableOption(tableId))),
     ...normalizedExclusions.entityIds.map(entryId => buildCompareExclusionSummaryLabel(resolveCompareExclusionEntityOption(entryId)))
   ]
@@ -2056,6 +2082,22 @@ const activeCompareExclusionVisibleLabels = computed(() => {
 })
 const activeCompareExclusionHiddenLabelCount = computed(() => {
   return buildCompareExclusionVisibleLabels(activeCompareExclusions.value).length - activeCompareExclusionVisibleLabels.value.length
+})
+const compareExclusionSchemaSections = computed<CompareExclusionSchemaSection[]>(() => {
+  const schemaNames = new Set<string>([
+    ...compareExclusionSourceModels.value.flatMap(model => model.schemas),
+    ...compareExclusionsEffective.value.schemaNames
+  ])
+
+  return Array.from(schemaNames)
+    .sort((left, right) => left.localeCompare(right))
+    .map((schemaName) => {
+      return {
+        id: `schema-section:${schemaName}`,
+        schemaOption: createCompareExclusionSchemaOption(schemaName),
+        tableOptions: []
+      } satisfies CompareExclusionSchemaSection
+    })
 })
 const compareExclusionGroupSections = computed<CompareExclusionGroupSection[]>(() => {
   const groupNames = new Set<string>([
@@ -2175,6 +2217,7 @@ const compareExclusionEntitySections = computed<CompareExclusionEntitySection[]>
   })
 })
 const compareExclusionTypeFilterItems = computed<CompareExclusionTypeFilterItem[]>(() => {
+  const schemaCount = compareExclusionSchemaSections.value.length
   const groupCount = compareExclusionGroupSections.value.length
   const tableCount = compareExclusionGroupSections.value.reduce((count, section) => {
     return count + section.tableOptions.length
@@ -2182,18 +2225,20 @@ const compareExclusionTypeFilterItems = computed<CompareExclusionTypeFilterItem[
   const entityCountByKind = new Map<PgmlDiagramCompareEntityKind, number>(
     compareExclusionEntitySections.value.map(section => [section.entityKind, section.options.length])
   )
-  const totalCount = groupCount + tableCount + Array.from(entityCountByKind.values()).reduce((sum, count) => {
+  const totalCount = schemaCount + groupCount + tableCount + Array.from(entityCountByKind.values()).reduce((sum, count) => {
     return sum + count
   }, 0)
 
   return compareExclusionTypeFilterOrder.flatMap((value) => {
     const count = value === 'all'
       ? totalCount
-      : value === 'group'
-        ? groupCount
-        : value === 'table'
-          ? tableCount
-          : entityCountByKind.get(value) || 0
+      : value === 'schema'
+        ? schemaCount
+        : value === 'group'
+          ? groupCount
+          : value === 'table'
+            ? tableCount
+            : entityCountByKind.get(value) || 0
 
     if (value !== 'all' && count === 0) {
       return []
@@ -2201,11 +2246,13 @@ const compareExclusionTypeFilterItems = computed<CompareExclusionTypeFilterItem[
 
     const label = value === 'all'
       ? 'All'
-      : value === 'group'
-        ? 'Groups'
-        : value === 'table'
-          ? 'Tables'
-          : compareExclusionEntitySectionTitleByKind[value]
+      : value === 'schema'
+        ? 'Schemas'
+        : value === 'group'
+          ? 'Groups'
+          : value === 'table'
+            ? 'Tables'
+            : compareExclusionEntitySectionTitleByKind[value]
 
     return [{
       count,
@@ -2216,6 +2263,22 @@ const compareExclusionTypeFilterItems = computed<CompareExclusionTypeFilterItem[
 })
 const normalizedCompareExclusionsSearchQuery = computed(() => {
   return compareExclusionsSearchQuery.value.trim().toLowerCase()
+})
+const filteredCompareExclusionSchemaSections = computed(() => {
+  const searchQuery = normalizedCompareExclusionsSearchQuery.value
+  const typeFilter = compareExclusionsTypeFilter.value
+
+  if (typeFilter !== 'all' && typeFilter !== 'schema') {
+    return []
+  }
+
+  if (searchQuery.length === 0) {
+    return compareExclusionSchemaSections.value
+  }
+
+  return compareExclusionSchemaSections.value.filter((section) => {
+    return section.schemaOption.searchText.includes(searchQuery)
+  })
 })
 const filteredCompareExclusionGroupSections = computed(() => {
   const searchQuery = normalizedCompareExclusionsSearchQuery.value
@@ -2350,6 +2413,9 @@ const filteredCompareExclusionEntitySections = computed(() => {
 const compareExclusionsShowsGroupedTableOptions = computed(() => {
   return compareExclusionsTypeFilter.value === 'all' || compareExclusionsTypeFilter.value === 'table'
 })
+const compareExclusionsShowsSchemaSections = computed(() => {
+  return compareExclusionsTypeFilter.value === 'all' || compareExclusionsTypeFilter.value === 'schema'
+})
 const compareExclusionsShowsGroupSections = computed(() => {
   return compareExclusionsTypeFilter.value === 'all'
     || compareExclusionsTypeFilter.value === 'group'
@@ -2360,10 +2426,15 @@ const compareExclusionsShowsUngroupedTableSection = computed(() => {
 })
 const compareExclusionsShowsEntitySections = computed(() => {
   return compareExclusionsTypeFilter.value === 'all'
-    || (compareExclusionsTypeFilter.value !== 'group' && compareExclusionsTypeFilter.value !== 'table')
+    || (
+      compareExclusionsTypeFilter.value !== 'group'
+      && compareExclusionsTypeFilter.value !== 'schema'
+      && compareExclusionsTypeFilter.value !== 'table'
+    )
 })
 const hasVisibleCompareExclusionOptions = computed(() => {
-  return filteredCompareExclusionGroupSections.value.length > 0
+  return filteredCompareExclusionSchemaSections.value.length > 0
+    || filteredCompareExclusionGroupSections.value.length > 0
     || filteredCompareExclusionUngroupedTableOptions.value.length > 0
     || filteredCompareExclusionEntitySections.value.length > 0
 })
@@ -2650,6 +2721,10 @@ const isCompareExclusionOptionSelected = (option: CompareExclusionOption) => {
     return compareExclusionsEffective.value.groupNames.includes(option.value)
   }
 
+  if (option.kind === 'schema') {
+    return compareExclusionsEffective.value.schemaNames.includes(option.value)
+  }
+
   if (option.kind === 'table') {
     return compareExclusionsEffective.value.tableIds.includes(option.value)
   }
@@ -2685,7 +2760,9 @@ const toggleCompareExclusionOption = (option: CompareExclusionOption) => {
       ? nextDraft.entityIds
       : option.kind === 'group'
         ? nextDraft.groupNames
-        : nextDraft.tableIds
+        : option.kind === 'schema'
+          ? nextDraft.schemaNames
+          : nextDraft.tableIds
   )
 
   if (isCompareExclusionOptionSelected(option)) {
@@ -2696,7 +2773,13 @@ const toggleCompareExclusionOption = (option: CompareExclusionOption) => {
 
   compareExclusionsDraft.value = clonePgmlCompareExclusions({
     ...nextDraft,
-    [option.kind === 'entity' ? 'entityIds' : option.kind === 'group' ? 'groupNames' : 'tableIds']: Array.from(nextValues)
+    [option.kind === 'entity'
+      ? 'entityIds'
+      : option.kind === 'group'
+        ? 'groupNames'
+        : option.kind === 'schema'
+          ? 'schemaNames'
+          : 'tableIds']: Array.from(nextValues)
   })
 }
 const removeCompareExclusionOption = (option: CompareExclusionOption) => {
@@ -5032,10 +5115,7 @@ onBeforeUnmount(() => {
                 :aria-pressed="isCompareExclusionsTypeFilterActive(item.value)"
                 @click="setCompareExclusionsTypeFilter(item.value)"
               >
-                <span>{{ item.label }}</span>
-                <span class="text-[color:var(--studio-shell-muted)]">
-                  {{ item.count }}
-                </span>
+                <span>{{ item.label }} ({{ item.count }})</span>
               </button>
             </div>
           </div>
@@ -5045,7 +5125,7 @@ onBeforeUnmount(() => {
               Exclude from compare
             </div>
             <p :class="studioCompactBodyCopyClass">
-              Select a group to exclude its full cluster, pick individual tables inside it, or exclude other comparable entities like indexes, references, types, and executables.
+              Select a schema or group to exclude its full cluster, pick individual tables inside it, or exclude other comparable entities like indexes, references, types, and executables.
             </p>
             <section
               v-if="staleCompareExclusionEntityOptions.length > 0"
@@ -5084,6 +5164,33 @@ onBeforeUnmount(() => {
               data-compare-exclusion-options="true"
               class="grid min-w-0 gap-4 pr-1"
             >
+              <section
+                v-if="compareExclusionsShowsSchemaSections"
+                data-compare-exclusion-schemas-section="true"
+                class="grid min-w-0 gap-2"
+              >
+                <div :class="studioFieldKickerClass">
+                  Schemas
+                </div>
+                <div class="grid min-w-0 gap-2 sm:grid-cols-2">
+                  <button
+                    v-for="section in filteredCompareExclusionSchemaSections"
+                    :key="section.id"
+                    type="button"
+                    :data-compare-exclusion-schema-section="section.schemaOption.value"
+                    :data-compare-exclusion-option="section.schemaOption.id"
+                    :class="getStudioToggleChipClass({
+                      active: isCompareExclusionOptionSelected(section.schemaOption),
+                      extraClass: compareExclusionChipExtraClass
+                    })"
+                    :aria-pressed="isCompareExclusionOptionSelected(section.schemaOption)"
+                    @click="toggleCompareExclusionOption(section.schemaOption)"
+                  >
+                    {{ section.schemaOption.label }}
+                  </button>
+                </div>
+              </section>
+
               <section
                 v-if="compareExclusionsShowsGroupSections"
                 data-compare-exclusion-groups-section="true"

@@ -105,7 +105,9 @@ export type PgmlCompareExclusions = {
   groupNames: string[]
   includedEntityIds: string[]
   includedGroupNames: string[]
+  includedSchemaNames: string[]
   includedTableIds: string[]
+  schemaNames: string[]
   tableIds: string[]
 }
 
@@ -301,7 +303,9 @@ export const createEmptyPgmlCompareExclusions = (): PgmlCompareExclusions => {
     groupNames: [],
     includedEntityIds: [],
     includedGroupNames: [],
+    includedSchemaNames: [],
     includedTableIds: [],
+    schemaNames: [],
     tableIds: []
   }
 }
@@ -418,7 +422,9 @@ export const clonePgmlCompareExclusions = (
     groupNames: normalizeValues(exclusions?.groupNames || []),
     includedEntityIds: normalizeValues(exclusions?.includedEntityIds || [], isExcludableCompareEntityId),
     includedGroupNames: normalizeValues(exclusions?.includedGroupNames || []),
+    includedSchemaNames: normalizeValues(exclusions?.includedSchemaNames || []),
     includedTableIds: normalizeValues(exclusions?.includedTableIds || []),
+    schemaNames: normalizeValues(exclusions?.schemaNames || []),
     tableIds: normalizeValues(exclusions?.tableIds || [])
   }
 }
@@ -431,9 +437,11 @@ export const hasPgmlCompareExclusionOverrides = (
   return (
     normalizedExclusions.entityIds.length > 0
     || normalizedExclusions.groupNames.length > 0
+    || normalizedExclusions.schemaNames.length > 0
     || normalizedExclusions.tableIds.length > 0
     || normalizedExclusions.includedEntityIds.length > 0
     || normalizedExclusions.includedGroupNames.length > 0
+    || normalizedExclusions.includedSchemaNames.length > 0
     || normalizedExclusions.includedTableIds.length > 0
   )
 }
@@ -446,6 +454,7 @@ export const resolvePgmlCompareExclusions = (
   const normalizedLocalOverrides = clonePgmlCompareExclusions(localOverrides)
   const effectiveEntityIds = new Set(normalizedInheritedExclusions.entityIds)
   const effectiveGroupNames = new Set(normalizedInheritedExclusions.groupNames)
+  const effectiveSchemaNames = new Set(normalizedInheritedExclusions.schemaNames)
   const effectiveTableIds = new Set(normalizedInheritedExclusions.tableIds)
 
   normalizedLocalOverrides.includedEntityIds.forEach((entityId) => {
@@ -453,6 +462,9 @@ export const resolvePgmlCompareExclusions = (
   })
   normalizedLocalOverrides.includedGroupNames.forEach((groupName) => {
     effectiveGroupNames.delete(groupName)
+  })
+  normalizedLocalOverrides.includedSchemaNames.forEach((schemaName) => {
+    effectiveSchemaNames.delete(schemaName)
   })
   normalizedLocalOverrides.includedTableIds.forEach((tableId) => {
     effectiveTableIds.delete(tableId)
@@ -463,6 +475,9 @@ export const resolvePgmlCompareExclusions = (
   normalizedLocalOverrides.groupNames.forEach((groupName) => {
     effectiveGroupNames.add(groupName)
   })
+  normalizedLocalOverrides.schemaNames.forEach((schemaName) => {
+    effectiveSchemaNames.add(schemaName)
+  })
   normalizedLocalOverrides.tableIds.forEach((tableId) => {
     effectiveTableIds.add(tableId)
   })
@@ -472,7 +487,9 @@ export const resolvePgmlCompareExclusions = (
     groupNames: Array.from(effectiveGroupNames),
     includedEntityIds: [],
     includedGroupNames: [],
+    includedSchemaNames: [],
     includedTableIds: [],
+    schemaNames: Array.from(effectiveSchemaNames),
     tableIds: Array.from(effectiveTableIds)
   })
 }
@@ -481,7 +498,7 @@ export const setPgmlCompareExclusionOverride = (
   input: {
     exclusions: PgmlCompareExclusions
     inheritedExclusions?: PgmlCompareExclusions | null
-    kind: 'entity' | 'group' | 'table'
+    kind: 'entity' | 'group' | 'schema' | 'table'
     selected: boolean
     value: string
   }
@@ -492,17 +509,23 @@ export const setPgmlCompareExclusionOverride = (
     ? 'entityIds'
     : input.kind === 'group'
       ? 'groupNames'
-      : 'tableIds'
+      : input.kind === 'schema'
+        ? 'schemaNames'
+        : 'tableIds'
   const localIncludedKey = input.kind === 'entity'
     ? 'includedEntityIds'
     : input.kind === 'group'
       ? 'includedGroupNames'
-      : 'includedTableIds'
+      : input.kind === 'schema'
+        ? 'includedSchemaNames'
+        : 'includedTableIds'
   const inheritedValues = input.kind === 'entity'
     ? normalizedInheritedExclusions.entityIds
     : input.kind === 'group'
       ? normalizedInheritedExclusions.groupNames
-      : normalizedInheritedExclusions.tableIds
+      : input.kind === 'schema'
+        ? normalizedInheritedExclusions.schemaNames
+        : normalizedInheritedExclusions.tableIds
   const nextExcludedValues = new Set(normalizedExclusions[localExcludedKey])
   const nextIncludedValues = new Set(normalizedExclusions[localIncludedKey])
 
@@ -1033,6 +1056,7 @@ export const filterPgmlSchemaModelForCompareExclusions = (
 
   if (
     normalizedExclusions.groupNames.length === 0
+    && normalizedExclusions.schemaNames.length === 0
     && normalizedExclusions.tableIds.length === 0
   ) {
     return {
@@ -1071,8 +1095,19 @@ export const filterPgmlSchemaModelForCompareExclusions = (
   }
 
   const excludedGroupNames = new Set(normalizedExclusions.groupNames)
+  const excludedSchemaNames = new Set(normalizedExclusions.schemaNames)
   const excludedTableIds = new Set(normalizedExclusions.tableIds)
+  const getQualifiedNameSchema = (value: string) => {
+    return value.includes('.') ? value.split('.')[0] || 'public' : 'public'
+  }
+  const isSchemaIncluded = (schemaName: string) => {
+    return !excludedSchemaNames.has(schemaName)
+  }
   const includedTables = model.tables.filter((table) => {
+    if (!isSchemaIncluded(table.schema)) {
+      return false
+    }
+
     if (excludedTableIds.has(table.fullName)) {
       return false
     }
@@ -1108,6 +1143,10 @@ export const filterPgmlSchemaModelForCompareExclusions = (
 
   const routinesReferenceLookup = buildGroupTableReferenceLookup(model.tables)
   const shouldKeepRoutine = (routine: PgmlRoutine) => {
+    if (!isSchemaIncluded(getQualifiedNameSchema(routine.name))) {
+      return false
+    }
+
     const attachedTableIds = getRoutinePrimaryTableIds(model.tables, routinesReferenceLookup, routine)
 
     return attachedTableIds.length === 0 || attachedTableIds.some(tableId => includedTableIds.has(tableId))
@@ -1115,25 +1154,38 @@ export const filterPgmlSchemaModelForCompareExclusions = (
   const functions = model.functions.filter(shouldKeepRoutine)
   const procedures = model.procedures.filter(shouldKeepRoutine)
   const triggers = model.triggers.filter((trigger) => {
+    if (!isSchemaIncluded(getQualifiedNameSchema(trigger.name))) {
+      return false
+    }
+
     const resolvedTableId = resolveTableIdentifier(model.tables, originalReferenceLookup, trigger.tableName)
 
     return !resolvedTableId || includedTableIds.has(resolvedTableId)
   })
   const sequences = model.sequences.filter((sequence) => {
+    if (!isSchemaIncluded(getQualifiedNameSchema(sequence.name))) {
+      return false
+    }
+
     const attachedTableIds = getSequenceAttachedTableIds(model.tables, sequence)
 
     return attachedTableIds.length === 0 || attachedTableIds.some(tableId => includedTableIds.has(tableId))
+  })
+  const customTypes = model.customTypes.filter((customType) => {
+    return isSchemaIncluded(getQualifiedNameSchema(customType.name))
   })
   const references = model.references.filter((reference) => {
     return includedTableIds.has(reference.fromTable) && includedTableIds.has(reference.toTable)
   })
   const filteredModelWithoutNodeProperties = {
     ...model,
+    customTypes,
     functions,
     groups,
     nodeProperties: {},
     procedures,
     references,
+    schemas: model.schemas.filter(isSchemaIncluded),
     sequences,
     tables: includedTables,
     triggers

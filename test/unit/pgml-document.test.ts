@@ -350,6 +350,7 @@ Table public.orders {
       entity: "column:public.users::id"
       entity: "function:public.refresh_users"
       group: "Core"
+      schema: "audit"
       table: "public.audit_log"
     }
   }
@@ -377,7 +378,9 @@ Table public.orders {
           groupNames: ['Core'],
           includedEntityIds: [],
           includedGroupNames: [],
+          includedSchemaNames: [],
           includedTableIds: [],
+          schemaNames: ['audit'],
           tableIds: ['public.audit_log']
         },
         id: 'cmp_implemented',
@@ -411,6 +414,7 @@ Table public.orders {
     expect(serialized).not.toContain('entity: "column:public.users::id"')
     expect(serialized).toContain('entity: "function:public.refresh_users"')
     expect(serialized).toContain('group: "Core"')
+    expect(serialized).toContain('schema: "audit"')
     expect(serialized).toContain('table: "public.audit_log"')
   })
 
@@ -464,7 +468,9 @@ Table public.orders {
       groupNames: ['Core'],
       includedEntityIds: ['function:public.refresh_users'],
       includedGroupNames: ['Deferred'],
+      includedSchemaNames: [],
       includedTableIds: ['public.users'],
+      schemaNames: [],
       tableIds: ['public.audit_log']
     })
     expect(parsed.versions[0]?.compareExclusions).toEqual({
@@ -472,7 +478,9 @@ Table public.orders {
       groupNames: ['Legacy'],
       includedEntityIds: ['custom-type:Enum::public.release_status'],
       includedGroupNames: ['Core'],
+      includedSchemaNames: [],
       includedTableIds: ['public.audit_log'],
+      schemaNames: [],
       tableIds: ['public.kysely_migration']
     })
     expect(parsed.comparisons).toEqual([
@@ -483,7 +491,9 @@ Table public.orders {
           groupNames: ['Core', 'Legacy'],
           includedEntityIds: [],
           includedGroupNames: [],
+          includedSchemaNames: [],
           includedTableIds: [],
+          schemaNames: [],
           tableIds: ['public.audit_log', 'public.kysely_migration']
         },
         id: expect.stringMatching(/^cmp_/),
@@ -511,7 +521,9 @@ Table public.orders {
           groupNames: ['Legacy'],
           includedEntityIds: [],
           includedGroupNames: [],
+          includedSchemaNames: [],
           includedTableIds: [],
+          schemaNames: [],
           tableIds: ['public.kysely_migration']
         },
         id: expect.stringMatching(/^cmp_/),
@@ -691,7 +703,9 @@ Table public.memberships {
       groupNames: ['Core'],
       includedEntityIds: [],
       includedGroupNames: [],
+      includedSchemaNames: [],
       includedTableIds: [],
+      schemaNames: [],
       tableIds: ['public.audit_log']
     })
     expect(withSecondVersion.versions[1]?.parentVersionId).toBe(withFirstVersion.versions[0]?.id)
@@ -702,7 +716,9 @@ Table public.memberships {
       groupNames: [],
       includedEntityIds: [],
       includedGroupNames: [],
+      includedSchemaNames: [],
       includedTableIds: [],
+      schemaNames: [],
       tableIds: []
     })
   })

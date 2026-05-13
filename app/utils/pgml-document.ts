@@ -1052,6 +1052,11 @@ const parseCompareExclusionsBlock = (
       return nextExclusions
     }
 
+    if (entry.key === 'schema') {
+      nextExclusions.schemaNames.push(entry.value)
+      return nextExclusions
+    }
+
     if (entry.key === 'table') {
       nextExclusions.tableIds.push(entry.value)
       return nextExclusions
@@ -1067,12 +1072,17 @@ const parseCompareExclusionsBlock = (
       return nextExclusions
     }
 
+    if (entry.key === 'include_schema') {
+      nextExclusions.includedSchemaNames.push(entry.value)
+      return nextExclusions
+    }
+
     if (entry.key === 'include_table') {
       nextExclusions.includedTableIds.push(entry.value)
       return nextExclusions
     }
 
-    throw new Error(`${context} CompareExclusions only allows entity, group, table, include_entity, include_group, and include_table entries.`)
+    throw new Error(`${context} CompareExclusions only allows entity, group, schema, table, include_entity, include_group, include_schema, and include_table entries.`)
   }, createEmptyPgmlCompareExclusions())
 
   return clonePgmlCompareExclusions(compareExclusions)
@@ -1964,6 +1974,9 @@ const buildCompareExclusionsBlock = (
   normalizedCompareExclusions.groupNames.forEach((groupName) => {
     lines.push(buildMetadataLine('group', groupName, level + 1, true))
   })
+  normalizedCompareExclusions.schemaNames.forEach((schemaName) => {
+    lines.push(buildMetadataLine('schema', schemaName, level + 1, true))
+  })
   normalizedCompareExclusions.tableIds.forEach((tableId) => {
     lines.push(buildMetadataLine('table', tableId, level + 1, true))
   })
@@ -1972,6 +1985,9 @@ const buildCompareExclusionsBlock = (
   })
   normalizedCompareExclusions.includedGroupNames.forEach((groupName) => {
     lines.push(buildMetadataLine('include_group', groupName, level + 1, true))
+  })
+  normalizedCompareExclusions.includedSchemaNames.forEach((schemaName) => {
+    lines.push(buildMetadataLine('include_schema', schemaName, level + 1, true))
   })
   normalizedCompareExclusions.includedTableIds.forEach((tableId) => {
     lines.push(buildMetadataLine('include_table', tableId, level + 1, true))

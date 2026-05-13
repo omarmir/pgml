@@ -136,6 +136,42 @@ Trigger trg_touch_users on public.users {
     expect(filteredModel.triggers).toEqual([])
   })
 
+  it('filters compare models by excluded schemas', () => {
+    const model = parsePgml(`Table public.users {
+  id uuid [pk]
+}
+
+Table audit.events {
+  id uuid [pk]
+  user_id uuid [ref: > public.users.id]
+}
+
+Enum audit.event_kind {
+  created
+}
+
+Function audit.capture_event() returns trigger {
+  source: $sql$
+    select 1;
+  $sql$
+}
+
+Sequence audit.event_id_seq {
+  type: bigint
+}`)
+
+    const filteredModel = filterPgmlSchemaModelForCompareExclusions(model, {
+      schemaNames: ['audit']
+    })
+
+    expect(filteredModel.schemas).toEqual(['public'])
+    expect(filteredModel.tables.map(table => table.fullName)).toEqual(['public.users'])
+    expect(filteredModel.references).toEqual([])
+    expect(filteredModel.customTypes).toEqual([])
+    expect(filteredModel.functions).toEqual([])
+    expect(filteredModel.sequences).toEqual([])
+  })
+
   it('derives sequence ownership and routine metadata from source blocks', () => {
     const model = parsePgml(pgmlExample)
     const orderNumberSequence = model.sequences.find(sequence => sequence.name === 'order_number_seq')

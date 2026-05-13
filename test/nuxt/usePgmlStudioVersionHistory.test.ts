@@ -738,7 +738,9 @@ Properties "public.users" {
       groupNames: ['Core'],
       includedEntityIds: [],
       includedGroupNames: [],
+      includedSchemaNames: [],
       includedTableIds: [],
+      schemaNames: [],
       tableIds: ['public.audit_log']
     })
     expect(savedComparison?.noiseFilters).toEqual({
@@ -765,7 +767,9 @@ Properties "public.users" {
       groupNames: [],
       includedEntityIds: [],
       includedGroupNames: [],
+      includedSchemaNames: [],
       includedTableIds: [],
+      schemaNames: [],
       tableIds: []
     })
     expect(api.compareNoiseFilters.value).toEqual({
@@ -783,7 +787,9 @@ Properties "public.users" {
       groupNames: ['Core'],
       includedEntityIds: [],
       includedGroupNames: [],
+      includedSchemaNames: [],
       includedTableIds: [],
+      schemaNames: [],
       tableIds: ['public.audit_log']
     })
     expect(api.compareNoiseFilters.value).toEqual({
@@ -846,7 +852,9 @@ Properties "public.users" {
       groupNames: ['Core'],
       includedEntityIds: [],
       includedGroupNames: [],
+      includedSchemaNames: [],
       includedTableIds: [],
+      schemaNames: [],
       tableIds: ['public.audit_log']
     })
     expect(api.compareExclusions.value).toEqual({
@@ -854,7 +862,9 @@ Properties "public.users" {
       groupNames: ['Core'],
       includedEntityIds: [],
       includedGroupNames: [],
+      includedSchemaNames: [],
       includedTableIds: [],
+      schemaNames: [],
       tableIds: ['public.audit_log']
     })
   })

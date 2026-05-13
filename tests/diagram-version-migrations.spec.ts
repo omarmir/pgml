@@ -1361,6 +1361,10 @@ Table public.kysely_migration {
   id bigint [pk]
 }
 
+Table audit.events {
+  id uuid [pk]
+}
+
 TableGroup Core {
   public.users
   public.orders
@@ -1388,6 +1392,11 @@ Table public.kysely_migration {
   name text
 }
 
+Table audit.events {
+  id uuid [pk]
+  detail text
+}
+
 Enum public.review_status {
   pending
   approved
@@ -1410,13 +1419,15 @@ TableGroup Core {
   const usersColumnEntry = comparePanel.locator('[data-compare-entry="column:public.users::email"]')
   const ordersColumnEntry = comparePanel.locator('[data-compare-entry="column:public.orders::status"]')
   const auditLogColumnEntry = comparePanel.locator('[data-compare-entry="column:public.audit_log::action"]')
+  const auditEventsColumnEntry = comparePanel.locator('[data-compare-entry="column:audit.events::detail"]')
   const migrationColumnEntry = comparePanel.locator('[data-compare-entry="column:public.kysely_migration::name"]')
   const addedTypeEntry = comparePanel.locator('[data-compare-entry="custom-type:Enum::public.review_status"]')
-  const addedFunctionEntry = comparePanel.locator('[data-compare-entry="function:public.refresh_users"]')
+  const addedFunctionEntry = comparePanel.locator('[data-compare-entry="function:refresh_users"]')
 
   await expect(usersColumnEntry).toBeVisible()
   await expect(ordersColumnEntry).toBeVisible()
   await expect(auditLogColumnEntry).toBeVisible()
+  await expect(auditEventsColumnEntry).toBeVisible()
   await expect(migrationColumnEntry).toBeVisible()
   await expect(addedTypeEntry).toBeVisible()
   await expect(addedFunctionEntry).toBeVisible()
@@ -1426,10 +1437,13 @@ TableGroup Core {
   const exclusionsDialog = page.locator('[data-studio-modal-surface="compare-exclusions"]')
 
   await expect(exclusionsDialog).toBeVisible()
-  await expect(exclusionsDialog.locator('[data-compare-exclusions-type-filters="true"]')).toContainText('All')
-  await expect(exclusionsDialog.locator('[data-compare-exclusions-type-filters="true"]')).toContainText('Groups')
-  await expect(exclusionsDialog.locator('[data-compare-exclusions-type-filters="true"]')).toContainText('Tables')
-  await expect(exclusionsDialog.locator('[data-compare-exclusions-type-filters="true"]')).toContainText('Functions')
+  await expect(exclusionsDialog.locator('[data-compare-exclusions-type-filter="all"]')).toHaveText(/All \(\d+\)/)
+  await expect(exclusionsDialog.locator('[data-compare-exclusions-type-filter="group"]')).toHaveText(/Groups \(\d+\)/)
+  await expect(exclusionsDialog.locator('[data-compare-exclusions-type-filter="schema"]')).toHaveText(/Schemas \(\d+\)/)
+  await expect(exclusionsDialog.locator('[data-compare-exclusions-type-filter="table"]')).toHaveText(/Tables \(\d+\)/)
+  await expect(exclusionsDialog.locator('[data-compare-exclusions-type-filter="function"]')).toHaveText(/Functions \(\d+\)/)
+  await expect(exclusionsDialog.locator('[data-compare-exclusion-schemas-section="true"]')).toContainText('Schemas')
+  await expect(exclusionsDialog.locator('[data-compare-exclusion-schemas-section="true"]')).toContainText('Schema audit')
   await expect(exclusionsDialog.locator('[data-compare-exclusion-groups-section="true"]')).toContainText('Groups')
   await expect(exclusionsDialog.locator('[data-compare-exclusion-group-section="Core"]')).toContainText('public.users')
   await expect(exclusionsDialog.locator('[data-compare-exclusion-group-section="Core"]')).toContainText('public.orders')
@@ -1440,6 +1454,7 @@ TableGroup Core {
   await expect(exclusionsDialog.locator('[data-compare-exclusion-entity-section="function"]')).toContainText('public.refresh_users')
   await exclusionsDialog.locator('[data-compare-exclusions-type-filter="function"]').click()
   await expect(exclusionsDialog.locator('[data-compare-exclusions-type-filter="function"]')).toHaveAttribute('aria-pressed', 'true')
+  await expect(exclusionsDialog.locator('[data-compare-exclusion-schemas-section="true"]')).toHaveCount(0)
   await expect(exclusionsDialog.locator('[data-compare-exclusion-groups-section="true"]')).toHaveCount(0)
   await expect(exclusionsDialog.locator('[data-compare-exclusion-ungrouped-section="true"]')).toHaveCount(0)
   await expect(exclusionsDialog.locator('[data-compare-exclusion-entity-section="custom-type"]')).toHaveCount(0)
@@ -1458,19 +1473,22 @@ TableGroup Core {
       return scrollContainer ? scrollContainer.scrollWidth - scrollContainer.clientWidth : Number.POSITIVE_INFINITY
     })
   }).toBeLessThanOrEqual(1)
+  await exclusionsDialog.locator('[data-compare-exclusion-schemas-section="true"] [data-compare-exclusion-option="schema:audit"]').click()
   await exclusionsDialog.locator('[data-compare-exclusion-group-section="Core"] [data-compare-exclusion-option="group:Core"]').click()
   await exclusionsDialog.locator('[data-compare-exclusion-ungrouped-section="true"] [data-compare-exclusion-option="table:public.kysely_migration"]').click()
   await exclusionsDialog.locator('[data-compare-exclusion-entity-section="custom-type"] [data-compare-exclusion-option="custom-type:Enum::public.review_status"]').click()
-  await exclusionsDialog.locator('[data-compare-exclusion-entity-section="function"] [data-compare-exclusion-option="function:public.refresh_users"]').click()
+  await exclusionsDialog.locator('[data-compare-exclusion-entity-section="function"] [data-compare-exclusion-option="function:refresh_users"]').click()
   await exclusionsDialog.locator('[data-compare-exclusions-save="true"]').click()
   await expect(exclusionsDialog).toHaveCount(0)
 
+  await expect(comparePanel).toContainText('Schema audit')
   await expect(comparePanel).toContainText('Group Core')
   await expect(comparePanel).toContainText('Table public.kysely_migration')
   await expect(comparePanel).toContainText('Type public.review_status')
-  await expect(comparePanel).toContainText('Function public.refresh_users')
+  await expect(comparePanel).toContainText('Function refresh_users')
   await expect(usersColumnEntry).toHaveCount(0)
   await expect(ordersColumnEntry).toHaveCount(0)
+  await expect(auditEventsColumnEntry).toHaveCount(0)
   await expect(migrationColumnEntry).toHaveCount(0)
   await expect(addedTypeEntry).toHaveCount(0)
   await expect(addedFunctionEntry).toHaveCount(0)
@@ -1490,15 +1508,17 @@ TableGroup Core {
   await recalledComparePanel.locator('[data-compare-comparison-select="true"]').click()
   await page.getByRole('option', { name: 'Implemented scope' }).click()
 
+  await expect(recalledComparePanel).toContainText('Schema audit')
   await expect(recalledComparePanel).toContainText('Group Core')
   await expect(recalledComparePanel).toContainText('Table public.kysely_migration')
   await expect(recalledComparePanel).toContainText('Type public.review_status')
-  await expect(recalledComparePanel).toContainText('Function public.refresh_users')
+  await expect(recalledComparePanel).toContainText('Function refresh_users')
   await expect(recalledComparePanel.locator('[data-compare-entry="column:public.users::email"]')).toHaveCount(0)
   await expect(recalledComparePanel.locator('[data-compare-entry="column:public.orders::status"]')).toHaveCount(0)
+  await expect(recalledComparePanel.locator('[data-compare-entry="column:audit.events::detail"]')).toHaveCount(0)
   await expect(recalledComparePanel.locator('[data-compare-entry="column:public.kysely_migration::name"]')).toHaveCount(0)
   await expect(recalledComparePanel.locator('[data-compare-entry="custom-type:Enum::public.review_status"]')).toHaveCount(0)
-  await expect(recalledComparePanel.locator('[data-compare-entry="function:public.refresh_users"]')).toHaveCount(0)
+  await expect(recalledComparePanel.locator('[data-compare-entry="function:refresh_users"]')).toHaveCount(0)
   await expect(recalledComparePanel.locator('[data-compare-entry="column:public.audit_log::action"]')).toBeVisible()
   await expect(recalledComparePanel.locator('[data-compare-base-select="true"]')).toContainText('Baseline')
 
@@ -1513,9 +1533,10 @@ TableGroup Core {
   await expect(recalledComparePanel.locator('[data-compare-comparison-select="true"]')).toContainText('Current comparison')
   await expect(recalledComparePanel.locator('[data-compare-entry="column:public.users::email"]')).toHaveCount(0)
   await expect(recalledComparePanel.locator('[data-compare-entry="column:public.orders::status"]')).toHaveCount(0)
+  await expect(recalledComparePanel.locator('[data-compare-entry="column:audit.events::detail"]')).toHaveCount(0)
   await expect(recalledComparePanel.locator('[data-compare-entry="column:public.kysely_migration::name"]')).toHaveCount(0)
   await expect(recalledComparePanel.locator('[data-compare-entry="custom-type:Enum::public.review_status"]')).toHaveCount(0)
-  await expect(recalledComparePanel.locator('[data-compare-entry="function:public.refresh_users"]')).toHaveCount(0)
+  await expect(recalledComparePanel.locator('[data-compare-entry="function:refresh_users"]')).toHaveCount(0)
   await expect(recalledComparePanel.locator('[data-compare-entry="column:public.audit_log::action"]')).toBeVisible()
 })
 
