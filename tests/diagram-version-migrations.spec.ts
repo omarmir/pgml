@@ -1548,12 +1548,73 @@ test('versions overview controls render inline instead of as a sticky floating c
 
   await expect(overview).toBeVisible()
   await expect(overview.locator('[data-version-create-checkpoint="true"]')).toBeVisible()
+  await expect(overview.locator('[data-version-import-pgml="true"]')).toBeVisible()
   await expect(overview.locator('[data-version-import-dbml="true"]')).toBeVisible()
   await expect(overview.locator('[data-version-import-dump="true"]')).toBeVisible()
-  await expect(overview).toContainText('Choose which locked snapshot the diagram and raw PGML preview should show.')
+  await expect(overview).toContainText('Choose which locked snapshot the active workspace should inspect.')
   await expect.poll(async () => {
     return overview.evaluate(element => getComputedStyle(element).position)
   }).toBe('static')
+})
+
+test('versions panel appends imported PGML version history', async ({ goto, page }) => {
+  await goto('/diagram')
+  const editor = getPgmlEditor(page)
+
+  await setPgmlEditorValue(editor, `Table public.local_users {
+  id uuid [pk]
+}`)
+  await createCheckpoint(page, 'Local baseline')
+  await openVersionsPanel(page)
+  await page.locator('[data-version-import-pgml="true"]').click()
+
+  const importDialog = page.locator('[data-studio-modal-surface="pgml-import"]')
+
+  await expect(importDialog).toBeVisible()
+  await importDialog.locator('textarea').fill(`VersionSet "Imported" {
+  Workspace {
+    based_on: imported_v2
+
+    Snapshot {
+      Table public.imported_workspace {
+        id uuid [pk]
+      }
+    }
+  }
+
+  Version imported_v1 {
+    name: "Imported base"
+    role: design
+    created_at: "2026-03-29T13:00:00.000Z"
+
+    Snapshot {
+      Table public.imported_base {
+        id uuid [pk]
+      }
+    }
+  }
+
+  Version imported_v2 {
+    name: "Imported follow-up"
+    role: implementation
+    parent: imported_v1
+    created_at: "2026-03-29T13:10:00.000Z"
+
+    Snapshot {
+      Table public.imported_followup {
+        id uuid [pk]
+      }
+    }
+  }
+}`)
+  await importDialog.getByRole('button', { name: 'Append PGML' }).click()
+  await expect(importDialog).toHaveCount(0)
+
+  await openVersionsPanel(page)
+  await expect(getVersionCardByLabel(page, 'Local baseline')).toBeVisible()
+  await expect(getVersionCardByLabel(page, 'Imported base')).toBeVisible()
+  await expect(getVersionCardByLabel(page, 'Imported follow-up')).toBeVisible()
+  await expect.poll(async () => readPgmlEditorValue(editor)).toContain('Table public.imported_workspace')
 })
 
 test('versions panel renames the initial locked version directly from its card actions', async ({ goto, page }) => {
@@ -1870,14 +1931,15 @@ test('version import modals keep their text inputs above the footer actions', as
   await openVersionsPanel(page)
 
   const assertModalTextareaClearsFooter = async (payload: {
-    dialogSurfaceId: 'dbml-import' | 'pg-dump-import'
-    openButtonSelector: '[data-version-import-dbml="true"]' | '[data-version-import-dump="true"]'
+    confirmLabel: 'Append PGML' | 'Replace workspace with import'
+    dialogSurfaceId: 'dbml-import' | 'pg-dump-import' | 'pgml-import'
+    openButtonSelector: '[data-version-import-dbml="true"]' | '[data-version-import-dump="true"]' | '[data-version-import-pgml="true"]'
   }) => {
     await page.locator(payload.openButtonSelector).click()
 
     const importDialog = page.locator(`[data-studio-modal-surface="${payload.dialogSurfaceId}"]`)
     const textarea = importDialog.locator('textarea')
-    const confirmButton = importDialog.getByRole('button', { name: 'Replace workspace with import' })
+    const confirmButton = importDialog.getByRole('button', { name: payload.confirmLabel })
 
     await expect(importDialog).toBeVisible()
     await expect(textarea).toBeVisible()
@@ -1913,10 +1975,17 @@ test('version import modals keep their text inputs above the footer actions', as
   }
 
   await assertModalTextareaClearsFooter({
+    confirmLabel: 'Append PGML',
+    dialogSurfaceId: 'pgml-import',
+    openButtonSelector: '[data-version-import-pgml="true"]'
+  })
+  await assertModalTextareaClearsFooter({
+    confirmLabel: 'Replace workspace with import',
     dialogSurfaceId: 'pg-dump-import',
     openButtonSelector: '[data-version-import-dump="true"]'
   })
   await assertModalTextareaClearsFooter({
+    confirmLabel: 'Replace workspace with import',
     dialogSurfaceId: 'dbml-import',
     openButtonSelector: '[data-version-import-dbml="true"]'
   })

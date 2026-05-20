@@ -541,6 +541,7 @@ const emit = defineEmits<{
   versionCheckpoint: []
   versionImportDbml: []
   versionImportDump: []
+  versionImportPgml: []
   viewVersionTarget: [targetId: string]
 }>()
 
@@ -8763,6 +8764,7 @@ defineExpose<{
         @delete-version="emit('deleteVersion', $event)"
         @import-dbml="emit('versionImportDbml')"
         @import-dump="emit('versionImportDump')"
+        @import-pgml="emit('versionImportPgml')"
         @rename-version="emit('renameVersion', $event)"
         @restore-version="emit('restoreVersion', $event)"
         @view-target="emit('viewVersionTarget', $event)"

@@ -2252,6 +2252,128 @@ export const clonePgmlVersionSetDocument = (document: PgmlVersionSetDocument) =>
   } satisfies PgmlVersionSetDocument
 }
 
+const mapHasValue = (
+  map: Map<string, string>,
+  value: string
+) => {
+  return [...map.values()].includes(value)
+}
+
+const remapPgmlImportTargetId = (
+  targetId: string,
+  versionIdMap: Map<string, string>
+) => {
+  return targetId === 'workspace'
+    ? 'workspace'
+    : versionIdMap.get(targetId) || targetId
+}
+
+const remapPgmlImportBaseId = (
+  baseId: string | null,
+  versionIdMap: Map<string, string>
+) => {
+  if (baseId === null || baseId === 'workspace') {
+    return baseId
+  }
+
+  return versionIdMap.get(baseId) || baseId
+}
+
+const appendImportedPgmlSchemaMetadata = (
+  baseMetadata: PgmlDocumentSchemaMetadata,
+  importedMetadata: PgmlDocumentSchemaMetadata
+) => {
+  const tableIds = new Set(baseMetadata.tables.map(entry => entry.tableId))
+  const columnIds = new Set(baseMetadata.columns.map(entry => `${entry.tableId}.${entry.columnName}`))
+
+  return clonePgmlDocumentSchemaMetadata({
+    columns: [
+      ...baseMetadata.columns,
+      ...importedMetadata.columns.filter((entry) => {
+        return !columnIds.has(`${entry.tableId}.${entry.columnName}`)
+      })
+    ],
+    tables: [
+      ...baseMetadata.tables,
+      ...importedMetadata.tables.filter(entry => !tableIds.has(entry.tableId))
+    ]
+  })
+}
+
+export const appendPgmlDocumentImport = (
+  document: PgmlVersionSetDocument,
+  importedDocument: PgmlVersionSetDocument
+) => {
+  const currentDocument = clonePgmlVersionSetDocument(document)
+  const imported = clonePgmlVersionSetDocument(importedDocument)
+  const existingVersionIds = new Set(currentDocument.versions.map(version => version.id))
+  const existingComparisonIds = new Set(currentDocument.comparisons.map(comparison => comparison.id))
+  const existingComparisonNames = new Set(currentDocument.comparisons.map(comparison => comparison.name))
+  const versionIdMap = new Map<string, string>()
+  const comparisonIdMap = new Map<string, string>()
+
+  imported.versions.forEach((version) => {
+    let nextId = createPgmlVersionId()
+
+    while (existingVersionIds.has(nextId) || mapHasValue(versionIdMap, nextId)) {
+      nextId = createPgmlVersionId()
+    }
+
+    versionIdMap.set(version.id, nextId)
+  })
+
+  imported.comparisons.forEach((comparison) => {
+    let nextId = createPgmlDocumentComparisonId()
+
+    while (existingComparisonIds.has(nextId) || mapHasValue(comparisonIdMap, nextId)) {
+      nextId = createPgmlDocumentComparisonId()
+    }
+
+    comparisonIdMap.set(comparison.id, nextId)
+  })
+
+  const importedVersions = imported.versions.map((version) => {
+    return {
+      ...version,
+      id: versionIdMap.get(version.id) || version.id,
+      parentVersionId: version.parentVersionId
+        ? versionIdMap.get(version.parentVersionId) || version.parentVersionId
+        : null
+    } satisfies PgmlVersionDocumentBlock
+  })
+  const importedComparisons = imported.comparisons.map((comparison) => {
+    return createPgmlDocumentComparison({
+      ...comparison,
+      baseId: remapPgmlImportBaseId(comparison.baseId, versionIdMap),
+      id: comparisonIdMap.get(comparison.id) || comparison.id,
+      name: buildUniquePgmlComparisonName(existingComparisonNames, comparison.name),
+      targetId: remapPgmlImportTargetId(comparison.targetId, versionIdMap)
+    })
+  })
+  const nextDocument: PgmlVersionSetDocument = {
+    ...currentDocument,
+    comparisons: [
+      ...currentDocument.comparisons,
+      ...importedComparisons
+    ],
+    schemaMetadata: appendImportedPgmlSchemaMetadata(currentDocument.schemaMetadata, imported.schemaMetadata),
+    versions: [
+      ...currentDocument.versions,
+      ...importedVersions
+    ],
+    workspace: {
+      ...imported.workspace,
+      basedOnVersionId: imported.workspace.basedOnVersionId
+        ? versionIdMap.get(imported.workspace.basedOnVersionId) || imported.workspace.basedOnVersionId
+        : currentDocument.workspace.basedOnVersionId
+    }
+  }
+
+  validateVersionSetDocument(nextDocument)
+
+  return nextDocument
+}
+
 export const getPgmlVersionById = (
   document: PgmlVersionSetDocument,
   versionId: string | null

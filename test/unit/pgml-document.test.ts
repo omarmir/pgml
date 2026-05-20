@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 
 import {
   arePgmlSnapshotsEquivalent,
+  appendPgmlDocumentImport,
   buildPgmlCheckpointName,
   canCreatePgmlCheckpoint,
   clonePgmlVersionSetDocument,
@@ -1821,5 +1822,81 @@ Table public.memberships {
     expect(() => parsePgmlDocument(invalidDocumentSource)).toThrow(
       'Version v1 forms a parent cycle through v1.'
     )
+  })
+
+  it('appends imported PGML versions without replacing existing history', () => {
+    const currentDocument = parsePgmlDocument(`VersionSet "Current" {
+  Workspace {
+    based_on: current_v1
+
+    Snapshot {
+      Table public.current_workspace {
+        id uuid [pk]
+      }
+    }
+  }
+
+  Version current_v1 {
+    name: "Current baseline"
+    role: design
+    created_at: "2026-03-29T12:00:00.000Z"
+
+    Snapshot {
+      Table public.current_base {
+        id uuid [pk]
+      }
+    }
+  }
+}`)
+    const importedDocument = parsePgmlDocument(`VersionSet "Imported" {
+  Workspace {
+    based_on: imported_v2
+
+    Snapshot {
+      Table public.imported_workspace {
+        id uuid [pk]
+      }
+    }
+  }
+
+  Version imported_v1 {
+    name: "Imported base"
+    role: design
+    created_at: "2026-03-29T13:00:00.000Z"
+
+    Snapshot {
+      Table public.imported_base {
+        id uuid [pk]
+      }
+    }
+  }
+
+  Version imported_v2 {
+    name: "Imported follow-up"
+    role: implementation
+    parent: imported_v1
+    created_at: "2026-03-29T13:10:00.000Z"
+
+    Snapshot {
+      Table public.imported_followup {
+        id uuid [pk]
+      }
+    }
+  }
+}`)
+
+    const appended = appendPgmlDocumentImport(currentDocument, importedDocument)
+
+    expect(appended.versions).toHaveLength(3)
+    expect(appended.versions.map(version => version.name)).toEqual([
+      'Current baseline',
+      'Imported base',
+      'Imported follow-up'
+    ])
+    expect(appended.workspace.snapshot.source).toContain('Table public.imported_workspace')
+    expect(appended.workspace.basedOnVersionId).not.toBe('imported_v2')
+    expect(getPgmlWorkspaceBaseVersion(appended)?.name).toBe('Imported follow-up')
+    expect(getPgmlVersionById(appended, 'current_v1')?.name).toBe('Current baseline')
+    expect(serializePgmlDocument(appended)).toContain('Version current_v1')
   })
 })

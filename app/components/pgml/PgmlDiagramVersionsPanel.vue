@@ -54,6 +54,7 @@ const emit = defineEmits<{
   'delete-version': [versionId: string]
   'import-dbml': []
   'import-dump': []
+  'import-pgml': []
   'rename-version': [versionId: string]
   'restore-version': [versionId: string]
   'view-target': [targetId: string]
@@ -73,7 +74,7 @@ const previewLabel = computed(() => {
 <template>
   <div
     data-diagram-versions-panel="true"
-    class="grid content-start gap-3 overflow-auto px-3 py-3"
+    class="grid h-full min-h-0 content-start gap-3 overflow-auto px-3 py-3"
   >
     <div
       data-version-overview="true"
@@ -90,6 +91,16 @@ const previewLabel = computed(() => {
           size="sm"
           :disabled="!canCreateCheckpoint"
           @click="emit('create-checkpoint')"
+        />
+        <UButton
+          data-version-import-pgml="true"
+          label="Import PGML"
+          icon="i-lucide-file-code-2"
+          color="neutral"
+          variant="outline"
+          :class="studioPanelActionButtonClass"
+          size="sm"
+          @click="emit('import-pgml')"
         />
         <UButton
           data-version-import-dbml="true"

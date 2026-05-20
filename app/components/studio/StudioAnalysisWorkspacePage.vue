@@ -72,9 +72,11 @@ import {
   buildPgmlWorkspaceStatus
 } from '~/utils/pgml-version-summary'
 import {
+  appendPgmlDocumentImport,
   buildPgmlCheckpointName,
   getPgmlVersionDisplayLabel,
   getLatestPgmlVersion,
+  parsePgmlDocument,
   preparePgmlDocumentForLoad,
   serializePgmlDocumentScope,
   type PgmlVersionSetDocument
@@ -316,6 +318,11 @@ const checkpointRole: Ref<'design' | 'implementation'> = ref('design')
 const diagramViewDialogOpen: Ref<boolean> = ref(false)
 const diagramViewDialogMode: Ref<'create' | 'rename'> = ref('create')
 const diagramViewDraftName: Ref<string> = ref('')
+const importPgmlDialogOpen: Ref<boolean> = ref(false)
+const importPgmlError: Ref<string | null> = ref(null)
+const importPgmlSelectedFile: Ref<File | null> = ref(null)
+const importPgmlText: Ref<string> = ref('')
+const isSubmittingImportPgml: Ref<boolean> = ref(false)
 const importDbmlDialogOpen: Ref<boolean> = ref(false)
 const importDbmlBaseVersionId: Ref<string | null> = ref(null)
 const importDbmlError: Ref<string | null> = ref(null)
@@ -821,14 +828,20 @@ const displayedEditorSource = computed(() => {
 })
 const importDumpSelectedFileName = computed(() => importDumpSelectedFile.value?.name || '')
 const importDbmlSelectedFileName = computed(() => importDbmlSelectedFile.value?.name || '')
+const importPgmlSelectedFileName = computed(() => importPgmlSelectedFile.value?.name || '')
 const isImportBusy = computed(() => {
-  return isSubmittingImportDbml.value
+  return isSubmittingImportPgml.value
+    || isSubmittingImportDbml.value
     || isSubmittingImportDump.value
     || isSubmittingImportExecutableAttachmentResolution.value
 })
 const importBusyTitle = computed(() => {
   if (isSubmittingImportExecutableAttachmentResolution.value) {
     return 'Applying import selections'
+  }
+
+  if (isSubmittingImportPgml.value) {
+    return 'Importing PGML'
   }
 
   if (isSubmittingImportDbml.value) {
@@ -844,6 +857,10 @@ const importBusyTitle = computed(() => {
 const importBusyDescription = computed(() => {
   if (isSubmittingImportExecutableAttachmentResolution.value) {
     return 'Updating executable attachment metadata and replacing the active workspace.'
+  }
+
+  if (isSubmittingImportPgml.value) {
+    return 'Parsing the PGML document and appending its version history.'
   }
 
   if (isSubmittingImportDbml.value) {
@@ -3135,6 +3152,27 @@ const saveDiagramViewDialog = () => {
   revealPreviewTargetDocumentSource()
   closeDiagramViewDialog()
 }
+const syncImportPgmlConflictError = () => {
+  const hasFile = importPgmlSelectedFile.value !== null
+  const hasText = importPgmlText.value.trim().length > 0
+
+  if (hasFile && hasText) {
+    importPgmlError.value = 'Choose either pasted PGML text or a file upload, not both.'
+    return false
+  }
+
+  if (importPgmlError.value === 'Choose either pasted PGML text or a file upload, not both.') {
+    importPgmlError.value = null
+  }
+
+  return true
+}
+const resetImportPgmlDialog = () => {
+  importPgmlDialogOpen.value = false
+  importPgmlError.value = null
+  importPgmlSelectedFile.value = null
+  importPgmlText.value = ''
+}
 const syncImportDumpConflictError = () => {
   const hasFile = importDumpSelectedFile.value !== null
   const hasText = importDumpText.value.trim().length > 0
@@ -3370,6 +3408,12 @@ const openImportDbmlDialog = () => {
   importDbmlText.value = ''
   importDbmlBaseVersionId.value = getPreferredImportBaseVersionId()
 }
+const openImportPgmlDialog = () => {
+  importPgmlDialogOpen.value = true
+  importPgmlError.value = null
+  importPgmlSelectedFile.value = null
+  importPgmlText.value = ''
+}
 const closeImportDumpDialog = () => {
   if (isSubmittingImportDump.value || isSubmittingImportExecutableAttachmentResolution.value) {
     return
@@ -3383,6 +3427,13 @@ const closeImportDbmlDialog = () => {
   }
 
   resetImportDbmlDialog()
+}
+const closeImportPgmlDialog = () => {
+  if (isSubmittingImportPgml.value) {
+    return
+  }
+
+  resetImportPgmlDialog()
 }
 const handleImportDumpDialogOpenChange = (nextOpen: boolean) => {
   if (nextOpen) {
@@ -3400,6 +3451,14 @@ const handleImportDbmlDialogOpenChange = (nextOpen: boolean) => {
 
   closeImportDbmlDialog()
 }
+const handleImportPgmlDialogOpenChange = (nextOpen: boolean) => {
+  if (nextOpen) {
+    importPgmlDialogOpen.value = true
+    return
+  }
+
+  closeImportPgmlDialog()
+}
 const setImportDumpText = (value: string) => {
   importDumpText.value = value
   syncImportDumpConflictError()
@@ -3407,6 +3466,10 @@ const setImportDumpText = (value: string) => {
 const setImportDbmlText = (value: string) => {
   importDbmlText.value = value
   syncImportDbmlConflictError()
+}
+const setImportPgmlText = (value: string) => {
+  importPgmlText.value = value
+  syncImportPgmlConflictError()
 }
 const setImportDumpFile = (files: FileList | null) => {
   importDumpSelectedFile.value = files?.[0] || null
@@ -3416,6 +3479,14 @@ const setImportDbmlFile = (files: FileList | null) => {
   importDbmlSelectedFile.value = files?.[0] || null
   syncImportDbmlConflictError()
 }
+const setImportPgmlFile = (files: FileList | null) => {
+  importPgmlSelectedFile.value = files?.[0] || null
+  syncImportPgmlConflictError()
+}
+const clearImportPgmlFile = () => {
+  importPgmlSelectedFile.value = null
+  syncImportPgmlConflictError()
+}
 const clearImportDumpFile = () => {
   importDumpSelectedFile.value = null
   syncImportDumpConflictError()
@@ -3423,6 +3494,48 @@ const clearImportDumpFile = () => {
 const clearImportDbmlFile = () => {
   importDbmlSelectedFile.value = null
   syncImportDbmlConflictError()
+}
+const submitImportPgml = async () => {
+  if (!syncImportPgmlConflictError()) {
+    return
+  }
+
+  const selectedFile = importPgmlSelectedFile.value
+  const trimmedText = importPgmlText.value.trim()
+
+  if (!selectedFile && trimmedText.length === 0) {
+    importPgmlError.value = 'Paste PGML text or choose a PGML file before importing.'
+    return
+  }
+
+  isSubmittingImportPgml.value = true
+
+  try {
+    const importedPgml = selectedFile ? await selectedFile.text() : importPgmlText.value
+    const importedDocument = parsePgmlDocument(importedPgml)
+    const nextDocument = appendPgmlDocumentImport(versionDocument.value, importedDocument)
+
+    loadPreparedDocument(nextDocument)
+    markBrowserSchemaStatusEligible()
+    requestCanvasViewportReset()
+    resetImportPgmlDialog()
+    toast.add({
+      title: 'PGML appended',
+      description: 'The imported PGML history was appended and its workspace is now the current draft.',
+      color: 'success',
+      icon: 'i-lucide-check'
+    })
+  } catch (error) {
+    if (error instanceof Error && error.message.trim().length > 0) {
+      importPgmlError.value = error.message
+    } else if (typeof error === 'string' && error.trim().length > 0) {
+      importPgmlError.value = error
+    } else {
+      importPgmlError.value = 'Unable to import that PGML document.'
+    }
+  } finally {
+    isSubmittingImportPgml.value = false
+  }
 }
 const submitImportDump = async () => {
   if (!importDumpBaseVersionId.value) {
@@ -3757,6 +3870,11 @@ const actionMenus = computed<StudioHeaderMenu[]>(() => {
             label: 'Create checkpoint',
             icon: 'i-lucide-bookmark-plus',
             onSelect: openCheckpointDialog
+          },
+          {
+            label: 'Import PGML document',
+            icon: 'i-lucide-file-code-2',
+            onSelect: openImportPgmlDialog
           },
           {
             label: 'Import DBML onto version',
@@ -4635,6 +4753,7 @@ onBeforeUnmount(() => {
           @delete-version="openDeleteVersionDialog"
           @import-dbml="openImportDbmlDialog"
           @import-dump="openImportDumpDialog"
+          @import-pgml="openImportPgmlDialog"
           @rename-version="openRenameVersionDialog"
           @restore-version="restoreVersionToWorkspace"
           @view-target="viewVersionTarget"
@@ -5450,6 +5569,19 @@ onBeforeUnmount(() => {
           />
         </template>
       </StudioModalFrame>
+
+      <AppPgmlImportModal
+        :open="importPgmlDialogOpen"
+        :model-value="importPgmlText"
+        :selected-file-name="importPgmlSelectedFileName"
+        :error-message="importPgmlError"
+        :is-submitting="isSubmittingImportPgml"
+        @update:open="handleImportPgmlDialogOpenChange"
+        @update:model-value="setImportPgmlText"
+        @select-file="setImportPgmlFile"
+        @clear-file="clearImportPgmlFile"
+        @submit="submitImportPgml"
+      />
 
       <AppDbmlImportModal
         :open="importDbmlDialogOpen"

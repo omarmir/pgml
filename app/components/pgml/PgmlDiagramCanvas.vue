@@ -220,6 +220,7 @@ const emit = defineEmits<{
   versionCheckpoint: []
   versionImportDbml: []
   versionImportDump: []
+  versionImportPgml: []
   viewVersionTarget: [targetId: string]
 }>()
 
@@ -321,6 +322,7 @@ defineExpose<CanvasHandle>({
     @version-checkpoint="emit('versionCheckpoint')"
     @version-import-dbml="emit('versionImportDbml')"
     @version-import-dump="emit('versionImportDump')"
+    @version-import-pgml="emit('versionImportPgml')"
     @view-version-target="emit('viewVersionTarget', $event)"
   />
 </template>
