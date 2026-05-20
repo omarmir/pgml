@@ -314,6 +314,104 @@ Table public.common_review_set {
     expect(diff.constraints).toEqual([])
   })
 
+  it('keeps foreign-key constraint diffs when target column names do not match', () => {
+    const diff = diffPgmlSchemaModels(
+      parsePgml(`Table public.common_entity {
+  id bigint [pk]
+  egcs_cn_entitytype text
+  Index cn_idx_entityidentitytype (id, egcs_cn_entitytype)
+}
+
+Table public.common_additional_reviewers {
+  egcs_cn_entityid bigint
+  egcs_cn_entitytype text
+  Constraint cn_ref_additionalreviewersentityidentitytype: foreign key (egcs_cn_entityid, egcs_cn_entitytype) references public.common_entity (id_egcs_cn_entitytype)
+}`),
+      parsePgml(`Table public.Common_Entity {
+  id bigint [pk]
+  egcs_cn_entitytype text
+  Index cn_idx_entityidentitytype (id, egcs_cn_entitytype)
+}
+
+Table public.common_additional_reviewers {
+  egcs_cn_entityid bigint
+  egcs_cn_entitytype text
+  Constraint cn_ref_additionalreviewersentityidentitytype: foreign key (egcs_cn_entityid, egcs_cn_entitytype) references public.Common_Entity (id, egcs_cn_entitytype) ON DELETE RESTRICT
+}`)
+    )
+
+    expect(diff.constraints).toEqual([
+      expect.objectContaining({
+        changes: ['expression'],
+        id: 'public.common_additional_reviewers::cn_ref_additionalreviewersentityidentitytype',
+        kind: 'modified'
+      })
+    ])
+    expect(diff.summary.modified).toBe(1)
+  })
+
+  it('does not pair renamed foreign-key constraints when target column names do not match', () => {
+    const diff = diffPgmlSchemaModels(
+      parsePgml(`Table public.common_review_set_setup {
+  id bigint [pk]
+  egcs_cn_entitytype text
+}
+
+Table public.common_review_set {
+  egcs_cn_reviewsetsetup bigint
+  egcs_cn_entitytype text
+  Constraint cn_ref_reviewsetreviewsetsetupentitytype: foreign key (egcs_cn_reviewsetsetup, egcs_cn_entitytype) references public.common_review_set_setup (id_egcs_cn_entitytype)
+}`),
+      parsePgml(`Table public.Common_Review_Set_Setup {
+  id bigint [pk]
+  egcs_cn_entitytype text
+}
+
+Table public.common_review_set {
+  egcs_cn_reviewsetsetup bigint
+  egcs_cn_entitytype text
+  Constraint cn_fk_reviewset_setup: foreign key (egcs_cn_reviewsetsetup, egcs_cn_entitytype) references public.Common_Review_Set_Setup (id, egcs_cn_entitytype) ON DELETE RESTRICT
+}`)
+    )
+
+    expect(diff.constraints).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        id: 'public.common_review_set::cn_fk_reviewset_setup',
+        kind: 'added'
+      }),
+      expect.objectContaining({
+        id: 'public.common_review_set::cn_ref_reviewsetreviewsetsetupentitytype',
+        kind: 'removed'
+      })
+    ]))
+  })
+
+  it('ignores restrict-only reference action changes as default noise', () => {
+    const diff = diffPgmlSchemaModels(
+      parsePgml(`Table public.parent {
+  id bigint [pk]
+}
+
+Table public.child {
+  parent_id bigint
+}
+
+Ref: public.child.parent_id > public.parent.id`),
+      parsePgml(`Table public.parent {
+  id bigint [pk]
+}
+
+Table public.child {
+  parent_id bigint
+}
+
+Ref: public.child.parent_id > public.parent.id [delete: restrict]`)
+    )
+
+    expect(diff.references).toEqual([])
+    expect(diff.summary.modified).toBe(0)
+  })
+
   it('suppresses equivalent enum-range constraint expressions across IN SELECT and = ANY forms', () => {
     const diff = diffPgmlSchemaModels(
       parsePgml(`Table public.common_entity {
@@ -502,6 +600,36 @@ Sequence public.common_review_set_id_seq {
     expect(migrationBundle.meta.statementCount).toBe(0)
   })
 
+  it('ignores routine signature differences when only the replace marker changes', () => {
+    const beforeModel = parsePgml(`Function public.register_entity() returns trigger [replace] {
+  source: $sql$
+    CREATE OR REPLACE FUNCTION public.register_entity() RETURNS trigger
+      LANGUAGE plpgsql
+      AS $$
+      BEGIN
+        RETURN NEW;
+      END;
+      $$;
+  $sql$
+}`)
+    const afterModel = parsePgml(`Function register_entity() returns trigger {
+  source: $sql$
+    CREATE FUNCTION register_entity() RETURNS trigger AS $$
+    BEGIN
+      RETURN NEW;
+    END;
+    $$ LANGUAGE plpgsql;
+  $sql$
+}`)
+    const diff = diffPgmlSchemaModels(beforeModel, afterModel)
+    const migrationBundle = buildPgmlMigrationDiffBundle(beforeModel, afterModel)
+
+    expect(diff.functions).toEqual([])
+    expect(diff.summary.modified).toBe(0)
+    expect(migrationBundle.meta.hasChanges).toBe(false)
+    expect(migrationBundle.meta.statementCount).toBe(0)
+  })
+
   it('ignores trigger source differences when only formatting, event ordering, or execute syntax aliases change', () => {
     const beforeModel = parsePgml(`Trigger trg_touch_users on public.users {
   source: $sql$
@@ -568,6 +696,59 @@ Sequence public.common_review_set_id_seq {
     const afterModel = parsePgml(`Trigger trg_register_applicantrecipient on public."Applicant_Recipient_Profile" {
   source: $sql$
     CREATE TRIGGER trg_register_applicantrecipient BEFORE INSERT ON public."Applicant_Recipient_Profile" FOR EACH ROW EXECUTE FUNCTION public.register_entity('applicantrecipient');
+  $sql$
+}`)
+    const diff = diffPgmlSchemaModels(beforeModel, afterModel)
+    const migrationBundle = buildPgmlMigrationDiffBundle(beforeModel, afterModel)
+
+    expect(diff.triggers).toEqual([])
+    expect(diff.summary.modified).toBe(0)
+    expect(migrationBundle.meta.hasChanges).toBe(false)
+    expect(migrationBundle.meta.statementCount).toBe(0)
+  })
+
+  it('ignores trigger source differences when one side stores the structured source fingerprint', () => {
+    const beforeModel = parsePgml(`Trigger trg_register_applicantrecipient on applicant_recipient_profile {
+  source: $sql$
+    trg_register_applicantrecipient create trigger trg_register_applicantrecipient before insert on applicant_recipient_profile for each row execute function register_entity('applicantrecipient'); register_entity
+  $sql$
+}`)
+    const afterModel = parsePgml(`Trigger trg_register_applicantrecipient on public.applicant_recipient_profile {
+  arguments: ['applicantrecipient']
+  events: [insert]
+  function: register_entity
+  level: row
+  timing: before
+  source: $sql$
+    {"arguments":["'applicantrecipient'"],"constraint":false,"deferrable":null,"events":["insert"],"fromTable":null,"initially":null,"level":null,"routineName":"register_entity","tableName":"applicant_recipient_profile","timing":"before","when":null}
+  $sql$
+}`)
+    const diff = diffPgmlSchemaModels(beforeModel, afterModel)
+    const migrationBundle = buildPgmlMigrationDiffBundle(beforeModel, afterModel)
+
+    expect(diff.triggers).toEqual([])
+    expect(diff.summary.modified).toBe(0)
+    expect(migrationBundle.meta.hasChanges).toBe(false)
+    expect(migrationBundle.meta.statementCount).toBe(0)
+  })
+
+  it('ignores trigger source fingerprint differences with update columns and when clauses', () => {
+    const beforeModel = parsePgml(`Trigger trg_cascade_routingslip_status on common_approval {
+  events: [update of egcs_cn_approvalvalue]
+  function: trg_fn_cascade_routingslip_status
+  level: row
+  timing: after
+  source: $sql$
+    trg_cascade_routingslip_status create trigger trg_cascade_routingslip_status after update of egcs_cn_approvalvalue on common_approval for each row when (old.egcs_cn_approvalvalue is distinct from new.egcs_cn_approvalvalue) execute function trg_fn_cascade_routingslip_status(); trg_fn_cascade_routingslip_status
+  $sql$
+}`)
+    const afterModel = parsePgml(`Trigger trg_cascade_routingslip_status on public.common_approval {
+  events: [update of egcs_cn_approvalvalue]
+  function: trg_fn_cascade_routingslip_status
+  level: row
+  timing: after
+  source: $sql$
+    {"arguments":[],"constraint":false,"deferrable":null,"events":["update of egcs_cn_approvalvalue"],"fromTable":null,"initially":null,"level":null,"routineName":"trg_fn_cascade_routingslip_status","tableName":"common_approval","timing":"after","when":"old.egcs_cn_approvalvalue is distinct from new.egcs_cn_approvalvalue"}
   $sql$
 }`)
     const diff = diffPgmlSchemaModels(beforeModel, afterModel)

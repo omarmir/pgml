@@ -717,7 +717,7 @@ const normalizeRoutineExecutableObjectName = (value: string) => {
 }
 
 const normalizeRoutineSignatureForCompare = (value: string) => {
-  const normalizedValue = value.trim()
+  const normalizedValue = value.trim().replace(/\s+\[replace\]$/iu, '')
   const parameterIndex = normalizedValue.indexOf('(')
 
   if (parameterIndex < 0) {
@@ -759,12 +759,57 @@ const normalizeRoutineSemanticFingerprint = (
   }
 }
 
+const normalizeTriggerEventValue = (value: unknown) => {
+  if (typeof value !== 'string') {
+    return ''
+  }
+
+  const normalizedValue = normalizeWhitespace(value)
+  const updateColumnsMatch = normalizedValue.match(/^update\s+of\s+(.+)$/u)
+
+  if (!updateColumnsMatch?.[1]) {
+    return normalizedValue
+  }
+
+  const columns = updateColumnsMatch[1]
+    .split(',')
+    .map(columnName => normalizeWhitespace(columnName))
+    .filter(columnName => columnName.length > 0)
+    .sort((left, right) => left.localeCompare(right))
+
+  return `update of ${columns.join(', ')}`
+}
+
 const normalizeTriggerEvents = (value: string) => {
   return value
     .split(/\s+or\s+/u)
-    .map(eventName => normalizeWhitespace(eventName))
+    .map(normalizeTriggerEventValue)
     .filter(eventName => eventName.length > 0)
     .sort((left, right) => left.localeCompare(right))
+}
+
+const normalizeTriggerEventValues = (value: unknown) => {
+  if (Array.isArray(value)) {
+    return value
+      .map(normalizeTriggerEventValue)
+      .filter(eventName => eventName.length > 0)
+      .sort((left, right) => left.localeCompare(right))
+  }
+
+  return typeof value === 'string'
+    ? normalizeTriggerEvents(value)
+    : []
+}
+
+const normalizeTriggerArgumentValue = (value: string) => {
+  const normalizedValue = normalizeExecutableSqlText(value) || ''
+  const quotedMatch = normalizedValue.match(/^'(.*)'$/u)
+
+  if (!quotedMatch) {
+    return normalizedValue
+  }
+
+  return (quotedMatch[1] || '').replaceAll('\'\'', '\'')
 }
 
 const normalizeTriggerArguments = (value: string) => {
@@ -775,8 +820,20 @@ const normalizeTriggerArguments = (value: string) => {
   }
 
   return splitSqlValueList(normalizedValue)
-    .map(entry => normalizeExecutableSqlText(entry) || '')
+    .map(normalizeTriggerArgumentValue)
     .filter(entry => entry.length > 0)
+}
+
+const normalizeTriggerArgumentValues = (value: unknown) => {
+  if (Array.isArray(value)) {
+    return value
+      .map(entry => normalizeTriggerArgumentValue(String(entry)))
+      .filter(entry => entry.length > 0)
+  }
+
+  return typeof value === 'string'
+    ? normalizeTriggerArguments(value)
+    : []
 }
 
 const normalizeTriggerExecutableObjectName = (value: string) => {
@@ -813,7 +870,78 @@ const normalizeTriggerSemanticFingerprint = (
   }
 }
 
+const parseStructuredTriggerSource = (source: string | null) => {
+  if (!source) {
+    return null
+  }
+
+  const trimmedSource = source.trim()
+
+  if (!trimmedSource.startsWith('{')) {
+    return null
+  }
+
+  try {
+    const parsed = JSON.parse(trimmedSource) as unknown
+
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+      return null
+    }
+
+    return parsed as Record<string, unknown>
+  } catch {
+    return null
+  }
+}
+
+const normalizeStructuredTriggerSourceForCompare = (
+  source: Record<string, unknown>
+) => {
+  const routineName = typeof source.routineName === 'string'
+    ? source.routineName
+    : typeof source.function === 'string'
+      ? source.function
+      : ''
+  const tableName = typeof source.tableName === 'string'
+    ? source.tableName
+    : typeof source.relation === 'string'
+      ? source.relation
+      : ''
+
+  return {
+    arguments: normalizeTriggerArgumentValues(source.arguments),
+    constraint: source.constraint === true,
+    deferrable: typeof source.deferrable === 'string'
+      ? normalizeWhitespace(source.deferrable)
+      : null,
+    events: normalizeTriggerEventValues(source.events),
+    fromTable: typeof source.fromTable === 'string'
+      ? normalizeTriggerExecutableObjectName(source.fromTable)
+      : null,
+    initially: typeof source.initially === 'string'
+      ? normalizeWhitespace(source.initially)
+      : null,
+    level: typeof source.level === 'string'
+      ? normalizeWhitespace(source.level)
+      : null,
+    routineName: normalizeTriggerExecutableObjectName(routineName),
+    tableName: normalizeTriggerExecutableObjectName(tableName),
+    timing: typeof source.timing === 'string'
+      ? normalizeWhitespace(source.timing)
+      : null,
+    when: typeof source.when === 'string'
+      ? normalizeExecutableSqlText(trimBalancedOuterParentheses(source.when))
+      : null
+  }
+}
+
 const normalizeTriggerSourceForCompare = (source: string | null) => {
+  const structuredSource = parseStructuredTriggerSource(source)
+
+  if (structuredSource) {
+    return normalizeStructuredTriggerSourceForCompare(structuredSource)
+  }
+
   const normalizedSource = normalizeExecutableSqlText(source)
 
   if (!normalizedSource) {
@@ -822,7 +950,7 @@ const normalizeTriggerSourceForCompare = (source: string | null) => {
 
   const normalizedExecuteSource = normalizedSource.replace(/\bexecute\s+procedure\b/gu, 'execute function')
   const triggerMatch = normalizedExecuteSource.match(
-    /^create\s+(constraint\s+)?trigger\s+([^\s]+)\s+(before|after|instead\s+of)\s+(.+?)\s+on\s+([^\s]+)\s+(.+)$/u
+    /(?:^|\s)create\s+(constraint\s+)?trigger\s+([^\s]+)\s+(before|after|instead\s+of)\s+(.+?)\s+on\s+([^\s]+)\s+(.+)$/u
   )
 
   if (!triggerMatch) {
@@ -831,7 +959,7 @@ const normalizeTriggerSourceForCompare = (source: string | null) => {
 
   const trailingSource = triggerMatch[6] || ''
   const executeMatch = trailingSource.match(
-    /^(.*?)(?:\s+for\s+each\s+(row|statement))?(?:\s+when\s*\((.+)\))?\s+execute\s+function\s+([^(;\s]+)\s*(?:\((.*?)\))?\s*;?$/u
+    /^(.*?)(?:\s+for\s+each\s+(row|statement))?(?:\s+when\s*\((.+)\))?\s+execute\s+function\s+([^(;\s]+)\s*(?:\((.*?)\))?\s*;?(?:\s+[^\s;]+)?$/u
   )
 
   if (!executeMatch) {
@@ -861,6 +989,43 @@ const normalizeTriggerSourceForCompare = (source: string | null) => {
     when: executeMatch[3]
       ? normalizeExecutableSqlText(trimBalancedOuterParentheses(executeMatch[3]))
       : null
+  }
+}
+
+const getNormalizedTriggerMetadataValue = (
+  metadata: PgmlMetadataEntry[],
+  key: string
+) => {
+  const matchedEntry = metadata.find((entry) => {
+    return entry.key.trim().toLowerCase().replaceAll(/[^\w]+/g, '_') === key
+  })
+
+  return matchedEntry ? normalizeWhitespace(matchedEntry.value) : null
+}
+
+const normalizeTriggerSourceWithMetadata = (
+  source: ReturnType<typeof normalizeTriggerSourceForCompare>,
+  metadata: PgmlMetadataEntry[]
+) => {
+  if (!source || typeof source !== 'object' || Array.isArray(source)) {
+    return source
+  }
+
+  const sourceRecord = source as Record<string, unknown>
+
+  if (sourceRecord.level !== null && sourceRecord.level !== undefined) {
+    return source
+  }
+
+  const metadataLevel = getNormalizedTriggerMetadataValue(metadata, 'level')
+
+  if (!metadataLevel) {
+    return source
+  }
+
+  return {
+    ...sourceRecord,
+    level: metadataLevel
   }
 }
 
@@ -944,15 +1109,21 @@ export const normalizePgmlCompareRoutinePairValues = (
 
 export const normalizePgmlCompareTriggerValue = (trigger: PgmlTrigger) => {
   const semantic = trigger.semantic || buildPgmlTriggerSemanticModel(trigger.source)
+  const normalizedSource = normalizeTriggerSourceWithMetadata(
+    normalizeTriggerSourceForCompare(trigger.source),
+    trigger.metadata
+  )
 
   return {
     affects: normalizePgmlCompareAffectsValue(trigger.affects),
     docs: normalizePgmlCompareDocumentationValue(trigger.docs),
     metadata: normalizePgmlCompareTriggerMetadataEntries(trigger.metadata),
     name: trigger.name,
-    source: semantic?.status === 'parsed'
-      ? normalizeTriggerSemanticFingerprint(semantic.fingerprint as Record<string, unknown>)
-      : normalizeTriggerSourceForCompare(trigger.source),
+    source: normalizedSource || (
+      semantic?.status === 'parsed'
+        ? normalizeTriggerSemanticFingerprint(semantic.fingerprint as Record<string, unknown>)
+        : null
+    ),
     tableName: normalizeTriggerExecutableObjectName(trigger.tableName)
   }
 }
@@ -1352,6 +1523,61 @@ const normalizeMembershipExpression = (
   return `${normalizedLeftSide} ${options.operator} (${normalizedEntries.join(', ')})`
 }
 
+const normalizeConstraintIdentifier = (value: string) => {
+  return normalizeSqlIdentifier(value).trim().toLowerCase()
+}
+
+const normalizeConstraintQualifiedName = (value: string) => {
+  const normalizedValue = normalizeImportedQualifiedName(value, {
+    foldIdentifiersToLowercase: true
+  })
+
+  return normalizedValue.includes('.') ? normalizedValue : `public.${normalizedValue}`
+}
+
+const normalizeConstraintColumnList = (value: string) => {
+  return splitSqlValueList(value)
+    .map(normalizeConstraintIdentifier)
+    .filter(entry => entry.length > 0)
+}
+
+const normalizeForeignKeyConstraintActionClauses = (value: string) => {
+  const actions: string[] = []
+  const deleteMatch = value.match(/\bon\s+delete\s+(.+?)(?=\s+on\s+update\b|$)/iu)
+  const updateMatch = value.match(/\bon\s+update\s+(.+?)(?=\s+on\s+delete\b|$)/iu)
+  const normalizedDeleteAction = deleteMatch?.[1] ? normalizeWhitespace(deleteMatch[1]).toLowerCase() : null
+  const normalizedUpdateAction = updateMatch?.[1] ? normalizeWhitespace(updateMatch[1]).toLowerCase() : null
+
+  if (normalizedDeleteAction && normalizedDeleteAction !== 'restrict') {
+    actions.push(`on delete ${normalizedDeleteAction}`)
+  }
+
+  if (normalizedUpdateAction && normalizedUpdateAction !== 'restrict') {
+    actions.push(`on update ${normalizedUpdateAction}`)
+  }
+
+  return actions.length > 0 ? ` ${actions.join(' ')}` : ''
+}
+
+const normalizeForeignKeyConstraintExpression = (value: string) => {
+  const matched = value.match(/^foreign key\s*\((.+)\)\s+references\s+([^\s(]+)\s*\((.+)\)(.*)$/iu)
+
+  if (!matched?.[1] || !matched[2] || !matched[3]) {
+    return null
+  }
+
+  const fromColumns = normalizeConstraintColumnList(matched[1])
+  const targetTableName = normalizeConstraintQualifiedName(matched[2])
+  const toColumns = normalizeConstraintColumnList(matched[3])
+  const actionClauses = normalizeForeignKeyConstraintActionClauses(matched[4] || '')
+
+  if (fromColumns.length === 0 || toColumns.length === 0) {
+    return null
+  }
+
+  return `foreign key (${fromColumns.join(', ')}) references ${targetTableName} (${toColumns.join(', ')})${actionClauses}`
+}
+
 export const normalizePgmlCompareConstraintExpression = (value: string) => {
   const normalizedValue = normalizeConstraintComparisonGrouping(
     normalizeConstraintEnumRangeMemberships(
@@ -1361,6 +1587,12 @@ export const normalizePgmlCompareConstraintExpression = (value: string) => {
     )
   )
   const trimmedNormalizedValue = stripDanglingOuterParentheses(normalizedValue)
+  const normalizedForeignKeyExpression = normalizeForeignKeyConstraintExpression(trimmedNormalizedValue)
+
+  if (normalizedForeignKeyExpression) {
+    return normalizedForeignKeyExpression
+  }
+
   const normalizedNotInExpression = normalizeMembershipExpression(trimmedNormalizedValue, {
     operator: 'NOT IN',
     pattern: /^(.*?)\s+not\s+in\s*\((.+)\)$/iu
