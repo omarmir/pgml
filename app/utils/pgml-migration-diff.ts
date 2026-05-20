@@ -472,6 +472,52 @@ const isSerialPseudoType = (value: string) => {
   return ['bigserial', 'serial', 'serial2', 'serial4', 'serial8', 'smallserial'].includes(value.trim().toLowerCase())
 }
 
+const normalizeSequenceNameKey = (value: string) => {
+  return normalizeImportedQualifiedName(value, {
+    foldIdentifiersToLowercase: true
+  })
+}
+
+const getColumnNextvalSequenceName = (input: {
+  column: PgmlColumn
+  normalizeType: (value: string) => string
+  tableId: string
+}) => {
+  const normalizedColumn = normalizePgmlCompareColumnValue(input)
+  const normalizedDefault = normalizedColumn.modifiers.find(modifier => modifier.startsWith('default:'))
+    ?.replace(/^default:\s*/u, '')
+    .trim()
+  const nextvalMatch = normalizedDefault?.match(/^nextval\('(.+)'\)$/u)
+
+  return nextvalMatch?.[1] || null
+}
+
+const hasOnlyImplicitSequenceMetadata = (input: {
+  column: PgmlColumn
+  normalizeType: (value: string) => string
+  sequence: PgmlSequence
+  tableId: string
+}) => {
+  const normalizedSequenceMetadata = normalizePgmlCompareSequenceMetadataEntries(
+    input.sequence.metadata,
+    input.normalizeType
+  )
+  const normalizedColumn = normalizePgmlCompareColumnValue({
+    column: input.column,
+    normalizeType: input.normalizeType,
+    tableId: input.tableId
+  })
+  const allowedKeys = new Set(['as', 'owned_by'])
+
+  if (normalizedSequenceMetadata.some(entry => !allowedKeys.has(entry.key))) {
+    return false
+  }
+
+  const sequenceType = normalizedSequenceMetadata.find(entry => entry.key === 'as')?.value || null
+
+  return !sequenceType || sequenceType === normalizedColumn.type
+}
+
 const isImplicitSerialSequenceValue = (input: {
   column: {
     column: PgmlColumn
@@ -493,39 +539,26 @@ const isImplicitSerialSequenceValue = (input: {
     input.column.column.name
   )
 
-  if (input.sequence.name !== expectedSequenceName) {
+  if (normalizeSequenceNameKey(input.sequence.name) !== normalizeSequenceNameKey(expectedSequenceName)) {
     return false
   }
 
-  const normalizedColumn = normalizePgmlCompareColumnValue({
+  const defaultSequenceName = getColumnNextvalSequenceName({
     column: input.column.column,
     normalizeType: input.normalizeType,
     tableId: input.column.tableId
   })
-  const normalizedDefault = normalizedColumn.modifiers.find(modifier => modifier.startsWith('default:'))
-    ?.replace(/^default:\s*/u, '')
-    .trim()
 
-  if (normalizedDefault !== `nextval('${expectedSequenceName}')`) {
+  if (!defaultSequenceName || normalizeSequenceNameKey(defaultSequenceName) !== normalizeSequenceNameKey(expectedSequenceName)) {
     return false
   }
 
-  const normalizedSequenceMetadata = normalizePgmlCompareSequenceMetadataEntries(
-    input.sequence.metadata,
-    input.normalizeType
-  )
-  const expectedMetadata = normalizePgmlCompareSequenceMetadataEntries([
-    {
-      key: 'as',
-      value: normalizedColumn.type
-    },
-    {
-      key: 'owned_by',
-      value: `${input.column.tableId}.${input.column.column.name}`
-    }
-  ], input.normalizeType)
-
-  return toStableJson(normalizedSequenceMetadata) === toStableJson(expectedMetadata)
+  return hasOnlyImplicitSequenceMetadata({
+    column: input.column.column,
+    normalizeType: input.normalizeType,
+    sequence: input.sequence,
+    tableId: input.column.tableId
+  })
 }
 
 const isImplicitSerialSequenceOnlyDiff = (input: {
@@ -580,24 +613,38 @@ const isImplicitSerialSequenceOnlyDiff = (input: {
     return false
   }
 
-  if (input.type === 'added' && !isSerialPseudoType(beforeColumn.type)) {
-    return false
-  }
+  const candidateColumn = input.type === 'added'
+    ? {
+        column: afterColumn,
+        tableId: afterTable.fullName
+      }
+    : {
+        column: beforeColumn,
+        tableId: beforeTable.fullName
+      }
+  const oppositeColumn = input.type === 'added'
+    ? beforeColumn
+    : afterColumn
 
-  if (input.type === 'removed' && !isSerialPseudoType(afterColumn.type)) {
-    return false
+  if (!isSerialPseudoType(oppositeColumn.type)) {
+    const defaultSequenceName = getColumnNextvalSequenceName({
+      column: candidateColumn.column,
+      normalizeType: input.normalizeType,
+      tableId: candidateColumn.tableId
+    })
+
+    return !!defaultSequenceName
+      && normalizeSequenceNameKey(defaultSequenceName) === normalizeSequenceNameKey(input.sequence.name)
+      && hasOnlyImplicitSequenceMetadata({
+        column: candidateColumn.column,
+        normalizeType: input.normalizeType,
+        sequence: input.sequence,
+        tableId: candidateColumn.tableId
+      })
   }
 
   return isImplicitSerialSequenceValue({
-    column: input.type === 'added'
-      ? {
-          column: afterColumn,
-          tableId: afterTable.fullName
-        }
-      : {
-          column: beforeColumn,
-          tableId: beforeTable.fullName
-        },
+    column: candidateColumn,
     normalizeType: input.normalizeType,
     sequence: input.sequence
   })

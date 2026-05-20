@@ -995,6 +995,66 @@ Table public.common_review {
     expect(migrationBundle.meta.hasChanges).toBe(false)
   })
 
+  it('ignores added owned sequences when unchanged columns already use matching nextval defaults', () => {
+    const beforeModel = parsePgml(`Table public.agency_address_type {
+  id bigint [pk, not null, default: nextval('public.Agency_Address_Type_id_seq')]
+}`)
+    const afterModel = parsePgml(`Sequence public.agency_address_type_id_seq {
+  owned_by: public.agency_address_type.id
+}
+
+Table public.agency_address_type {
+  id bigint [pk, not null, default: nextval('public.Agency_Address_Type_id_seq')]
+}`)
+    const diff = diffPgmlSchemaModels(beforeModel, afterModel)
+    const migrationBundle = buildPgmlMigrationDiffBundle(beforeModel, afterModel)
+
+    expect(diff.sequences).toEqual([])
+    expect(diff.summary.added).toBe(0)
+    expect(migrationBundle.meta.hasChanges).toBe(false)
+    expect(migrationBundle.meta.statementCount).toBe(0)
+  })
+
+  it('keeps added owned sequences when sequence metadata changes generation behavior', () => {
+    const beforeModel = parsePgml(`Table public.agency_address_type {
+  id bigint [pk, not null, default: nextval('public.agency_address_type_id_seq')]
+}`)
+    const afterModel = parsePgml(`Sequence public.agency_address_type_id_seq {
+  start: 5000
+  owned_by: public.agency_address_type.id
+}
+
+Table public.agency_address_type {
+  id bigint [pk, not null, default: nextval('public.agency_address_type_id_seq')]
+}`)
+    const diff = diffPgmlSchemaModels(beforeModel, afterModel)
+
+    expect(diff.sequences).toHaveLength(1)
+    expect(diff.sequences[0]).toEqual(expect.objectContaining({
+      id: 'public.agency_address_type_id_seq',
+      kind: 'added'
+    }))
+  })
+
+  it('folds backing sequences into added table diffs when they only support nextval defaults', () => {
+    const beforeModel = parsePgml('')
+    const afterModel = parsePgml(`Sequence public.agency_address_type_id_seq {
+  owned_by: public.agency_address_type.id
+}
+
+Table public.agency_address_type {
+  id bigint [pk, not null, default: nextval('public.agency_address_type_id_seq')]
+}`)
+    const diff = diffPgmlSchemaModels(beforeModel, afterModel)
+    const migrationBundle = buildPgmlMigrationDiffBundle(beforeModel, afterModel)
+
+    expect(diff.tables).toHaveLength(1)
+    expect(diff.sequences).toEqual([])
+    expect(diff.summary.added).toBe(2)
+    expect(migrationBundle.meta.hasChanges).toBe(true)
+    expect(migrationBundle.sql.migration.content).toContain('CREATE SEQUENCE "public"."agency_address_type_id_seq";')
+  })
+
   it('ignores group membership reordering when the set of tables stays the same', () => {
     const beforeModel = parsePgml(`TableGroup Core {
   public.users

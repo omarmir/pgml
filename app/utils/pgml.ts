@@ -1087,9 +1087,13 @@ const getSequenceOwnedTableIds = (
   const values = metadataOwnedBy
     ? [metadataOwnedBy, ...explicitOwnedBy]
     : explicitOwnedBy
+  const explicitTableIds = getTableIdsFromValues(tables, referenceLookup, values)
+
+  if (values.length > 0) {
+    return uniqueValues(explicitTableIds)
+  }
 
   return uniqueValues([
-    ...getTableIdsFromValues(tables, referenceLookup, values),
     ...getSequenceModifierTableIds(tables, sequence)
   ])
 }

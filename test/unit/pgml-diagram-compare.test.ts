@@ -1,3 +1,5 @@
+import { readFileSync } from 'node:fs'
+
 import { describe, expect, it } from 'vitest'
 
 import {
@@ -12,12 +14,49 @@ import {
 } from '../../app/utils/pgml-diagram-compare'
 import { diffPgmlSchemaModels } from '../../app/utils/pgml-diff'
 import { filterPgmlSchemaModelForCompareExclusions, parsePgml } from '../../app/utils/pgml'
+import { getPgmlVersionById, parsePgmlDocument } from '../../app/utils/pgml-document'
 
 const parseSnapshotModel = (source: string) => {
   return parsePgml(source)
 }
 
 describe('PGML diagram compare entries', () => {
+  it('hides owned backing sequences from the exported EGCS-GCS comparison fixture', () => {
+    const document = parsePgmlDocument(readFileSync('export.pgml', 'utf8'))
+    const comparison = document.comparisons.find(entry => entry.name === 'EGCS-GCS') || null
+
+    if (!comparison) {
+      throw new Error('Expected export.pgml to contain the EGCS-GCS comparison')
+    }
+
+    const baseVersion = getPgmlVersionById(document, comparison.baseId)
+    const targetVersion = getPgmlVersionById(document, comparison.targetId)
+
+    if (!baseVersion || !targetVersion) {
+      throw new Error('Expected export.pgml comparison versions to resolve')
+    }
+
+    const baseModel = filterPgmlSchemaModelForCompareExclusions(
+      parsePgml(baseVersion.snapshot.source),
+      comparison.exclusions
+    )
+    const targetModel = filterPgmlSchemaModelForCompareExclusions(
+      parsePgml(targetVersion.snapshot.source),
+      comparison.exclusions
+    )
+    const rawEntries = buildPgmlDiagramCompareEntries(
+      diffPgmlSchemaModels(baseModel, targetModel),
+      baseModel,
+      targetModel
+    )
+    const visibleEntries = filterPgmlDiagramCompareEntriesForNoise(
+      filterPgmlDiagramCompareEntriesForExclusions(rawEntries, comparison.exclusions),
+      comparison.noiseFilters
+    )
+
+    expect(visibleEntries.filter(entry => entry.entityKind === 'sequence')).toEqual([])
+  })
+
   it('builds compare entries that can drive diagram selection and delta inspection', () => {
     const baseModel = parseSnapshotModel(`Table public.users {
   id uuid [pk]
