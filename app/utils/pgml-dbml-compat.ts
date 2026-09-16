@@ -34,7 +34,7 @@ const sourceDelimiterPattern = /^(source|definition):\s*(\$(?:[A-Za-z0-9_]+)?\$)
 
 const cleanName = (value: string) => value.replaceAll('"', '').trim()
 
-const splitBracketParts = (value: string) => {
+export const splitBracketParts = (value: string) => {
   const parts: string[] = []
   let currentPart = ''
   let insideSingleQuote = false

@@ -1,5 +1,7 @@
+import { matchPgmlColumnDefinition } from './pgml-column-syntax'
 import { commonPgmlColumnTypes } from './pgml-table-editor'
 import {
+  splitBracketParts,
   collectDbmlCompatibleMultilineEntries,
   normalizePgmlCompatSource,
   parseDbmlCompatibleCheckDefinition,
@@ -1006,7 +1008,7 @@ const collectTableBody = (
       continue
     }
 
-    const columnMatch = line.trimmed.match(/^([^\s]+)\s+([^[\]]+?)(?:\s+\[([^\]]+)\])?$/)
+    const columnMatch = matchPgmlColumnDefinition(line.trimmed)
 
     if (!columnMatch) {
       createDiagnostic(
@@ -1030,10 +1032,7 @@ const collectTableBody = (
     const modifierGroup = columnMatch[3] ? columnMatch[3].trim() : ''
 
     if (modifierGroup.length > 0) {
-      modifierGroup
-        .split(',')
-        .map(part => part.trim())
-        .filter(part => part.length > 0)
+      splitBracketParts(modifierGroup)
         .forEach((modifier) => {
           if (!modifier.startsWith('ref:')) {
             return

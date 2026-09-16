@@ -1,8 +1,10 @@
+import { matchPgmlColumnDefinition } from './pgml-column-syntax'
 import {
   hasStoredPgmlTableWidthScale,
   normalizePgmlTableWidthScale
 } from './pgml-node-properties'
 import {
+  splitBracketParts,
   collectDbmlCompatibleMultilineEntries,
   normalizePgmlCompatSource,
   parseDbmlCompatibleCheckDefinition,
@@ -3182,7 +3184,7 @@ const parseTable = (block: NamedBlock) => {
       continue
     }
 
-    const columnMatch = trimmed.match(/^([^\s]+)\s+([^[\]]+?)(?:\s+\[([^\]]+)\])?$/)
+    const columnMatch = matchPgmlColumnDefinition(trimmed)
 
     if (!columnMatch) {
       lineIndex += 1
@@ -3192,7 +3194,7 @@ const parseTable = (block: NamedBlock) => {
     const columnName = readMatch(columnMatch[1])
     const columnType = readMatch(columnMatch[2])
     const columnOptions = readMatch(columnMatch[3])
-    const modifiers = columnOptions ? parseBracketParts(columnOptions) : []
+    const modifiers = columnOptions ? splitBracketParts(columnOptions) : []
     const refPart = modifiers.find(part => part.startsWith('ref:'))
     const notePart = modifiers.find(part => part.startsWith('note:'))
     const onDelete = getModifierValue(modifiers, 'delete')
