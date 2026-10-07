@@ -6311,18 +6311,20 @@ const buildExportSvg = () => {
     )
   })
 
-  styledConnectionLines.value.forEach((line) => {
-    const path = line.points.map((point, index) => {
-      const x = point.x + offsetX
-      const y = point.y + offsetY
+  if (showRelationshipLines.value) {
+    styledConnectionLines.value.forEach((line) => {
+      const path = line.points.map((point, index) => {
+        const x = point.x + offsetX
+        const y = point.y + offsetY
 
-      return `${index === 0 ? 'M' : 'L'} ${x} ${y}`
-    }).join(' ')
+        return `${index === 0 ? 'M' : 'L'} ${x} ${y}`
+      }).join(' ')
 
-    parts.push(
-      `<path d="${path}" fill="none" stroke="${line.color}" stroke-width="2" stroke-dasharray="${line.dashed ? line.dashPattern : '0'}" />`
-    )
-  })
+      parts.push(
+        `<path d="${path}" fill="none" stroke="${line.color}" stroke-width="2" stroke-dasharray="${line.dashed ? line.dashPattern : '0'}" />`
+      )
+    })
+  }
 
   tableCards.value.forEach((card) => {
     parts.push(

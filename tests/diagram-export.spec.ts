@@ -41,6 +41,69 @@ test('studio exports svg and png downloads', async ({ goto, page }) => {
   expect(pngDownload.suggestedFilename()).toBe('example-schema-diagram.png')
 })
 
+for (const format of ['svg', 'png'] as const) {
+  test(`${format} exports respect relationship line visibility`, async ({ goto, page }) => {
+    await goto('/diagram')
+    await expect(page.locator('[data-attachment-row="index:idx_products_search"]')).toBeVisible()
+    await expect.poll(() => page.evaluate(() => {
+      const debug = (window as Window & { __pgmlSceneDebug?: { connectionCount: number } }).__pgmlSceneDebug
+
+      return debug ? debug.connectionCount : 0
+    })).toBeGreaterThan(0)
+
+    // PNG exports rasterize an SVG blob. Capture that input so the assertion
+    // checks the actual relationship paths rather than only the file extension.
+    await page.evaluate(() => {
+      const createObjectURL = URL.createObjectURL.bind(URL)
+      const captured: Promise<string>[] = []
+
+      Object.assign(window, { __pgmlExportSvgBlobs: captured })
+      URL.createObjectURL = (blob: Blob | MediaSource) => {
+        if (blob instanceof Blob && blob.type.startsWith('image/svg+xml')) {
+          captured.push(blob.text())
+        }
+
+        return createObjectURL(blob)
+      }
+    })
+
+    for (const visible of [true, false, true]) {
+      await page.locator('[data-diagram-view-settings="desktop"]').click()
+      const setting = page.getByRole('switch', { name: /^Relationship lines(\s|$)/ })
+
+      await expect(setting).toBeVisible()
+      if ((await setting.getAttribute('aria-checked') === 'true') !== visible) {
+        await setting.click()
+      }
+      await page.locator('[data-diagram-view-settings-save="true"]').click()
+      await expect(page.locator('[data-diagram-view-settings-dialog="true"]')).toHaveCount(0)
+
+      await page.getByTitle('Export').click()
+      const downloadPromise = page.waitForEvent('download')
+
+      await page.getByRole('menuitem', { name: format === 'svg' ? 'SVG' : 'PNG 1x', exact: true }).click()
+      const download = await downloadPromise
+      const downloadPath = await download.path()
+
+      expect(download.suggestedFilename()).toBe(`example-schema-diagram.${format}`)
+      const svg = format === 'svg'
+        ? readFileSync(downloadPath!, 'utf8')
+        : await page.evaluate(async () => {
+            const captured = (window as Window & { __pgmlExportSvgBlobs: Promise<string>[] }).__pgmlExportSvgBlobs
+
+            return captured[captured.length - 1]!
+          })
+
+      expect(svg).toContain('<svg')
+      expect(svg).toContain('>users</text>')
+      expect(svg.includes('<path ')).toBe(visible)
+      if (format === 'png') {
+        expect([...readFileSync(downloadPath!).subarray(0, 8)]).toEqual([137, 80, 78, 71, 13, 10, 26, 10])
+      }
+    }
+  })
+}
+
 test('diagram export panel exposes every supported png scale and downloads from the 8x action', async ({ goto, page }) => {
   await goto('/diagram')
   await page.locator('[data-diagram-panel-tab="export"]').click()
