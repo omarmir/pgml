@@ -3159,6 +3159,10 @@ const buildConnectionPath = (line: DiagramGpuConnectionLine) => {
 }
 
 const automationConnectionCanvasLayers = computed(() => {
+  if (!showRelationshipLines.value) {
+    return []
+  }
+
   return buildDiagramConnectionPreviewLayers(
     displayedConnectionLines.value.map((styledLine) => {
       return {

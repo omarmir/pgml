@@ -97,6 +97,13 @@ for (const format of ['svg', 'png'] as const) {
       expect(svg).toContain('<svg')
       expect(svg).toContain('>users</text>')
       expect(svg.includes('<path ')).toBe(visible)
+      const livePaths = page.locator('[data-connection-layer="true"] path')
+
+      if (visible) {
+        await expect(livePaths.first()).toBeVisible()
+      } else {
+        await expect(livePaths).toHaveCount(0)
+      }
       if (format === 'png') {
         expect([...readFileSync(downloadPath!).subarray(0, 8)]).toEqual([137, 80, 78, 71, 13, 10, 26, 10])
       }

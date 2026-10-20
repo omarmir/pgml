@@ -398,6 +398,68 @@ Table public.invoices {
   await saveDiagramViewSettings(page)
 })
 
+test('relationship visibility updates the rendered GPU canvas and restores its lines', async ({ goto, page }) => {
+  await page.addInitScript(() => {
+    Object.assign(window, { __PGML_FORCE_GPU_SCENE__: true })
+  })
+  await goto('/diagram')
+  await setPgmlEditorValue(getPgmlEditor(page), `Table public.accounts {
+  id uuid [pk]
+}
+
+Table public.invoices {
+  id uuid [pk]
+  account_id uuid [ref: > public.accounts.id]
+}`)
+
+  await expect.poll(() => page.evaluate(() => {
+    const debug = (window as Window & {
+      __pgmlSceneRendererDebug?: { renderedTableCards: Array<{ id: string }> }
+    }).__pgmlSceneRendererDebug
+
+    return debug ? debug.renderedTableCards.map(table => table.id).sort() : []
+  })).toEqual(['public.accounts', 'public.invoices'])
+  const canvas = page.locator('[data-diagram-viewport="true"] canvas')
+  await expect(canvas).toBeVisible()
+
+  await openDiagramViewSettings(page)
+  await setDiagramViewSetting(page, 'Relationship lines', true)
+  await saveDiagramViewSettings(page)
+  const visible = await canvas.screenshot()
+
+  await openDiagramViewSettings(page)
+  await setDiagramViewSetting(page, 'Relationship lines', false)
+  await saveDiagramViewSettings(page)
+  await expect.poll(async () => (await canvas.screenshot()).equals(visible)).toBe(false)
+
+  await openDiagramViewSettings(page)
+  await setDiagramViewSetting(page, 'Relationship lines', true)
+  await saveDiagramViewSettings(page)
+  await expect.poll(async () => (await canvas.screenshot()).equals(visible)).toBe(true)
+})
+
+test.describe('touch relationship overlay', () => {
+  test.use({ hasTouch: true })
+
+  test('hides and restores relationship paths with the view setting', async ({ goto, page }) => {
+    await goto('/diagram')
+    const paths = page.locator('[data-connection-layer="true"] path')
+
+    await expect(paths.first()).toBeVisible()
+    const initialCount = await paths.count()
+
+    await openDiagramViewSettings(page)
+    await setDiagramViewSetting(page, 'Relationship lines', false)
+    await saveDiagramViewSettings(page)
+    await expect(paths).toHaveCount(0)
+
+    await openDiagramViewSettings(page)
+    await setDiagramViewSetting(page, 'Relationship lines', true)
+    await saveDiagramViewSettings(page)
+    await expect(paths).toHaveCount(initialCount)
+  })
+})
+
 test('gpu scene prunes stale sprites when the schema changes so current lines stay visible', async ({ goto, page }) => {
   await page.addInitScript(() => {
     ;(window as Window & {
