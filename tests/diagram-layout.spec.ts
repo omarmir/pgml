@@ -1,6 +1,6 @@
 import { expect, test } from '@nuxt/test-utils/playwright'
 import type { Page } from '@playwright/test'
-import { diagramMaxScale, diagramMinScale } from '../app/utils/diagram-gpu-scene'
+import { diagramMaxScale } from '../app/utils/diagram-gpu-scene'
 import { getPgmlEditor, readPgmlEditorValue, setPgmlEditorValue } from './helpers/pgml-editor'
 import { authorizeStudioLaunchAccess } from './helpers/studio-launch'
 
@@ -706,7 +706,7 @@ test('studio canvas refits when the workspace shrinks after the initial fit', as
     })
   }).toBeLessThan(initialScale - 0.03)
 
-  const diagnostics = await page.evaluate(({ maxScale, minScale }) => {
+  const diagnostics = await page.evaluate(({ maxScale }) => {
     const viewport = document.querySelector('[data-diagram-viewport="true"]')
     const debugWindow = window as Window & {
       __pgmlSceneDebug?: {
@@ -742,7 +742,7 @@ test('studio canvas refits when the workspace shrinks after the initial fit', as
       availableWidth / worldWidth,
       (viewport.clientHeight - padding * 2) / worldHeight
     )
-    const expectedScale = Math.min(maxScale, Math.max(minScale, fittedScale))
+    const expectedScale = Math.min(maxScale, fittedScale)
 
     return {
       actualScale: rendererDebug.scale,
@@ -751,8 +751,7 @@ test('studio canvas refits when the workspace shrinks after the initial fit', as
       expectedScale
     }
   }, {
-    maxScale: diagramMaxScale,
-    minScale: diagramMinScale
+    maxScale: diagramMaxScale
   })
 
   expect(diagnostics).not.toBeNull()

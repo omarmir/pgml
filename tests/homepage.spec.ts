@@ -336,7 +336,7 @@ test('workspace menu switches between diagram and analysis without keeping the e
   await page.getByRole('button', { name: 'Workspace', exact: true }).click()
   await page.getByRole('menuitem', { name: 'Analysis' }).click()
 
-  await expect(page).toHaveURL(/\/analysis$/)
+  await expect(page).toHaveURL(url => url.pathname === '/analysis')
   await expect(page.locator('[data-analysis-workspace="true"]')).toBeVisible()
   await expect(page.locator('[data-analysis-tab="versions"]')).toBeVisible()
   await expect(page.locator('[data-editor-visibility-toggle="true"]')).toHaveCount(0)
@@ -345,7 +345,7 @@ test('workspace menu switches between diagram and analysis without keeping the e
   await page.getByRole('button', { name: 'Workspace', exact: true }).click()
   await page.getByRole('menuitem', { name: 'Diagram' }).click()
 
-  await expect(page).toHaveURL(/\/diagram$/)
+  await expect(page).toHaveURL(url => url.pathname === '/diagram')
   await expect.poll(async () => readPgmlEditorValue(getPgmlEditor(page))).toContain('TableGroup Core')
 })
 
@@ -358,7 +358,7 @@ test('analysis compare opens source in a modal', async ({ goto, page }) => {
   await page.getByRole('button', { name: 'Workspace', exact: true }).click()
   await page.getByRole('menuitem', { name: 'Analysis' }).click()
 
-  await expect(page).toHaveURL(/\/analysis$/)
+  await expect(page).toHaveURL(url => url.pathname === '/analysis')
   await page.locator('[data-analysis-tab="compare"]').click()
 
   const comparePanel = page.locator('[data-diagram-compare-panel="true"]')
@@ -387,7 +387,7 @@ test('workspace route switches keep saved comparison notes intact', async ({ got
   await page.getByRole('button', { name: 'Workspace', exact: true }).click()
   await page.getByRole('menuitem', { name: 'Analysis' }).click()
 
-  await expect(page).toHaveURL(/\/analysis$/)
+  await expect(page).toHaveURL(url => url.pathname === '/analysis')
   await page.locator('[data-analysis-tab="compare"]').click()
 
   const comparePanel = page.locator('[data-diagram-compare-panel="true"]')
@@ -419,12 +419,12 @@ test('workspace route switches keep saved comparison notes intact', async ({ got
 
   await page.getByRole('button', { name: 'Workspace', exact: true }).click()
   await page.getByRole('menuitem', { name: 'Diagram' }).click()
-  await expect(page).toHaveURL(/\/diagram$/)
+  await expect(page).toHaveURL(url => url.pathname === '/diagram')
   await expect.poll(async () => readPgmlEditorValue(getPgmlEditor(page))).toContain('TableGroup Core')
 
   await page.getByRole('button', { name: 'Workspace', exact: true }).click()
   await page.getByRole('menuitem', { name: 'Analysis' }).click()
-  await expect(page).toHaveURL(/\/analysis$/)
+  await expect(page).toHaveURL(url => url.pathname === '/analysis')
   await page.locator('[data-analysis-tab="compare"]').click()
   await expect(comparePanel.locator('[data-compare-comparison-select="true"]')).toContainText('Route switch note coverage')
 
@@ -441,7 +441,7 @@ test('analysis refresh keeps saved comparison notes intact', async ({ goto, page
   await page.getByRole('button', { name: 'Workspace', exact: true }).click()
   await page.getByRole('menuitem', { name: 'Analysis' }).click()
 
-  await expect(page).toHaveURL(/\/analysis$/)
+  await expect(page).toHaveURL(url => url.pathname === '/analysis')
   await page.locator('[data-analysis-tab="compare"]').click()
 
   const comparePanel = page.locator('[data-diagram-compare-panel="true"]')
@@ -472,7 +472,7 @@ test('analysis refresh keeps saved comparison notes intact', async ({ goto, page
   await expect(comparePanel.locator('[data-compare-entry-detail="true"]')).toContainText('Keep this note after refreshing analysis.')
 
   await page.reload()
-  await expect(page).toHaveURL(/\/analysis$/)
+  await expect(page).toHaveURL(url => url.pathname === '/analysis')
   await page.locator('[data-analysis-tab="compare"]').click()
   await expect(comparePanel.locator('[data-compare-comparison-select="true"]')).toContainText('Analysis refresh note coverage')
 

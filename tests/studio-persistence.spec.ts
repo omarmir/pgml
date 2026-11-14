@@ -16,6 +16,27 @@ test.beforeEach(async ({ page }) => {
   await authorizeStudioLaunchAccess(page)
 })
 
+for (const launch of ['new', 'example']) {
+  test(`reloading an autosaved ${launch} browser workspace restores the saved schema`, async ({ goto, page }) => {
+    await goto(`/diagram?source=browser&launch=${launch}`)
+
+    const editor = getPgmlEditor(page)
+    const source = `Table public.reload_after_${launch} {\n  id uuid [pk]\n}`
+
+    await expect(editor).toBeVisible()
+    await setPgmlEditorValue(editor, source)
+    await expect.poll(async () => {
+      return page.evaluate(() => window.localStorage.getItem('pgml-studio-schemas-v1'))
+    }, { timeout: 10_000 }).toContain(`reload_after_${launch}`)
+
+    await page.reload()
+
+    await expect.poll(async () => readPgmlEditorValue(getPgmlEditor(page))).toContain(`reload_after_${launch}`)
+    expect(new URL(page.url()).searchParams.get('launch')).toBe('saved')
+    expect(new URL(page.url()).searchParams.get('schema')).toBeTruthy()
+  })
+}
+
 test('studio saves, reloads, and downloads PGML with embedded layout', async ({ goto, page }) => {
   await goto('/diagram')
   const schemaMenuButton = page.getByRole('button', { name: 'Schema' })
@@ -266,13 +287,17 @@ test('studio autosaves changes to local storage and updates the header status ic
   })
 })
 
-test('browser autosave still runs for UI-driven layout changes when download layout is disabled', async ({ goto, page }) => {
+test('browser autosave preserves UI-driven layout changes when downloads exclude layout', async ({ goto, page }) => {
   await goto('/diagram')
   const editor = getPgmlEditor(page)
 
   await page.getByRole('button', { name: 'Schema' }).click()
   await page.getByRole('menuitem', { name: 'Download schema' }).click()
-  await expect(page.getByRole('switch', { name: 'Include current layout' })).toBeDisabled()
+  const includeLayoutSwitch = page.getByRole('switch', { name: 'Include current layout' })
+
+  await expect(includeLayoutSwitch).toBeEnabled()
+  await includeLayoutSwitch.click()
+  await expect(includeLayoutSwitch).toHaveAttribute('aria-checked', 'false')
   await page.getByRole('button', { name: 'Cancel' }).click()
 
   const initialUpdatedAt = await page.evaluate(() => {
@@ -301,7 +326,7 @@ test('browser autosave still runs for UI-driven layout changes when download lay
     timeout: 8000
   }).toEqual({
     count: 1,
-    text: expect.any(String),
+    text: expect.stringMatching(/Properties "group:Core" \{[^}]*masonry: true/),
     updatedAtChanged: true
   })
 })

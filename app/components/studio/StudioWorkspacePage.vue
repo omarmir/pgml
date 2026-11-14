@@ -43,6 +43,7 @@ import {
   type SavedPgmlSchema
 } from '~/utils/studio-browser-schemas'
 import {
+  buildBrowserStudioSavedQuery,
   getStudioWorkspacePath,
   getStudioLaunchRequestKey,
   isStudioWorkspacePath,
@@ -1101,6 +1102,7 @@ watch(editorDisplaySource, (nextSource) => {
 
 const {
   clearSchema: clearStudioSchema,
+  currentSchemaId,
   currentSchemaName,
   currentSchemaUpdatedAt,
   clearSaveSchemaTarget,
@@ -1120,7 +1122,8 @@ const {
   saveSchemaToBrowser,
   selectSaveSchemaTarget,
   schemaActionDescription,
-  schemaActionTitle
+  schemaActionTitle,
+  schemaDialogName
 } = usePgmlStudioSchemas({
   applyLoadedSchemaText: loadWorkspaceDocument,
   autosaveEnabled: computed(() => workspacePersistenceActive.value && currentPersistenceSource.value === 'browser'),
@@ -2746,11 +2749,37 @@ watch([studioLaunchRequest, orderedSavedSchemas], async ([request]) => {
   immediate: true
 })
 
+watch([currentPersistenceSource, currentSchemaId], async ([persistenceSource, schemaId]) => {
+  if (persistenceSource !== 'browser' || schemaId === null) {
+    return
+  }
+
+  const request = studioLaunchRequest.value
+
+  if (request?.source === 'browser' && request.launch === 'saved' && request.schemaId === schemaId) {
+    return
+  }
+
+  appliedStudioLaunchKey.value = getStudioLaunchRequestKey({
+    launch: 'saved',
+    schemaId,
+    source: 'browser'
+  })
+  await navigateTo({
+    path: route.path,
+    query: buildBrowserStudioSavedQuery(schemaId)
+  }, { replace: true })
+}, { immediate: true })
+
 const downloadCurrentSchema = async () => {
   await flushPendingEditorChanges({
     waitForAnalysis: true
   })
-  downloadSchemaText(activeSchemaName.value, buildSchemaText(includeLayoutInSchema.value))
+  const name = currentPersistenceSource.value === 'browser' && schemaDialogName.value !== null
+    ? schemaDialogName.value
+    : activeSchemaName.value
+
+  downloadSchemaText(name, buildSchemaText(includeLayoutInSchema.value))
   schemaDialogOpen.value = false
 }
 const saveCurrentSchema = async () => {
@@ -6297,14 +6326,14 @@ onBeforeUnmount(() => {
         <div class="grid gap-3 lg:grid-cols-[minmax(0,0.95fr)_minmax(0,1.05fr)]">
           <div class="grid gap-3">
             <label
-              v-if="currentPersistenceSource === 'browser'"
+              v-if="currentPersistenceSource === 'browser' && schemaDialogName !== null"
               class="grid gap-1"
             >
               <span :class="studioFieldKickerClass">
                 Schema Name
               </span>
               <UInput
-                v-model="currentSchemaName"
+                v-model="schemaDialogName"
                 placeholder="Schema name"
                 color="neutral"
                 variant="outline"

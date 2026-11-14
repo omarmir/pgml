@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest'
+import ts from 'typescript'
 
 import { buildPgmlExportBundle } from '../../app/utils/pgml-export'
 import { parsePgml } from '../../app/utils/pgml'
@@ -125,5 +126,65 @@ Table public.audit_log {
 
     expect(bundle.sql.ddl.content).toContain('CONSTRAINT "audit_log_parent_fkey" foreign key (tenant_id, entity_type) references public.parent_entities (tenant_id, entity_type) on delete restrict')
     expect(bundle.sql.ddl.content).not.toContain('CONSTRAINT "audit_log_parent_fkey" CHECK (foreign key')
+  })
+
+  it('exports valid Kysely types for enum values and identifiers that need escaping', () => {
+    const source = `Enum workflow_state {
+  "can't"
+  "back\\slash"
+}
+
+Composite attributes {
+  display-name text
+}
+
+Table public.o'brien {
+  id uuid [pk]
+  display-name text
+  state workflow_state
+}`
+    const model = parsePgml(source)
+    const bundle = buildPgmlExportBundle(model, {
+      kyselyTypeStyle: 'strict'
+    })
+    const content = bundle.kysely.interfaces.content
+    const result = ts.transpileModule(content, {
+      compilerOptions: { target: ts.ScriptTarget.ESNext },
+      reportDiagnostics: true
+    })
+
+    expect(result.diagnostics?.map(diagnostic => ts.flattenDiagnosticMessageText(diagnostic.messageText, '\n'))).toEqual([])
+    expect(content).toContain('\'display-name\': string')
+    expect(content).toContain('\'public.o\\\'brien\': OBrienTable')
+
+    const exportedSource = ts.createSourceFile('database.ts', content, ts.ScriptTarget.Latest)
+    const exportedEnum = exportedSource.statements.find(ts.isTypeAliasDeclaration)
+
+    expect(exportedEnum).toBeDefined()
+    if (!exportedEnum || !ts.isUnionTypeNode(exportedEnum.type)) {
+      throw new Error('Expected the exported enum to be a union of string literals')
+    }
+
+    const values = exportedEnum.type.types.map((type) => {
+      if (!ts.isLiteralTypeNode(type) || !ts.isStringLiteral(type.literal)) {
+        throw new Error('Expected an enum string literal')
+      }
+
+      return type.literal.text
+    })
+
+    expect(values).toEqual(['can\'t', 'back\\slash'])
+  })
+
+  it('exports an empty enum as never so Kysely interfaces remain valid TypeScript', () => {
+    const bundle = buildPgmlExportBundle(parsePgml('Enum empty_status {\n}'), {
+      kyselyTypeStyle: 'strict'
+    })
+    const result = ts.transpileModule(bundle.kysely.interfaces.content, {
+      reportDiagnostics: true
+    })
+
+    expect(result.diagnostics?.map(diagnostic => ts.flattenDiagnosticMessageText(diagnostic.messageText, '\n'))).toEqual([])
+    expect(bundle.kysely.interfaces.content).toContain('export type EmptyStatus = never')
   })
 })

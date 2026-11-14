@@ -12,6 +12,7 @@ import {
   type DiagramVerticalLaneReservation
 } from '../utils/diagram-routing'
 import { getDiagramConnectionZIndex } from '../utils/diagram-layering'
+import { avoidDiagramEndpointHostIntersections } from '../utils/diagram-routing-obstacles'
 
 type AnchorSide = 'left' | 'right' | 'top' | 'bottom'
 
@@ -131,26 +132,6 @@ const verticalSegmentKeyScale = 4
 
 const clamp = (value: number, min: number, max: number) => Math.min(max, Math.max(min, value))
 
-const cloneUsageMap = (usage: Map<string, number[]>) => {
-  return new Map(Array.from(usage.entries()).map(([key, slots]) => {
-    return [key, [...slots]]
-  }))
-}
-
-const cloneVerticalSegmentUsage = (verticalUsage: VerticalSegmentUsage) => {
-  return new Map(Array.from(verticalUsage.entries()).map(([key, segments]) => {
-    return [key, segments.map(segment => ({ ...segment }))]
-  }))
-}
-
-const replaceUsageMap = <T>(target: Map<string, T>, source: Map<string, T>) => {
-  target.clear()
-
-  for (const [key, value] of source.entries()) {
-    target.set(key, value)
-  }
-}
-
 const getAnchorSlotCount = (geometry: WorkerConnectionGeometry, side: AnchorSide) => {
   if (geometry.isColumnLabelAnchor) {
     return isHorizontalDiagramSide(side) ? 2 : 3
@@ -243,7 +224,8 @@ const reserveAnchorPoint = (
 ) => {
   const count = getAnchorSlotCount(geometry, side)
   const key = `${geometry.identity}:${side}`
-  const slots = usage.get(key) || Array.from({ length: count }, () => 0)
+  const reservedSlots = usage.get(key)
+  const slots = reservedSlots ? [...reservedSlots] : Array.from({ length: count }, () => 0)
 
   if (slots.length < count) {
     slots.push(...Array.from({ length: count - slots.length }, () => 0))
@@ -331,7 +313,8 @@ const reserveFieldRowAnchorPoint = (
   )
   const rowKey = rowGeometry.rowKey || fieldGeometry.identity
   const usageKey = `field-row:${rowKey}:${side}`
-  const slotUsage = usage.get(usageKey) || Array.from({ length: candidateRatios.length }, () => 0)
+  const reservedSlots = usage.get(usageKey)
+  const slotUsage = reservedSlots ? [...reservedSlots] : Array.from({ length: candidateRatios.length }, () => 0)
 
   if (slotUsage.length < candidateRatios.length) {
     slotUsage.push(...Array.from({ length: candidateRatios.length - slotUsage.length }, () => 0))
@@ -366,7 +349,8 @@ const reserveLaneOffset = (
   baseOffset: number,
   gap: number
 ) => {
-  const slots = usage.get(key) || [0]
+  const reservedSlots = usage.get(key)
+  const slots = reservedSlots ? [...reservedSlots] : [0]
   const laneIndex = slots[0] || 0
 
   slots[0] = laneIndex + 1
@@ -487,12 +471,11 @@ const reserveVerticalSegmentX = (
         continue
       }
 
-      segments.push({
+      verticalUsage.set(key, [...segments, {
         start: Math.min(startY, endY),
         end: Math.max(startY, endY),
         shift: candidateX - baseX
-      })
-      verticalUsage.set(key, segments)
+      }])
 
       return candidateX
     }
@@ -502,12 +485,11 @@ const reserveVerticalSegmentX = (
   const fallbackKey = getVerticalSegmentUsageKey(fallbackX)
   const fallbackSegments = verticalUsage.get(fallbackKey) || []
 
-  fallbackSegments.push({
+  verticalUsage.set(fallbackKey, [...fallbackSegments, {
     start: Math.min(startY, endY),
     end: Math.max(startY, endY),
     shift: fallbackX - baseX
-  })
-  verticalUsage.set(fallbackKey, fallbackSegments)
+  }])
 
   return fallbackX
 }
@@ -874,13 +856,14 @@ export const routeDiagramConnectionsWithCpu = (input: WorkerRouteRequest) => {
     tableById: new Map<string, WorkerConnectionGeometry>()
   })
 
+  let usage = new Map<string, number[]>()
+  let verticalUsage: VerticalSegmentUsage = new Map()
+
   const buildPathBetween = (
     fromGeometry: WorkerConnectionGeometry,
     toGeometry: WorkerConnectionGeometry,
     color: string,
     dashed: boolean,
-    usage: Map<string, number[]>,
-    verticalUsage: VerticalSegmentUsage,
     headerBands: DiagramRect[]
   ) => {
     const sharedGroupGeometry = fromGeometry.groupNodeId && fromGeometry.groupNodeId === toGeometry.groupNodeId
@@ -996,8 +979,9 @@ export const routeDiagramConnectionsWithCpu = (input: WorkerRouteRequest) => {
     })()
 
     const buildCandidate = (forcedSides: Partial<{ from: AnchorSide, to: AnchorSide }> = {}) => {
-      const localUsage = cloneUsageMap(usage)
-      const localVerticalUsage = cloneVerticalSegmentUsage(verticalUsage)
+      // Candidate routes share untouched reservations; reservation helpers copy arrays before writing.
+      const localUsage = new Map(usage)
+      const localVerticalUsage = new Map(verticalUsage)
       const reservations: UsageReservation[] = []
       const reserveLeg = (
         geometry: WorkerConnectionGeometry,
@@ -1193,8 +1177,8 @@ export const routeDiagramConnectionsWithCpu = (input: WorkerRouteRequest) => {
       return left.forcedCount - right.forcedCount
     })[0]?.candidate || initialCandidate
 
-    replaceUsageMap(usage, chosenCandidate.localUsage)
-    replaceUsageMap(verticalUsage, chosenCandidate.localVerticalUsage)
+    usage = chosenCandidate.localUsage
+    verticalUsage = chosenCandidate.localVerticalUsage
 
     return {
       path: buildPathFromPoints(chosenCandidate.points),
@@ -1203,27 +1187,35 @@ export const routeDiagramConnectionsWithCpu = (input: WorkerRouteRequest) => {
     }
   }
 
-  const usage = new Map<string, number[]>()
-  const verticalUsage: VerticalSegmentUsage = new Map()
-
   return input.descriptors.map((descriptor) => {
     const result = buildPathBetween(
       descriptor.fromGeometry,
       descriptor.toGeometry,
       descriptor.color,
       descriptor.dashed,
-      usage,
-      verticalUsage,
       input.groupHeaderBands
     )
+    const getHostRect = (geometry: WorkerConnectionGeometry): DiagramRect => {
+      const bounds = geometry.tableBounds ? geometry.tableBounds : geometry.bounds
+      return {
+        left: (bounds.left - input.planeBounds.left) / input.scale,
+        right: (bounds.right - input.planeBounds.left) / input.scale,
+        top: (bounds.top - input.planeBounds.top) / input.scale,
+        bottom: (bounds.bottom - input.planeBounds.top) / input.scale
+      }
+    }
+    const points = avoidDiagramEndpointHostIntersections(result.points, {
+      from: getHostRect(descriptor.fromGeometry),
+      to: getHostRect(descriptor.toGeometry)
+    }, input.groupHeaderBands)
     const fromOwnerNodeId = descriptor.fromGeometry.ownerNodeId
     const toOwnerNodeId = descriptor.toGeometry.ownerNodeId
 
     return {
       key: descriptor.key,
-      path: result.path,
-      points: result.points,
-      bounds: getConnectionLineBounds(result.points),
+      path: points === result.points ? result.path : buildPathFromPoints(points),
+      points,
+      bounds: getConnectionLineBounds(points),
       color: descriptor.color,
       dashed: descriptor.dashed,
       dashPattern: descriptor.dashPattern,

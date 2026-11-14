@@ -52,9 +52,7 @@ export const getDiagramPinchViewportTransform = ({
   minScale
 }: DiagramPinchViewportTransformOptions): DiagramPinchViewportTransform => {
   const safeInitialDistance = initialDistance > 0 ? initialDistance : currentDistance || 1
-  const normalizedScale = Number(
-    clampScale(initialScale * (currentDistance / safeInitialDistance), minScale, maxScale).toFixed(2)
-  )
+  const normalizedScale = clampScale(initialScale * (currentDistance / safeInitialDistance), minScale, maxScale)
   const planeX = (initialCenter.x - initialPan.x) / initialScale
   const planeY = (initialCenter.y - initialPan.y) / initialScale
 

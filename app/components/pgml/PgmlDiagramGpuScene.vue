@@ -30,6 +30,7 @@ import {
   type DiagramTouchGesture,
   type DiagramTouchPoint
 } from '~/utils/diagram-touch'
+import { getDiagramViewportFitTransform } from '~/utils/diagram-viewport'
 import {
   diagramBackgroundColor,
   diagramDividerColor,
@@ -156,6 +157,7 @@ const {
 }>()
 
 const emit = defineEmits<{
+  dragPreviewChange: [payload: { id: string, kind: 'group' | 'object' | 'table', x: number, y: number } | null]
   focusSource: [sourceRange: PgmlSourceRange]
   moveEnd: [payload: { id: string, kind: 'group' | 'object' | 'table', x: number, y: number }]
   rendererCapabilityChange: [capability: DiagramRendererCapability]
@@ -219,7 +221,10 @@ let cachedVisibleConnectionBuckets: VisibleConnectionBuckets = {
   staticLines: []
 }
 let liveConnectionDragPreview: DiagramConnectionPreviewDragState | null = null
+let renderedStaticConnections: Array<Pick<DiagramGpuConnectionLine, 'key' | 'points'>> = []
+let renderedDynamicConnections: Array<Pick<DiagramGpuConnectionLine, 'key' | 'points'>> = []
 let liveDragPreview: DiagramNodeDragPreview | null = null
+let renderedDragPreview: DiagramNodeDragPreview | null = null
 let dragPreviewRenderScheduled = false
 let fullRenderScheduled = false
 let transformRenderScheduled = false
@@ -668,6 +673,11 @@ const getTouchGesture = (touches: TouchList): DiagramTouchGesture | null => {
 }
 
 const startTouchPinchSession = (gesture: DiagramTouchGesture) => {
+  // Cancel a node preview even when its coalesced frame has not rendered yet.
+  emit('dragPreviewChange', null)
+  setDragPreview(null)
+  setConnectionDragPreview(null)
+
   touchPinchSession = {
     initialCenter: gesture.center,
     initialDistance: gesture.distance,
@@ -712,7 +722,7 @@ const applyPinchGestureTransform = (gesture: DiagramTouchGesture) => {
     initialPan: touchPinchSession.initialPan,
     initialScale: touchPinchSession.initialScale,
     maxScale: diagramMaxScale,
-    minScale: diagramMinScale
+    minScale: getMinViewportScale()
   })
 
   worldScale = transform.scale
@@ -1726,8 +1736,23 @@ const emitSelectionForHitTarget = (target: HitTarget | null) => {
   return ''
 }
 
-const publishRendererDebug = () => {
+const shouldPublishRendererDebug = () => {
   if (!import.meta.client) {
+    return false
+  }
+
+  const debugWindow = window as Window & {
+    __PGML_ENABLE_SCENE_DEBUG__?: boolean
+    __PGML_FORCE_GPU_SCENE__?: boolean
+  }
+
+  return debugWindow.__PGML_ENABLE_SCENE_DEBUG__ === true
+    || debugWindow.__PGML_FORCE_GPU_SCENE__ === true
+    || navigator.webdriver
+}
+
+const publishRendererDebug = () => {
+  if (!shouldPublishRendererDebug()) {
     return
   }
 
@@ -1747,6 +1772,7 @@ const publishRendererDebug = () => {
       requestedRendererBackend: DiagramRendererBackend
       panX: number
       panY: number
+      renderedConnections: Array<Pick<DiagramGpuConnectionLine, 'key' | 'points'>>
       renderedGroupCards: Array<{ height: number, id: string, width: number, x: number, y: number }>
       renderedObjectCards: Array<{ height: number, id: string, width: number, x: number, y: number }>
       renderedTableCards: Array<{ height: number, id: string, width: number, x: number, y: number }>
@@ -1754,14 +1780,6 @@ const publishRendererDebug = () => {
       scale: number
       tableSpriteCount: number
     }
-  }
-
-  if (
-    typedWindow.__PGML_ENABLE_SCENE_DEBUG__ !== true
-    && typedWindow.__PGML_FORCE_GPU_SCENE__ !== true
-    && !navigator.webdriver
-  ) {
-    return
   }
 
   typedWindow.__pgmlSceneRendererDebug = {
@@ -1777,9 +1795,19 @@ const publishRendererDebug = () => {
     requestedRendererBackend: rendererCapability.value.requested,
     panX: worldPanX,
     panY: worldPanY,
-    renderedGroupCards: renderedDebugGroupCards,
-    renderedObjectCards: renderedDebugObjectCards,
-    renderedTableCards: renderedDebugTableCards,
+    renderedConnections: [...renderedStaticConnections, ...renderedDynamicConnections],
+    renderedGroupCards: renderedDebugGroupCards.map((group) => {
+      const sprite = groupSpriteEntries.get(group.id)?.sprite
+      return sprite ? { ...group, x: sprite.x, y: sprite.y } : group
+    }),
+    renderedObjectCards: renderedDebugObjectCards.map((objectNode) => {
+      const sprite = objectSpriteEntries.get(objectNode.id)?.sprite
+      return sprite ? { ...objectNode, x: sprite.x, y: sprite.y } : objectNode
+    }),
+    renderedTableCards: renderedDebugTableCards.map((table) => {
+      const sprite = tableSpriteEntries.get(table.id)?.sprite
+      return sprite ? { ...table, x: sprite.x, y: sprite.y } : table
+    }),
     resolvedRendererBackend: rendererCapability.value.resolved,
     scale: worldScale,
     tableSpriteCount: tableSpriteEntries.size
@@ -1798,6 +1826,7 @@ const renderWorldTransformOnly = () => {
   }
 
   updateWorldTransform()
+  applyDragPreviewSpritePositions(liveDragPreview)
   publishRendererDebug()
   app.render()
 }
@@ -1986,7 +2015,11 @@ const getConnectionPreviewPoints = (
 }
 
 const getDynamicConnectionPreviewNodeId = (preview: DiagramConnectionPreviewDragState | null) => {
-  return hasActiveConnectionPreview(preview) ? preview?.nodeId || null : null
+  if (hasActiveConnectionPreview(preview)) {
+    return preview ? preview.nodeId : null
+  }
+
+  return hasActiveNodeDragPreview(liveDragPreview) && liveDragPreview ? liveDragPreview.nodeId : null
 }
 
 const getVisibleConnectionLinesForPreviewNodeId = (previewNodeId: string | null) => {
@@ -2047,12 +2080,23 @@ const drawConnectionLines = (
 ) => {
   graphics.clear()
 
+  const debugConnections: Array<Pick<DiagramGpuConnectionLine, 'key' | 'points'>> = []
+  const captureDebug = shouldPublishRendererDebug()
+  if (graphics === staticLineGraphics) {
+    renderedStaticConnections = debugConnections
+  } else {
+    renderedDynamicConnections = debugConnections
+  }
+
   if (!showRelationshipLines || lines.length === 0) {
     return
   }
 
   lines.forEach((line) => {
     const linePoints = getConnectionPreviewPoints(line, preview)
+    if (captureDebug) {
+      debugConnections.push({ key: line.key, points: linePoints })
+    }
     const color = hexToNumber(line.color, 0x79e3ea)
     const solidStyle = {
       alpha: line.animated ? 0.62 : 0.72,
@@ -2106,12 +2150,14 @@ const renderConnectionLayer = (
     includeStatic = true
   } = options
   const visibleLines = getVisibleConnectionBuckets(preview)
+  const previewNodeId = getDynamicConnectionPreviewNodeId(preview)
 
-  if (includeStatic) {
+  if (includeStatic || previewNodeId !== activeDynamicConnectionPreviewNodeId) {
     drawConnectionLines(staticLineGraphics, visibleLines.staticLines, null)
   }
 
   drawConnectionLines(dynamicLineGraphics, visibleLines.dynamicLines, preview)
+  activeDynamicConnectionPreviewNodeId = previewNodeId
 }
 
 const syncAnimatedLineLoop = () => {
@@ -2137,9 +2183,11 @@ const syncAnimatedLineLoop = () => {
 
   const animate = (timestamp: number) => {
     lineAnimationOffset = (timestamp * 0.042) % 24
+    applyDragPreviewSpritePositions(liveDragPreview)
     renderConnectionLayer(hasActiveConnectionPreview(liveConnectionDragPreview) ? liveConnectionDragPreview : null, {
       includeStatic: false
     })
+    publishRendererDebug()
     app?.render()
     lineAnimationFrame = requestAnimationFrame(animate)
   }
@@ -2333,7 +2381,7 @@ const renderScene = () => {
     })
   })
 
-  activeDynamicConnectionPreviewNodeId = getDynamicConnectionPreviewNodeId(liveConnectionDragPreview)
+  applyDragPreviewSpritePositions(liveDragPreview)
   renderConnectionLayer(liveConnectionDragPreview)
   syncAnimatedLineLoop()
 
@@ -2346,7 +2394,41 @@ const renderScene = () => {
   app.render()
 }
 
+const resetDragPreviewSpritePositions = (preview: DiagramNodeDragPreview) => {
+  if (preview.kind === 'group') {
+    const group = groups.find(entry => entry.id === preview.id)
+    if (group) {
+      groupSpriteEntries.get(group.id)?.sprite.position.set(group.x, group.y)
+      groupHeaderSpriteEntries.get(group.id)?.sprite.position.set(group.x, group.y)
+    }
+    tables.forEach((table) => {
+      if (table.groupId === preview.id) {
+        tableSpriteEntries.get(table.id)?.sprite.position.set(table.x, table.y)
+      }
+    })
+    return
+  }
+
+  if (preview.kind === 'table') {
+    const table = tables.find(entry => entry.id === preview.id)
+    if (table) {
+      tableSpriteEntries.get(table.id)?.sprite.position.set(table.x, table.y)
+    }
+    return
+  }
+
+  const objectNode = objects.find(entry => entry.id === preview.id)
+  if (objectNode) {
+    objectSpriteEntries.get(objectNode.id)?.sprite.position.set(objectNode.x, objectNode.y)
+  }
+}
+
 const applyDragPreviewSpritePositions = (preview: DiagramNodeDragPreview | null) => {
+  if (renderedDragPreview && (!preview || preview.id !== renderedDragPreview.id || preview.kind !== renderedDragPreview.kind)) {
+    resetDragPreviewSpritePositions(renderedDragPreview)
+  }
+  renderedDragPreview = preview
+
   if (!preview) {
     return
   }
@@ -2390,12 +2472,9 @@ const renderDragPreview = () => {
 
   updateWorldTransform()
   applyDragPreviewSpritePositions(liveDragPreview)
-  const nextPreviewNodeId = getDynamicConnectionPreviewNodeId(liveConnectionDragPreview)
-
   renderConnectionLayer(liveConnectionDragPreview, {
-    includeStatic: nextPreviewNodeId !== activeDynamicConnectionPreviewNodeId
+    includeStatic: false
   })
-  activeDynamicConnectionPreviewNodeId = nextPreviewNodeId
   syncAnimatedLineLoop()
   publishRendererDebug()
   app.render()
@@ -2451,25 +2530,21 @@ const getResetViewTransform = (
   nextViewportHeight = viewportHeight.value,
   nextViewportInsetRight = viewportInsetRight
 ) => {
-  const worldWidth = Math.max(1, worldBounds.maxX - worldBounds.minX)
-  const worldHeight = Math.max(1, worldBounds.maxY - worldBounds.minY)
-  const padding = 40
-  const insetRight = Math.max(0, nextViewportInsetRight)
-  const availableWidth = Math.max(1, nextViewportWidth - insetRight - padding * 2)
-  const widthScale = availableWidth / worldWidth
-  const heightScale = (nextViewportHeight - padding * 2) / worldHeight
-  const fittedScale = clamp(Math.min(widthScale, heightScale), diagramMinScale, diagramMaxScale)
-  const contentWidth = worldWidth * fittedScale
-  const contentHeight = worldHeight * fittedScale
-  const contentLeft = padding + (availableWidth - contentWidth) / 2
-  const contentTop = (nextViewportHeight - contentHeight) / 2
-
-  return {
-    panX: contentLeft - worldBounds.minX * fittedScale,
-    panY: contentTop - worldBounds.minY * fittedScale,
-    scale: fittedScale
-  } satisfies ViewTransform
+  return getDiagramViewportFitTransform({
+    bounds: {
+      height: worldBounds.maxY - worldBounds.minY,
+      width: worldBounds.maxX - worldBounds.minX,
+      x: worldBounds.minX,
+      y: worldBounds.minY
+    },
+    maxScale: diagramMaxScale,
+    viewportHeight: nextViewportHeight,
+    viewportInsetRight: nextViewportInsetRight,
+    viewportWidth: nextViewportWidth
+  })
 }
+
+const getMinViewportScale = () => Math.min(diagramMinScale, getResetViewTransform().scale)
 
 const isAtResetViewTransform = (
   nextViewportWidth = viewportWidth.value,
@@ -2498,19 +2573,18 @@ const focusBounds = (bounds: FocusBounds, padding = 72) => {
     return
   }
 
-  const availableWidth = Math.max(1, viewportWidth.value - Math.max(0, viewportInsetRight) - padding * 2)
-  const availableHeight = Math.max(1, viewportHeight.value - padding * 2)
-  const fittedScale = clamp(
-    Math.min(availableWidth / Math.max(1, bounds.width), availableHeight / Math.max(1, bounds.height)),
-    diagramMinScale,
-    diagramMaxScale
-  )
-  const centeredLeft = padding + (availableWidth - bounds.width * fittedScale) / 2
-  const centeredTop = padding + (availableHeight - bounds.height * fittedScale) / 2
+  const nextTransform = getDiagramViewportFitTransform({
+    bounds,
+    maxScale: diagramMaxScale,
+    padding,
+    viewportHeight: viewportHeight.value,
+    viewportInsetRight,
+    viewportWidth: viewportWidth.value
+  })
 
-  worldScale = fittedScale
-  worldPanX = centeredLeft - bounds.x * fittedScale
-  worldPanY = centeredTop - bounds.y * fittedScale
+  worldScale = nextTransform.scale
+  worldPanX = nextTransform.panX
+  worldPanY = nextTransform.panY
   hasViewportInteraction = true
   scheduleFullRender()
 }
@@ -2522,7 +2596,7 @@ const zoomToScale = (nextScale: number, clientX: number, clientY: number) => {
     return
   }
 
-  const clampedScale = clamp(nextScale, diagramMinScale, diagramMaxScale)
+  const clampedScale = clamp(nextScale, getMinViewportScale(), diagramMaxScale)
   const pointerX = clientX - bounds.left
   const pointerY = clientY - bounds.top
   const worldX = (pointerX - worldPanX) / Math.max(worldScale, 0.001)
@@ -2748,8 +2822,7 @@ const handlePointerMove = (event: PointerEvent) => {
     y: nextPosition.y
   }
 
-  setDragPreview(currentPreview)
-  setConnectionDragPreview(currentPreview)
+  emit('dragPreviewChange', currentPreview)
 }
 
 const handleTouchMove = (event: TouchEvent) => {
@@ -2991,7 +3064,6 @@ const initPixi = async (initialTransform: ViewTransform | null = null) => {
 
   try {
     app = await initApplication(preferredRenderer)
-    activeRendererPreference = preferredRenderer
   } catch (error) {
     if (preferredRenderer !== 'webgpu') {
       throw error
@@ -3004,6 +3076,11 @@ const initPixi = async (initialTransform: ViewTransform | null = null) => {
 
   if (!(hostRef.value instanceof HTMLDivElement) || !app || !pixi) {
     return
+  }
+
+  activeRendererPreference = app.renderer.type === pixiModule.RendererType.WEBGPU ? 'webgpu' : 'webgl'
+  if (preferredRenderer === 'webgpu' && activeRendererPreference === 'webgl') {
+    setRendererCapability(applyDiagramRendererInitFailure(initialRendererCapability))
   }
 
   syncMaxSpriteTextureDimension()
@@ -3055,6 +3132,7 @@ const destroyPixi = () => {
   destroyed = true
   resetTouchInteraction()
   liveDragPreview = null
+  renderedDragPreview = null
   liveConnectionDragPreview = null
   dragPreviewRenderScheduled = false
   connectionBucketCacheVersion = 0
@@ -3188,7 +3266,6 @@ watch(
     groups,
     tables,
     objects,
-    connections,
     selection,
     showRelationshipLines,
     worldBounds.maxX,
@@ -3203,6 +3280,23 @@ watch(
   {
     deep: true
   }
+)
+
+watch(
+  () => connections,
+  () => {
+    connectionBucketCacheVersion += 1
+
+    if (hasActiveNodeDragPreview(liveDragPreview)) {
+      // Consume the current routed points in this frame before the moved sprites are presented.
+      renderDragPreview()
+      return
+    }
+
+    rebuildSpatialIndices()
+    scheduleFullRender()
+  },
+  { deep: true }
 )
 
 useResizeObserver(hostRef, syncViewportLayout)

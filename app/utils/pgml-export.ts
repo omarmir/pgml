@@ -90,6 +90,10 @@ const formatQualifiedSqlName = (value: string, defaultSchema = 'public') => {
 
 const formatSqlIdentifierList = (values: string[]) => values.map(value => quoteSqlIdentifier(value)).join(', ')
 const formatSqlStringLiteral = (value: string) => `'${value.replaceAll('\'', '\'\'')}'`
+const formatTypeScriptStringLiteral = (value: string) => `'${JSON.stringify(value).slice(1, -1).replaceAll('\'', '\\\'')}'`
+const formatTypeScriptPropertyName = (value: string) => {
+  return /^[A-Za-z_$][\w$]*$/.test(value) ? value : formatTypeScriptStringLiteral(value)
+}
 const ensureSqlStatement = (value: string) => {
   const trimmed = value.trim()
 
@@ -616,7 +620,11 @@ const applyColumnTypeWrappers = (value: string, column: PgmlColumn) => {
 }
 
 const buildEnumTypeDefinition = (customType: PgmlEnumType) => {
-  return `export type ${getCustomTypeSymbolName(customType)} = ${customType.values.map(value => formatSqlStringLiteral(value)).join(' | ')}`
+  const valueType = customType.values.length > 0
+    ? customType.values.map(value => formatTypeScriptStringLiteral(value)).join(' | ')
+    : 'never'
+
+  return `export type ${getCustomTypeSymbolName(customType)} = ${valueType}`
 }
 
 const buildDomainTypeDefinition = (
@@ -647,7 +655,7 @@ const buildCompositeTypeDefinition = (
   return [
     `export interface ${getCustomTypeSymbolName(customType)} {`,
     ...customType.fields.map((field) => {
-      return `  ${quoteSqlIdentifier(field.name).replaceAll('"', '')}: ${resolveTypeScriptType(field.type, style, context)}`
+      return `  ${formatTypeScriptPropertyName(field.name)}: ${resolveTypeScriptType(field.type, style, context)}`
     }),
     '}'
   ].join('\n')
@@ -662,7 +670,7 @@ const buildTableInterfaceDefinition = (
     `export interface ${getTableInterfaceName(table)} {`,
     ...table.columns.map((column) => {
       const resolvedType = applyColumnTypeWrappers(resolveTypeScriptType(column.type, style, context), column)
-      return `  ${quoteSqlIdentifier(column.name).replaceAll('"', '')}: ${resolvedType}`
+      return `  ${formatTypeScriptPropertyName(column.name)}: ${resolvedType}`
     }),
     '}'
   ].join('\n')
@@ -703,7 +711,7 @@ const buildKyselyInterfacesContent = (
   const databaseBlock = [
     'export interface Database {',
     ...model.tables.map((table) => {
-      return `  '${table.fullName}': ${getTableInterfaceName(table)}`
+      return `  ${formatTypeScriptStringLiteral(table.fullName)}: ${getTableInterfaceName(table)}`
     }),
     '}'
   ].join('\n')

@@ -31,6 +31,7 @@ type UsePgmlStudioSchemasOptions = {
 
 type PersistSchemaOptions = {
   closeDialog: boolean
+  schemaId: string | null
 }
 
 export const usePgmlStudioSchemas = ({
@@ -62,6 +63,7 @@ export const usePgmlStudioSchemas = ({
     isSavingToLocalStorage: false,
     name: source.value.trim().length > 0 ? exampleSchemaName : untitledSchemaName
   })
+  const schemaDialogName: Ref<string | null> = ref(null)
 
   const schemaActionTitle = computed(() => schemaDialogMode.value === 'save' ? 'Save schema' : 'Download schema')
   const schemaActionDescription = computed(() => {
@@ -162,15 +164,6 @@ export const usePgmlStudioSchemas = ({
   const persistSavedSchemas = (schemas: SavedPgmlSchema[]) => {
     return studioSourcesStore.persistBrowserSchemas(schemas)
   }
-  const findMatchingSavedSchema = (name: string) => {
-    const explicitSchemaId = saveSchemaTargetId.value || currentSchemaId.value
-
-    if (explicitSchemaId) {
-      return savedSchemas.value.find(entry => entry.id === explicitSchemaId)
-    }
-
-    return savedSchemas.value.find(entry => entry.name.toLowerCase() === name.toLowerCase())
-  }
   const upsertSavedSchema = (schema: SavedPgmlSchema, existingSchemaId: string | null) => {
     if (!existingSchemaId) {
       return [schema, ...savedSchemas.value]
@@ -194,18 +187,18 @@ export const usePgmlStudioSchemas = ({
     currentSchemaId.value = schema.id
     currentSchemaName.value = schema.name
     currentSchemaUpdatedAt.value = schema.updatedAt
-    saveSchemaTargetId.value = schema.id
     syncSchemaSnapshot(schema.name, schema.text)
   }
 
   const openSchemaDialog = (mode: PgmlStudioSchemaDialogMode) => {
+    schemaDialogName.value = currentSchemaName.value
     saveSchemaTargetId.value = mode === 'save' ? currentSchemaId.value : null
     studioSessionStore.openSchemaDialog(mode)
   }
 
   const selectSaveSchemaTarget = (schema: SavedPgmlSchema) => {
     saveSchemaTargetId.value = schema.id
-    currentSchemaName.value = schema.name
+    schemaDialogName.value = schema.name
   }
 
   const clearSaveSchemaTarget = () => {
@@ -218,8 +211,8 @@ export const usePgmlStudioSchemas = ({
     options: PersistSchemaOptions
   ) => {
     const updatedAt = new Date().toISOString()
-    const matchingSchema = findMatchingSavedSchema(name)
-    const existingSchemaId = matchingSchema?.id || saveSchemaTargetId.value || currentSchemaId.value || null
+    const matchingSchema = savedSchemas.value.find(entry => entry.id === options.schemaId)
+    const existingSchemaId = options.schemaId
     const nextSchema: SavedPgmlSchema = matchingSchema
       ? {
           ...matchingSchema,
@@ -247,6 +240,7 @@ export const usePgmlStudioSchemas = ({
     syncPersistedState(nextSchema)
 
     if (options.closeDialog) {
+      saveSchemaTargetId.value = nextSchema.id
       studioSessionStore.closeSchemaDialog()
     }
 
@@ -277,15 +271,13 @@ export const usePgmlStudioSchemas = ({
       isSavingToLocalStorage.value = false
     }
   }
-  const persistCurrentSchemaToBrowser = async (options: PersistSchemaOptions) => {
-    return persistSnapshotToBrowser(currentSnapshot.value, options)
-  }
   const persistAutosaveSnapshotsToBrowser = async (snapshot: string) => {
     let nextSnapshot = snapshot
 
     while (nextSnapshot !== lastPersistedSnapshot.value) {
       const didSave = await persistSnapshotToBrowser(nextSnapshot, {
-        closeDialog: false
+        closeDialog: false,
+        schemaId: currentSchemaId.value
       })
 
       if (!didSave || nextSnapshot === currentSnapshot.value) {
@@ -301,16 +293,21 @@ export const usePgmlStudioSchemas = ({
       return false
     }
 
-    return persistCurrentSchemaToBrowser({
-      closeDialog: true
+    const isSavingFromDialog = schemaDialogOpen.value && schemaDialogMode.value === 'save'
+    const name = isSavingFromDialog && schemaDialogName.value !== null
+      ? normalizeSchemaName(schemaDialogName.value)
+      : getAutosaveName()
+
+    return persistSnapshotToBrowser(getSnapshot(name, getPersistedText()), {
+      closeDialog: true,
+      schemaId: isSavingFromDialog ? saveSchemaTargetId.value : currentSchemaId.value
     })
   }
 
   const downloadSchema = () => {
-    const name = normalizeSchemaName(currentSchemaName.value)
+    const name = normalizeSchemaName(schemaDialogName.value !== null ? schemaDialogName.value : currentSchemaName.value)
     const text = buildSchemaText(includeLayoutInSchema.value)
 
-    currentSchemaName.value = name
     downloadSchemaText(name, text)
     studioSessionStore.closeSchemaDialog()
   }
@@ -394,6 +391,12 @@ export const usePgmlStudioSchemas = ({
     maxWait: schemaAutosaveDebounceMs
   })
 
+  watch(schemaDialogOpen, (open) => {
+    if (!open) {
+      schemaDialogName.value = null
+    }
+  })
+
   return {
     clearSchema,
     clearSaveSchemaTarget,
@@ -421,6 +424,7 @@ export const usePgmlStudioSchemas = ({
     selectSaveSchemaTarget,
     schemaActionDescription,
     schemaActionTitle,
+    schemaDialogName,
     schemaDialogMode,
     schemaDialogOpen
   }

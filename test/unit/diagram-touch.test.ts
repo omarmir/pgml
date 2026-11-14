@@ -51,4 +51,20 @@ describe('diagram touch utilities', () => {
       scale: 1
     })
   })
+
+  it('preserves small scale changes while pinch zooming an overview of a large model', () => {
+    const transform = getDiagramPinchViewportTransform({
+      currentCenter: { x: 100, y: 100 },
+      currentDistance: 108,
+      initialCenter: { x: 100, y: 100 },
+      initialDistance: 100,
+      initialPan: { x: 0, y: 0 },
+      initialScale: 0.004,
+      maxScale: 1.95,
+      minScale: 0.001
+    })
+
+    expect(transform.scale).toBeCloseTo(0.00432)
+    expect(transform.pan).toEqual({ x: -8, y: -8 })
+  })
 })

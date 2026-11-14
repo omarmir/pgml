@@ -40,7 +40,7 @@ import type {
   DiagramRoutingRequest
 } from '~/utils/diagram-routing-contract'
 import { buildOrthogonalMiddlePoints } from '~/utils/diagram-routing'
-import { routeDiagramConnectionsWithWebgpu } from '~/utils/diagram-routing-webgpu'
+import { isDiagramReferenceSelected } from '~/utils/diagram-reference-selection'
 import { routeDiagramConnectionsWithCpu } from '~/workers/diagram-routing.worker'
 import {
   buildTableGroupMasonryLayout,
@@ -624,13 +624,12 @@ let automationPlaneDragSession: {
   started: boolean
 } | null = null
 let activeAutomationNodeDragPreview: DiagramNodeDragPreview | null = null
+let liveSceneNodeDragPreview: DiagramNodeDragPreview | null = null
 let liveSceneConnectionDragPreview: ActiveConnectionDragPreview | null = null
-let pendingLiveConnectionPreviewRequest: { preview: DiagramNodeDragPreview, version: number } | null = null
-let liveConnectionPreviewRequestInFlight = false
+let pendingLiveConnectionPreview: DiagramNodeDragPreview | null = null
+let liveConnectionPreviewFrame: number | null = null
 let routingWorker: Worker | null = null
 let latestConnectionRequestId = 0
-let latestPreviewRoutingRequestId = 0
-let liveConnectionPreviewVersion = 0
 const automationPlaneNodeElements = new Map<string, HTMLElement>()
 const pendingRoutingRequests = new Map<number, {
   reject: (reason?: unknown) => void
@@ -2556,6 +2555,7 @@ const setSceneConnectionDragPreview = (preview: ActiveConnectionDragPreview | nu
 }
 
 const setSceneDragPreview = (preview: DiagramNodeDragPreview | null) => {
+  liveSceneNodeDragPreview = preview
   sceneRef.value?.setDragPreview(preview)
 }
 
@@ -2566,8 +2566,11 @@ const hasConnectionDragPreview = (preview: ActiveConnectionDragPreview | null) =
 const resetLiveConnectionPreviewState = (options: {
   clearLines?: boolean
 } = {}) => {
-  liveConnectionPreviewVersion += 1
-  pendingLiveConnectionPreviewRequest = null
+  pendingLiveConnectionPreview = null
+  if (liveConnectionPreviewFrame !== null) {
+    cancelAnimationFrame(liveConnectionPreviewFrame)
+    liveConnectionPreviewFrame = null
+  }
 
   if (options.clearLines !== false) {
     liveConnectionPreviewLines.value = []
@@ -2870,19 +2873,23 @@ const selectedTableId = computed(() => {
   return null
 })
 
-const selectedTableOutgoingReferences = computed(() => {
-  if (!selectedTableId.value) {
-    return []
-  }
-
+const selectedReferences = computed(() => {
   return model.references.filter((reference) => {
-    return reference.fromTable === selectedTableId.value && reference.toTable !== selectedTableId.value
+    return isDiagramReferenceSelected(reference, selectedSelection.value)
   })
 })
 
 const selectedTableRelationalRowKeys = computed(() => {
-  return new Set(selectedTableOutgoingReferences.value.map((reference) => {
-    return getColumnAnchorKey(reference.toTable, reference.toColumn)
+  return new Set(selectedReferences.value.flatMap((reference) => {
+    const toColumns = reference.toColumns ? reference.toColumns : [reference.toColumn]
+    const rowKeys = toColumns.map(column => getColumnAnchorKey(reference.toTable, column))
+
+    if (selectedSelection.value?.kind === 'column') {
+      const fromColumns = reference.fromColumns ? reference.fromColumns : [reference.fromColumn]
+      rowKeys.push(...fromColumns.map(column => getColumnAnchorKey(reference.fromTable, column)))
+    }
+
+    return rowKeys
   }))
 })
 
@@ -3062,17 +3069,17 @@ const connectionStyleByKey = computed<Record<string, {
   }> = {}
 
   model.references.forEach((reference) => {
-    const isSelectedOutgoingReference = selectedTableId.value !== null && reference.fromTable === selectedTableId.value
-    const color = isSelectedOutgoingReference
-      ? (tableColorById.value[reference.fromTable] || tableColorById.value[reference.toTable] || '#79e3ea')
+    const isSelectedReference = isDiagramReferenceSelected(reference, selectedSelection.value)
+    const color = isSelectedReference
+      ? (tableColorById.value[selectedTableId.value || ''] || tableColorById.value[reference.toTable] || '#79e3ea')
       : (tableColorById.value[reference.toTable] || '#79e3ea')
 
     entries[`ref:${reference.fromTable}:${reference.fromColumn}:${reference.toTable}:${reference.toColumn}`] = {
-      animated: isSelectedOutgoingReference,
+      animated: isSelectedReference,
       color,
-      dashPattern: isSelectedOutgoingReference ? '10 7' : '0',
-      dashed: isSelectedOutgoingReference,
-      zIndex: getDiagramConnectionZIndex(0, 0, isSelectedOutgoingReference)
+      dashPattern: isSelectedReference ? '10 7' : '0',
+      dashed: isSelectedReference,
+      zIndex: getDiagramConnectionZIndex(0, 0, isSelectedReference)
     }
   })
 
@@ -4178,19 +4185,6 @@ const buildMainThreadFallbackConnectionLines = (
   })
 }
 
-const tryComputeConnectionLinesWithWebgpu = async (
-  request: DiagramRoutingRequest,
-  _requestId: number
-) => {
-  if (shouldRenderAutomationPlane.value) {
-    return null
-  }
-
-  const nextLines = await routeDiagramConnectionsWithWebgpu(request)
-
-  return nextLines
-}
-
 const routeConnectionLinesWithWorker = async (
   request: DiagramRoutingRequest
 ) => {
@@ -4205,7 +4199,7 @@ const routeConnectionLinesWithWorker = async (
   })
 }
 
-const computeLiveConnectionPreviewLines = async (
+const computeLiveConnectionPreviewLines = (
   preview: DiagramNodeDragPreview
 ) => {
   const routingGeometry = buildPreviewRoutingGeometryRegistry(preview)
@@ -4215,24 +4209,10 @@ const computeLiveConnectionPreviewLines = async (
     return []
   }
 
-  latestPreviewRoutingRequestId += 1
-  const requestId = 1_000_000_000 + latestPreviewRoutingRequestId
-  const routingRequest = buildConnectionRoutingRequest(descriptors, requestId, preview, routingGeometry)
-
-  if (shouldPreferMainThreadConnectionRouting.value) {
-    const lines = routeDiagramConnectionsWithCpu(routingRequest)
-
-    return lines.length > 0 ? lines : buildMainThreadFallbackConnectionLines(routingRequest)
-  }
-
-  const webgpuLines = await tryComputeConnectionLinesWithWebgpu(routingRequest, requestId)
-
-  if (webgpuLines && webgpuLines.length > 0) {
-    return webgpuLines
-  }
+  const routingRequest = buildConnectionRoutingRequest(descriptors, 0, preview, routingGeometry)
 
   try {
-    const lines = await routeConnectionLinesWithWorker(routingRequest)
+    const lines = routeDiagramConnectionsWithCpu(routingRequest)
 
     return lines.length > 0 ? lines : buildMainThreadFallbackConnectionLines(routingRequest)
   } catch {
@@ -4240,43 +4220,31 @@ const computeLiveConnectionPreviewLines = async (
   }
 }
 
-const flushLiveConnectionPreviewRequest = async () => {
-  if (liveConnectionPreviewRequestInFlight || !pendingLiveConnectionPreviewRequest) {
+const flushLiveConnectionPreviewRequest = () => {
+  liveConnectionPreviewFrame = null
+  const preview = pendingLiveConnectionPreview
+  pendingLiveConnectionPreview = null
+
+  if (!preview) {
     return
   }
 
-  liveConnectionPreviewRequestInFlight = true
-  const nextRequest = pendingLiveConnectionPreviewRequest
-
-  pendingLiveConnectionPreviewRequest = null
-
-  try {
-    const nextLines = await computeLiveConnectionPreviewLines(nextRequest.preview)
-
-    if (nextRequest.version === liveConnectionPreviewVersion) {
-      liveConnectionPreviewLines.value = nextLines
-
-      if (nextLines.length > 0) {
-        activeConnectionDragPreview.value = null
-        setSceneConnectionDragPreview(null)
-      }
-    }
-  } finally {
-    liveConnectionPreviewRequestInFlight = false
-
-    if (pendingLiveConnectionPreviewRequest) {
-      void flushLiveConnectionPreviewRequest()
-    }
-  }
+  liveConnectionPreviewLines.value = computeLiveConnectionPreviewLines(preview)
+  activeConnectionDragPreview.value = null
+  setSceneConnectionDragPreview(null)
+  setSceneDragPreview(preview)
+  applyAutomationNodeDragPreview(shouldRenderAutomationPlane.value ? preview : null)
 }
 
 const scheduleLiveConnectionPreview = (preview: DiagramNodeDragPreview) => {
-  liveConnectionPreviewVersion += 1
-  pendingLiveConnectionPreviewRequest = {
-    preview,
-    version: liveConnectionPreviewVersion
+  pendingLiveConnectionPreview = preview
+
+  if (liveConnectionPreviewFrame !== null) {
+    return
   }
-  void flushLiveConnectionPreviewRequest()
+
+  // Route incident relationships before the scene's next frame so endpoint legs stay outside moved cards.
+  liveConnectionPreviewFrame = requestAnimationFrame(flushLiveConnectionPreviewRequest)
 }
 
 const computeConnectionLines = async (options: {
@@ -4289,7 +4257,7 @@ const computeConnectionLines = async (options: {
     ? currentConnectionDragPreview
     : null
 
-  if (currentConnectionDragPreview && !options.preserveDragPreviewUntilSettled) {
+  if ((liveSceneNodeDragPreview || currentConnectionDragPreview || liveConnectionPreviewLines.value.length > 0) && !options.preserveDragPreviewUntilSettled) {
     return
   }
 
@@ -4309,7 +4277,7 @@ const computeConnectionLines = async (options: {
   }
 
   const commitSettledLines = (nextLines: DiagramGpuConnectionLine[], backend: DiagramRoutingBackend) => {
-    if (requestId !== latestConnectionRequestId) {
+    if (requestId !== latestConnectionRequestId || liveSceneNodeDragPreview) {
       return
     }
 
@@ -4332,17 +4300,6 @@ const computeConnectionLines = async (options: {
 
     commitSettledLines(lines.length > 0 ? lines : buildMainThreadFallbackConnectionLines(routingRequest), 'cpu')
     return
-  }
-
-  const webgpuLines = await tryComputeConnectionLinesWithWebgpu(routingRequest, requestId)
-
-  if (webgpuLines && webgpuLines.length > 0 && !options.preserveDragPreviewUntilSettled && requestId === latestConnectionRequestId) {
-    activeRoutingBackend.value = 'webgpu'
-    routedConnectionLines.value = webgpuLines
-  }
-
-  if (!webgpuLines || webgpuLines.length === 0) {
-    activeRoutingBackend.value = 'cpu'
   }
 
   try {
@@ -5957,25 +5914,7 @@ const updateSceneDragPreview = (
     y: payload.y
   }
 
-  setSceneDragPreview(nextPreview)
   scheduleLiveConnectionPreview(nextPreview)
-
-  if (liveConnectionPreviewLines.value.length === 0) {
-    setSceneConnectionDragPreview(nextPreview)
-  } else {
-    setSceneConnectionDragPreview(null)
-  }
-
-  if (shouldRenderAutomationPlane.value) {
-    applyAutomationNodeDragPreview(nextPreview)
-    activeConnectionDragPreview.value = liveConnectionPreviewLines.value.length === 0
-      ? nextPreview
-      : null
-    return
-  }
-
-  applyAutomationNodeDragPreview(null)
-  activeConnectionDragPreview.value = null
 }
 
 const commitSceneNodePosition = (
@@ -6004,6 +5943,7 @@ const commitSceneNodePosition = (
     x: nextPosition.x,
     y: nextPosition.y
   }
+  const settledPreviewLines = computeLiveConnectionPreviewLines(settledPreview)
 
   setPendingNodePositionOverride({
     ...payload,
@@ -6035,19 +5975,28 @@ const commitSceneNodePosition = (
   }
 
   resetLiveConnectionPreviewState()
-  setSceneConnectionDragPreview(settledPreview)
+  liveConnectionPreviewLines.value = settledPreviewLines
+  setSceneConnectionDragPreview(null)
   setSceneDragPreview(null)
   applyAutomationNodeDragPreview(null)
 
   if (shouldRenderAutomationPlane.value) {
-    activeConnectionDragPreview.value = settledPreview
+    activeConnectionDragPreview.value = null
     return
   }
 
   activeConnectionDragPreview.value = null
 }
 
-const handleSceneDragPreviewChange = (payload: { id: string, kind: 'group' | 'object' | 'table', x: number, y: number }) => {
+const handleSceneDragPreviewChange = (payload: { id: string, kind: 'group' | 'object' | 'table', x: number, y: number } | null) => {
+  if (!payload) {
+    resetLiveConnectionPreviewState()
+    setSceneDragPreview(null)
+    setSceneConnectionDragPreview(null)
+    activeConnectionDragPreview.value = null
+    return
+  }
+
   updateSceneDragPreview(payload)
 }
 
@@ -6461,12 +6410,13 @@ watch(
 )
 
 watch(
-  () => [groupNodes.value, tableCards.value, objectNodes.value, model.references],
+  // Row highlight changes must not reroute otherwise identical geometry.
+  () => JSON.stringify(buildConnectionRoutingRequest(buildConnectionRoutingDescriptors(geometryRegistry.value), 0)),
   () => {
     void computeConnectionLines()
   },
   {
-    deep: true,
+    flush: 'post',
     immediate: true
   }
 )
@@ -6834,6 +6784,7 @@ defineExpose<{
       :viewport-inset-right="detailPopoverViewportInsetRight"
       :viewport-reset-key="viewportResetKey"
       :world-bounds="worldBounds"
+      @drag-preview-change="handleSceneDragPreviewChange"
       @focus-source="focusSourceRange"
       @move-end="handleSceneMoveEnd"
       @renderer-capability-change="handleRendererCapabilityChange"
@@ -7366,11 +7317,11 @@ defineExpose<{
 
     <div
       v-if="shouldShowZoomToolbar"
-      class="pointer-events-none absolute inset-x-0 bottom-3 z-[4] flex justify-center"
+      class="pointer-events-none absolute bottom-3 left-6 right-3 z-[4] flex justify-center"
     >
       <div
         data-diagram-zoom-toolbar="true"
-        class="pointer-events-auto flex items-center gap-1 border px-1 py-1"
+        class="pointer-events-auto flex min-w-0 max-w-full flex-wrap items-center justify-center gap-1 border px-1 py-1"
         :style="floatingPanelStyle"
       >
         <UButton

@@ -88,6 +88,145 @@ describe('usePgmlStudioSchemas', () => {
     expect(persisted[0]?.text).toContain('email text')
   })
 
+  it.each(['save', 'cancel'])('keeps overwrite targets unchanged until the user explicitly saves (%s)', async (action) => {
+    vi.useFakeTimers()
+
+    const activeSchema = {
+      id: 'active-schema',
+      name: 'Active schema',
+      text: 'Table public.active {\n  id uuid [pk]\n}',
+      updatedAt: '2026-03-20T10:00:00.000Z'
+    }
+    const overwriteTarget = {
+      id: 'overwrite-target',
+      name: 'Keep this schema',
+      text: 'Table public.keep_this {\n  id uuid [pk]\n}',
+      updatedAt: '2026-03-19T10:00:00.000Z'
+    }
+
+    window.localStorage.setItem('pgml-studio-schemas-v1', JSON.stringify([activeSchema, overwriteTarget]))
+
+    const source = ref(activeSchema.text)
+    let api!: ReturnType<typeof usePgmlStudioSchemas>
+
+    await mountSuspended(defineComponent({
+      setup() {
+        api = usePgmlStudioSchemas({
+          buildSchemaText: () => source.value,
+          canEmbedLayout: computed(() => true),
+          initialSource: '',
+          source
+        })
+
+        return () => null
+      }
+    }))
+
+    api.openSchemaDialog('save')
+    api.selectSaveSchemaTarget(overwriteTarget)
+    source.value = 'Table public.active {\n  id uuid [pk]\n  changed text\n}'
+
+    await vi.advanceTimersByTimeAsync(5000)
+
+    const targetBeforeSave = api.orderedSavedSchemas.value.find(schema => schema.id === overwriteTarget.id)
+
+    expect(targetBeforeSave?.text).toBe(overwriteTarget.text)
+    expect(api.saveSchemaTargetId.value).toBe(overwriteTarget.id)
+    expect(api.currentSchemaName.value).toBe(activeSchema.name)
+
+    if (action === 'cancel') {
+      api.schemaDialogOpen.value = false
+      await vi.advanceTimersByTimeAsync(5000)
+
+      const targetAfterCancel = api.orderedSavedSchemas.value.find(schema => schema.id === overwriteTarget.id)
+
+      expect(targetAfterCancel?.text).toBe(overwriteTarget.text)
+      expect(api.currentSchemaName.value).toBe(activeSchema.name)
+      expect(api.schemaDialogName.value).toBe(null)
+      return
+    }
+
+    await expect(api.saveSchemaToBrowser()).resolves.toBe(true)
+
+    const targetAfterSave = api.orderedSavedSchemas.value.find(schema => schema.id === overwriteTarget.id)
+
+    expect(targetAfterSave?.text).toContain('changed text')
+  })
+
+  it('creates a separate save slot when Save as new is selected, even with the same schema name', async () => {
+    const existingSchema = {
+      id: 'existing-schema',
+      name: 'Shared name',
+      text: 'Table public.original {\n  id uuid [pk]\n}',
+      updatedAt: '2026-03-20T10:00:00.000Z'
+    }
+
+    window.localStorage.setItem('pgml-studio-schemas-v1', JSON.stringify([existingSchema]))
+
+    const source = ref(existingSchema.text)
+    let api!: ReturnType<typeof usePgmlStudioSchemas>
+
+    await mountSuspended(defineComponent({
+      setup() {
+        api = usePgmlStudioSchemas({
+          buildSchemaText: () => source.value,
+          canEmbedLayout: computed(() => true),
+          initialSource: '',
+          source
+        })
+
+        return () => null
+      }
+    }))
+
+    source.value = 'Table public.copy {\n  id uuid [pk]\n}'
+    api.openSchemaDialog('save')
+    api.clearSaveSchemaTarget()
+    await expect(api.saveSchemaToBrowser()).resolves.toBe(true)
+
+    expect(api.orderedSavedSchemas.value).toHaveLength(2)
+    expect(api.currentSchemaId.value).not.toBe(existingSchema.id)
+    expect(api.orderedSavedSchemas.value.find(schema => schema.id === existingSchema.id)?.text).toBe(existingSchema.text)
+    expect(api.orderedSavedSchemas.value.find(schema => schema.id === api.currentSchemaId.value)?.text).toContain('public.copy')
+  })
+
+  it('autosaves a new workspace into its own slot when another saved schema has the same name', async () => {
+    vi.useFakeTimers()
+
+    const existingSchema = {
+      id: 'existing-schema',
+      name: 'Example schema',
+      text: 'Table public.original {\n  id uuid [pk]\n}',
+      updatedAt: '2026-03-20T10:00:00.000Z'
+    }
+
+    window.localStorage.setItem('pgml-studio-schemas-v1', JSON.stringify([existingSchema]))
+
+    const source = ref('Table public.new_schema {\n  id uuid [pk]\n}')
+    let api!: ReturnType<typeof usePgmlStudioSchemas>
+
+    await mountSuspended(defineComponent({
+      setup() {
+        api = usePgmlStudioSchemas({
+          buildSchemaText: () => source.value,
+          canEmbedLayout: computed(() => true),
+          initialSource: '',
+          restoreLatestOnSetup: false,
+          source
+        })
+
+        return () => null
+      }
+    }))
+
+    source.value = 'Table public.new_schema {\n  id uuid [pk]\n  changed text\n}'
+    await vi.advanceTimersByTimeAsync(5000)
+
+    expect(api.orderedSavedSchemas.value).toHaveLength(2)
+    expect(api.currentSchemaId.value).not.toBe(existingSchema.id)
+    expect(api.orderedSavedSchemas.value.find(schema => schema.id === existingSchema.id)?.text).toBe(existingSchema.text)
+  })
+
   it('downloads, loads, and deletes schemas while keeping the current selection in sync', async () => {
     const source = ref('Table public.users {\n  id uuid [pk]\n}')
     let api!: ReturnType<typeof usePgmlStudioSchemas>
@@ -123,7 +262,7 @@ describe('usePgmlStudioSchemas', () => {
     }))
 
     api.openSchemaDialog('save')
-    api.currentSchemaName.value = 'Primary schema'
+    api.schemaDialogName.value = 'Primary schema'
     await expect(api.saveSchemaToBrowser()).resolves.toBe(true)
 
     const savedSchema = api.orderedSavedSchemas.value[0]
