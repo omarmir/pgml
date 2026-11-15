@@ -1,4 +1,5 @@
 import type { PgmlExportArtifact } from './pgml-export'
+import { formatPgmlIndexKeyForSource, formatPgmlIndexKeyForSql, getPgmlIndexKeys } from './pgml-index-keys'
 import {
   getNormalizedPgmlColumnDefaultModifierValue,
   normalizePgmlColumnModifiers
@@ -347,7 +348,9 @@ const buildCreateTableStatement = (table: PgmlTable) => {
 }
 
 const buildCreateIndexStatement = (tableId: string, index: PgmlIndex) => {
-  return `CREATE INDEX ${quoteSqlIdentifier(index.name)} ON ${formatQualifiedSqlName(tableId)} USING ${index.type || 'btree'} (${formatSqlIdentifierList(index.columns)});`
+  const keys = getPgmlIndexKeys(index).map(formatPgmlIndexKeyForSql)
+
+  return `CREATE INDEX ${quoteSqlIdentifier(index.name)} ON ${formatQualifiedSqlName(tableId)} USING ${index.type || 'btree'} (${keys.join(', ')});`
 }
 
 const buildCreateReferenceStatement = (reference: PgmlReference) => {
@@ -652,7 +655,7 @@ const isImplicitSerialSequenceOnlyDiff = (input: {
 
 const normalizeIndexForCompare = (index: PgmlIndex) => {
   return {
-    columns: index.columns,
+    columns: getPgmlIndexKeys(index).map(formatPgmlIndexKeyForSource),
     name: index.name,
     type: index.type
   }

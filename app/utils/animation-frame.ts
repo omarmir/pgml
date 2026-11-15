@@ -10,6 +10,9 @@ export type AnimationFrameBatcher = {
   schedule: (task: () => void) => void
 }
 
+type FrameState = { kind: 'idle' }
+  | { kind: 'scheduled', handle: number, task: () => void }
+
 export const createAnimationFrameBatcher = (
   options: AnimationFrameBatcherOptions = {}
 ): AnimationFrameBatcher => {
@@ -21,56 +24,66 @@ export const createAnimationFrameBatcher = (
     || (typeof globalThis.cancelAnimationFrame === 'function'
       ? globalThis.cancelAnimationFrame.bind(globalThis)
       : null)
-  let frameHandle: number | null = null
-  let pendingTask: (() => void) | null = null
-
-  const runPendingTask = () => {
-    const task = pendingTask
-
-    pendingTask = null
-    task?.()
-  }
+  let state: FrameState = { kind: 'idle' }
 
   const flush = () => {
-    if (frameHandle !== null && cancelFrame) {
-      cancelFrame(frameHandle)
+    if (state.kind === 'idle') {
+      return
     }
 
-    frameHandle = null
-    runPendingTask()
+    const pending = state
+    state = { kind: 'idle' }
+
+    if (cancelFrame) {
+      cancelFrame(pending.handle)
+    }
+
+    pending.task()
   }
 
   const schedule = (task: () => void) => {
-    pendingTask = task
-
     if (!requestFrame || !cancelFrame) {
-      flush()
+      task()
       return
     }
 
-    if (frameHandle !== null) {
+    if (state.kind === 'scheduled') {
+      state.task = task
       return
     }
 
-    frameHandle = requestFrame(() => {
-      frameHandle = null
-      runPendingTask()
-    })
+    const pending: Extract<FrameState, { kind: 'scheduled' }> = {
+      kind: 'scheduled',
+      handle: requestFrame(() => {
+        if (state !== pending) {
+          return
+        }
+
+        state = { kind: 'idle' }
+        pending.task()
+      }),
+      task
+    }
+    state = pending
   }
 
   const cancel = () => {
-    if (frameHandle !== null && cancelFrame) {
-      cancelFrame(frameHandle)
+    if (state.kind === 'idle') {
+      return
     }
 
-    frameHandle = null
-    pendingTask = null
+    const pending = state
+    state = { kind: 'idle' }
+
+    if (cancelFrame) {
+      cancelFrame(pending.handle)
+    }
   }
 
   return {
     cancel,
     flush,
-    isPending: () => pendingTask !== null,
+    isPending: () => state.kind === 'scheduled',
     schedule
   }
 }

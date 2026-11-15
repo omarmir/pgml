@@ -1,7 +1,12 @@
+import { readBalancedSection, splitTopLevelSqlList } from './sql-scan'
 import {
   normalizePgmlCompatSource,
-  parsePgmlCompatibleReference
+  parseDbmlCompatibleIndexDefinition,
+  parsePgmlInlineIndexDefinition,
+  parsePgmlCompatibleReference,
+  splitTrailingBracketOptions
 } from './pgml-dbml-compat'
+import { foldPgmlIndexKeyIdentifiers, formatPgmlIndexKeyForSource, parsePgmlIndexKeys, type PgmlIndexKey } from './pgml-index-keys'
 import { normalizePgmlColumnModifiers } from './pgml-column-modifiers'
 import { normalizePgmlTypeExpression } from './pgml-types'
 
@@ -139,147 +144,6 @@ export const normalizeImportedTableColumnReference = (
   }
 
   return normalizeImportedIdentifier(value, options)
-}
-
-const splitTopLevelList = (value: string) => {
-  const entries: string[] = []
-  let current = ''
-  let curlyDepth = 0
-  let roundDepth = 0
-  let squareDepth = 0
-  let doubleQuoted = false
-  let singleQuoted = false
-  let dollarQuoted: string | null = null
-
-  for (let index = 0; index < value.length; index += 1) {
-    const character = value[index] || ''
-    const nextCharacter = value[index + 1] || ''
-
-    if (dollarQuoted) {
-      if (value.startsWith(dollarQuoted, index)) {
-        current += dollarQuoted
-        index += dollarQuoted.length - 1
-        dollarQuoted = null
-        continue
-      }
-
-      current += character
-      continue
-    }
-
-    if (singleQuoted) {
-      current += character
-
-      if (character === '\'' && nextCharacter === '\'') {
-        current += nextCharacter
-        index += 1
-        continue
-      }
-
-      if (character === '\'') {
-        singleQuoted = false
-      }
-
-      continue
-    }
-
-    if (doubleQuoted) {
-      current += character
-
-      if (character === '"' && nextCharacter === '"') {
-        current += nextCharacter
-        index += 1
-        continue
-      }
-
-      if (character === '"') {
-        doubleQuoted = false
-      }
-
-      continue
-    }
-
-    if (character === '\'') {
-      singleQuoted = true
-      current += character
-      continue
-    }
-
-    if (character === '"') {
-      doubleQuoted = true
-      current += character
-      continue
-    }
-
-    if (character === '$') {
-      const remainder = value.slice(index)
-      const match = remainder.match(/^\$[A-Za-z0-9_]*\$/u)
-
-      if (match) {
-        dollarQuoted = match[0]
-        current += dollarQuoted
-        index += dollarQuoted.length - 1
-        continue
-      }
-    }
-
-    if (character === '(') {
-      roundDepth += 1
-      current += character
-      continue
-    }
-
-    if (character === ')') {
-      roundDepth = Math.max(0, roundDepth - 1)
-      current += character
-      continue
-    }
-
-    if (character === '[') {
-      squareDepth += 1
-      current += character
-      continue
-    }
-
-    if (character === ']') {
-      squareDepth = Math.max(0, squareDepth - 1)
-      current += character
-      continue
-    }
-
-    if (character === '{') {
-      curlyDepth += 1
-      current += character
-      continue
-    }
-
-    if (character === '}') {
-      curlyDepth = Math.max(0, curlyDepth - 1)
-      current += character
-      continue
-    }
-
-    if (character === ',' && roundDepth === 0 && squareDepth === 0 && curlyDepth === 0) {
-      const entry = current.trim()
-
-      if (entry.length > 0) {
-        entries.push(entry)
-      }
-
-      current = ''
-      continue
-    }
-
-    current += character
-  }
-
-  const trailingEntry = current.trim()
-
-  if (trailingEntry.length > 0) {
-    entries.push(trailingEntry)
-  }
-
-  return entries
 }
 
 const findSourceDelimiter = (line: string) => {
@@ -451,7 +315,7 @@ const normalizeTableGroupLine = (
       return trimmedVisibleLine
     }
 
-    const normalizedEntries = splitTopLevelList(listMatch[1] || '').map((entry) => {
+    const normalizedEntries = splitTopLevelSqlList(listMatch[1] || '').map((entry) => {
       return normalizeImportedQualifiedName(entry, options)
     })
 
@@ -461,26 +325,53 @@ const normalizeTableGroupLine = (
   return normalizeImportedQualifiedName(trimmedVisibleLine.replace(/,$/u, ''), options)
 }
 
+const normalizeIndexKeys = (keys: readonly PgmlIndexKey[], options: PgmlImportIdentifierNormalizationOptions) => {
+  return keys.map((key) => {
+    return formatPgmlIndexKeyForSource(options.foldIdentifiersToLowercase ? foldPgmlIndexKeyIdentifiers(key) : key)
+  }).join(', ')
+}
+
 const normalizeIndexLine = (
   trimmedVisibleLine: string,
   options: PgmlImportIdentifierNormalizationOptions
 ) => {
-  const indexMatch = trimmedVisibleLine.match(/^Index\s+([^\s(]+)\s*\(([^)]*)\)(?:\s+\[([^\]]+)\])?$/u)
+  const indexDefinition = parsePgmlInlineIndexDefinition(trimmedVisibleLine)
 
-  if (!indexMatch) {
+  if (!indexDefinition) {
     return trimmedVisibleLine
   }
 
-  const indexName = normalizeImportedIdentifier(indexMatch[1] || '', options)
-  const normalizedColumns = splitTopLevelList(indexMatch[2] || '').map((entry) => {
-    return normalizeImportedIdentifier(entry, options)
-  })
+  const indexName = normalizeImportedIdentifier(indexDefinition.name, options)
+  const normalizedColumns = normalizeIndexKeys(indexDefinition.keys, options)
 
-  if (!indexMatch[3]) {
-    return `Index ${indexName} (${normalizedColumns.join(', ')})`
+  const indexOptions = indexDefinition.options === null ? '' : ` [${indexDefinition.options}]`
+
+  return `Index ${indexName} (${normalizedColumns})${indexOptions}`
+}
+
+const normalizeGroupedIndexLine = (value: string, options: PgmlImportIdentifierNormalizationOptions) => {
+  if (value.startsWith('(')) {
+    const section = readBalancedSection(value, 0)
+
+    return section
+      ? `(${normalizeIndexKeys(parsePgmlIndexKeys(section.content), options)})${value.slice(section.endIndex + 1)}`
+      : value
   }
 
-  return `Index ${indexName} (${normalizedColumns.join(', ')}) [${indexMatch[3]}]`
+  if (value === '}' || value.startsWith('//')) {
+    return value
+  }
+
+  const definition = parseDbmlCompatibleIndexDefinition(value)
+
+  if (!definition) {
+    return value
+  }
+
+  const parsedValue = splitTrailingBracketOptions(value)
+  const suffix = parsedValue.options === null ? '' : ` [${parsedValue.options}]`
+
+  return `${normalizeIndexKeys(definition.keys, options)}${suffix}`
 }
 
 const normalizeColumnModifier = (
@@ -516,7 +407,7 @@ const normalizeTableColumnLine = (
   }
 
   const normalizedModifiers = normalizePgmlColumnModifiers(
-    splitTopLevelList(columnMatch[3] || '').map((modifier) => {
+    splitTopLevelSqlList(columnMatch[3] || '').map((modifier) => {
       return normalizeColumnModifier(modifier, options)
     })
   )
@@ -765,6 +656,7 @@ export const canonicalizePgmlSource = (
   let currentBlockKind: PgmlImportBlockKind | null = null
   let depth = 0
   let sourceDelimiter: string | null = null
+  let tableIndexes: { depth: number, entry: 'start' | 'continuation' } | null = null
 
   originalLines.forEach((originalLine, index) => {
     const visibleLine = visibleLines[index] || ''
@@ -789,10 +681,20 @@ export const canonicalizePgmlSource = (
         nextVisibleContent = normalizeTopLevelHeader(trimmedVisibleLine, customTypeLookup, options)
       }
     } else if (depth === 1 && currentBlockKind === 'Table') {
-      if (trimmedVisibleLine.startsWith('Index ')) {
+      if (/^Indexes\s*\{$/iu.test(trimmedVisibleLine)) {
+        tableIndexes = { depth: depth + 1, entry: 'start' }
+      } else if (trimmedVisibleLine.startsWith('Index ')) {
         nextVisibleContent = normalizeIndexLine(trimmedVisibleLine, options)
       } else if (!trimmedVisibleLine.startsWith('Constraint ') && !trimmedVisibleLine.startsWith('Note:')) {
         nextVisibleContent = normalizeTableColumnLine(trimmedVisibleLine, customTypeLookup, options)
+      }
+    } else if (tableIndexes !== null && depth === tableIndexes.depth) {
+      if (tableIndexes.entry === 'start') {
+        nextVisibleContent = normalizeGroupedIndexLine(trimmedVisibleLine, options)
+      }
+
+      if ((trimmedVisibleLine.match(/`/gu) || []).length % 2 === 1) {
+        tableIndexes.entry = tableIndexes.entry === 'start' ? 'continuation' : 'start'
       }
     } else if (depth === 1 && currentBlockKind === 'TableGroup') {
       nextVisibleContent = normalizeTableGroupLine(trimmedVisibleLine, options)
@@ -825,6 +727,10 @@ export const canonicalizePgmlSource = (
     depth += (trimmedVisibleLine.match(/\{/g) || []).length
     depth -= (trimmedVisibleLine.match(/\}/g) || []).length
     depth = Math.max(depth, 0)
+
+    if (tableIndexes !== null && depth < tableIndexes.depth) {
+      tableIndexes = null
+    }
 
     if (depth === 0) {
       currentBlockKind = null

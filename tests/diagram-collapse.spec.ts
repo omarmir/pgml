@@ -54,7 +54,7 @@ test('studio attaches table-scoped rows to tables and still lets floating nodes 
 
   expect(expandedHeight).toBeGreaterThan(initialHeight + 40)
 
-  await page.getByRole('button', { name: 'Collapse email_address' }).click()
+  await page.getByRole('button', { name: 'Collapse public.email_address' }).click()
   await expect(page.locator('[data-node-body="custom-type:Domain:public.email_address"]')).toHaveCount(0)
 
   const collapsedHeight = await customTypeNode.evaluate((element) => {

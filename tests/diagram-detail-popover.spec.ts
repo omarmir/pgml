@@ -222,12 +222,12 @@ test('procedure attachment popovers render dedented source previews', async ({ g
 
   await page.locator('[data-diagram-panel-tab="entities"]').click()
 
-  const procedureRow = page.locator('[data-browser-entity-row="procedure:archive_orders"] button').first()
+  const procedureRow = page.locator('[data-browser-entity-row="procedure:public.archive_orders"] button').first()
 
   await expect(procedureRow).toBeVisible()
   await procedureRow.click()
 
-  const popover = page.locator('[data-attachment-popover="procedure:archive_orders"]')
+  const popover = page.locator('[data-attachment-popover="procedure:public.archive_orders"]')
   const sourceDetail = popover
     .locator('[data-detail-popover-detail="true"]')
     .filter({ hasText: 'CREATE OR REPLACE PROCEDURE public.archive_orders(retention_days integer)' })
@@ -415,6 +415,15 @@ Function orphan_report() {
   await expect(popover.locator('[data-detail-popover-metadata-editor="true"]')).toBeVisible()
   await expect(popover).toContainText('Language')
 
+  await popover.locator('[data-detail-metadata-summary="true"]').fill('Discarded summary')
+  await popover.locator('[data-detail-popover-cancel-source="true"]').click()
+  await expect(popover.locator('[data-detail-popover-metadata-editor="true"]')).toHaveCount(0)
+  await popover.locator('[data-detail-popover-edit-source="true"]').click()
+  await expect(popover.locator('[data-detail-popover-source-editor="true"]')).toBeVisible()
+  await expect(popover.locator('[data-detail-popover-metadata-editor="true"]')).toHaveCount(0)
+  await popover.locator('[data-detail-popover-cancel-source="true"]').click()
+  await popover.locator('[data-detail-popover-edit-metadata="true"]').click()
+  await expect(popover.locator('[data-detail-metadata-summary="true"]')).not.toHaveValue('Discarded summary')
   await popover.locator('[data-detail-metadata-summary="true"]').fill('Orphan report summary')
   await expect(popover.locator('[data-detail-popover-apply-metadata="true"]')).toContainText('Apply metadata')
   await popover.locator('[data-detail-popover-apply-metadata="true"]').click()
@@ -445,7 +454,44 @@ test('index popovers expose structured metadata controls in the popup editor', a
   await popover.locator('[data-detail-popover-edit-metadata="true"]').click()
   await expect(popover.locator('[data-detail-popover-metadata-editor="true"]')).toBeVisible()
   await expect(popover).toContainText('Index type')
-  await expect(popover.locator('input[placeholder="Column name"]')).toHaveCount(1)
+  await expect(popover.locator('input[placeholder="Column or SQL expression"]')).toHaveCount(1)
+})
+
+test('index key identity survives popup metadata edits and reopening', async ({ goto, page }) => {
+  await goto('/diagram')
+
+  const mainEditor = getPgmlEditor(page).first()
+
+  await setPgmlEditorValue(mainEditor, `Table public.users {
+  email text
+  "DisplayEmail" text
+  "lower(email)" text
+  Index users_keys_idx (coalesce(email, 'a,b'), "lower(email)", lower("DisplayEmail"), \`length(email) + 1\`) [type: btree]
+}`)
+  await page.locator('[data-diagram-panel-tab="entities"]').click()
+  await page.locator('[data-entity-search="true"]').fill('users_keys_idx')
+  await page.locator('[data-browser-entity-row="index:users_keys_idx"] button').first().press('Enter')
+
+  const popover = page.locator('[data-attachment-popover="index:users_keys_idx"]')
+
+  await expect(popover).toBeVisible()
+  await popover.locator('[data-detail-popover-edit-metadata="true"]').click()
+  const keys = popover.locator('[data-detail-metadata-index-column="true"]')
+
+  await expect(keys).toHaveCount(4)
+  await expect(keys.nth(0)).toHaveValue('coalesce(email, \'a,b\')')
+  await expect(keys.nth(1)).toHaveValue('"lower(email)"')
+  await expect(keys.nth(2)).toHaveValue('lower("DisplayEmail")')
+  await expect(keys.nth(3)).toHaveValue('`length(email) + 1`')
+  await expect(keys.nth(3)).toHaveAttribute('aria-label', 'Index key 4')
+  await keys.nth(0).fill('coalesce(email, \'a  b\')')
+  await popover.locator('[data-detail-popover-apply-metadata="true"]').click()
+  await expect.poll(() => readPgmlEditorValue(mainEditor)).toContain('coalesce(email, \'a  b\'), "lower(email)", lower("DisplayEmail"), `length(email) + 1`')
+  await popover.locator('[data-detail-popover-edit-metadata="true"]').click()
+  await expect(keys.nth(0)).toHaveValue('coalesce(email, \'a  b\')')
+  await expect(keys.nth(1)).toHaveValue('"lower(email)"')
+  await expect(keys.nth(2)).toHaveValue('lower("DisplayEmail")')
+  await expect(keys.nth(3)).toHaveValue('`length(email) + 1`')
 })
 
 test('metadata popover stays within the desktop canvas chrome and remains closable while scrolling internally', async ({ goto, page }) => {

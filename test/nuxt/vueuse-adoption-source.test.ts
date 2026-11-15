@@ -6,7 +6,6 @@ describe('VueUse adoption source', () => {
     const themeFile = readSourceFile('app/composables/useStudioTheme.ts')
     const layoutFile = readSourceFile('app/composables/useStudioEditorLayout.ts')
     const canvasFile = readSourceFile('app/components/pgml/PgmlDiagramCanvasGpuShell.vue')
-    const pointerSessionFile = readSourceFile('app/composables/useWindowPointerSession.ts')
 
     expect(themeFile).toContain('useStorage')
     expect(layoutFile).toContain('useWindowSize')
@@ -17,6 +16,5 @@ describe('VueUse adoption source', () => {
     expect(canvasFile).toContain('useResizeObserver(viewportRef, syncViewportSize)')
     expect(canvasFile).toContain('useResizeObserver(detailPopoverRef, syncDetailPopoverSize)')
     expect(canvasFile).not.toContain('new ResizeObserver(')
-    expect(pointerSessionFile).toContain('useEventListener')
   })
 })

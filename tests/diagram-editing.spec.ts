@@ -8,6 +8,7 @@ import {
   setPgmlEditorValue
 } from './helpers/pgml-editor'
 import { authorizeStudioLaunchAccess } from './helpers/studio-launch'
+import { openTableEditorFromInspector } from './helpers/diagram-editor'
 
 test.setTimeout(120_000)
 
@@ -19,7 +20,7 @@ test('table edit modal can rename a table and add a new grouped table', async ({
   await goto('/diagram')
   const editor = getPgmlEditor(page)
 
-  await page.locator('[data-table-edit-button="public.users"]').click()
+  await openTableEditorFromInspector(page, 'public.users')
   await page.locator('[data-table-editor-name="true"]').fill('accounts')
   await expect(page.locator('[data-table-editor-save="true"]')).toBeVisible()
   await page.locator('[data-table-editor-save="true"]').dispatchEvent('click')
@@ -144,7 +145,7 @@ test('group editor can create and rename table groups from the diagram canvas', 
   await expect.poll(async () => readPgmlEditorValue(editor)).toMatch(/TableGroup Billing \{\n {2}Note: Invoices and payouts\n\}/)
   await expect(page.locator('[data-node-anchor="group:Billing"]')).toBeVisible()
 
-  await page.locator('[data-browser-group-edit="Billing"]').click()
+  await page.locator('[data-group-edit-button="Billing"]').click()
   await page.locator('[data-group-editor-name="true"]').fill('BillingOps')
   await page.locator('[data-group-editor-note="true"]').fill('Revenue operations and settlement.')
   await expect(page.locator('[data-group-editor-save="true"]')).toBeVisible()
@@ -180,6 +181,7 @@ Table public.orders {
   id uuid [pk]
 }`)
 
+  await page.locator('[data-diagram-panel-tab="entities"]').click()
   await page.locator('[data-diagram-panel-tab="entities"]').click()
   await page.locator('[data-browser-group-edit="Core"]').click()
 
@@ -286,7 +288,7 @@ Table public.audit_entries {
 test('table edit modal autocompletes default values from the column type', async ({ goto, page }) => {
   await goto('/diagram')
 
-  await page.locator('[data-table-edit-button="public.users"]').click()
+  await openTableEditorFromInspector(page, 'public.users')
 
   const displayNameColumn = page.locator('[data-table-editor-column]').filter({ hasText: 'display_name' })
   const columnTypeInput = displayNameColumn.getByLabel('Column type', { exact: true })
@@ -305,10 +307,30 @@ test('table edit modal autocompletes default values from the column type', async
   await expect(page.getByText(/^true$/)).toBeVisible()
 })
 
+test('wide table modal keeps header and footer controls inside the viewport', async ({ goto, page }) => {
+  await goto('/diagram')
+  await openTableEditorFromInspector(page, 'public.users')
+  const surface = page.locator('[data-studio-modal-surface="table-editor"]')
+  for (const viewport of [{ width: 1280, height: 800 }, { width: 1024, height: 640 }]) {
+    await page.setViewportSize(viewport)
+    await expect.poll(() => surface.evaluate((element) => {
+      const box = element.getBoundingClientRect()
+      const buttons = Array.from(element.querySelectorAll('button')).filter(button => button.textContent?.trim() === 'Cancel' || button.getAttribute('aria-label') === 'Close')
+      return box.left >= 0 && box.right <= window.innerWidth && box.top >= 0 && box.bottom <= window.innerHeight
+        && buttons.every((button) => {
+          const rect = button.getBoundingClientRect()
+          return rect.left >= 0 && rect.right <= window.innerWidth && rect.top >= 0 && rect.bottom <= window.innerHeight
+        })
+    })).toBe(true)
+  }
+  await surface.getByRole('button', { name: 'Cancel', exact: true }).click()
+  await expect(surface).toHaveCount(0)
+})
+
 test('table edit modal keeps its content mounted until close animation finishes', async ({ goto, page }) => {
   await goto('/diagram')
 
-  await page.locator('[data-table-edit-button="public.users"]').click()
+  await openTableEditorFromInspector(page, 'public.users')
   await expect(page.locator('[data-table-editor-name="true"]')).toBeVisible()
 
   await page.evaluate(() => {
@@ -356,7 +378,7 @@ test('table edit modal keeps its content mounted until close animation finishes'
 
   const tableEditorSurface = page.locator('[data-studio-modal-surface="table-editor"]')
 
-  await tableEditorSurface.getByRole('button', { name: 'Cancel', exact: true }).click()
+  await tableEditorSurface.getByRole('button', { name: 'Close', exact: true }).click()
   await expect(tableEditorSurface).toHaveCount(0)
 
   const sawSurfaceWithoutField = await page.evaluate(() => {
@@ -387,7 +409,7 @@ test('table edit modal explains relationship direction and uses searchable refer
 
   const editor = getPgmlEditor(page)
 
-  await page.locator('[data-table-edit-button="public.users"]').click()
+  await openTableEditorFromInspector(page, 'public.users')
 
   const roleIdColumn = page.locator('[data-table-editor-column]').filter({ hasText: 'role_id' })
   const relationDirection = roleIdColumn.getByLabel('Relationship direction', { exact: true })
@@ -438,7 +460,7 @@ Table public.orders {
 }`)
   await expect(page.locator('[data-pgml-diagnostics="true"]')).toHaveCount(0)
 
-  await page.locator('[data-table-edit-button="public.orders"]').click()
+  await openTableEditorFromInspector(page, 'public.orders')
 
   const customerIdColumn = page.locator('[data-table-editor-column]').filter({ hasText: 'customer_id' })
   const onDelete = customerIdColumn.getByLabel('Reference on delete action', { exact: true })
@@ -939,25 +961,26 @@ Table public.audit_entries {
 test('relationship lines can be hidden and restored from the bottom toolbar', async ({ goto, page }) => {
   await goto('/diagram')
 
-  const relationshipLinesToggle = page.locator('[data-relationship-lines-toggle="true"]')
   const connectionPaths = page.locator('[data-connection-layer="true"] path')
+  const setRelationshipVisibility = async (visible: boolean) => {
+    await page.locator('[data-diagram-view-settings="desktop"]').click()
+    const toggle = page.getByRole('switch', { name: /^Relationship lines(\s|$)/ })
 
-  await expect(relationshipLinesToggle).toHaveAttribute('aria-pressed', 'true')
+    await expect(toggle).toHaveAttribute('aria-checked', visible ? 'false' : 'true')
+    await toggle.click()
+    await expect(toggle).toHaveAttribute('aria-checked', visible ? 'true' : 'false')
+    await page.locator('[data-diagram-view-settings-save="true"]').click()
+    await expect(page.locator('[data-diagram-view-settings-dialog="true"]')).toHaveCount(0)
+  }
+
   await expect(connectionPaths.first()).toBeVisible()
-
   const initialPathCount = await connectionPaths.count()
 
   expect(initialPathCount).toBeGreaterThan(0)
-
-  await relationshipLinesToggle.click()
-
-  await expect(relationshipLinesToggle).toHaveAttribute('aria-pressed', 'false')
-  await expect.poll(async () => page.locator('[data-connection-layer="true"] path').count()).toBe(0)
-
-  await relationshipLinesToggle.click()
-
-  await expect(relationshipLinesToggle).toHaveAttribute('aria-pressed', 'true')
-  await expect.poll(async () => page.locator('[data-connection-layer="true"] path').count()).toBe(initialPathCount)
+  await setRelationshipVisibility(false)
+  await expect.poll(() => connectionPaths.count()).toBe(0)
+  await setRelationshipVisibility(true)
+  await expect.poll(() => connectionPaths.count()).toBe(initialPathCount)
 })
 
 test('connection routing stays stable when zoom changes', async ({ goto, page }) => {
@@ -1046,7 +1069,12 @@ test('canvas interactions keep the PGML editor source in sync', async ({ goto, p
   await expect.poll(async () => readPgmlEditorValue(editor)).toMatch(/Properties "group:Core" \{[\s\S]*masonry: true/)
 
   await masonrySwitch.click()
-  await expect.poll(async () => readPgmlEditorValue(editor)).not.toContain('masonry: true')
+  await expect.poll(async () => {
+    const value = await readPgmlEditorValue(editor)
+    const coreProperties = value.match(/Properties "group:Core" \{([^}]*)\}/)
+
+    return coreProperties === null ? null : coreProperties[1]
+  }).toEqual(expect.not.stringContaining('masonry: true'))
 
   const coreHeader = page.locator('[data-node-header="group:Core"]')
   const headerBox = await coreHeader.boundingBox()
@@ -1072,7 +1100,7 @@ test('canvas interactions keep the PGML editor source in sync', async ({ goto, p
   const customTypeNode = page.locator('[data-node-anchor="custom-type:Domain:public.email_address"]')
   const customTypeHeader = page.locator('[data-node-header="custom-type:Domain:public.email_address"]')
 
-  await page.getByRole('button', { name: 'Expand email_address' }).click()
+  await page.getByRole('button', { name: 'Expand public.email_address' }).click()
 
   const customTypeHeaderBox = await customTypeHeader.boundingBox()
 
@@ -1303,7 +1331,7 @@ test('double clicking entity panel items focuses the matching PGML source block'
   await expect.poll(async () => {
     return readEditorState()
   }).toEqual(expect.objectContaining({
-    selectedText: expect.stringContaining('email email_address')
+    selectedText: expect.stringContaining('email public.email_address')
   }))
 
   await resetEditorState()
@@ -1312,14 +1340,14 @@ test('double clicking entity panel items focuses the matching PGML source block'
     return readEditorState()
   }).toEqual(expect.objectContaining({
     scrollTop: expect.any(Number),
-    selectedText: expect.stringContaining('Domain email_address {')
+    selectedText: expect.stringContaining('Domain public.email_address {')
   }))
 })
 
 test('dragging a group or custom type preserves the current zoom and pan', async ({ goto, page }) => {
   await goto('/diagram')
 
-  await page.getByRole('button', { name: 'Expand email_address' }).click()
+  await page.getByRole('button', { name: 'Expand public.email_address' }).click()
 
   const plane = page.locator('[data-diagram-plane="true"]')
   const viewport = page.locator('[data-diagram-viewport="true"]')

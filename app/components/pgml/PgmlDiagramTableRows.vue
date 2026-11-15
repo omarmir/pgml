@@ -92,8 +92,8 @@ const emit = defineEmits<{
   attachmentDoubleClick: [attachment: TableAttachment]
 }>()
 
-const columnModifierBadgeClass = 'inline-flex h-4 shrink-0 items-center justify-end border border-[color:var(--studio-rail)] px-1 font-mono text-[0.48rem] uppercase leading-none tracking-[0.04em] whitespace-nowrap text-[color:var(--studio-shell-muted)]'
-const columnRowClass = 'relative grid min-w-0 grid-cols-[minmax(0,1fr)_auto] items-start gap-x-2 gap-y-0.5 bg-[color:var(--studio-row-surface)] px-2 py-1.5'
+const columnModifierBadgeClass = 'inline-flex h-3 shrink-0 items-center justify-end border border-[color:var(--studio-rail)] px-1 font-mono text-[0.48rem] uppercase leading-none tracking-[0.04em] whitespace-nowrap text-[color:var(--studio-shell-muted)]'
+const columnRowClass = 'relative grid min-w-0 grid-cols-[minmax(0,1fr)_auto] grid-rows-[12px_12px] items-start gap-x-2 gap-y-px bg-[color:var(--studio-row-surface)] px-2 py-0.5'
 const columnModifierRowClass = 'flex max-w-[8.5rem] shrink-0 items-start justify-end gap-0.5 overflow-hidden text-right'
 const attachmentButtonClass = 'relative flex min-w-0 w-full items-start justify-between gap-2 px-2 py-1.5 text-left transition-[filter,transform] duration-150 hover:brightness-105'
 const attachmentKindBadgeClass = 'mt-0.5 inline-flex h-4 shrink-0 items-center border px-1 font-mono text-[0.48rem] uppercase tracking-[0.06em]'
@@ -154,13 +154,13 @@ const handleAttachmentDoubleClick = (attachment: TableAttachment) => {
       <strong
         :data-column-label-anchor="getColumnLabelAnchorKey(tableId, row.column.name)"
         data-table-row-title
-        class="col-span-2 block truncate font-mono text-[0.68rem] font-medium text-[color:var(--studio-shell-text)]"
+        class="col-span-2 block truncate font-mono text-[0.68rem] font-medium leading-3 text-[color:var(--studio-shell-text)]"
       >
         {{ row.column.name }}
       </strong>
       <span
         data-table-row-subtitle
-        class="block min-w-0 truncate text-[0.64rem] text-[color:var(--studio-shell-muted)]"
+        class="block min-w-0 truncate text-[0.64rem] leading-3 text-[color:var(--studio-shell-muted)]"
       >
         {{ row.column.type }}
       </span>

@@ -1,3 +1,4 @@
+import { useStudioSessionStore } from '~/stores/studio-session'
 import {
   createDefaultPgmlCompareEntityFilters,
   createDefaultPgmlCompareNoteFilters,
@@ -22,31 +23,9 @@ const studioWorkspaceStateKeys = Object.freeze({
   compareNoteFilters: 'studio-workspace-compare-note-filters-v1',
   compareNoiseFilters: 'studio-workspace-compare-noise-filters-v1',
   compareTargetId: 'studio-workspace-compare-target-id-v1',
-  computerFileId: 'studio-workspace-computer-file-id-v1',
-  computerFileName: 'studio-workspace-computer-file-name-v1',
-  computerFileSaveError: 'studio-workspace-computer-file-save-error-v1',
-  computerFileSnapshot: 'studio-workspace-computer-file-snapshot-v1',
-  computerFileUpdatedAt: 'studio-workspace-computer-file-updated-at-v1',
   documentEditorScope: 'studio-workspace-document-editor-scope-v1',
   editorMode: 'studio-workspace-editor-mode-v1',
-  gistFileName: 'studio-workspace-gist-file-name-v1',
-  gistFileSnapshot: 'studio-workspace-gist-file-snapshot-v1',
-  gistFileUpdatedAt: 'studio-workspace-gist-file-updated-at-v1',
-  gistId: 'studio-workspace-gist-id-v1',
-  gistSaveError: 'studio-workspace-gist-save-error-v1',
-  hasSavedComputerFileInSession: 'studio-workspace-has-saved-computer-file-in-session-v1',
-  hasSavedGistFileInSession: 'studio-workspace-has-saved-gist-file-in-session-v1',
-  hasSavedSchemaInSession: 'studio-workspace-has-saved-schema-in-session-v1',
-  isSavingToComputerFile: 'studio-workspace-is-saving-to-computer-file-v1',
-  isSavingToGistFile: 'studio-workspace-is-saving-to-gist-file-v1',
-  isSavingToLocalStorage: 'studio-workspace-is-saving-to-local-storage-v1',
-  localStorageSaveError: 'studio-workspace-local-storage-save-error-v1',
   previewTargetId: 'studio-workspace-preview-target-id-v1',
-  saveSchemaTargetId: 'studio-workspace-save-schema-target-id-v1',
-  schemaId: 'studio-workspace-schema-id-v1',
-  schemaName: 'studio-workspace-schema-name-v1',
-  schemaSnapshot: 'studio-workspace-schema-snapshot-v1',
-  schemaUpdatedAt: 'studio-workspace-schema-updated-at-v1',
   selectedComparisonId: 'studio-workspace-selected-comparison-id-v1',
   sessionInitialized: 'studio-workspace-session-initialized-v1',
   source: 'studio-workspace-source-v1',
@@ -104,78 +83,17 @@ export const useStudioWorkspaceVersionHistoryState = (defaults: {
   }
 }
 
-export const useStudioWorkspaceBrowserSchemaState = (defaults: {
-  isSavingToLocalStorage: boolean
-  name: string
-}) => {
-  return {
-    currentSchemaId: useStateWithDefault<string | null>(studioWorkspaceStateKeys.schemaId, () => null),
-    currentSchemaName: useStateWithDefault<string>(studioWorkspaceStateKeys.schemaName, () => defaults.name),
-    currentSchemaUpdatedAt: useStateWithDefault<string | null>(studioWorkspaceStateKeys.schemaUpdatedAt, () => null),
-    hasSavedSchemaInSession: useStateWithDefault<boolean>(studioWorkspaceStateKeys.hasSavedSchemaInSession, () => false),
-    isSavingToLocalStorage: useStateWithDefault<boolean>(studioWorkspaceStateKeys.isSavingToLocalStorage, () => defaults.isSavingToLocalStorage),
-    lastPersistedSnapshot: useStateWithDefault<string | null>(studioWorkspaceStateKeys.schemaSnapshot, () => null),
-    localStorageSaveError: useStateWithDefault<string | null>(studioWorkspaceStateKeys.localStorageSaveError, () => null),
-    saveSchemaTargetId: useStateWithDefault<string | null>(studioWorkspaceStateKeys.saveSchemaTargetId, () => null)
-  }
-}
-
-export const useStudioWorkspaceComputerFileState = () => {
-  return {
-    computerFileSaveError: useStateWithDefault<string | null>(studioWorkspaceStateKeys.computerFileSaveError, () => null),
-    currentComputerFileId: useStateWithDefault<string | null>(studioWorkspaceStateKeys.computerFileId, () => null),
-    currentComputerFileName: useStateWithDefault<string>(studioWorkspaceStateKeys.computerFileName, () => ''),
-    currentComputerFileUpdatedAt: useStateWithDefault<string | null>(studioWorkspaceStateKeys.computerFileUpdatedAt, () => null),
-    hasSavedComputerFileInSession: useStateWithDefault<boolean>(studioWorkspaceStateKeys.hasSavedComputerFileInSession, () => false),
-    isSavingToComputerFile: useStateWithDefault<boolean>(studioWorkspaceStateKeys.isSavingToComputerFile, () => false),
-    lastPersistedSnapshot: useStateWithDefault<string | null>(studioWorkspaceStateKeys.computerFileSnapshot, () => null)
-  }
-}
-
-export const useStudioWorkspaceGistFileState = () => {
-  return {
-    currentGistFileName: useStateWithDefault<string>(studioWorkspaceStateKeys.gistFileName, () => ''),
-    currentGistFileUpdatedAt: useStateWithDefault<string | null>(studioWorkspaceStateKeys.gistFileUpdatedAt, () => null),
-    currentGistId: useStateWithDefault<string | null>(studioWorkspaceStateKeys.gistId, () => null),
-    gistFileSaveError: useStateWithDefault<string | null>(studioWorkspaceStateKeys.gistSaveError, () => null),
-    hasSavedGistFileInSession: useStateWithDefault<boolean>(studioWorkspaceStateKeys.hasSavedGistFileInSession, () => false),
-    isSavingToGistFile: useStateWithDefault<boolean>(studioWorkspaceStateKeys.isSavingToGistFile, () => false),
-    lastPersistedSnapshot: useStateWithDefault<string | null>(studioWorkspaceStateKeys.gistFileSnapshot, () => null)
-  }
-}
-
 export const resetStudioWorkspaceState = () => {
+  useStudioSessionStore().resetPersistence()
   useState<string | null>(studioWorkspaceStateKeys.compareBaseId, () => null).value = null
   useState<PgmlCompareExclusions>(studioWorkspaceStateKeys.compareExclusions, createEmptyPgmlCompareExclusions).value = createEmptyPgmlCompareExclusions()
   useState<PgmlCompareEntityFilters>(studioWorkspaceStateKeys.compareEntityFilters, createDefaultPgmlCompareEntityFilters).value = createDefaultPgmlCompareEntityFilters()
   useState<PgmlCompareNoteFilters>(studioWorkspaceStateKeys.compareNoteFilters, createDefaultPgmlCompareNoteFilters).value = createDefaultPgmlCompareNoteFilters()
   useState<PgmlCompareNoiseFilters>(studioWorkspaceStateKeys.compareNoiseFilters, createDefaultPgmlCompareNoiseFilters).value = createDefaultPgmlCompareNoiseFilters()
   useState<string>(studioWorkspaceStateKeys.compareTargetId, () => 'workspace').value = 'workspace'
-  useState<string | null>(studioWorkspaceStateKeys.computerFileId, () => null).value = null
-  useState<string>(studioWorkspaceStateKeys.computerFileName, () => '').value = ''
-  useState<string | null>(studioWorkspaceStateKeys.computerFileSaveError, () => null).value = null
-  useState<string | null>(studioWorkspaceStateKeys.computerFileSnapshot, () => null).value = null
-  useState<string | null>(studioWorkspaceStateKeys.computerFileUpdatedAt, () => null).value = null
   useState<PgmlDocumentEditorScope>(studioWorkspaceStateKeys.documentEditorScope, () => 'all').value = 'all'
   useState<PgmlVersionedDocumentEditorMode>(studioWorkspaceStateKeys.editorMode, () => 'head').value = 'head'
-  useState<string>(studioWorkspaceStateKeys.gistFileName, () => '').value = ''
-  useState<string | null>(studioWorkspaceStateKeys.gistFileSnapshot, () => null).value = null
-  useState<string | null>(studioWorkspaceStateKeys.gistFileUpdatedAt, () => null).value = null
-  useState<string | null>(studioWorkspaceStateKeys.gistId, () => null).value = null
-  useState<string | null>(studioWorkspaceStateKeys.gistSaveError, () => null).value = null
-  useState<boolean>(studioWorkspaceStateKeys.hasSavedComputerFileInSession, () => false).value = false
-  useState<boolean>(studioWorkspaceStateKeys.hasSavedGistFileInSession, () => false).value = false
-  useState<boolean>(studioWorkspaceStateKeys.hasSavedSchemaInSession, () => false).value = false
-  useState<boolean>(studioWorkspaceStateKeys.isSavingToComputerFile, () => false).value = false
-  useState<boolean>(studioWorkspaceStateKeys.isSavingToGistFile, () => false).value = false
-  useState<boolean>(studioWorkspaceStateKeys.isSavingToLocalStorage, () => false).value = false
-  useState<string | null>(studioWorkspaceStateKeys.localStorageSaveError, () => null).value = null
   useState<PgmlVersionPreviewTarget>(studioWorkspaceStateKeys.previewTargetId, () => 'workspace').value = 'workspace'
-  useState<string | null>(studioWorkspaceStateKeys.saveSchemaTargetId, () => null).value = null
-  useState<string | null>(studioWorkspaceStateKeys.schemaId, () => null).value = null
-  useState<string>(studioWorkspaceStateKeys.schemaName, () => 'Untitled schema').value = 'Untitled schema'
-  useState<string | null>(studioWorkspaceStateKeys.schemaSnapshot, () => null).value = null
-  useState<string | null>(studioWorkspaceStateKeys.schemaUpdatedAt, () => null).value = null
   useState<string | null>(studioWorkspaceStateKeys.selectedComparisonId, () => null).value = null
   useState<boolean>(studioWorkspaceStateKeys.sessionInitialized, () => false).value = false
   useState<string>(studioWorkspaceStateKeys.source, () => '').value = ''

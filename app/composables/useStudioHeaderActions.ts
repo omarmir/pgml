@@ -14,17 +14,7 @@ export const useStudioHeaderActions = () => {
     }
   })
 
-  const setStudioHeaderActions = (nextState: StudioHeaderActionState) => {
-    studioShellStore.setHeaderActions(nextState)
-  }
-
-  const clearStudioHeaderActions = () => {
-    studioShellStore.clearHeaderActions()
-  }
-
   return {
-    clearStudioHeaderActions,
-    setStudioHeaderActions,
     state
   }
 }

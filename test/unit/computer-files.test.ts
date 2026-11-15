@@ -392,3 +392,23 @@ describe('computer file utilities', () => {
     })).resolves.toBe(null)
   })
 })
+
+it.each(['open', 'save'] as const)('invokes the native %s picker synchronously before any awaited persistence preparation', async (kind) => {
+  const files = new Map([['immediate', { fileName: 'immediate.pgml', text: 'Table public.kept { id int }' }]])
+  const handle = createMemoryHandle('immediate', files)
+  let pickerCalls = 0
+  const access: PgmlFileSystemAccessApi = {
+    showOpenFilePicker: async () => {
+      pickerCalls += 1
+      return [handle]
+    },
+    showSaveFilePicker: async () => {
+      pickerCalls += 1
+      return handle
+    }
+  }
+  const options = { access, store: createMemoryStore() }
+  const operation = kind === 'open' ? openComputerPgmlFile(options) : createComputerPgmlFile({ name: 'Immediate', text: 'Table public.saved { id int }' }, options)
+  expect(pickerCalls).toBe(1)
+  expect(await operation).not.toBe(null)
+})

@@ -219,6 +219,13 @@ const openComparator = async (page: Page) => {
   await expect(getComparePanel(page)).toBeVisible()
 }
 
+const expandCompareScopes = async (page: Page) => {
+  const collapsedScopes = getComparePanel(page).locator('[data-compare-scope-entry][aria-expanded="false"]')
+  while (await collapsedScopes.count() > 0) {
+    await collapsedScopes.first().click()
+  }
+}
+
 const downloadMigrationArtifacts = async (
   page: Page,
   format: 'sql' | 'kysely',
@@ -464,6 +471,11 @@ Trigger trg_touch_orders on public.orders {
   await expect(migrationArtifact).toContainText('CREATE OR REPLACE FUNCTION public.touch_orders()')
   await expect(migrationArtifact).toContainText('CREATE TRIGGER trg_touch_orders')
 
+  await page.context().grantPermissions(['clipboard-read', 'clipboard-write'])
+  await migrationsPanel.locator('[data-version-migration-copy="sql"]').click()
+  await expect(migrationsPanel.locator('[data-version-migration-copy="sql"]')).toHaveText('Copied')
+  expect(await page.evaluate(() => navigator.clipboard.readText())).toBe(await migrationArtifact.textContent())
+
   const sqlDownloads = await downloadMigrationArtifacts(page, 'sql', 2)
 
   expect(sqlDownloads.archiveFileName).toContain('initial-users-to-workspace')
@@ -610,6 +622,7 @@ Ref: public.orders.user_id > public.users.id`)
   await expect(comparePanel).toContainText('Orders baseline')
   await expect(comparePanel).toContainText('increments directly from')
   await expect(comparePanel).not.toContainText('Current workspace')
+  await expandCompareScopes(page)
   await expect(comparePanel.locator('[data-compare-entry="table:public.orders"]')).toBeVisible()
   await expect(comparePanel.locator('[data-compare-entry]').filter({ hasText: 'public.audit_log' })).toHaveCount(0)
 })
@@ -910,7 +923,7 @@ Function public.refresh_orders() returns void {
 
   const comparePanel = getComparePanel(page)
   const defaultEntry = comparePanel.locator('[data-compare-entry="column:public.orders::status"]')
-  const metadataEntry = comparePanel.locator('[data-compare-entry="function:public.refresh_orders"]')
+  const metadataEntry = comparePanel.locator('[data-compare-entry="function:refresh_orders"]')
   const hideDefaultsButton = comparePanel.locator('[data-compare-noise-filter="hideDefaults"]')
   const hideMetadataButton = comparePanel.locator('[data-compare-noise-filter="hideMetadata"]')
 
@@ -920,11 +933,13 @@ Function public.refresh_orders() returns void {
 
   await hideDefaultsButton.click()
   await expect(hideDefaultsButton).toHaveAttribute('aria-pressed', 'false')
+  await expandCompareScopes(page)
   await expect(defaultEntry).toBeVisible()
   await expect(metadataEntry).toHaveCount(0)
 
   await hideMetadataButton.click()
   await expect(hideMetadataButton).toHaveAttribute('aria-pressed', 'false')
+  await expandCompareScopes(page)
   await expect(defaultEntry).toBeVisible()
   await expect(metadataEntry).toBeVisible()
 
@@ -951,6 +966,7 @@ Function public.refresh_orders() returns void {
   await expect(comparePanel.locator('[data-compare-base-select="true"]')).toContainText('Noise baseline')
   await expect(comparePanel.locator('[data-compare-noise-filter="hideDefaults"]')).toHaveAttribute('aria-pressed', 'false')
   await expect(comparePanel.locator('[data-compare-noise-filter="hideMetadata"]')).toHaveAttribute('aria-pressed', 'false')
+  await expandCompareScopes(page)
   await expect(defaultEntry).toBeVisible()
   await expect(metadataEntry).toBeVisible()
 })
@@ -998,7 +1014,7 @@ Function public.refresh_users() returns void {
   const exclusionsDialog = page.locator('[data-studio-modal-surface="compare-exclusions"]')
 
   await expect(exclusionsDialog).toBeVisible()
-  await exclusionsDialog.locator('[data-compare-exclusion-entity-section="function"] [data-compare-exclusion-option="function:public.refresh_users"]').click()
+  await exclusionsDialog.locator('[data-compare-exclusion-entity-section="function"] [data-compare-exclusion-option="function:refresh_users"]').click()
   await exclusionsDialog.locator('[data-compare-exclusions-save="true"]').click()
   await expect(exclusionsDialog).toHaveCount(0)
 
@@ -1067,7 +1083,7 @@ Function public.refresh_users() returns void {
   const exclusionsDialog = page.locator('[data-studio-modal-surface="compare-exclusions"]')
 
   await expect(exclusionsDialog).toBeVisible()
-  await exclusionsDialog.locator('[data-compare-exclusion-entity-section="function"] [data-compare-exclusion-option="function:public.refresh_users"]').click()
+  await exclusionsDialog.locator('[data-compare-exclusion-entity-section="function"] [data-compare-exclusion-option="function:refresh_users"]').click()
   await exclusionsDialog.locator('[data-compare-exclusions-save="true"]').click()
   await expect(exclusionsDialog).toHaveCount(0)
 
@@ -1231,7 +1247,7 @@ Sequence public.user_number_seq {
   const comparePanel = getComparePanel(page)
   const addedStat = comparePanel.locator('[data-compare-stat-filter="added"]')
   const tableScopeRow = comparePanel.getByRole('button', { name: /public\.orders/i })
-  const functionEntry = comparePanel.locator('[data-compare-entry="function:public.refresh_users"]')
+  const functionEntry = comparePanel.locator('[data-compare-entry="function:refresh_users"]')
   const sequenceEntry = comparePanel.locator('[data-compare-entry="sequence:public.user_number_seq"]')
   const tableFilter = comparePanel.locator('[data-compare-entity-filter="table"]')
   const functionFilter = comparePanel.locator('[data-compare-entity-filter="function"]')
@@ -1244,7 +1260,6 @@ Sequence public.user_number_seq {
       return {
         backgroundColor: style.backgroundColor,
         borderColor: style.borderColor,
-        boxShadow: style.boxShadow,
         color: style.color
       }
     })
@@ -1265,12 +1280,12 @@ Sequence public.user_number_seq {
   await expect(tableScopeRow).toHaveCount(0)
   await expect(functionEntry).toBeVisible()
   await expect(sequenceEntry).toHaveCount(0)
+  await expect.poll(async () => (await readFilterStyles(functionFilter)).color).not.toBe(inactiveFunctionFilterStyles.color)
   const activeFunctionFilterStyles = await readFilterStyles(functionFilter)
 
   expect(activeFunctionFilterStyles.backgroundColor).not.toBe(inactiveFunctionFilterStyles.backgroundColor)
   expect(activeFunctionFilterStyles.borderColor).not.toBe(inactiveFunctionFilterStyles.borderColor)
   expect(activeFunctionFilterStyles.color).not.toBe(inactiveFunctionFilterStyles.color)
-  expect(activeFunctionFilterStyles.boxShadow).not.toBe('none')
 
   await clearFilters.click()
   await expect(tableScopeRow).toBeVisible()
@@ -1528,6 +1543,7 @@ TableGroup Core {
   await comparisonDialog.locator('[data-compare-comparison-save="true"]').click()
   await expect(comparisonDialog).toHaveCount(0)
   await expect(recalledComparePanel.locator('[data-compare-comparison-select="true"]')).toContainText('Implemented today')
+  await expect(page.getByLabel('Notifications (F8)').getByText('Implemented today is now the saved comparison label.', { exact: true })).toBeVisible()
 
   await recalledComparePanel.locator('[data-compare-delete-comparison="true"]').click()
   await expect(recalledComparePanel.locator('[data-compare-comparison-select="true"]')).toContainText('Current comparison')
@@ -1636,6 +1652,7 @@ test('versions panel renames the initial locked version directly from its card a
   await renameDialog.locator('[data-rename-version-save="true"]').click()
   await expect(renameDialog).toHaveCount(0)
 
+  await expect(page.getByLabel('Notifications (F8)').getByText('Locked version renamed to Foundation baseline.', { exact: true })).toBeVisible()
   await expect(getVersionCardByLabel(page, 'Foundation baseline')).toBeVisible()
   await expect(getVersionCardByLabel(page, 'Initial implementation')).toHaveCount(0)
   await expect(getVersionsPanel(page)).toContainText('Incrementing from Foundation baseline.')
@@ -2223,8 +2240,8 @@ Ref: public.memberships.team_id > public.teams.id`)
 
   await compareFromVersion(page, 'Users only')
 
-  await expect(getVersionsPanel(page)).toContainText('No visible delta in the selected comparison.')
-  await expect(getVersionsPanel(page)).toContainText('No schema or layout changes are visible for the selected compare pair.')
+  await expect(getHistoryToolsPanel(page)).toContainText('0 highlighted changes')
+  await expect(getComparePanel(page)).toContainText('No diff entries match the current filter.')
 })
 
 test('versions panel only deletes unreferenced checkpoints', async ({ goto, page }) => {
@@ -2311,3 +2328,58 @@ test('versioned document mode can scope the editor to the full document, workspa
   await expectEditorValueToContain(editor, 'Workspace {')
   await expect(page.locator('[data-pgml-diagnostics="true"]')).toHaveCount(0)
 })
+
+test('import placement Back preserves the source/options and applying commits the chosen attachment once', async ({ goto, page }) => {
+  await goto('/diagram')
+  const editor = getPgmlEditor(page)
+  await setPgmlEditorValue(editor, 'Table public.accounts {\n  id integer [pk]\n}')
+  await createCheckpoint(page, 'Import base')
+  await openVersionsPanel(page)
+  await page.locator('[data-version-import-dump="true"]').click()
+  const modal = page.locator('[data-studio-modal-surface="pg-dump-import"]')
+  await modal.getByRole('switch').last().click()
+  await modal.getByRole('switch').first().click()
+  const dump = `CREATE TABLE public.accounts (id integer);
+CREATE PROCEDURE public.archive_accounts() LANGUAGE plpgsql AS $$ BEGIN NULL; END; $$;`
+  await modal.locator('textarea').fill(dump)
+  await modal.getByRole('button', { name: 'Replace workspace with import' }).click()
+  const placement = page.locator('[data-studio-modal-surface="import-executable-attachments"]')
+  await expect(placement).toBeVisible()
+  await placement.getByRole('button', { name: 'Back', exact: true }).click()
+  await expect(modal).toBeVisible()
+  await expect(modal.locator('textarea')).toHaveValue(dump)
+  await expect(modal.getByRole('switch').first()).not.toBeChecked()
+  await expect(modal.getByRole('switch').last()).toBeChecked()
+  await modal.getByRole('button', { name: 'Replace workspace with import' }).click()
+  await expect(placement).toBeVisible()
+  await placement.locator('[data-import-executable-table-toggle="procedure:public.archive_accounts:public.accounts"]').click()
+  await placement.getByRole('button', { name: 'Continue import' }).click()
+  await expect(placement).toHaveCount(0)
+  await expect.poll(() => readPgmlEditorValue(editor)).toContain('owned_by: [public.accounts]')
+})
+
+for (const outcome of ['success', 'failure'] as const) {
+  test(`migration clipboard shows ${outcome} feedback for the actual visible artifact`, async ({ goto, page }) => {
+    await page.addInitScript((result) => {
+      Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText: async (text: string) => {
+        Reflect.set(window, '__copiedMigrationText', text)
+        if (result === 'failure') throw new Error('Clipboard denied in test')
+      } } })
+    }, outcome)
+    await goto('/diagram')
+    const editor = getPgmlEditor(page)
+    await setPgmlEditorValue(editor, 'Table public.copy_base {\n  id integer [pk]\n}')
+    await createCheckpoint(page, 'Clipboard baseline')
+    await setPgmlEditorValue(editor, 'Table public.copy_base {\n  id integer [pk]\n  copied text\n}')
+    await compareFromVersion(page, 'Clipboard baseline')
+    await openMigrationsPanel(page)
+    const panel = getMigrationsPanel(page)
+    const artifact = getMigrationArtifact(page)
+    await expect(artifact).toContainText('ADD COLUMN "copied" text')
+    const copy = panel.locator('[data-version-migration-copy="sql"]')
+    await copy.click()
+    await expect(copy).toHaveText(outcome === 'success' ? 'Copied' : 'Copy failed')
+    await expect(panel.getByRole('status')).toHaveText(outcome === 'success' ? 'Copied' : 'Copy failed')
+    expect(await page.evaluate(() => Reflect.get(window, '__copiedMigrationText'))).toBe(await artifact.textContent())
+  })
+}

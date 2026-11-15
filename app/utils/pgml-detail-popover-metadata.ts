@@ -1,4 +1,5 @@
 import { nanoid } from 'nanoid'
+import { formatPgmlIndexKeyForSource, getPgmlIndexKeys } from './pgml-index-keys'
 import type {
   PgmlAffects,
   PgmlConstraint,
@@ -300,7 +301,7 @@ export const createPgmlDetailMetadataDraftFromSequence = (sequence: PgmlSequence
 export const createPgmlDetailMetadataDraftFromIndex = (index: PgmlIndex) => {
   const draft = createBaseDraft('index')
 
-  draft.known.indexColumns = createListItems(index.columns)
+  draft.known.indexColumns = createListItems(getPgmlIndexKeys(index).map(formatPgmlIndexKeyForSource))
   draft.known.indexType = index.type
 
   return draft

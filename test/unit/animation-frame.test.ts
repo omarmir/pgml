@@ -1,6 +1,8 @@
-import { describe, expect, it, vi } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import { createAnimationFrameBatcher } from '../../app/utils/animation-frame'
+
+afterEach(() => vi.unstubAllGlobals())
 
 describe('animation frame batcher', () => {
   it('coalesces multiple scheduled tasks into the latest callback for the frame', () => {
@@ -55,6 +57,70 @@ describe('animation frame batcher', () => {
 
     expect(cancelFrame).toHaveBeenCalledWith(9)
     expect(task).not.toHaveBeenCalled()
+    expect(batcher.isPending()).toBe(false)
+  })
+
+  it('does not let a cancelled callback run a newer scheduled task', () => {
+    const callbacks: FrameRequestCallback[] = []
+    const batcher = createAnimationFrameBatcher({
+      cancelFrame: vi.fn(),
+      requestFrame: callback => callbacks.push(callback)
+    })
+    const cancelledTask = vi.fn()
+    const newTask = vi.fn()
+
+    batcher.schedule(cancelledTask)
+    batcher.cancel()
+    batcher.schedule(newTask)
+    callbacks[0]?.(16)
+
+    expect(cancelledTask).not.toHaveBeenCalled()
+    expect(newTask).not.toHaveBeenCalled()
+    expect(batcher.isPending()).toBe(true)
+
+    callbacks[1]?.(32)
+    expect(newTask).toHaveBeenCalledTimes(1)
+    expect(batcher.isPending()).toBe(false)
+  })
+
+  it.each(['frame', 'flush'])('preserves a task scheduled from inside a %s callback', (execution) => {
+    const callbacks: FrameRequestCallback[] = []
+    const batcher = createAnimationFrameBatcher({
+      cancelFrame: vi.fn(),
+      requestFrame: callback => callbacks.push(callback)
+    })
+    const nextTask = vi.fn()
+
+    batcher.schedule(() => {
+      expect(batcher.isPending()).toBe(false)
+      batcher.schedule(nextTask)
+    })
+
+    if (execution === 'frame') {
+      callbacks[0]?.(16)
+    } else {
+      batcher.flush()
+    }
+
+    expect(batcher.isPending()).toBe(true)
+    expect(callbacks).toHaveLength(2)
+    expect(nextTask).not.toHaveBeenCalled()
+
+    callbacks[1]?.(32)
+    expect(nextTask).toHaveBeenCalledTimes(1)
+  })
+
+  it('runs immediately when browser frame scheduling is unavailable', () => {
+    vi.stubGlobal('requestAnimationFrame', undefined)
+    vi.stubGlobal('cancelAnimationFrame', undefined)
+    const batcher = createAnimationFrameBatcher()
+    const task = vi.fn()
+
+    batcher.schedule(task)
+    batcher.flush()
+    batcher.cancel()
+
+    expect(task).toHaveBeenCalledTimes(1)
     expect(batcher.isPending()).toBe(false)
   })
 })

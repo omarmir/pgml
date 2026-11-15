@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import type { Ref } from 'vue'
+import type { DeepReadonly, Ref } from 'vue'
 import { ref } from 'vue'
 import PgmlDiagramCanvasGpuShell from '~/components/pgml/PgmlDiagramCanvasGpuShell.vue'
 import type { PgmlDiagramCompareEntry } from '~/utils/pgml-diagram-compare'
@@ -13,12 +13,10 @@ import type {
   PgmlSourceRange
 } from '~/utils/pgml'
 import type { PgmlVersionMigrationStepBundle } from '~/utils/pgml-version-migration'
-import type { DiagramPanelTab, DiagramToolPanelTab, StudioMobileCanvasView } from '~/utils/studio-workspace'
+import type { DiagramExportRequest, DiagramPanelTab, DiagramToolPanelTab, StudioMobileCanvasView } from '~/utils/studio-workspace'
 
 type CanvasHandle = {
   exportDiagram: (format: 'svg' | 'png', scaleFactor?: number) => Promise<void>
-  exportPng: (scaleFactor: number) => Promise<void>
-  exportSvg: () => Promise<void>
   getNodeLayoutProperties: () => Record<string, PgmlNodeProperties>
 }
 
@@ -123,7 +121,11 @@ const {
   compareSavedComparisonHint = null,
   compareSelectedComparisonId = null,
   compareTargetLabel = 'Target',
+  documentContextRevision = 0,
+  loadIntentRevision = 0,
+  modelIsCurrent = true,
   exportBaseName = 'pgml-schema',
+  exportInProgress = false,
   exportPreferenceKey = 'name:pgml-schema',
   hasBlockingSourceErrors = false,
   mobileActiveView = null,
@@ -157,7 +159,7 @@ const {
   compareEntries?: PgmlDiagramCompareEntry[]
   compareExcludedLabels?: string[]
   compareExcludedSummary?: string | null
-  compareEntityFilters?: PgmlCompareEntityFilters
+  compareEntityFilters?: DeepReadonly<PgmlCompareEntityFilters>
   compareHiddenExcludedLabelCount?: number
   compareNoteFilters?: PgmlCompareNoteFilters
   compareNotes?: PgmlCompareNote[]
@@ -168,6 +170,10 @@ const {
   compareTargetLabel?: string
   diagramViewItems?: DiagramViewItem[]
   diagramViewSettings?: DiagramViewSettings
+  documentContextRevision?: number
+  loadIntentRevision?: number
+  modelIsCurrent?: boolean
+  exportInProgress?: boolean
   exportBaseName?: string
   exportPreferenceKey?: string
   hasBlockingSourceErrors?: boolean
@@ -187,6 +193,7 @@ const {
 }>()
 
 const emit = defineEmits<{
+  exportDiagram: [request: DiagramExportRequest]
   createGroup: []
   createCompareComparison: []
   createTable: [groupName: string | null]
@@ -230,12 +237,6 @@ defineExpose<CanvasHandle>({
   exportDiagram: async (format, scaleFactor = 1) => {
     await shellRef.value?.exportDiagram(format, scaleFactor)
   },
-  exportPng: async (scaleFactor) => {
-    await shellRef.value?.exportPng(scaleFactor)
-  },
-  exportSvg: async () => {
-    await shellRef.value?.exportSvg()
-  },
   getNodeLayoutProperties: () => {
     return shellRef.value?.getNodeLayoutProperties() || {}
   }
@@ -266,7 +267,11 @@ defineExpose<CanvasHandle>({
     :compare-target-label="compareTargetLabel"
     :diagram-view-items="diagramViewItems"
     :diagram-view-settings="diagramViewSettings"
+    :document-context-revision="documentContextRevision"
+    :load-intent-revision="loadIntentRevision"
+    :model-is-current="modelIsCurrent"
     :export-base-name="exportBaseName"
+    :export-in-progress="exportInProgress"
     :export-preference-key="exportPreferenceKey"
     :has-blocking-source-errors="hasBlockingSourceErrors"
     :mobile-active-view="mobileActiveView"
@@ -303,6 +308,7 @@ defineExpose<CanvasHandle>({
     @rename-compare-comparison="emit('renameCompareComparison')"
     @rename-version="emit('renameVersion', $event)"
     @edit-table="emit('editTable', $event)"
+    @export-diagram="emit('exportDiagram', $event)"
     @focus-source="emit('focusSource', $event)"
     @mobile-canvas-view-change="emit('mobileCanvasViewChange', $event)"
     @node-properties-change="emit('nodePropertiesChange', $event)"

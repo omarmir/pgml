@@ -18,6 +18,9 @@ import StudioDesktopWorkspace from '~/components/studio/StudioDesktopWorkspace.v
 import StudioEditorSurface from '~/components/studio/StudioEditorSurface.vue'
 import StudioMobileWorkspace from '~/components/studio/StudioMobileWorkspace.vue'
 import { usePgmlColumnDefaultSuggestions } from '~/composables/usePgmlColumnDefaultSuggestions'
+import { useDialogDraft } from '~/composables/useDialogDraft'
+import { usePgmlWorkspaceAnalysis } from '~/composables/usePgmlWorkspaceAnalysis'
+import { usePgmlDocumentLoader } from '~/composables/usePgmlDocumentLoader'
 import { usePgmlStudioComputerFiles } from '~/composables/usePgmlStudioComputerFiles'
 import { usePgmlStudioGists } from '~/composables/usePgmlStudioGists'
 import {
@@ -32,9 +35,9 @@ import {
   useStudioWorkspaceSourceState
 } from '~/composables/useStudioWorkspaceState'
 import type { PgmlSourceEditorHandle } from '~/composables/usePgmlSourceEditor'
-import { useStudioHeaderActions } from '~/composables/useStudioHeaderActions'
-import { useStudioSchemaStatus } from '~/composables/useStudioSchemaStatus'
+import { useStudioShellStore } from '~/stores/studio-shell'
 import { useStudioSessionStore } from '~/stores/studio-session'
+import type { StudioLoadIntent } from '~/stores/studio-session'
 import { useStudioSourcesStore } from '~/stores/studio-sources'
 import {
   downloadSchemaText,
@@ -71,10 +74,6 @@ import {
 import { retainPgmlTableGroupsFromBaseSource } from '~/utils/pgml-import-groups'
 import { analyzePgmlDocument } from '~/utils/pgml-language'
 import {
-  hasBlockingPgmlDiagnostics,
-  type PgmlAnalysisWorkerResponse
-} from '~/utils/pgml-analysis-worker'
-import {
   buildPgmlDocumentEditorModeDescription,
   buildPgmlEditorReadOnlyLabel,
   buildPgmlVersionPreviewDescription,
@@ -88,9 +87,7 @@ import {
   getPgmlVersionDisplayLabel,
   getLatestPgmlVersion,
   parsePgmlDocument,
-  preparePgmlDocumentForLoad,
-  serializePgmlDocumentScope,
-  type PgmlVersionSetDocument
+  serializePgmlDocumentScope
 } from '~/utils/pgml-document'
 import {
   buildPgmlVersionMigrationBundle,
@@ -127,7 +124,6 @@ import {
   buildPgmlImportBaseVersionItems,
   buildPgmlVersionCompareOptions
 } from '~/utils/pgml-version-options'
-import { initializePgmlExecutableParser } from '~/utils/pgml-executable-parser'
 import {
   clonePgmlCompareExclusions,
   createEmptyPgmlCompareExclusions,
@@ -143,6 +139,7 @@ import {
   type PgmlCompareNoteFlag,
   type PgmlCompareNoteFilters,
   type PgmlCompareExclusions,
+  type PgmlCompareExclusionsInput,
   type PgmlCompareNoiseFilters,
   type PgmlNodeProperties,
   type PgmlMetadataEntry,
@@ -191,6 +188,7 @@ import {
 } from '~/utils/uiStyles'
 import {
   defaultStudioMobilePanelTab,
+  type DiagramExportRequest,
   type DiagramPanelTab,
   type DiagramToolPanelTab,
   type StudioMobileCanvasView,
@@ -201,8 +199,6 @@ const PgmlDiagramCanvas = defineAsyncComponent(() => import('~/components/pgml/P
 
 type PgmlDiagramCanvasExposed = {
   exportDiagram: (format: 'svg' | 'png', scaleFactor?: number) => Promise<void>
-  exportPng: (scaleFactor: number) => Promise<void>
-  exportSvg: () => Promise<void>
   getNodeLayoutProperties: () => Record<string, PgmlNodeProperties>
 }
 
@@ -230,7 +226,6 @@ type ImportExecutableAttachmentResolution = {
   tableOptions: PgmlImportExecutableAttachmentTableOption[]
 }
 
-type DiagramViewDialogMode = 'create' | 'rename'
 type AnalysisWorkspaceTab = 'versions' | 'compare' | 'migrations'
 
 const {
@@ -304,6 +299,7 @@ const formatColumnTypeLabel = (value: string) => {
 }
 
 const route = useRoute()
+const studioSessionStore = useStudioSessionStore()
 const isDiagramWorkspace = computed(() => workspaceMode === 'diagram')
 const isAnalysisWorkspace = computed(() => workspaceMode === 'analysis')
 const studioLaunchRequest = computed(() => parseStudioLaunchQuery(route.query))
@@ -321,8 +317,26 @@ const studioWorkspaceSessionInitialized: Ref<boolean> = useStudioWorkspaceSessio
 const editorDisplaySource: Ref<string> = ref(initialWorkspaceSource)
 const canvasRef: Ref<PgmlDiagramCanvasExposed | null> = ref(null)
 const canvasViewportResetKey: Ref<number> = ref(0)
-const isExporting: Ref<boolean> = ref(false)
-const isOpeningPgmlDocument: Ref<boolean> = ref(false)
+type DiagramExportState = { kind: 'idle' } | { kind: 'disposed' } | {
+  kind: 'exporting'
+  format: 'svg' | 'png'
+  scaleFactor: number | undefined
+  canvas: PgmlDiagramCanvasExposed
+  documentRevision: number
+}
+const diagramExport: Ref<DiagramExportState> = shallowRef({ kind: 'idle' })
+const isExporting = computed(() => diagramExport.value.kind === 'exporting')
+type WorkspaceNavigationRequest = {
+  destination: StudioWorkspacePage
+  documentRevision: number
+  loadRevision: number
+  source: StudioLoadIntent['source']
+  query: ReturnType<typeof useRoute>['query'] | undefined
+}
+type WorkspaceNavigationState = { kind: 'idle' } | { kind: 'disposed' }
+  | { kind: 'persisting' | 'navigating', request: WorkspaceNavigationRequest }
+const workspaceNavigation: Ref<WorkspaceNavigationState> = shallowRef({ kind: 'idle' })
+const isNavigatingWorkspace = computed(() => workspaceNavigation.value.kind === 'persisting' || workspaceNavigation.value.kind === 'navigating')
 const versionDocumentName: Ref<string> = useStudioWorkspaceDocumentNameState('Untitled schema')
 const mobileWorkspaceView: Ref<StudioMobileWorkspaceView> = ref(
   workspaceMode === 'analysis' ? 'tool-panel' : 'diagram'
@@ -339,68 +353,103 @@ const toolPanelVisibility: Ref<{
 const analysisWorkspaceTab: Ref<AnalysisWorkspaceTab> = ref('versions')
 const analysisMobileView: Ref<AnalysisWorkspaceTab> = ref('versions')
 const analysisSelectedCompareEntryId: Ref<string | null> = ref(null)
-const checkpointDialogOpen: Ref<boolean> = ref(false)
-const checkpointName: Ref<string> = ref('')
-const checkpointSuggestedCreatedAt: Ref<string | null> = ref(null)
-const checkpointNameIsSuggested: Ref<boolean> = ref(false)
-const checkpointRole: Ref<'design' | 'implementation'> = ref('design')
-const diagramViewDialogOpen: Ref<boolean> = ref(false)
-const diagramViewDialogMode: Ref<DiagramViewDialogMode> = ref('create')
-const diagramViewDraftName: Ref<string> = ref('')
-const importPgmlDialogOpen: Ref<boolean> = ref(false)
-const importPgmlError: Ref<string | null> = ref(null)
-const importPgmlSelectedFile: Ref<File | null> = ref(null)
-const importPgmlText: Ref<string> = ref('')
-const isSubmittingImportPgml: Ref<boolean> = ref(false)
-const importDbmlDialogOpen: Ref<boolean> = ref(false)
-const importDbmlBaseVersionId: Ref<string | null> = ref(null)
-const importDbmlError: Ref<string | null> = ref(null)
-const importDbmlFoldIdentifiersToLowercase: Ref<boolean> = ref(false)
-const importDbmlParseExecutableComments: Ref<boolean> = ref(false)
-const importDbmlSelectedFile: Ref<File | null> = ref(null)
-const importDbmlText: Ref<string> = ref('')
-const isSubmittingImportDbml: Ref<boolean> = ref(false)
-const importDumpDialogOpen: Ref<boolean> = ref(false)
-const importDumpBaseVersionId: Ref<string | null> = ref(null)
-const importDumpError: Ref<string | null> = ref(null)
-const importDumpFoldIdentifiersToLowercase: Ref<boolean> = ref(false)
-const importDumpRetainMatchingTableGroups: Ref<boolean> = ref(true)
-const importDumpSelectedFile: Ref<File | null> = ref(null)
-const importDumpText: Ref<string> = ref('')
-const isSubmittingImportDump: Ref<boolean> = ref(false)
-const importExecutableAttachmentResolution: Ref<ImportExecutableAttachmentResolution | null> = ref(null)
-const importExecutableAttachmentError: Ref<string | null> = ref(null)
-const isSubmittingImportExecutableAttachmentResolution: Ref<boolean> = ref(false)
-const restoreVersionDialogOpen: Ref<boolean> = ref(false)
-const restoreVersionId: Ref<string | null> = ref(null)
-const deleteVersionDialogOpen: Ref<boolean> = ref(false)
-const deleteVersionId: Ref<string | null> = ref(null)
-const compareExclusionsDialogOpen: Ref<boolean> = ref(false)
-const compareExclusionsDraft: Ref<PgmlCompareExclusions | null> = ref(null)
-const compareExclusionsSearchQuery: Ref<string> = ref('')
-const compareExclusionsTypeFilter: Ref<CompareExclusionTypeFilterValue> = ref('all')
-const compareNoteDialogOpen: Ref<boolean> = ref(false)
-const compareNoteDraftEntryId: Ref<string | null> = ref(null)
-const compareNoteDraftFlag: Ref<PgmlCompareNoteFlag> = ref('pending')
-const compareNoteDraftText: Ref<string> = ref('')
-const compareSourceDialogOpen: Ref<boolean> = ref(false)
-const compareSourceDialogRange: Ref<PgmlSourceRange | null> = ref(null)
-const comparisonDialogOpen: Ref<boolean> = ref(false)
-const comparisonDialogMode: Ref<'create' | 'rename'> = ref('create')
-const comparisonDraftName: Ref<string> = ref('')
-const renameVersionDialogOpen: Ref<boolean> = ref(false)
-const renameVersionDraftName: Ref<string> = ref('')
-const renameVersionId: Ref<string | null> = ref(null)
-const tableEditorDraft: Ref<PgmlEditableTableDraft | null> = ref(null)
-const tableEditorOpen: Ref<boolean> = ref(false)
-const groupEditorDraft: Ref<PgmlEditableGroupDraft | null> = ref(null)
-const groupEditorOpen: Ref<boolean> = ref(false)
+type CheckpointDraft = {
+  name: string
+  role: 'design' | 'implementation'
+  nameOrigin: { kind: 'suggested', createdAt: string } | { kind: 'custom' }
+}
+const checkpointDialog = useDialogDraft<CheckpointDraft>({ context: () => studioSessionStore.workspaceLoadRevision })
+const { isOpen: checkpointDialogOpen, isSaving: isSavingCheckpoint } = checkpointDialog
+const checkpointName = computed(() => checkpointDialog.draft.value === null ? '' : checkpointDialog.draft.value.name)
+const checkpointRole = computed(() => checkpointDialog.draft.value === null ? 'design' : checkpointDialog.draft.value.role)
+type DiagramViewNameDraft = { kind: 'create', previewTargetId: string, name: string }
+  | { kind: 'rename', previewTargetId: string, viewId: string, name: string }
+const diagramViewDialog = useDialogDraft<DiagramViewNameDraft>({ context: () => studioSessionStore.workspaceLoadRevision })
+const { isOpen: diagramViewDialogOpen } = diagramViewDialog
+const diagramViewDialogMode = computed(() => diagramViewDialog.draft.value === null ? 'create' : diagramViewDialog.draft.value.kind)
+const diagramViewDraftName = computed(() => diagramViewDialog.draft.value === null ? '' : diagramViewDialog.draft.value.name)
+type WorkspaceImportInput = { text: string, file: File | null }
+type WorkspaceImportDraft = WorkspaceImportInput & (
+  | { kind: 'pgml' }
+  | { kind: 'dbml', baseVersionId: string | null, foldIdentifiersToLowercase: boolean, parseExecutableComments: boolean }
+  | { kind: 'pg_dump', baseVersionId: string | null, foldIdentifiersToLowercase: boolean, retainMatchingTableGroups: boolean }
+)
+const schemaImport = useSchemaImportSession<WorkspaceImportDraft, ImportExecutableAttachmentResolution>()
+const importPgmlDraft = computed(() => schemaImport.draft.value?.kind === 'pgml' ? schemaImport.draft.value : null)
+const importDbmlDraft = computed(() => schemaImport.draft.value?.kind === 'dbml' ? schemaImport.draft.value : null)
+const importDumpDraft = computed(() => schemaImport.draft.value?.kind === 'pg_dump' ? schemaImport.draft.value : null)
+const importPgmlDialogOpen = computed(() => schemaImport.isOpen.value && importPgmlDraft.value !== null)
+const importDbmlDialogOpen = computed(() => schemaImport.isOpen.value && importDbmlDraft.value !== null)
+const importDumpDialogOpen = computed(() => schemaImport.isOpen.value && importDumpDraft.value !== null)
+const importPgmlError = computed(() => importPgmlDraft.value === null ? null : schemaImport.error.value)
+const importDbmlError = computed(() => importDbmlDraft.value === null ? null : schemaImport.error.value)
+const importDumpError = computed(() => importDumpDraft.value === null ? null : schemaImport.error.value)
+const importPgmlText = computed(() => importPgmlDraft.value === null ? '' : importPgmlDraft.value.text)
+const importDbmlText = computed(() => importDbmlDraft.value === null ? '' : importDbmlDraft.value.text)
+const importDumpText = computed(() => importDumpDraft.value === null ? '' : importDumpDraft.value.text)
+const importPgmlSelectedFile = computed(() => importPgmlDraft.value === null ? null : importPgmlDraft.value.file)
+const importDbmlSelectedFile = computed(() => importDbmlDraft.value === null ? null : importDbmlDraft.value.file)
+const importDumpSelectedFile = computed(() => importDumpDraft.value === null ? null : importDumpDraft.value.file)
+const importDbmlBaseVersionId = computed(() => importDbmlDraft.value === null ? null : importDbmlDraft.value.baseVersionId)
+const importDumpBaseVersionId = computed(() => importDumpDraft.value === null ? null : importDumpDraft.value.baseVersionId)
+const importDbmlFoldIdentifiersToLowercase = computed(() => importDbmlDraft.value !== null && importDbmlDraft.value.foldIdentifiersToLowercase)
+const importDbmlParseExecutableComments = computed(() => importDbmlDraft.value !== null && importDbmlDraft.value.parseExecutableComments)
+const importDumpFoldIdentifiersToLowercase = computed(() => importDumpDraft.value !== null && importDumpDraft.value.foldIdentifiersToLowercase)
+const importDumpRetainMatchingTableGroups = computed(() => importDumpDraft.value !== null && importDumpDraft.value.retainMatchingTableGroups)
+const isSubmittingImportPgml = computed(() => schemaImport.isBusy.value && importPgmlDraft.value !== null && !schemaImport.isPlacing.value)
+const isSubmittingImportDbml = computed(() => schemaImport.isBusy.value && importDbmlDraft.value !== null && !schemaImport.isPlacing.value)
+const isSubmittingImportDump = computed(() => schemaImport.isBusy.value && importDumpDraft.value !== null && !schemaImport.isPlacing.value)
+const importExecutableAttachmentResolution = schemaImport.placement
+const importExecutableAttachmentError = schemaImport.error
+const isSubmittingImportExecutableAttachmentResolution = computed(() => schemaImport.isBusy.value && schemaImport.isPlacing.value)
+let importLoadIntent: StudioLoadIntent | null = null
+const restoreVersionDialog = useDialogDraft<{ versionId: string, label: string }>({ context: () => studioSessionStore.workspaceLoadRevision })
+const { isOpen: restoreVersionDialogOpen } = restoreVersionDialog
+const restoreVersionLabel = computed(() => restoreVersionDialog.draft.value === null ? 'Unknown version' : restoreVersionDialog.draft.value.label)
+const deleteVersionDialog = useDialogDraft<{ versionId: string, label: string }>({ context: () => studioSessionStore.workspaceLoadRevision })
+const { isOpen: deleteVersionDialogOpen } = deleteVersionDialog
+const deleteVersionId = computed(() => deleteVersionDialog.draft.value === null ? null : deleteVersionDialog.draft.value.versionId)
+const deleteVersionLabel = computed(() => deleteVersionDialog.draft.value === null ? 'Unknown version' : deleteVersionDialog.draft.value.label)
+const compareExclusionsDialog = useDialogDraft<{
+  comparisonId: string | null
+  exclusions: PgmlCompareExclusions
+  searchQuery: string
+  typeFilter: CompareExclusionTypeFilterValue
+}>({ context: () => studioSessionStore.workspaceLoadRevision })
+const { isOpen: compareExclusionsDialogOpen, isSaving: isSavingCompareExclusions } = compareExclusionsDialog
+const compareExclusionsDraft = computed(() => compareExclusionsDialog.draft.value === null ? null : compareExclusionsDialog.draft.value.exclusions)
+const compareExclusionsSearchQuery = computed(() => compareExclusionsDialog.draft.value === null ? '' : compareExclusionsDialog.draft.value.searchQuery)
+const compareExclusionsTypeFilter = computed(() => compareExclusionsDialog.draft.value === null ? 'all' : compareExclusionsDialog.draft.value.typeFilter)
+const compareNoteDialog = useDialogDraft<{ comparisonId: string, entryId: string, flag: PgmlCompareNoteFlag, text: string }>({ context: () => studioSessionStore.workspaceLoadRevision })
+const { isOpen: compareNoteDialogOpen, isSaving: isSavingCompareNote } = compareNoteDialog
+const compareNoteDraftEntryId = computed(() => compareNoteDialog.draft.value === null ? null : compareNoteDialog.draft.value.entryId)
+const compareNoteDraftFlag = computed(() => compareNoteDialog.draft.value === null ? 'pending' : compareNoteDialog.draft.value.flag)
+const compareNoteDraftText = computed(() => compareNoteDialog.draft.value === null ? '' : compareNoteDialog.draft.value.text)
+const compareSourceDialog = useDialogDraft<{ range: PgmlSourceRange, source: string, versionLabel: string, entryLabel: string | null }>({ context: () => studioSessionStore.workspaceLoadRevision })
+const { isOpen: compareSourceDialogOpen } = compareSourceDialog
+const compareSourceDialogRange = computed(() => compareSourceDialog.draft.value === null ? null : compareSourceDialog.draft.value.range)
+type ComparisonNameDraft = { kind: 'create', name: string } | { kind: 'rename', comparisonId: string, name: string }
+const comparisonDialog = useDialogDraft<ComparisonNameDraft>({ context: () => studioSessionStore.workspaceLoadRevision })
+const { isOpen: comparisonDialogOpen, isSaving: isSavingComparisonDialog } = comparisonDialog
+const comparisonDialogMode = computed(() => comparisonDialog.draft.value === null ? 'create' : comparisonDialog.draft.value.kind)
+const comparisonDraftName = computed(() => comparisonDialog.draft.value === null ? '' : comparisonDialog.draft.value.name)
+const renameVersionDialog = useDialogDraft<{ versionId: string, name: string }>({ context: () => studioSessionStore.workspaceLoadRevision })
+const { isOpen: renameVersionDialogOpen } = renameVersionDialog
+const renameVersionDraftName = computed(() => renameVersionDialog.draft.value === null ? '' : renameVersionDialog.draft.value.name)
+const renameVersionId = computed(() => renameVersionDialog.draft.value === null ? null : renameVersionDialog.draft.value.versionId)
+const tableEditor = useDialogDraft<PgmlEditableTableDraft>({ context: () => [studioSessionStore.workspaceLoadRevision, source.value] })
+const { draft: tableEditorDraft, isOpen: tableEditorOpen, isSaving: isSavingTableEditor } = tableEditor
+const groupEditor = useDialogDraft<PgmlEditableGroupDraft>({ context: () => [studioSessionStore.workspaceLoadRevision, source.value] })
+const { draft: groupEditorDraft, isOpen: groupEditorOpen, isSaving: isSavingGroupEditor } = groupEditor
 const exportScales = [...diagramRasterExportScaleFactors]
 const lastSaveErrorToastMessage: Ref<string | null> = ref(null)
 const browserSchemaStatusEligible: Ref<boolean> = ref(false)
-const workspacePersistenceActive: Ref<boolean> = ref(true)
-const { clearStudioHeaderActions, setStudioHeaderActions } = useStudioHeaderActions()
-const { clearStudioSchemaStatus, setStudioSchemaStatus } = useStudioSchemaStatus()
+const workspaceLifetime: Ref<'active' | 'leaving' | 'disposed'> = ref('active')
+const workspacePersistenceActive = computed(() => workspaceLifetime.value === 'active')
+const { clearHeaderActions: clearStudioHeaderActions, setHeaderActions: setStudioHeaderActions,
+  clearSchemaStatus: clearStudioSchemaStatus, setSchemaStatus: setStudioSchemaStatus,
+  release: releaseWorkspaceChrome } = useStudioShellStore().acquireWorkspaceChrome()
+onScopeDispose(releaseWorkspaceChrome)
 const { getColumnDefaultPlaceholder, getColumnDefaultSuggestions } = usePgmlColumnDefaultSuggestions()
 const toast = useToast()
 const {
@@ -408,7 +457,6 @@ const {
   focusEditorDiagnostic,
   focusEditorSourceRange
 } = usePgmlSourceEditor()
-const studioSessionStore = useStudioSessionStore()
 const studioSourcesStore = useStudioSourcesStore()
 const {
   appliedLaunchKey: appliedStudioLaunchKey,
@@ -418,11 +466,6 @@ const {
   schemaDialogMode,
   schemaDialogOpen
 } = storeToRefs(studioSessionStore)
-currentPersistenceSource.value = studioLaunchRequest.value?.source === 'file'
-  ? 'file'
-  : studioLaunchRequest.value?.source === 'gist'
-    ? 'gist'
-    : 'browser'
 const {
   activeDiagramViewName,
   activeDiagramViewId,
@@ -472,6 +515,7 @@ const {
   setCurrentCompareNoteFilters,
   setCurrentCompareNoiseFilters,
   setDocumentEditorScope,
+  setEditorMode,
   setPreviewTarget,
   saveSelectedComparisonNote,
   setSchemaMetadata,
@@ -486,163 +530,33 @@ const {
   documentName: computed(() => versionDocumentName.value),
   source
 })
+watch([previewTargetId, activeDiagramViewId], () => diagramViewDialog.discard(), { flush: 'sync' })
+watch(selectedComparisonId, () => {
+  compareExclusionsDialog.discard()
+  compareNoteDialog.discard()
+}, { flush: 'sync' })
 const largeDocumentCharThreshold = 50000
 const largeDocumentLineThreshold = 1500
-const workspaceAnalysisDiagnostics: Ref<PgmlAnalysisWorkerResponse['diagnostics']> = ref([])
-const workspaceAnalysisHasBlockingErrors: Ref<boolean> = ref(false)
-const workspaceAnalysisParsedModel: ShallowRef<PgmlSchemaModel> = shallowRef(parsePgml(source.value))
-const workspaceAnalysisRevision: Ref<number> = ref(0)
-const workspaceAnalysisRequestRevision: Ref<number> = ref(0)
-const executableParserReadyRevision: Ref<number> = ref(0)
+const {
+  isCurrent: isWorkspaceModelCurrent,
+  diagnostics: workspaceAnalysisDiagnostics,
+  hasBlockingErrors: workspaceAnalysisHasBlockingErrors,
+  parsedModel: workspaceAnalysisParsedModel,
+  revision: workspaceAnalysisRevision,
+  requestedRevision: workspaceAnalysisRequestRevision,
+  parserReadyRevision: executableParserReadyRevision
+} = usePgmlWorkspaceAnalysis(source)
 const lastRenderableWorkspaceModel: ShallowRef<PgmlSchemaModel> = shallowRef(applyPgmlDocumentSchemaMetadataToModel(
   parsePgml(source.value),
   versionDocument.value.schemaMetadata
 ))
-let pgmlAnalysisWorker: Worker | null = null
-let documentLoadRevision = 0
-
-type PgmlDocumentLoadWorkerResponse = {
-  document: PgmlVersionSetDocument | null
-  error: string | null
-  revision: number
-}
-
-const prepareLoadedDocumentOffThread = async (
-  rawText: string,
-  revision: number
-) => {
-  if (!import.meta.client) {
-    return preparePgmlDocumentForLoad({
-      documentName: versionDocumentName.value,
-      rawText
-    })
+const { load: loadWorkspaceDocument, isLoading: isOpeningPgmlDocument } = usePgmlDocumentLoader({
+  documentName: () => versionDocumentName.value,
+  applyDocument: loadPreparedDocument,
+  onError: (description) => {
+    toast.add({ title: 'Open failed', description, color: 'error', icon: 'i-lucide-x' })
   }
-
-  return await new Promise<PgmlVersionSetDocument>((resolve, reject) => {
-    const worker = new Worker(new URL('../../workers/pgml-document-load.worker.ts', import.meta.url), {
-      type: 'module'
-    })
-
-    worker.onmessage = (event: MessageEvent<PgmlDocumentLoadWorkerResponse>) => {
-      worker.terminate()
-
-      if (event.data.revision !== revision) {
-        reject(new Error('Skipped stale PGML open request.'))
-        return
-      }
-
-      if (event.data.error || !event.data.document) {
-        reject(new Error(event.data.error || 'Unable to open that PGML document.'))
-        return
-      }
-
-      resolve(event.data.document)
-    }
-    worker.onerror = () => {
-      worker.terminate()
-      reject(new Error('Unable to open that PGML document.'))
-    }
-    worker.postMessage({
-      documentName: versionDocumentName.value,
-      rawText,
-      revision
-    })
-  })
-}
-
-const loadWorkspaceDocument = async (rawText: string) => {
-  const revision = documentLoadRevision + 1
-
-  documentLoadRevision = revision
-  isOpeningPgmlDocument.value = true
-
-  try {
-    const document = await prepareLoadedDocumentOffThread(rawText, revision)
-
-    if (revision !== documentLoadRevision) {
-      return
-    }
-
-    loadPreparedDocument(document)
-  } catch (error) {
-    if (revision !== documentLoadRevision) {
-      return
-    }
-
-    toast.add({
-      title: 'Open failed',
-      description: error instanceof Error ? error.message : 'Unable to open that PGML document.',
-      color: 'error',
-      icon: 'i-lucide-x'
-    })
-  } finally {
-    if (revision === documentLoadRevision) {
-      isOpeningPgmlDocument.value = false
-    }
-  }
-}
-
-const syncWorkspaceAnalysisLocally = (
-  nextSource: string,
-  revision: number
-) => {
-  const analysis = analyzePgmlDocument(nextSource)
-
-  workspaceAnalysisDiagnostics.value = analysis.diagnostics
-  workspaceAnalysisHasBlockingErrors.value = hasBlockingPgmlDiagnostics(analysis.diagnostics)
-  workspaceAnalysisParsedModel.value = parsePgml(nextSource)
-  workspaceAnalysisRevision.value = revision
-}
-
-const ensurePgmlAnalysisWorker = () => {
-  if (!import.meta.client) {
-    return null
-  }
-
-  if (pgmlAnalysisWorker) {
-    return pgmlAnalysisWorker
-  }
-
-  const worker = new Worker(new URL('../../workers/pgml-analysis.worker.ts', import.meta.url), {
-    type: 'module'
-  })
-
-  worker.onmessage = (event: MessageEvent<PgmlAnalysisWorkerResponse>) => {
-    if (event.data.revision !== workspaceAnalysisRequestRevision.value) {
-      return
-    }
-
-    workspaceAnalysisDiagnostics.value = event.data.diagnostics
-    workspaceAnalysisHasBlockingErrors.value = event.data.hasBlockingErrors
-    workspaceAnalysisParsedModel.value = event.data.parsedModel
-    workspaceAnalysisRevision.value = event.data.revision
-  }
-  worker.onerror = () => {
-    pgmlAnalysisWorker?.terminate()
-    pgmlAnalysisWorker = null
-    syncWorkspaceAnalysisLocally(source.value, workspaceAnalysisRequestRevision.value)
-  }
-  pgmlAnalysisWorker = worker
-
-  return worker
-}
-
-const queueWorkspaceAnalysis = (nextSource: string) => {
-  const nextRevision = workspaceAnalysisRequestRevision.value + 1
-
-  workspaceAnalysisRequestRevision.value = nextRevision
-  const worker = ensurePgmlAnalysisWorker()
-
-  if (!worker) {
-    syncWorkspaceAnalysisLocally(nextSource, nextRevision)
-    return
-  }
-
-  worker.postMessage({
-    revision: nextRevision,
-    source: nextSource
-  })
-}
+})
 
 const parsePgmlForCurrentExecutableParser = (
   nextSource: string,
@@ -655,18 +569,6 @@ const parsePgmlForCurrentExecutableParser = (
   return parsePgml(nextSource)
 }
 
-watch(source, (nextSource) => {
-  queueWorkspaceAnalysis(nextSource)
-}, {
-  immediate: true
-})
-
-if (import.meta.client) {
-  void initializePgmlExecutableParser().then(() => {
-    executableParserReadyRevision.value += 1
-    queueWorkspaceAnalysis(source.value)
-  }).catch(() => null)
-}
 const {
   isEditorPanelVisible,
   isCompactStudioLayout,
@@ -980,8 +882,12 @@ const waitForLatestWorkspaceAnalysis = async () => {
 const flushPendingEditorChanges = async (options: {
   waitForAnalysis?: boolean
 } = {}) => {
-  if (editorRef.value?.hasPendingChanges()) {
-    await editorRef.value.flushPendingChanges()
+  const editor = editorRef.value
+  if (editor !== null
+    && editor.getDocumentContextRevision() === studioSessionStore.workspaceDocumentRevision
+    && editor.getCommittedInput() === displayedEditorSource.value
+    && editor.hasPendingChanges()) {
+    await editor.flushPendingChanges()
   }
 
   if (options.waitForAnalysis) {
@@ -989,10 +895,14 @@ const flushPendingEditorChanges = async (options: {
   }
 }
 
+watch([isEditorPanelVisible, isCompactStudioLayout], ([visible, compact], [, previousCompact]) => {
+  if (!visible || compact !== previousCompact) void flushPendingEditorChanges()
+}, { flush: 'sync' })
+
 const buildSchemaText = (includeLayout: boolean) => {
   const shouldIncludeLayout = includeLayout && canEmbedLayout.value
 
-  return serializeCurrentDocument(shouldIncludeLayout, getLiveWorkspaceSource())
+  return serializeCurrentDocument(shouldIncludeLayout, source.value)
 }
 
 const markBrowserSchemaStatusEligible = () => {
@@ -1123,7 +1033,8 @@ const {
   selectSaveSchemaTarget,
   schemaActionDescription,
   schemaActionTitle,
-  schemaDialogName
+  schemaDialogName,
+  updateSchemaDialogName
 } = usePgmlStudioSchemas({
   applyLoadedSchemaText: loadWorkspaceDocument,
   autosaveEnabled: computed(() => workspacePersistenceActive.value && currentPersistenceSource.value === 'browser'),
@@ -1182,29 +1093,26 @@ const requestCanvasViewportReset = () => {
   canvasViewportResetKey.value += 1
 }
 
-const withViewportReset = (action: () => void) => {
+const withViewportReset = (action: () => boolean | Promise<boolean>) => {
   // Loading or clearing a schema changes the rendered node set, so the viewport
   // reset stays coupled to those entry points instead of being easy to forget.
-  return () => {
-    action()
-    requestCanvasViewportReset()
+  return async () => {
+    if (await action()) requestCanvasViewportReset()
   }
 }
 
 const loadExample = withViewportReset(() => {
   resetBrowserSchemaStatusEligibility()
-  loadStudioExample()
+  return loadStudioExample()
 })
 const clearSchema = withViewportReset(() => {
   resetBrowserSchemaStatusEligibility()
-  clearStudioSchema()
+  return clearStudioSchema()
 })
 
-const loadSavedSchema = (schema: SavedPgmlSchema) => {
-  currentPersistenceSource.value = 'browser'
+const loadSavedSchema = async (schema: SavedPgmlSchema) => {
   resetBrowserSchemaStatusEligibility()
-  loadStudioSavedSchema(schema)
-  requestCanvasViewportReset()
+  if (await loadStudioSavedSchema(schema)) requestCanvasViewportReset()
 }
 
 const loadRecentComputerFile = async (recentFileId: string) => {
@@ -1214,9 +1122,8 @@ const loadRecentComputerFile = async (recentFileId: string) => {
     return
   }
 
-  currentPersistenceSource.value = 'file'
   resetBrowserSchemaStatusEligibility()
-  loadDialogOpen.value = false
+  studioSessionStore.closeLoadDialog()
   requestCanvasViewportReset()
 }
 
@@ -1227,9 +1134,8 @@ const loadGistFile = async (filename: string) => {
     return
   }
 
-  currentPersistenceSource.value = 'gist'
   resetBrowserSchemaStatusEligibility()
-  loadDialogOpen.value = false
+  studioSessionStore.closeLoadDialog()
   requestCanvasViewportReset()
 }
 
@@ -1240,9 +1146,8 @@ const chooseComputerFileFromLoadDialog = async () => {
     return
   }
 
-  currentPersistenceSource.value = 'file'
   resetBrowserSchemaStatusEligibility()
-  loadDialogOpen.value = false
+  studioSessionStore.closeLoadDialog()
   requestCanvasViewportReset()
 }
 
@@ -1774,19 +1679,8 @@ const compareTargetLabel = computed(() => {
     name: versions.value.find(version => version.id === versionCompareTargetId.value)?.name || null
   })
 })
-const compareSourceDialogEntry = computed<PgmlDiagramCompareEntry | null>(() => {
-  return analysisSelectedCompareEntry.value
-})
-const compareSourceDialogVersionLabel = computed(() => {
-  return compareSourceDialogEntry.value?.changeKind === 'removed'
-    ? compareBaseLabel.value
-    : compareTargetLabel.value
-})
-const compareSourceDialogSource = computed(() => {
-  return compareSourceDialogEntry.value?.changeKind === 'removed'
-    ? compareBaseSource.value
-    : compareTargetSource.value
-})
+const compareSourceDialogVersionLabel = computed(() => compareSourceDialog.draft.value === null ? '' : compareSourceDialog.draft.value.versionLabel)
+const compareSourceDialogSource = computed(() => compareSourceDialog.draft.value === null ? '' : compareSourceDialog.draft.value.source)
 const compareSourceDialogContent = computed(() => {
   if (!compareSourceDialogRange.value) {
     return ''
@@ -1812,9 +1706,8 @@ const compareSourceDialogLineLabel = computed(() => {
   return `Lines ${compareSourceDialogRange.value.startLine}-${compareSourceDialogRange.value.endLine}`
 })
 const compareSourceDialogTitle = computed(() => {
-  return compareSourceDialogEntry.value
-    ? `View source: ${compareSourceDialogEntry.value.label}`
-    : 'View source'
+  const draft = compareSourceDialog.draft.value
+  return draft !== null && draft.entryLabel !== null ? `View source: ${draft.entryLabel}` : 'View source'
 })
 const compareSourceDialogDescription = computed(() => {
   return compareSourceDialogLineLabel.value
@@ -1908,9 +1801,6 @@ const selectedImportDumpBaseVersion = computed(() => {
     ? versions.value.find(version => version.id === importDumpBaseVersionId.value) || null
     : null
 })
-const selectedImportDumpBaseVersionSource = computed(() => {
-  return selectedImportDumpBaseVersion.value?.snapshot.source || null
-})
 const selectedImportDbmlBaseVersion = computed(() => {
   return importDbmlBaseVersionId.value
     ? versions.value.find(version => version.id === importDbmlBaseVersionId.value) || null
@@ -1946,10 +1836,7 @@ watch([
 ], () => {
   if (!selectedComparison.value) {
     if (compareNoteDialogOpen.value) {
-      compareNoteDialogOpen.value = false
-      compareNoteDraftEntryId.value = null
-      compareNoteDraftFlag.value = 'pending'
-      compareNoteDraftText.value = ''
+      compareNoteDialog.discard()
     }
     return
   }
@@ -1979,16 +1866,13 @@ watch([
     && compareNoteDraftEntryId.value
     && !compareRawEntriesById.value[compareNoteDraftEntryId.value]
   ) {
-    compareNoteDialogOpen.value = false
-    compareNoteDraftEntryId.value = null
-    compareNoteDraftFlag.value = 'pending'
-    compareNoteDraftText.value = ''
+    compareNoteDialog.discard()
   }
 }, {
   immediate: true
 })
 const buildCompareExclusionSummary = (
-  exclusions: Partial<PgmlCompareExclusions> | null | undefined
+  exclusions: PgmlCompareExclusionsInput | null | undefined
 ) => {
   const normalizedExclusions = clonePgmlCompareExclusions(exclusions)
   const parts: string[] = []
@@ -2014,7 +1898,7 @@ const buildCompareExclusionSummary = (
 const buildStaleCompareExclusionCountLabel = (count: number) => {
   return `${count} stale exclusion${count === 1 ? '' : 's'}`
 }
-const compareExclusionsEffective = computed<PgmlCompareExclusions>(() => {
+const compareExclusionsEffective = computed(() => {
   return compareExclusionsDraft.value
     ? compareExclusionsDraft.value
     : activeCompareExclusions.value
@@ -2197,7 +2081,7 @@ const buildCompareExclusionSummaryLabel = (option: CompareExclusionOption) => {
   return `${entityKindLabel} ${option.label}`
 }
 const buildCompareExclusionVisibleLabels = (
-  exclusions: Partial<PgmlCompareExclusions> | null | undefined
+  exclusions: PgmlCompareExclusionsInput | null | undefined
 ) => {
   const normalizedExclusions = clonePgmlCompareExclusions(exclusions)
 
@@ -2614,9 +2498,10 @@ const comparisonNameError = computed(() => {
     return 'Comparison name is required.'
   }
 
-  if (comparisonDialogMode.value === 'rename' && selectedComparisonId.value) {
+  const draft = comparisonDialog.draft.value
+  if (draft !== null && draft.kind === 'rename') {
     const duplicateComparison = comparisonItems.value.find((comparison) => {
-      return comparison.label === normalizedComparisonDraftName.value && comparison.value !== selectedComparisonId.value
+      return comparison.label === normalizedComparisonDraftName.value && comparison.value !== draft.comparisonId
     })
 
     return duplicateComparison ? 'Comparison name must be unique.' : null
@@ -2631,11 +2516,6 @@ const comparisonNameError = computed(() => {
 const renameVersionCandidate = computed(() => {
   return renameVersionId.value
     ? versions.value.find(version => version.id === renameVersionId.value) || null
-    : null
-})
-const restoreVersionCandidate = computed(() => {
-  return restoreVersionId.value
-    ? versions.value.find(version => version.id === restoreVersionId.value) || null
     : null
 })
 const deleteVersionCandidate = computed(() => {
@@ -2668,89 +2548,53 @@ watch(activeSaveError, (nextError) => {
   pushSaveErrorToast(nextError)
 })
 
+type WorkspaceLaunchState = { kind: 'idle' } | { kind: 'loading', key: string } | { kind: 'disposed' }
+const workspaceLaunchState: Ref<WorkspaceLaunchState> = shallowRef({ kind: 'idle' })
 watch([studioLaunchRequest, orderedSavedSchemas], async ([request]) => {
-  if (!request) {
-    return
-  }
-
+  if (!request || workspaceLaunchState.value.kind === 'disposed') return
   const requestKey = getStudioLaunchRequestKey(request)
-
-  if (requestKey === appliedStudioLaunchKey.value) {
-    return
-  }
-
-  if (request.source === 'file') {
-    const preloadedFileLaunch = studioSessionStore.consumePreloadedFileLaunch(request)
-
-    if (preloadedFileLaunch) {
-      syncLoadedComputerFile(preloadedFileLaunch)
-      await refreshRecentComputerFiles()
-      currentPersistenceSource.value = 'file'
-      resetBrowserSchemaStatusEligibility()
-      appliedStudioLaunchKey.value = requestKey
-      requestCanvasViewportReset()
+  if (requestKey === appliedStudioLaunchKey.value || (workspaceLaunchState.value.kind === 'loading' && workspaceLaunchState.value.key === requestKey)) return
+  const pending = { kind: 'loading', key: requestKey } satisfies WorkspaceLaunchState
+  workspaceLaunchState.value = pending
+  const intent = studioSessionStore.beginWorkspaceLoad(request.source)
+  let accepted = false
+  try {
+    if (request.source === 'file') {
+      const preloaded = studioSessionStore.consumePreloadedFileLaunch(request)
+      accepted = preloaded
+        ? await syncLoadedComputerFile(preloaded, intent)
+        : await loadRecentComputerFileById(request.recentFileId, intent)
+      if (accepted && preloaded) void refreshRecentComputerFiles().catch(() => {})
+    } else if (request.source === 'gist') {
+      accepted = await loadGistPgmlFileByName(request.filename, intent)
+    } else if (request.launch === 'example') {
+      accepted = await loadStudioExample(intent)
+    } else if (request.launch === 'new') {
+      accepted = await clearStudioSchema(intent)
+    } else {
+      const saved = orderedSavedSchemas.value.find(schema => schema.id === request.schemaId)
+      if (saved) accepted = await loadStudioSavedSchema(saved, intent)
+    }
+    if (!accepted) {
+      const message = request.source === 'file' ? computerFileSaveError.value : request.source === 'gist' ? gistFileSaveError.value : null
+      if (message !== null && currentPersistenceSource.value !== request.source && workspaceLaunchState.value === pending) {
+        toast.add({ id: `studio-open-failed:${requestKey}`, title: 'Open failed', description: message, color: 'error', icon: 'i-lucide-x' })
+      }
       return
     }
-
-    const didLoadRecentFile = await loadRecentComputerFileById(request.recentFileId)
-
-    if (!didLoadRecentFile) {
-      return
-    }
-
-    currentPersistenceSource.value = 'file'
+    if (!studioSessionStore.ownsWorkspaceLoad(intent) || workspaceLaunchState.value !== pending) return
+    appliedStudioLaunchKey.value = requestKey
     resetBrowserSchemaStatusEligibility()
-    loadDialogOpen.value = false
-    appliedStudioLaunchKey.value = requestKey
+    studioSessionStore.closeLoadDialog()
     requestCanvasViewportReset()
-    return
+  } finally {
+    if (!accepted) studioSessionStore.cancelWorkspaceLoad(intent)
+    if (workspaceLaunchState.value === pending) workspaceLaunchState.value = { kind: 'idle' }
   }
-
-  if (request.source === 'gist') {
-    const didLoadGistFile = await loadGistPgmlFileByName(request.filename)
-
-    if (!didLoadGistFile) {
-      return
-    }
-
-    currentPersistenceSource.value = 'gist'
-    resetBrowserSchemaStatusEligibility()
-    loadDialogOpen.value = false
-    appliedStudioLaunchKey.value = requestKey
-    requestCanvasViewportReset()
-    return
-  }
-
-  currentPersistenceSource.value = 'browser'
-
-  if (request.launch === 'example') {
-    appliedStudioLaunchKey.value = requestKey
-    loadExample()
-    return
-  }
-
-  if (request.launch === 'new') {
-    appliedStudioLaunchKey.value = requestKey
-    clearSchema()
-    return
-  }
-
-  const savedSchema = orderedSavedSchemas.value.find((schema) => {
-    return schema.id === request.schemaId
-  })
-
-  if (!savedSchema) {
-    return
-  }
-
-  appliedStudioLaunchKey.value = requestKey
-  loadSavedSchema(savedSchema)
-}, {
-  immediate: true
-})
+}, { immediate: true })
 
 watch([currentPersistenceSource, currentSchemaId], async ([persistenceSource, schemaId]) => {
-  if (persistenceSource !== 'browser' || schemaId === null) {
+  if (studioSessionStore.isWorkspaceLoading || persistenceSource !== 'browser' || schemaId === null) {
     return
   }
 
@@ -2780,9 +2624,10 @@ const downloadCurrentSchema = async () => {
     : activeSchemaName.value
 
   downloadSchemaText(name, buildSchemaText(includeLayoutInSchema.value))
-  schemaDialogOpen.value = false
+  studioSessionStore.closeSchemaDialog()
 }
 const saveCurrentSchema = async () => {
+  const dialogRevision = studioSessionStore.schemaDialogRevision
   await flushPendingEditorChanges({
     waitForAnalysis: true
   })
@@ -2791,7 +2636,7 @@ const saveCurrentSchema = async () => {
     const didSave = await saveSchemaToComputerFile()
 
     if (didSave) {
-      schemaDialogOpen.value = false
+      studioSessionStore.closeSchemaDialog(dialogRevision)
       pushSaveSuccessToast(getSaveSuccessToastDescription())
     }
 
@@ -2802,7 +2647,7 @@ const saveCurrentSchema = async () => {
     const didSave = await saveSchemaToGistFile()
 
     if (didSave) {
-      schemaDialogOpen.value = false
+      studioSessionStore.closeSchemaDialog(dialogRevision)
       pushSaveSuccessToast(getSaveSuccessToastDescription())
     }
 
@@ -2818,23 +2663,34 @@ const saveCurrentSchema = async () => {
 
   pushSaveSuccessToast(getSaveSuccessToastDescription())
 }
-const openCheckpointDialog = async () => {
-  await flushPendingEditorChanges()
-  const suggestedCreatedAt = new Date().toISOString()
-
-  checkpointDialogOpen.value = true
-  checkpointRole.value = 'design'
-  checkpointSuggestedCreatedAt.value = suggestedCreatedAt
-  checkpointName.value = buildPgmlCheckpointName(versionDocument.value, {
-    createdAt: suggestedCreatedAt,
-    role: 'design'
-  })
-  checkpointNameIsSuggested.value = true
+const refreshSuggestedCheckpointName = (draft: CheckpointDraft) => {
+  if (draft.nameOrigin.kind === 'suggested') {
+    draft.name = buildPgmlCheckpointName(versionDocument.value, { createdAt: draft.nameOrigin.createdAt, role: draft.role })
+  }
 }
-const persistWorkspaceBeforeRouteSwitch = async () => {
-  await flushPendingEditorChanges({
-    waitForAnalysis: true
-  })
+const openCheckpointDialog = async () => {
+  const createdAt = new Date().toISOString()
+  checkpointDialog.open({ name: buildPgmlCheckpointName(versionDocument.value, { createdAt, role: 'design' }),
+    role: 'design', nameOrigin: { kind: 'suggested', createdAt } })
+  const draft = checkpointDialog.draft.value
+  await flushPendingEditorChanges()
+  if (draft !== null && checkpointDialog.draft.value === draft && checkpointDialogOpen.value && !isSavingCheckpoint.value) refreshSuggestedCheckpointName(draft)
+}
+const updateCheckpointName = (value: unknown) => {
+  if (typeof value === 'string') checkpointDialog.updateDraft({ name: value, nameOrigin: { kind: 'custom' } })
+}
+const updateCheckpointRole = (value: unknown) => {
+  checkpointDialog.updateDraft({ role: value === 'implementation' ? 'implementation' : 'design' })
+  const draft = checkpointDialog.draft.value
+  if (draft !== null && !isSavingCheckpoint.value) refreshSuggestedCheckpointName(draft)
+}
+const ownsWorkspaceNavigation = (request: WorkspaceNavigationRequest) => 'request' in workspaceNavigation.value
+  && workspaceNavigation.value.request === request && workspacePersistenceActive.value
+  && studioSessionStore.workspaceDocumentRevision === request.documentRevision
+  && studioSessionStore.workspaceLoadRevision === request.loadRevision && currentPersistenceSource.value === request.source
+const persistWorkspaceBeforeRouteSwitch = async (request: WorkspaceNavigationRequest) => {
+  await flushPendingEditorChanges({ waitForAnalysis: true })
+  if (!ownsWorkspaceNavigation(request)) return false
 
   if (!activeHasPendingChanges.value) {
     return true
@@ -2863,35 +2719,29 @@ const persistWorkspaceBeforeRouteSwitch = async () => {
 
   return await saveSchemaToBrowser()
 }
-const navigateToWorkspaceMode = async (page: StudioWorkspacePage) => {
-  if (page === workspaceMode) {
-    return
+const navigateToWorkspaceMode = async (destination: StudioWorkspacePage) => {
+  if (destination === workspaceMode || workspaceNavigation.value.kind !== 'idle' || !workspacePersistenceActive.value) return
+  const source = currentPersistenceSource.value
+  const request: WorkspaceNavigationRequest = { destination, source,
+    documentRevision: studioSessionStore.workspaceDocumentRevision, loadRevision: studioSessionStore.workspaceLoadRevision,
+    query: source === 'file' || source === 'gist' ? { ...route.query } : undefined }
+  workspaceNavigation.value = { kind: 'persisting', request }
+  try {
+    const accepted = await persistWorkspaceBeforeRouteSwitch(request)
+    if (!accepted || !ownsWorkspaceNavigation(request)) return
+    workspaceNavigation.value = { kind: 'navigating', request }
+    const failure = await navigateTo({ path: getStudioWorkspacePath(request.destination), query: request.query })
+    if (failure !== undefined && 'request' in workspaceNavigation.value && workspaceNavigation.value.request === request) workspaceNavigation.value = { kind: 'idle' }
+  } catch (error) {
+    if (ownsWorkspaceNavigation(request)) toast.add({ title: 'Navigation failed', description: getActionErrorMessage(error, 'Unable to switch workspaces.'), color: 'error', icon: 'i-lucide-circle-alert' })
+    if ('request' in workspaceNavigation.value && workspaceNavigation.value.request === request) workspaceNavigation.value = { kind: 'idle' }
+  } finally {
+    if (workspaceNavigation.value.kind === 'persisting' && workspaceNavigation.value.request === request) workspaceNavigation.value = { kind: 'idle' }
   }
-
-  const didPersist = await persistWorkspaceBeforeRouteSwitch()
-
-  if (!didPersist) {
-    return
-  }
-
-  await navigateTo({
-    path: getStudioWorkspacePath(page),
-    query: currentPersistenceSource.value === 'file' || currentPersistenceSource.value === 'gist' ? route.query : undefined
-  })
 }
-const closeCheckpointDialog = () => {
-  checkpointDialogOpen.value = false
-  checkpointSuggestedCreatedAt.value = null
-  checkpointNameIsSuggested.value = false
-}
-const closeRestoreVersionDialog = () => {
-  restoreVersionDialogOpen.value = false
-  restoreVersionId.value = null
-}
-const closeDeleteVersionDialog = () => {
-  deleteVersionDialogOpen.value = false
-  deleteVersionId.value = null
-}
+const closeCheckpointDialog = () => checkpointDialog.close()
+const closeRestoreVersionDialog = () => restoreVersionDialog.close()
+const closeDeleteVersionDialog = () => deleteVersionDialog.close()
 const compareExclusionsDialogDescription = computed(() => {
   const staleCount = staleCompareExclusionEntityOptions.value.length
   const staleSuffix = staleCount > 0
@@ -2918,20 +2768,10 @@ const isCompareExclusionOptionSelected = (option: CompareExclusionOption) => {
   return compareExclusionsEffective.value.entityIds.includes(option.value)
 }
 const openCompareExclusionsDialog = () => {
-  compareExclusionsDraft.value = clonePgmlCompareExclusions(activeCompareExclusions.value)
-  compareExclusionsSearchQuery.value = ''
-  compareExclusionsTypeFilter.value = 'all'
-  compareExclusionsDialogOpen.value = true
+  compareExclusionsDialog.open({ comparisonId: selectedComparisonId.value, exclusions: clonePgmlCompareExclusions(activeCompareExclusions.value), searchQuery: '', typeFilter: 'all' })
 }
-const closeCompareExclusionsDialog = () => {
-  compareExclusionsDialogOpen.value = false
-  compareExclusionsDraft.value = null
-  compareExclusionsSearchQuery.value = ''
-  compareExclusionsTypeFilter.value = 'all'
-}
-const setCompareExclusionsTypeFilter = (value: CompareExclusionTypeFilterValue) => {
-  compareExclusionsTypeFilter.value = value
-}
+const closeCompareExclusionsDialog = () => compareExclusionsDialog.close()
+const setCompareExclusionsTypeFilter = (typeFilter: CompareExclusionTypeFilterValue) => compareExclusionsDialog.updateDraft({ typeFilter })
 const isCompareExclusionsTypeFilterActive = (value: CompareExclusionTypeFilterValue) => {
   return compareExclusionsTypeFilter.value === value
 }
@@ -2957,7 +2797,7 @@ const toggleCompareExclusionOption = (option: CompareExclusionOption) => {
     nextValues.add(option.value)
   }
 
-  compareExclusionsDraft.value = clonePgmlCompareExclusions({
+  compareExclusionsDialog.updateDraft({ exclusions: clonePgmlCompareExclusions({
     ...nextDraft,
     [option.kind === 'entity'
       ? 'entityIds'
@@ -2966,7 +2806,7 @@ const toggleCompareExclusionOption = (option: CompareExclusionOption) => {
         : option.kind === 'schema'
           ? 'schemaNames'
           : 'tableIds']: Array.from(nextValues)
-  })
+  }) })
 }
 const removeCompareExclusionOption = (option: CompareExclusionOption) => {
   if (!isCompareExclusionOptionSelected(option)) {
@@ -2976,102 +2816,68 @@ const removeCompareExclusionOption = (option: CompareExclusionOption) => {
   toggleCompareExclusionOption(option)
 }
 const clearCompareExclusionsDraft = () => {
-  compareExclusionsDraft.value = createEmptyPgmlCompareExclusions()
+  compareExclusionsDialog.updateDraft({ exclusions: createEmptyPgmlCompareExclusions() })
 }
 const saveCompareExclusionsDialog = async () => {
-  if (!compareExclusionsDraft.value) {
-    return
+  const draft = compareExclusionsDialog.beginSave()
+  if (draft === null) return
+  try {
+    if (draft.comparisonId !== selectedComparisonId.value || !setCurrentCompareExclusions(draft.exclusions)) return
+    const description = selectedComparison.value ? `${compareComparisonLabel.value} now keeps its saved exclusions.` : 'The current comparison now uses the updated exclusions.'
+    if (draft.comparisonId !== null) await persistBrowserWorkspaceMutation()
+    if (!isSavingCompareExclusions.value || compareExclusionsDialog.draft.value !== draft) return
+    compareExclusionsDialog.completeSave(draft, true)
+    toast.add({ title: 'Compare exclusions updated', description, color: 'success', icon: 'i-lucide-check' })
+  } finally {
+    compareExclusionsDialog.completeSave(draft, false)
   }
-
-  const didSave = setCurrentCompareExclusions(compareExclusionsDraft.value)
-
-  if (!didSave) {
-    return
-  }
-
-  if (selectedComparison.value) {
-    await persistBrowserWorkspaceMutation()
-  }
-
-  closeCompareExclusionsDialog()
-  toast.add({
-    title: 'Compare exclusions updated',
-    description: selectedComparison.value
-      ? `${compareComparisonLabel.value} now keeps its saved exclusions.`
-      : 'The current comparison now uses the updated exclusions.',
-    color: 'success',
-    icon: 'i-lucide-check'
-  })
 }
-const closeCompareNoteDialog = () => {
-  compareNoteDialogOpen.value = false
-  compareNoteDraftEntryId.value = null
-  compareNoteDraftFlag.value = 'pending'
-  compareNoteDraftText.value = ''
-}
+const closeCompareNoteDialog = () => compareNoteDialog.close()
 const openCompareNoteDialog = (entryId: string) => {
-  if (!selectedComparison.value) {
-    toast.add({
-      title: 'Save a comparison first',
-      description: 'Create or select a saved comparison before adding persisted compare notes.',
-      color: 'warning',
-      icon: 'i-lucide-bookmark'
-    })
+  const selected = selectedComparison.value
+  if (selected === null) {
+    toast.add({ title: 'Save a comparison first', description: 'Create or select a saved comparison before adding persisted compare notes.', color: 'warning', icon: 'i-lucide-bookmark' })
     return
   }
-
-  const existingNote = selectedComparison.value.notes.find((note) => {
-    return note.entryId === entryId
-  }) || null
-
-  compareNoteDraftEntryId.value = entryId
-  compareNoteDraftFlag.value = existingNote?.flag || 'pending'
-  compareNoteDraftText.value = existingNote?.note || ''
-  compareNoteDialogOpen.value = true
+  if (!compareRawEntriesById.value[entryId]) return
+  const note = selected.notes.find(entry => entry.entryId === entryId)
+  compareNoteDialog.open({ comparisonId: selected.id, entryId, flag: note === undefined ? 'pending' : note.flag, text: note === undefined ? '' : note.note })
+}
+const updateCompareNoteFlag = (value: unknown) => {
+  const item = compareNoteFlagItems.find(candidate => candidate.value === value)
+  if (item) compareNoteDialog.updateDraft({ flag: item.value })
+}
+const updateCompareNoteText = (event: Event) => {
+  if (event.target instanceof HTMLTextAreaElement) compareNoteDialog.updateDraft({ text: event.target.value })
 }
 const saveCompareNoteDialog = async () => {
-  if (!compareNoteDraftEntryId.value || compareNoteDraftText.value.trim().length === 0) {
-    return
+  if (!canSaveCompareNote.value) return
+  const draft = compareNoteDialog.beginSave()
+  if (draft === null) return
+  try {
+    if (draft.comparisonId !== selectedComparisonId.value || !saveSelectedComparisonNote({ entryId: draft.entryId, flag: draft.flag, note: draft.text })) return
+    const description = `${compareComparisonLabel.value} now keeps the note for this difference.`
+    await persistBrowserWorkspaceMutation()
+    if (!isSavingCompareNote.value || compareNoteDialog.draft.value !== draft) return
+    compareNoteDialog.completeSave(draft, true)
+    toast.add({ title: 'Compare note saved', description, color: 'success', icon: 'i-lucide-check' })
+  } finally {
+    compareNoteDialog.completeSave(draft, false)
   }
-
-  const didSave = saveSelectedComparisonNote({
-    entryId: compareNoteDraftEntryId.value,
-    flag: compareNoteDraftFlag.value,
-    note: compareNoteDraftText.value
-  })
-
-  if (!didSave) {
-    return
-  }
-
-  await persistBrowserWorkspaceMutation()
-  closeCompareNoteDialog()
-  toast.add({
-    title: 'Compare note saved',
-    description: `${compareComparisonLabel.value} now keeps the note for this difference.`,
-    color: 'success',
-    icon: 'i-lucide-check'
-  })
 }
 const deleteCompareNoteDialog = async () => {
-  if (!compareNoteDraftEntryId.value) {
-    return
+  const draft = compareNoteDialog.beginSave()
+  if (draft === null) return
+  try {
+    if (draft.comparisonId !== selectedComparisonId.value || !deleteSelectedComparisonNote(draft.entryId)) return
+    const description = `${compareComparisonLabel.value} no longer keeps a note for this difference.`
+    await persistBrowserWorkspaceMutation()
+    if (!isSavingCompareNote.value || compareNoteDialog.draft.value !== draft) return
+    compareNoteDialog.completeSave(draft, true)
+    toast.add({ title: 'Compare note removed', description, color: 'success', icon: 'i-lucide-check' })
+  } finally {
+    compareNoteDialog.completeSave(draft, false)
   }
-
-  const didDelete = deleteSelectedComparisonNote(compareNoteDraftEntryId.value)
-
-  if (!didDelete) {
-    return
-  }
-
-  await persistBrowserWorkspaceMutation()
-  closeCompareNoteDialog()
-  toast.add({
-    title: 'Compare note removed',
-    description: `${compareComparisonLabel.value} no longer keeps a note for this difference.`,
-    color: 'success',
-    icon: 'i-lucide-check'
-  })
 }
 const buildNextComparisonName = () => {
   let index = comparisonItems.value.length + 1
@@ -3083,58 +2889,38 @@ const buildNextComparisonName = () => {
   return `Comparison ${index}`
 }
 const openCreateComparisonDialog = () => {
-  comparisonDialogMode.value = 'create'
-  comparisonDraftName.value = buildNextComparisonName()
-  comparisonDialogOpen.value = true
+  comparisonDialog.open({ kind: 'create', name: buildNextComparisonName() })
 }
 const openRenameComparisonDialog = () => {
-  if (!selectedComparison.value) {
-    return
-  }
-
-  comparisonDialogMode.value = 'rename'
-  comparisonDraftName.value = selectedComparison.value.name
-  comparisonDialogOpen.value = true
+  const selected = selectedComparison.value
+  if (selected !== null) comparisonDialog.open({ kind: 'rename', comparisonId: selected.id, name: selected.name })
 }
-const closeComparisonDialog = () => {
-  comparisonDialogOpen.value = false
-  comparisonDraftName.value = ''
-}
+const closeComparisonDialog = () => comparisonDialog.close()
 const saveComparisonDialog = async () => {
-  if (comparisonNameError.value) {
-    return
-  }
-
-  if (comparisonDialogMode.value === 'rename') {
-    if (!selectedComparisonId.value || !renameComparison(selectedComparisonId.value, normalizedComparisonDraftName.value)) {
-      return
+  if (comparisonNameError.value !== null) return
+  const draft = comparisonDialog.beginSave()
+  if (draft === null) return
+  const name = draft.name.trim()
+  try {
+    let title: string
+    let description: string
+    if (draft.kind === 'rename') {
+      if (!renameComparison(draft.comparisonId, name)) return
+      title = 'Comparison renamed'
+      description = `${name} is now the saved comparison label.`
+    } else {
+      const created = createComparison(name)
+      if (created === null) return
+      title = 'Comparison created'
+      description = `${created.name} now stores the current base, target, filters, and exclusions.`
     }
-
     await persistBrowserWorkspaceMutation()
-    closeComparisonDialog()
-    toast.add({
-      title: 'Comparison renamed',
-      description: `${normalizedComparisonDraftName.value} is now the saved comparison label.`,
-      color: 'success',
-      icon: 'i-lucide-check'
-    })
-    return
+    if (!isSavingComparisonDialog.value || comparisonDialog.draft.value !== draft) return
+    comparisonDialog.completeSave(draft, true)
+    toast.add({ title, description, color: 'success', icon: 'i-lucide-check' })
+  } finally {
+    comparisonDialog.completeSave(draft, false)
   }
-
-  const nextComparison = createComparison(normalizedComparisonDraftName.value)
-
-  if (!nextComparison) {
-    return
-  }
-
-  await persistBrowserWorkspaceMutation()
-  closeComparisonDialog()
-  toast.add({
-    title: 'Comparison created',
-    description: `${nextComparison.name} now stores the current base, target, filters, and exclusions.`,
-    color: 'success',
-    icon: 'i-lucide-check'
-  })
 }
 const deleteSelectedComparisonPreset = () => {
   if (!selectedComparison.value || !deleteComparison(selectedComparison.value.id)) {
@@ -3169,15 +2955,9 @@ const openRenameVersionDialog = (versionId: string) => {
     return
   }
 
-  renameVersionId.value = versionId
-  renameVersionDraftName.value = getVersionLabel(version)
-  renameVersionDialogOpen.value = true
+  renameVersionDialog.open({ versionId, name: getVersionLabel(version) })
 }
-const closeRenameVersionDialog = () => {
-  renameVersionDialogOpen.value = false
-  renameVersionDraftName.value = ''
-  renameVersionId.value = null
-}
+const closeRenameVersionDialog = () => renameVersionDialog.close()
 const openDeleteVersionDialog = (versionId: string) => {
   const version = versionHistoryItems.value.find(entry => entry.id === versionId) || null
 
@@ -3185,51 +2965,28 @@ const openDeleteVersionDialog = (versionId: string) => {
     return
   }
 
-  deleteVersionId.value = versionId
-  deleteVersionDialogOpen.value = true
+  deleteVersionDialog.open({ versionId, label: getVersionLabel(version) })
 }
 const saveCheckpoint = async () => {
-  await flushPendingEditorChanges()
-  const normalizedName = checkpointName.value.trim()
-
-  if (normalizedName.length === 0) {
-    return
+  const draft = checkpointDialog.beginSave()
+  if (draft === null) return
+  try {
+    await flushPendingEditorChanges()
+    if (!isSavingCheckpoint.value || checkpointDialog.draft.value !== draft || !workspacePersistenceActive.value) return
+    refreshSuggestedCheckpointName(draft)
+    const name = draft.name.trim()
+    if (name.length === 0) return
+    const created = createVersionCheckpoint({ includeLayout: true, name, role: draft.role })
+    if (created === null) return
+    checkpointDialog.completeSave(draft, true)
+    setPreviewTarget('workspace')
+    requestCanvasViewportReset()
+    toast.add({ title: 'Checkpoint created', description: buildPgmlCheckpointCreatedDescription(getVersionLabel(created), created.role), color: 'success', icon: 'i-lucide-check' })
+  } finally {
+    checkpointDialog.completeSave(draft, false)
   }
-
-  const createdVersion = createVersionCheckpoint({
-    includeLayout: true,
-    name: normalizedName,
-    role: checkpointRole.value
-  })
-
-  if (!createdVersion) {
-    return
-  }
-
-  checkpointDialogOpen.value = false
-  checkpointName.value = ''
-  checkpointSuggestedCreatedAt.value = null
-  checkpointNameIsSuggested.value = false
-  setPreviewTarget('workspace')
-  requestCanvasViewportReset()
-  toast.add({
-    title: 'Checkpoint created',
-    description: buildPgmlCheckpointCreatedDescription(getVersionLabel(createdVersion), createdVersion.role),
-    color: 'success',
-    icon: 'i-lucide-check'
-  })
 }
 
-watch(checkpointRole, (nextRole) => {
-  if (!checkpointDialogOpen.value || !checkpointNameIsSuggested.value || !checkpointSuggestedCreatedAt.value) {
-    return
-  }
-
-  checkpointName.value = buildPgmlCheckpointName(versionDocument.value, {
-    createdAt: checkpointSuggestedCreatedAt.value,
-    role: nextRole
-  })
-})
 const normalizedDiagramViewDraftName = computed(() => {
   return diagramViewDraftName.value.trim()
 })
@@ -3261,576 +3018,214 @@ const diagramViewNameError = computed(() => {
   return null
 })
 const openCreateDiagramViewDialog = () => {
-  diagramViewDialogMode.value = 'create'
-  diagramViewDraftName.value = nextDiagramViewName.value
-  diagramViewDialogOpen.value = true
+  diagramViewDialog.open({ kind: 'create', previewTargetId: previewTargetId.value, name: nextDiagramViewName.value })
 }
 const openRenameDiagramViewDialog = () => {
-  if (!activeDiagramViewId.value) {
-    return
-  }
-
-  diagramViewDialogMode.value = 'rename'
-  diagramViewDraftName.value = activeDiagramViewName.value
-  diagramViewDialogOpen.value = true
+  if (activeDiagramViewId.value !== null) diagramViewDialog.open({ kind: 'rename', previewTargetId: previewTargetId.value, viewId: activeDiagramViewId.value, name: activeDiagramViewName.value })
 }
-const closeDiagramViewDialog = () => {
-  diagramViewDialogOpen.value = false
-  diagramViewDialogMode.value = 'create'
-  diagramViewDraftName.value = ''
-}
+const closeDiagramViewDialog = () => diagramViewDialog.close()
 const saveRenameVersionDialog = () => {
-  if (renameVersionNameError.value !== null || !renameVersionId.value) {
-    return
+  if (renameVersionNameError.value !== null) return
+  const draft = renameVersionDialog.beginSave()
+  if (draft === null) return
+  const name = draft.name.trim()
+  try {
+    if (!renameVersion(draft.versionId, name)) return
+    markBrowserSchemaStatusEligible()
+    renameVersionDialog.completeSave(draft, true)
+    toast.add({ title: 'Version renamed', description: `Locked version renamed to ${name}.`, color: 'success', icon: 'i-lucide-check' })
+  } finally {
+    renameVersionDialog.completeSave(draft, false)
   }
-
-  const didRename = renameVersion(renameVersionId.value, normalizedRenameVersionDraftName.value)
-
-  if (!didRename) {
-    return
-  }
-
-  markBrowserSchemaStatusEligible()
-  closeRenameVersionDialog()
-  toast.add({
-    title: 'Version renamed',
-    description: `Locked version renamed to ${normalizedRenameVersionDraftName.value}.`,
-    color: 'success',
-    icon: 'i-lucide-check'
-  })
 }
 const revealPreviewTargetDocumentSource = () => {
   setDocumentEditorScope(getPreviewTargetDocumentScope())
-  versionedEditorMode.value = 'document'
+  setEditorMode('document')
 }
 const saveDiagramViewDialog = () => {
-  if (diagramViewNameError.value !== null) {
+  if (diagramViewNameError.value !== null) return
+  const draft = diagramViewDialog.beginSave()
+  if (draft === null) return
+  try {
+    if (draft.previewTargetId !== previewTargetId.value || (draft.kind === 'rename' && draft.viewId !== activeDiagramViewId.value)) return
+    const name = draft.name.trim()
+    const accepted = draft.kind === 'rename' ? renameActiveDiagramView(name) : createNamedDiagramView(name)
+    if (!accepted) return
+    markBrowserSchemaStatusEligible()
+    revealPreviewTargetDocumentSource()
+    diagramViewDialog.completeSave(draft, true)
+  } finally {
+    diagramViewDialog.completeSave(draft, false)
+  }
+}
+const importCopy = {
+  pgml: { conflict: 'Choose either pasted PGML text or a file upload, not both.', missing: 'Paste PGML text or choose a PGML file before importing.', failure: 'Unable to import that PGML document.' },
+  dbml: { conflict: buildPgmlImportDbmlConflictMessage(), missing: buildPgmlImportDbmlMissingInputMessage(), failure: buildPgmlImportDbmlFailureMessage() },
+  pg_dump: { conflict: buildPgmlImportConflictMessage(), missing: buildPgmlImportMissingInputMessage(), failure: buildPgmlImportFailureMessage() }
+}
+const cancelImportIntent = () => {
+  const intent = importLoadIntent
+  importLoadIntent = null
+  if (intent !== null) studioSessionStore.cancelWorkspaceLoad(intent)
+}
+watch(() => studioSessionStore.workspaceLoadRevision, () => {
+  if (importLoadIntent !== null && !studioSessionStore.ownsWorkspaceLoad(importLoadIntent)) {
+    importLoadIntent = null
+    schemaImport.discard()
+  }
+}, { flush: 'sync' })
+onScopeDispose(cancelImportIntent)
+const editImportInput = (patch: Partial<WorkspaceImportInput>) => {
+  schemaImport.edit(draft => ({ ...draft, ...patch }))
+  const draft = schemaImport.draft.value
+  if (draft !== null && draft.file !== null && draft.text.trim().length > 0) schemaImport.setError(importCopy[draft.kind].conflict)
+}
+const editImportDbml = (patch: Partial<Omit<Extract<WorkspaceImportDraft, { kind: 'dbml' }>, 'kind'>>) => {
+  schemaImport.edit(draft => draft.kind === 'dbml' ? { ...draft, ...patch } : draft)
+}
+const editImportDump = (patch: Partial<Omit<Extract<WorkspaceImportDraft, { kind: 'pg_dump' }>, 'kind'>>) => {
+  schemaImport.edit(draft => draft.kind === 'pg_dump' ? { ...draft, ...patch } : draft)
+}
+const getPreferredImportBaseVersionId = () => versionHistoryItems.value.find(version => version.isWorkspaceBase)?.id
+  || latestImplementationVersion.value?.id || latestVersionId.value || null
+const openSchemaImport = (kind: WorkspaceImportDraft['kind']) => {
+  if (schemaImport.isBusy.value) return
+  if (kind !== 'pgml' && versions.value.length === 0) {
+    toast.add({ title: 'Checkpoint required', description: buildPgmlImportCheckpointRequiredDescription(), color: 'error', icon: 'i-lucide-circle-alert' })
     return
   }
-
-  markBrowserSchemaStatusEligible()
-
-  const didSave = diagramViewDialogMode.value === 'rename'
-    ? renameActiveDiagramView(normalizedDiagramViewDraftName.value)
-    : createNamedDiagramView(normalizedDiagramViewDraftName.value)
-
-  if (!didSave) {
-    return
-  }
-
-  revealPreviewTargetDocumentSource()
-  closeDiagramViewDialog()
+  cancelImportIntent()
+  const input = { text: '', file: null }
+  if (kind === 'pgml') schemaImport.open({ ...input, kind })
+  else if (kind === 'dbml') schemaImport.open({ ...input, kind, baseVersionId: getPreferredImportBaseVersionId(), foldIdentifiersToLowercase: false, parseExecutableComments: false })
+  else schemaImport.open({ ...input, kind, baseVersionId: getPreferredImportBaseVersionId(), foldIdentifiersToLowercase: false, retainMatchingTableGroups: true })
 }
-const syncImportPgmlConflictError = () => {
-  const hasFile = importPgmlSelectedFile.value !== null
-  const hasText = importPgmlText.value.trim().length > 0
-
-  if (hasFile && hasText) {
-    importPgmlError.value = 'Choose either pasted PGML text or a file upload, not both.'
-    return false
-  }
-
-  if (importPgmlError.value === 'Choose either pasted PGML text or a file upload, not both.') {
-    importPgmlError.value = null
-  }
-
-  return true
+const openImportPgmlDialog = () => openSchemaImport('pgml')
+const openImportDbmlDialog = () => openSchemaImport('dbml')
+const openImportDumpDialog = () => openSchemaImport('pg_dump')
+const closeSchemaImport = (open: boolean) => {
+  if (open || schemaImport.isBusy.value) return
+  cancelImportIntent()
+  schemaImport.close()
 }
-const resetImportPgmlDialog = () => {
-  importPgmlDialogOpen.value = false
-  importPgmlError.value = null
-  importPgmlSelectedFile.value = null
-  importPgmlText.value = ''
-}
-const syncImportDumpConflictError = () => {
-  const hasFile = importDumpSelectedFile.value !== null
-  const hasText = importDumpText.value.trim().length > 0
-
-  if (hasFile && hasText) {
-    importDumpError.value = buildPgmlImportConflictMessage()
-    return false
-  }
-
-  if (importDumpError.value === buildPgmlImportConflictMessage()) {
-    importDumpError.value = null
-  }
-
-  return true
-}
-const resetImportDumpDialog = () => {
-  importDumpDialogOpen.value = false
-  importDumpError.value = null
-  importDumpFoldIdentifiersToLowercase.value = false
-  importDumpRetainMatchingTableGroups.value = true
-  importDumpSelectedFile.value = null
-  importDumpText.value = ''
-  importDumpBaseVersionId.value = null
-}
-const syncImportDbmlConflictError = () => {
-  const hasFile = importDbmlSelectedFile.value !== null
-  const hasText = importDbmlText.value.trim().length > 0
-
-  if (hasFile && hasText) {
-    importDbmlError.value = buildPgmlImportDbmlConflictMessage()
-    return false
-  }
-
-  if (importDbmlError.value === buildPgmlImportDbmlConflictMessage()) {
-    importDbmlError.value = null
-  }
-
-  return true
-}
-const resetImportDbmlDialog = () => {
-  importDbmlDialogOpen.value = false
-  importDbmlError.value = null
-  importDbmlFoldIdentifiersToLowercase.value = false
-  importDbmlParseExecutableComments.value = false
-  importDbmlSelectedFile.value = null
-  importDbmlText.value = ''
-  importDbmlBaseVersionId.value = null
-}
-const resetImportExecutableAttachmentResolution = () => {
-  importExecutableAttachmentResolution.value = null
-  importExecutableAttachmentError.value = null
-}
-const commitImportedSchema = (input: {
-  basedOnVersionId: string
-  kind: ImportExecutableAttachmentResolutionKind
-  pgml: string
-}) => {
-  const didReplaceWorkspace = replaceWorkspaceFromImportedSnapshot({
-    basedOnVersionId: input.basedOnVersionId,
-    includeLayout: true,
-    source: input.pgml
-  })
-
-  if (!didReplaceWorkspace) {
-    throw new Error('The selected base version no longer exists.')
-  }
-
-  markBrowserSchemaStatusEligible()
-  requestCanvasViewportReset()
-  resetImportExecutableAttachmentResolution()
-
-  if (input.kind === 'dbml') {
-    resetImportDbmlDialog()
-  } else {
-    resetImportDumpDialog()
-  }
-
-  toast.add({
-    title: 'Workspace replaced',
-    description: buildPgmlImportSuccessDescription(),
-    color: 'success',
-    icon: 'i-lucide-check'
-  })
-}
-const openImportExecutableAttachmentResolution = (input: ImportExecutableAttachmentResolution) => {
-  importExecutableAttachmentResolution.value = input
-  importExecutableAttachmentError.value = null
-
-  if (input.kind === 'dbml') {
-    importDbmlDialogOpen.value = false
-  } else {
-    importDumpDialogOpen.value = false
-  }
-}
+const handleImportPgmlDialogOpenChange = closeSchemaImport
+const handleImportDbmlDialogOpenChange = closeSchemaImport
+const handleImportDumpDialogOpenChange = closeSchemaImport
+const setImportPgmlText = (text: string) => editImportInput({ text })
+const setImportDbmlText = (text: string) => editImportInput({ text })
+const setImportDumpText = (text: string) => editImportInput({ text })
+const setImportPgmlFile = (files: FileList | null) => editImportInput({ file: files === null ? null : files.item(0) })
+const setImportDbmlFile = setImportPgmlFile
+const setImportDumpFile = setImportPgmlFile
+const clearImportPgmlFile = () => editImportInput({ file: null })
+const clearImportDbmlFile = clearImportPgmlFile
+const clearImportDumpFile = clearImportPgmlFile
 const closeImportExecutableAttachmentResolution = () => {
-  if (isSubmittingImportExecutableAttachmentResolution.value) {
-    return
-  }
-
-  const resolution = importExecutableAttachmentResolution.value
-
-  if (!resolution) {
-    return
-  }
-
-  resetImportExecutableAttachmentResolution()
-
-  if (resolution.kind === 'dbml') {
-    importDbmlDialogOpen.value = true
-  } else {
-    importDumpDialogOpen.value = true
-  }
+  if (schemaImport.isBusy.value) return
+  cancelImportIntent()
+  schemaImport.back()
 }
-const handleImportExecutableAttachmentResolutionOpenChange = (nextOpen: boolean) => {
-  if (nextOpen || !importExecutableAttachmentResolution.value) {
-    return
-  }
-
-  closeImportExecutableAttachmentResolution()
+const handleImportExecutableAttachmentResolutionOpenChange = (open: boolean) => {
+  if (!open) closeImportExecutableAttachmentResolution()
 }
 const toggleImportExecutableAttachmentCandidateTable = (candidateId: string, tableId: string) => {
-  const resolution = importExecutableAttachmentResolution.value
-
-  if (!resolution) {
-    return
-  }
-
-  importExecutableAttachmentResolution.value = {
-    ...resolution,
-    candidates: resolution.candidates.map((candidate) => {
-      if (candidate.id !== candidateId) {
-        return candidate
-      }
-
-      const selectedTableIds = candidate.selectedTableIds.includes(tableId)
-        ? candidate.selectedTableIds.filter(value => value !== tableId)
-        : [...candidate.selectedTableIds, tableId]
-
-      return {
-        ...candidate,
-        selectedTableIds
-      }
-    })
-  }
+  schemaImport.editPlacement(resolution => ({ ...resolution, candidates: resolution.candidates.map(candidate => candidate.id !== candidateId
+    ? candidate
+    : {
+        ...candidate, selectedTableIds: candidate.selectedTableIds.includes(tableId) ? candidate.selectedTableIds.filter(value => value !== tableId) : [...candidate.selectedTableIds, tableId]
+      }) }))
 }
 const clearImportExecutableAttachmentCandidateTables = (candidateId: string) => {
-  const resolution = importExecutableAttachmentResolution.value
-
-  if (!resolution) {
+  schemaImport.editPlacement(resolution => ({ ...resolution, candidates: resolution.candidates.map(candidate => candidate.id === candidateId ? { ...candidate, selectedTableIds: [] } : candidate) }))
+}
+const commitImportedSchema = (input: ImportExecutableAttachmentResolution) => {
+  if (!replaceWorkspaceFromImportedSnapshot({ basedOnVersionId: input.basedOnVersionId, includeLayout: true, source: input.pgml })) throw new Error('The selected base version no longer exists.')
+  markBrowserSchemaStatusEligible()
+  requestCanvasViewportReset()
+  toast.add({ title: 'Workspace replaced', description: buildPgmlImportSuccessDescription(), color: 'success', icon: 'i-lucide-check' })
+}
+const getActionErrorMessage = (error: unknown, fallback: string) => {
+  if (error instanceof Error && error.message.trim().length > 0) return error.message
+  if (typeof error === 'string' && error.trim().length > 0) return error
+  return fallback
+}
+const submitSchemaImport = async (kind: WorkspaceImportDraft['kind']) => {
+  const current = schemaImport.draft.value
+  if (current === null || current.kind !== kind) return
+  if (current.kind !== 'pgml' && current.baseVersionId === null) {
+    schemaImport.setError(buildPgmlImportBaseRequiredMessage())
     return
   }
-
-  importExecutableAttachmentResolution.value = {
-    ...resolution,
-    candidates: resolution.candidates.map((candidate) => {
-      return candidate.id === candidateId
-        ? {
-            ...candidate,
-            selectedTableIds: []
-          }
-        : candidate
+  const request = schemaImport.begin(importCopy[kind])
+  if (request === null) return
+  const draft = request.draft
+  const baseDocument = versionDocument.value
+  const baseSource = draft.kind === 'pg_dump' ? versions.value.find(version => version.id === draft.baseVersionId)?.snapshot.source : null
+  const intent = studioSessionStore.beginWorkspaceLoad(currentPersistenceSource.value)
+  importLoadIntent = intent
+  const owns = () => schemaImport.owns(request) && studioSessionStore.ownsWorkspaceLoad(intent)
+  try {
+    const text = draft.file === null ? draft.text : await draft.file.text()
+    if (!owns()) return
+    if (draft.kind === 'pgml') {
+      const next = appendPgmlDocumentImport(baseDocument, parsePgmlDocument(text))
+      studioSessionStore.commitWorkspaceLoad(intent, () => {
+        loadPreparedDocument(next)
+        markBrowserSchemaStatusEligible()
+        requestCanvasViewportReset()
+        schemaImport.complete(request)
+        toast.add({ title: 'PGML appended', description: 'The imported PGML history was appended and its workspace is now the current draft.', color: 'success', icon: 'i-lucide-check' })
+      })
+      importLoadIntent = null
+      return
+    }
+    const imported = draft.kind === 'dbml'
+      ? convertDbmlToPgml({ dbml: text, foldIdentifiersToLowercase: draft.foldIdentifiersToLowercase, parseExecutableComments: draft.parseExecutableComments, preferredName: draft.file?.name })
+      : convertPgDumpToPgml({ sql: text, foldIdentifiersToLowercase: draft.foldIdentifiersToLowercase, preferredName: draft.file?.name })
+    let pgml = imported.pgml
+    if (draft.kind === 'pg_dump' && draft.retainMatchingTableGroups) {
+      if (!baseSource) throw new Error('The selected base version no longer exists.')
+      pgml = retainPgmlTableGroupsFromBaseSource({ baseSource, importedSource: pgml })
+    }
+    if (draft.baseVersionId === null || !versions.value.some(version => version.id === draft.baseVersionId)) throw new Error('The selected base version no longer exists.')
+    const prepared = prepareImportedExecutableAttachments(pgml)
+    const resolution = { ...prepared, basedOnVersionId: draft.baseVersionId, kind: draft.kind }
+    if (prepared.candidates.length > 0) {
+      schemaImport.place(request, resolution)
+      return
+    }
+    studioSessionStore.commitWorkspaceLoad(intent, () => {
+      commitImportedSchema(resolution)
+      schemaImport.complete(request)
     })
+    importLoadIntent = null
+  } catch (error) {
+    if (owns()) {
+      schemaImport.fail(request, getActionErrorMessage(error, importCopy[kind].failure))
+      cancelImportIntent()
+    }
   }
 }
+const submitImportPgml = () => submitSchemaImport('pgml')
+const submitImportDbml = () => submitSchemaImport('dbml')
+const submitImportDump = () => submitSchemaImport('pg_dump')
 const confirmImportExecutableAttachmentResolution = () => {
-  const resolution = importExecutableAttachmentResolution.value
-
-  if (!resolution) {
-    return
-  }
-
-  isSubmittingImportExecutableAttachmentResolution.value = true
-
+  const request = schemaImport.beginApply()
+  if (request === null || request.kind !== 'applying') return
+  const intent = importLoadIntent === null ? studioSessionStore.beginWorkspaceLoad(currentPersistenceSource.value) : importLoadIntent
+  importLoadIntent = intent
   try {
-    const nextPgml = applyImportedExecutableAttachmentSelections(resolution.pgml, resolution.candidates)
-
-    commitImportedSchema({
-      basedOnVersionId: resolution.basedOnVersionId,
-      kind: resolution.kind,
-      pgml: nextPgml
+    if (!studioSessionStore.ownsWorkspaceLoad(intent)) return
+    const resolution = request.placement
+    const pgml = applyImportedExecutableAttachmentSelections(resolution.pgml, resolution.candidates)
+    studioSessionStore.commitWorkspaceLoad(intent, () => {
+      commitImportedSchema({ ...resolution, pgml })
+      schemaImport.complete(request)
     })
+    importLoadIntent = null
   } catch (error) {
-    if (error instanceof Error && error.message.trim().length > 0) {
-      importExecutableAttachmentError.value = error.message
-    } else if (typeof error === 'string' && error.trim().length > 0) {
-      importExecutableAttachmentError.value = error
-    } else {
-      importExecutableAttachmentError.value = buildPgmlImportFailureMessage()
-    }
-  } finally {
-    isSubmittingImportExecutableAttachmentResolution.value = false
-  }
-}
-const getPreferredImportBaseVersionId = () => {
-  return versionHistoryItems.value.find(version => version.isWorkspaceBase)?.id
-    || latestImplementationVersion.value?.id
-    || latestVersionId.value
-    || null
-}
-const showImportCheckpointRequiredToast = () => {
-  toast.add({
-    title: 'Checkpoint required',
-    description: buildPgmlImportCheckpointRequiredDescription(),
-    color: 'error',
-    icon: 'i-lucide-circle-alert'
-  })
-}
-const openImportDumpDialog = () => {
-  if (versions.value.length === 0) {
-    showImportCheckpointRequiredToast()
-    return
-  }
-
-  importDumpDialogOpen.value = true
-  importDumpError.value = null
-  importDumpFoldIdentifiersToLowercase.value = false
-  importDumpRetainMatchingTableGroups.value = true
-  importDumpSelectedFile.value = null
-  importDumpText.value = ''
-  importDumpBaseVersionId.value = getPreferredImportBaseVersionId()
-}
-const openImportDbmlDialog = () => {
-  if (versions.value.length === 0) {
-    showImportCheckpointRequiredToast()
-    return
-  }
-
-  importDbmlDialogOpen.value = true
-  importDbmlError.value = null
-  importDbmlFoldIdentifiersToLowercase.value = false
-  importDbmlParseExecutableComments.value = false
-  importDbmlSelectedFile.value = null
-  importDbmlText.value = ''
-  importDbmlBaseVersionId.value = getPreferredImportBaseVersionId()
-}
-const openImportPgmlDialog = () => {
-  importPgmlDialogOpen.value = true
-  importPgmlError.value = null
-  importPgmlSelectedFile.value = null
-  importPgmlText.value = ''
-}
-const closeImportDumpDialog = () => {
-  if (isSubmittingImportDump.value || isSubmittingImportExecutableAttachmentResolution.value) {
-    return
-  }
-
-  resetImportDumpDialog()
-}
-const closeImportDbmlDialog = () => {
-  if (isSubmittingImportDbml.value || isSubmittingImportExecutableAttachmentResolution.value) {
-    return
-  }
-
-  resetImportDbmlDialog()
-}
-const closeImportPgmlDialog = () => {
-  if (isSubmittingImportPgml.value) {
-    return
-  }
-
-  resetImportPgmlDialog()
-}
-const handleImportDumpDialogOpenChange = (nextOpen: boolean) => {
-  if (nextOpen) {
-    importDumpDialogOpen.value = true
-    return
-  }
-
-  closeImportDumpDialog()
-}
-const handleImportDbmlDialogOpenChange = (nextOpen: boolean) => {
-  if (nextOpen) {
-    importDbmlDialogOpen.value = true
-    return
-  }
-
-  closeImportDbmlDialog()
-}
-const handleImportPgmlDialogOpenChange = (nextOpen: boolean) => {
-  if (nextOpen) {
-    importPgmlDialogOpen.value = true
-    return
-  }
-
-  closeImportPgmlDialog()
-}
-const setImportDumpText = (value: string) => {
-  importDumpText.value = value
-  syncImportDumpConflictError()
-}
-const setImportDbmlText = (value: string) => {
-  importDbmlText.value = value
-  syncImportDbmlConflictError()
-}
-const setImportPgmlText = (value: string) => {
-  importPgmlText.value = value
-  syncImportPgmlConflictError()
-}
-const setImportDumpFile = (files: FileList | null) => {
-  importDumpSelectedFile.value = files?.[0] || null
-  syncImportDumpConflictError()
-}
-const setImportDbmlFile = (files: FileList | null) => {
-  importDbmlSelectedFile.value = files?.[0] || null
-  syncImportDbmlConflictError()
-}
-const setImportPgmlFile = (files: FileList | null) => {
-  importPgmlSelectedFile.value = files?.[0] || null
-  syncImportPgmlConflictError()
-}
-const clearImportPgmlFile = () => {
-  importPgmlSelectedFile.value = null
-  syncImportPgmlConflictError()
-}
-const clearImportDumpFile = () => {
-  importDumpSelectedFile.value = null
-  syncImportDumpConflictError()
-}
-const clearImportDbmlFile = () => {
-  importDbmlSelectedFile.value = null
-  syncImportDbmlConflictError()
-}
-const submitImportPgml = async () => {
-  if (!syncImportPgmlConflictError()) {
-    return
-  }
-
-  const selectedFile = importPgmlSelectedFile.value
-  const trimmedText = importPgmlText.value.trim()
-
-  if (!selectedFile && trimmedText.length === 0) {
-    importPgmlError.value = 'Paste PGML text or choose a PGML file before importing.'
-    return
-  }
-
-  isSubmittingImportPgml.value = true
-
-  try {
-    const importedPgml = selectedFile ? await selectedFile.text() : importPgmlText.value
-    const importedDocument = parsePgmlDocument(importedPgml)
-    const nextDocument = appendPgmlDocumentImport(versionDocument.value, importedDocument)
-
-    loadPreparedDocument(nextDocument)
-    markBrowserSchemaStatusEligible()
-    requestCanvasViewportReset()
-    resetImportPgmlDialog()
-    toast.add({
-      title: 'PGML appended',
-      description: 'The imported PGML history was appended and its workspace is now the current draft.',
-      color: 'success',
-      icon: 'i-lucide-check'
-    })
-  } catch (error) {
-    if (error instanceof Error && error.message.trim().length > 0) {
-      importPgmlError.value = error.message
-    } else if (typeof error === 'string' && error.trim().length > 0) {
-      importPgmlError.value = error
-    } else {
-      importPgmlError.value = 'Unable to import that PGML document.'
-    }
-  } finally {
-    isSubmittingImportPgml.value = false
-  }
-}
-const submitImportDump = async () => {
-  if (!importDumpBaseVersionId.value) {
-    importDumpError.value = buildPgmlImportBaseRequiredMessage()
-    return
-  }
-
-  if (!syncImportDumpConflictError()) {
-    return
-  }
-
-  const selectedFile = importDumpSelectedFile.value
-  const trimmedText = importDumpText.value.trim()
-
-  if (!selectedFile && trimmedText.length === 0) {
-    importDumpError.value = buildPgmlImportMissingInputMessage()
-    return
-  }
-
-  isSubmittingImportDump.value = true
-
-  try {
-    const importedSql = selectedFile ? await selectedFile.text() : importDumpText.value
-    const importedSchema = convertPgDumpToPgml({
-      foldIdentifiersToLowercase: importDumpFoldIdentifiersToLowercase.value,
-      preferredName: selectedFile?.name,
-      sql: importedSql
-    })
-    const importedPgml = importDumpRetainMatchingTableGroups.value
-      ? (() => {
-          if (!selectedImportDumpBaseVersionSource.value) {
-            throw new Error('The selected base version no longer exists.')
-          }
-
-          return retainPgmlTableGroupsFromBaseSource({
-            baseSource: selectedImportDumpBaseVersionSource.value,
-            importedSource: importedSchema.pgml
-          })
-        })()
-      : importedSchema.pgml
-    const preparedImport = prepareImportedExecutableAttachments(importedPgml)
-
-    if (preparedImport.candidates.length > 0) {
-      openImportExecutableAttachmentResolution({
-        basedOnVersionId: importDumpBaseVersionId.value,
-        candidates: preparedImport.candidates,
-        kind: 'pg_dump',
-        pgml: preparedImport.pgml,
-        tableOptions: preparedImport.tableOptions
-      })
-      return
-    }
-
-    commitImportedSchema({
-      basedOnVersionId: importDumpBaseVersionId.value,
-      kind: 'pg_dump',
-      pgml: preparedImport.pgml
-    })
-  } catch (error) {
-    if (error instanceof Error && error.message.trim().length > 0) {
-      importDumpError.value = error.message
-    } else if (typeof error === 'string' && error.trim().length > 0) {
-      importDumpError.value = error
-    } else {
-      importDumpError.value = buildPgmlImportFailureMessage()
-    }
-  } finally {
-    isSubmittingImportDump.value = false
-  }
-}
-const submitImportDbml = async () => {
-  if (!importDbmlBaseVersionId.value) {
-    importDbmlError.value = buildPgmlImportBaseRequiredMessage()
-    return
-  }
-
-  if (!syncImportDbmlConflictError()) {
-    return
-  }
-
-  const selectedFile = importDbmlSelectedFile.value
-  const trimmedText = importDbmlText.value.trim()
-
-  if (!selectedFile && trimmedText.length === 0) {
-    importDbmlError.value = buildPgmlImportDbmlMissingInputMessage()
-    return
-  }
-
-  isSubmittingImportDbml.value = true
-
-  try {
-    const importedDbml = selectedFile ? await selectedFile.text() : importDbmlText.value
-    const importedSchema = convertDbmlToPgml({
-      dbml: importedDbml,
-      foldIdentifiersToLowercase: importDbmlFoldIdentifiersToLowercase.value,
-      parseExecutableComments: importDbmlParseExecutableComments.value,
-      preferredName: selectedFile?.name
-    })
-    const preparedImport = prepareImportedExecutableAttachments(importedSchema.pgml)
-
-    if (preparedImport.candidates.length > 0) {
-      openImportExecutableAttachmentResolution({
-        basedOnVersionId: importDbmlBaseVersionId.value,
-        candidates: preparedImport.candidates,
-        kind: 'dbml',
-        pgml: preparedImport.pgml,
-        tableOptions: preparedImport.tableOptions
-      })
-      return
-    }
-
-    commitImportedSchema({
-      basedOnVersionId: importDbmlBaseVersionId.value,
-      kind: 'dbml',
-      pgml: preparedImport.pgml
-    })
-  } catch (error) {
-    if (error instanceof Error && error.message.trim().length > 0) {
-      importDbmlError.value = error.message
-    } else if (typeof error === 'string' && error.trim().length > 0) {
-      importDbmlError.value = error
-    } else {
-      importDbmlError.value = buildPgmlImportDbmlFailureMessage()
-    }
-  } finally {
-    isSubmittingImportDbml.value = false
+    schemaImport.fail(request, getActionErrorMessage(error, buildPgmlImportFailureMessage()))
+    cancelImportIntent()
   }
 }
 const viewVersionTarget = (targetId: string) => {
@@ -3838,46 +3233,36 @@ const viewVersionTarget = (targetId: string) => {
   requestCanvasViewportReset()
 }
 const restoreVersionToWorkspace = (versionId: string) => {
-  restoreVersionId.value = versionId
-  restoreVersionDialogOpen.value = true
+  const version = versions.value.find(entry => entry.id === versionId)
+  if (version) restoreVersionDialog.open({ versionId, label: getVersionLabel(version) })
 }
 const confirmDeleteVersion = () => {
   const targetVersion = deleteVersionCandidate.value
-
-  if (!targetVersion || !targetVersion.canDelete || !deleteVersion(targetVersion.id)) {
-    return
+  if (!targetVersion || !targetVersion.canDelete) return
+  const draft = deleteVersionDialog.beginSave()
+  if (draft === null) return
+  try {
+    if (!deleteVersion(draft.versionId)) return
+    markBrowserSchemaStatusEligible()
+    requestCanvasViewportReset()
+    deleteVersionDialog.completeSave(draft, true)
+    toast.add({ title: 'Version deleted', description: buildPgmlDeleteVersionSuccessDescription(draft.label), color: 'success', icon: 'i-lucide-check' })
+  } finally {
+    deleteVersionDialog.completeSave(draft, false)
   }
-
-  markBrowserSchemaStatusEligible()
-  requestCanvasViewportReset()
-  closeDeleteVersionDialog()
-  toast.add({
-    title: 'Version deleted',
-    description: buildPgmlDeleteVersionSuccessDescription(getVersionLabel(targetVersion)),
-    color: 'success',
-    icon: 'i-lucide-check'
-  })
 }
 const confirmRestoreVersionToWorkspace = () => {
-  if (!restoreVersionId.value) {
-    return
+  const draft = restoreVersionDialog.beginSave()
+  if (draft === null) return
+  try {
+    if (!replaceWorkspaceFromVersion(draft.versionId)) return
+    markBrowserSchemaStatusEligible()
+    requestCanvasViewportReset()
+    restoreVersionDialog.completeSave(draft, true)
+    toast.add({ title: 'Workspace restored', description: buildPgmlRestoreSuccessDescription(), color: 'success', icon: 'i-lucide-check' })
+  } finally {
+    restoreVersionDialog.completeSave(draft, false)
   }
-
-  const didRestore = replaceWorkspaceFromVersion(restoreVersionId.value)
-
-  if (!didRestore) {
-    return
-  }
-
-  markBrowserSchemaStatusEligible()
-  requestCanvasViewportReset()
-  closeRestoreVersionDialog()
-  toast.add({
-    title: 'Workspace restored',
-    description: buildPgmlRestoreSuccessDescription(),
-    color: 'success',
-    icon: 'i-lucide-check'
-  })
 }
 // Compare selectors live in multiple controls, so keep the page-level pair
 // updates centralized before they flow into the shared version-history state.
@@ -3942,7 +3327,7 @@ const normalizeDocumentEditorScopeUpdate = (value: unknown) => {
     : null
 }
 const updateVersionedEditorMode = (value: string) => {
-  versionedEditorMode.value = normalizeVersionedEditorMode(value)
+  setEditorMode(normalizeVersionedEditorMode(value))
 }
 const updateDocumentEditorScope = (value: unknown) => {
   const nextScope = normalizeDocumentEditorScopeUpdate(value)
@@ -3983,7 +3368,7 @@ const actionMenus = computed<StudioHeaderMenu[]>(() => {
         {
           label: 'Diagram',
           icon: 'i-lucide-layout-template',
-          disabled: workspaceMode === 'diagram',
+          disabled: workspaceMode === 'diagram' || isNavigatingWorkspace.value,
           onSelect: () => {
             void navigateToWorkspaceMode('diagram')
           }
@@ -3991,7 +3376,7 @@ const actionMenus = computed<StudioHeaderMenu[]>(() => {
         {
           label: 'Analysis',
           icon: 'i-lucide-scan-search',
-          disabled: workspaceMode === 'analysis',
+          disabled: workspaceMode === 'analysis' || isNavigatingWorkspace.value,
           onSelect: () => {
             void navigateToWorkspaceMode('analysis')
           }
@@ -4030,7 +3415,7 @@ const actionMenus = computed<StudioHeaderMenu[]>(() => {
             label: loadDialogTitle.value,
             icon: 'i-lucide-folder-open',
             onSelect: () => {
-              loadDialogOpen.value = true
+              studioSessionStore.openLoadDialog()
             }
           },
           {
@@ -4271,8 +3656,10 @@ const normalizeReferenceActionSelectValue = (value: unknown) => {
   return value === defaultReferenceActionSelectValue ? '' : value
 }
 
+const canOpenStructuredEditor = () => workspacePersistenceActive.value && isWorkspacePreview.value && isWorkspaceModelCurrent.value && !workspaceHasBlockingSourceErrors.value && !studioSessionStore.isWorkspaceLoading && getLiveWorkspaceSource() === source.value
+
 const openTableEditor = (tableId: string) => {
-  if (!isWorkspacePreview.value || workspaceHasBlockingSourceErrors.value) {
+  if (!canOpenStructuredEditor()) {
     return
   }
 
@@ -4282,21 +3669,19 @@ const openTableEditor = (tableId: string) => {
     return
   }
 
-  tableEditorDraft.value = cloneEditableTableDraft(createEditableTableDraft(table))
-  tableEditorOpen.value = true
+  tableEditor.open(cloneEditableTableDraft(createEditableTableDraft(table)))
 }
 
 const openTableCreator = (groupName: string | null) => {
-  if (!isWorkspacePreview.value || workspaceHasBlockingSourceErrors.value) {
+  if (!canOpenStructuredEditor()) {
     return
   }
 
-  tableEditorDraft.value = createEditableTableDraftForGroup(groupName)
-  tableEditorOpen.value = true
+  tableEditor.open(createEditableTableDraftForGroup(groupName))
 }
 
 const openGroupEditor = (groupName: string) => {
-  if (!isWorkspacePreview.value || workspaceHasBlockingSourceErrors.value) {
+  if (!canOpenStructuredEditor()) {
     return
   }
 
@@ -4306,36 +3691,21 @@ const openGroupEditor = (groupName: string) => {
     return
   }
 
-  groupEditorDraft.value = cloneEditableGroupDraft(createEditableGroupDraft(group, workspaceParsedModel.value))
-  groupEditorOpen.value = true
+  groupEditor.open(cloneEditableGroupDraft(createEditableGroupDraft(group, workspaceParsedModel.value)))
 }
 
 const openGroupCreator = () => {
-  if (!isWorkspacePreview.value || workspaceHasBlockingSourceErrors.value) {
+  if (!canOpenStructuredEditor()) {
     return
   }
 
-  groupEditorDraft.value = createEditableGroupDraftForCreate()
-  groupEditorOpen.value = true
+  groupEditor.open(createEditableGroupDraftForCreate())
 }
 
-const closeTableEditor = () => {
-  tableEditorOpen.value = false
-}
-
-const closeGroupEditor = () => {
-  groupEditorOpen.value = false
-}
-const handleTableEditorAfterLeave = () => {
-  if (!tableEditorOpen.value) {
-    tableEditorDraft.value = null
-  }
-}
-const handleGroupEditorAfterLeave = () => {
-  if (!groupEditorOpen.value) {
-    groupEditorDraft.value = null
-  }
-}
+const closeTableEditor = () => tableEditor.close()
+const closeGroupEditor = () => groupEditor.close()
+const handleTableEditorAfterLeave = () => tableEditor.afterLeave()
+const handleGroupEditorAfterLeave = () => groupEditor.afterLeave()
 
 const addTableDraftMetadataEntry = () => {
   if (!tableEditorDraft.value) {
@@ -4590,58 +3960,63 @@ const persistTableDraftSchemaMetadata = (
 }
 
 const saveTableEditor = async () => {
-  if (!isWorkspacePreview.value || !tableEditorDraft.value || tableEditorErrors.value.length > 0) {
-    return
+  if (!isWorkspacePreview.value || tableEditorErrors.value.length > 0) return
+  const documentRevision = studioSessionStore.workspaceLoadRevision
+  const draft = tableEditor.beginSave()
+  if (draft === null) return
+  let accepted = false
+  try {
+    await flushPendingEditorChanges({ waitForAnalysis: true })
+    if (!workspacePersistenceActive.value || !isSavingTableEditor.value || !isWorkspaceModelCurrent.value || studioSessionStore.isWorkspaceLoading || studioSessionStore.workspaceLoadRevision !== documentRevision || tableEditorDraft.value !== draft) return
+    const previousTableId = draft.originalFullName
+    markBrowserSchemaStatusEligible()
+    source.value = applyEditableTableDraftToSource(getLiveWorkspaceSource(), workspaceParsedModel.value, draft)
+    persistTableDraftSchemaMetadata(draft, previousTableId)
+    accepted = true
+  } finally {
+    tableEditor.completeSave(draft, accepted)
   }
-
-  await flushPendingEditorChanges({
-    waitForAnalysis: true
-  })
-  const previousTableId = tableEditorDraft.value.originalFullName
-
-  markBrowserSchemaStatusEligible()
-  source.value = applyEditableTableDraftToSource(getLiveWorkspaceSource(), workspaceParsedModel.value, tableEditorDraft.value)
-  persistTableDraftSchemaMetadata(tableEditorDraft.value, previousTableId)
-  closeTableEditor()
 }
-
 const saveGroupEditor = async () => {
-  if (!isWorkspacePreview.value || !groupEditorDraft.value || groupEditorErrors.value.length > 0) {
-    return
+  if (!isWorkspacePreview.value || groupEditorErrors.value.length > 0) return
+  const documentRevision = studioSessionStore.workspaceLoadRevision
+  const draft = groupEditor.beginSave()
+  if (draft === null) return
+  let accepted = false
+  try {
+    await flushPendingEditorChanges({ waitForAnalysis: true })
+    if (!workspacePersistenceActive.value || !isSavingGroupEditor.value || !isWorkspaceModelCurrent.value || studioSessionStore.isWorkspaceLoading || studioSessionStore.workspaceLoadRevision !== documentRevision || groupEditorDraft.value !== draft) return
+    markBrowserSchemaStatusEligible()
+    source.value = applyEditableGroupDraftToSource(getLiveWorkspaceSource(), workspaceParsedModel.value, draft)
+    accepted = true
+  } finally {
+    groupEditor.completeSave(draft, accepted)
   }
-
-  await flushPendingEditorChanges({
-    waitForAnalysis: true
-  })
-  markBrowserSchemaStatusEligible()
-  source.value = applyEditableGroupDraftToSource(getLiveWorkspaceSource(), workspaceParsedModel.value, groupEditorDraft.value)
-  closeGroupEditor()
 }
 
 const runExport = async (format: 'svg' | 'png', scaleFactor?: number) => {
-  if (!canvasRef.value || isExporting.value) {
-    return
-  }
-
-  await flushPendingEditorChanges({
-    waitForAnalysis: true
-  })
-  isExporting.value = true
-
+  const canvas = canvasRef.value
+  if (canvas === null || diagramExport.value.kind !== 'idle' || !workspacePersistenceActive.value) return
+  const request: DiagramExportState = { kind: 'exporting', canvas, format, scaleFactor, documentRevision: studioSessionStore.workspaceDocumentRevision }
+  diagramExport.value = request
   try {
-    await canvasRef.value.exportDiagram(format, scaleFactor)
+    await flushPendingEditorChanges({ waitForAnalysis: true })
+    if (diagramExport.value !== request || !workspacePersistenceActive.value || canvasRef.value !== canvas || studioSessionStore.workspaceDocumentRevision !== request.documentRevision) return
+    await canvas.exportDiagram(request.format, request.scaleFactor)
   } catch (error) {
-    console.error(error)
+    if (diagramExport.value === request) toast.add({ title: 'Export failed', description: getActionErrorMessage(error, 'Unable to export the diagram.'), color: 'error', icon: 'i-lucide-circle-alert' })
   } finally {
-    isExporting.value = false
+    if (diagramExport.value === request) diagramExport.value = { kind: 'idle' }
   }
 }
+
+const requestDiagramExport = (request: DiagramExportRequest) => runExport(request.format, request.format === 'png' ? request.scaleFactor : undefined)
 
 const handleCanvasFocusSource = async (sourceRange: PgmlSourceRange) => {
   await flushPendingEditorChanges()
 
   if (versionedEditorMode.value === 'document') {
-    versionedEditorMode.value = 'head'
+    setEditorMode('head')
   }
 
   if (isCompactStudioLayout.value) {
@@ -4655,7 +4030,7 @@ const handleCanvasReplaceSourceRange = (input: {
   nextText: string
   sourceRange: PgmlSourceRange
 }) => {
-  if (!isWorkspacePreview.value) {
+  if (!canOpenStructuredEditor()) {
     return
   }
 
@@ -4717,18 +4092,19 @@ const getAnalysisMobileButtonClass = (view: AnalysisWorkspaceTab) => {
     'flex min-w-0 cursor-default items-center justify-center gap-1.5 px-2.5 py-2'
   )
 }
-const closeCompareSourceDialog = () => {
-  compareSourceDialogOpen.value = false
-  compareSourceDialogRange.value = null
-}
-const handleAnalysisCompareFocusSource = (sourceRange: PgmlSourceRange) => {
-  compareSourceDialogRange.value = sourceRange
-  compareSourceDialogOpen.value = true
+const closeCompareSourceDialog = () => compareSourceDialog.close()
+const handleAnalysisCompareFocusSource = (range: PgmlSourceRange) => {
+  const entry = analysisSelectedCompareEntry.value
+  const removed = entry !== null && entry.changeKind === 'removed'
+  compareSourceDialog.open({ range: { ...range }, source: removed ? compareBaseSource.value : compareTargetSource.value,
+    versionLabel: removed ? compareBaseLabel.value : compareTargetLabel.value, entryLabel: entry === null ? null : entry.label })
 }
 const handleAnalysisCompareFocusTarget = (_entryId: string) => {
 }
 
+const canPublishWorkspaceChrome = computed(() => workspacePersistenceActive.value && workspaceNavigation.value.kind !== 'navigating')
 watchEffect(() => {
+  if (!canPublishWorkspaceChrome.value) return
   setStudioHeaderActions({
     isLoading: isExporting.value,
     menus: actionMenus.value
@@ -4736,6 +4112,7 @@ watchEffect(() => {
 })
 
 watchEffect(() => {
+  if (!canPublishWorkspaceChrome.value) return
   const isWaitingToSave = activeHasPendingChanges.value && !activeIsSaving.value
   const isManualGistPending = currentPersistenceSource.value === 'gist' && isWaitingToSave
   const hasSavedInSession = activeHasSavedInSession.value && activeIsSaved.value && !isWaitingToSave
@@ -4825,7 +4202,7 @@ onBeforeRouteLeave((to) => {
     return false
   }
 
-  workspacePersistenceActive.value = false
+  workspaceLifetime.value = 'leaving'
   clearStudioHeaderActions()
   clearStudioSchemaStatus()
   studioSessionStore.resetStudioUiState()
@@ -4833,10 +4210,11 @@ onBeforeRouteLeave((to) => {
 })
 
 onBeforeUnmount(() => {
-  workspacePersistenceActive.value = false
+  workspaceNavigation.value = { kind: 'disposed' }
+  diagramExport.value = { kind: 'disposed' }
+  workspaceLifetime.value = 'disposed'
+  workspaceLaunchState.value = { kind: 'disposed' }
   window.removeEventListener('beforeunload', handleBeforeUnload)
-  pgmlAnalysisWorker?.terminate()
-  pgmlAnalysisWorker = null
 })
 </script>
 
@@ -4869,7 +4247,7 @@ onBeforeUnmount(() => {
             :active-diagram-view-id="activeDiagramViewId"
             :can-create-checkpoint="canCheckpoint"
             :can-delete-diagram-view="canDeleteDiagramView"
-            :can-edit-detail-source="isWorkspacePreview"
+            :can-edit-detail-source="isWorkspacePreview && isWorkspaceModelCurrent && !workspaceHasBlockingSourceErrors && !studioSessionStore.isWorkspaceLoading"
             :compare-base-label="compareBaseLabel"
             :compare-base-model="compareBaseModel"
             :compare-comparison-items="comparisonItems"
@@ -4888,7 +4266,11 @@ onBeforeUnmount(() => {
             :diagram-view-items="diagramViewItems"
             :diagram-view-settings="diagramViewSettings"
             :model="parsedModel"
+            :document-context-revision="studioSessionStore.workspaceDocumentRevision"
+            :load-intent-revision="studioSessionStore.workspaceLoadRevision"
+            :model-is-current="!isWorkspacePreview || (isWorkspaceModelCurrent && !workspaceHasBlockingSourceErrors)"
             :export-base-name="exportBaseName"
+            :export-in-progress="isExporting"
             :export-preference-key="exportPreferenceKey"
             :has-blocking-source-errors="hasBlockingSourceErrors"
             :migration-file-name="compareMigrationBundle.sql.migration.fileName"
@@ -4913,6 +4295,7 @@ onBeforeUnmount(() => {
             @create-compare-comparison="openCreateComparisonDialog"
             @create-group="openGroupCreator"
             @create-diagram-view="createActiveDiagramView"
+            @export-diagram="requestDiagramExport"
             @focus-source="handleCanvasFocusSource"
             @mobile-canvas-view-change="handleMobileCanvasViewChange"
             @panel-tab-change="handleCanvasPanelTabChange"
@@ -4959,6 +4342,7 @@ onBeforeUnmount(() => {
             :activate-completion-on-typing="editorActivateCompletionOnTyping"
             :commit-debounce-ms="editorCommitDebounceMs"
             :diagnostics-delay-ms="editorDiagnosticsDelayMs"
+            :document-context-revision="studioSessionStore.workspaceDocumentRevision"
             :focus-diagnostic="focusEditorDiagnostic"
             :mode-description="editorModeDescription"
             :read-only="isEditorReadOnly"
@@ -4992,6 +4376,7 @@ onBeforeUnmount(() => {
             :activate-completion-on-typing="editorActivateCompletionOnTyping"
             :commit-debounce-ms="editorCommitDebounceMs"
             :diagnostics-delay-ms="editorDiagnosticsDelayMs"
+            :document-context-revision="studioSessionStore.workspaceDocumentRevision"
             :focus-diagnostic="focusEditorDiagnostic"
             :mode-description="editorModeDescription"
             :read-only="isEditorReadOnly"
@@ -5010,7 +4395,7 @@ onBeforeUnmount(() => {
             :active-diagram-view-id="activeDiagramViewId"
             :can-create-checkpoint="canCheckpoint"
             :can-delete-diagram-view="canDeleteDiagramView"
-            :can-edit-detail-source="isWorkspacePreview"
+            :can-edit-detail-source="isWorkspacePreview && isWorkspaceModelCurrent && !workspaceHasBlockingSourceErrors && !studioSessionStore.isWorkspaceLoading"
             :compare-base-label="compareBaseLabel"
             :compare-base-model="compareBaseModel"
             :compare-comparison-items="comparisonItems"
@@ -5029,7 +4414,11 @@ onBeforeUnmount(() => {
             :diagram-view-items="diagramViewItems"
             :diagram-view-settings="diagramViewSettings"
             :model="parsedModel"
+            :document-context-revision="studioSessionStore.workspaceDocumentRevision"
+            :load-intent-revision="studioSessionStore.workspaceLoadRevision"
+            :model-is-current="!isWorkspacePreview || (isWorkspaceModelCurrent && !workspaceHasBlockingSourceErrors)"
             :export-base-name="exportBaseName"
+            :export-in-progress="isExporting"
             :export-preference-key="exportPreferenceKey"
             :has-blocking-source-errors="hasBlockingSourceErrors"
             :migration-file-name="compareMigrationBundle.sql.migration.fileName"
@@ -5051,6 +4440,7 @@ onBeforeUnmount(() => {
             @create-compare-comparison="openCreateComparisonDialog"
             @create-group="openGroupCreator"
             @create-diagram-view="createActiveDiagramView"
+            @export-diagram="requestDiagramExport"
             @focus-source="handleCanvasFocusSource"
             @mobile-canvas-view-change="handleMobileCanvasViewChange"
             @panel-tab-change="handleCanvasPanelTabChange"
@@ -5242,11 +4632,14 @@ onBeforeUnmount(() => {
 
     <ClientOnly>
       <StudioModalFrame
-        v-model:open="checkpointDialogOpen"
+        :open="checkpointDialogOpen"
         title="Create checkpoint"
         description="Lock the current workspace snapshot as an immutable PGML version."
         surface-id="checkpoint"
         body-class="grid gap-4 px-4 py-3"
+        @update:open="checkpointDialog.updateOpen"
+        @close="closeCheckpointDialog"
+        @after-leave="checkpointDialog.afterLeave"
       >
         <div class="grid gap-4">
           <div class="border border-[color:var(--studio-shell-border)] bg-[color:var(--studio-control-bg)] px-3 py-3">
@@ -5268,13 +4661,13 @@ onBeforeUnmount(() => {
               Version name
             </span>
             <UInput
-              v-model="checkpointName"
+              :model-value="checkpointName"
               placeholder="Checkpoint name"
               color="neutral"
               variant="outline"
               size="sm"
               :ui="studioFieldUi"
-              @update:model-value="checkpointNameIsSuggested = false"
+              @update:model-value="updateCheckpointName"
             />
           </label>
 
@@ -5291,7 +4684,7 @@ onBeforeUnmount(() => {
               variant="outline"
               size="sm"
               :ui="studioSelectUi"
-              @update:model-value="checkpointRole = $event === 'implementation' ? 'implementation' : 'design'"
+              @update:model-value="updateCheckpointRole"
             />
           </label>
         </div>
@@ -5309,18 +4702,22 @@ onBeforeUnmount(() => {
             color="neutral"
             variant="soft"
             :class="primaryModalButtonClass"
-            :disabled="checkpointName.trim().length === 0 || !canCheckpoint"
+            :disabled="checkpointName.trim().length === 0 || !canCheckpoint || isSavingCheckpoint"
+            :loading="isSavingCheckpoint"
             @click="saveCheckpoint"
           />
         </template>
       </StudioModalFrame>
 
       <StudioModalFrame
-        v-model:open="restoreVersionDialogOpen"
+        :open="restoreVersionDialogOpen"
         title="Restore version to workspace"
         description="Replace the current workspace draft with a locked version snapshot."
         surface-id="restore-version"
         body-class="grid gap-4 px-4 py-3"
+        @update:open="restoreVersionDialog.updateOpen"
+        @close="closeRestoreVersionDialog"
+        @after-leave="restoreVersionDialog.afterLeave"
       >
         <div class="grid gap-3">
           <div class="border border-[color:var(--studio-shell-border)] bg-[color:var(--studio-control-bg)] px-3 py-3">
@@ -5328,7 +4725,7 @@ onBeforeUnmount(() => {
               Selected version
             </div>
             <div class="mt-2 text-[0.85rem] font-semibold text-[color:var(--studio-shell-text)]">
-              {{ restoreVersionCandidate ? getVersionLabel(restoreVersionCandidate) : 'Unknown version' }}
+              {{ restoreVersionLabel }}
             </div>
             <p class="mt-2 text-[0.74rem] leading-6 text-[color:var(--studio-shell-muted)]">
               {{
@@ -5357,12 +4754,14 @@ onBeforeUnmount(() => {
       </StudioModalFrame>
 
       <StudioModalFrame
-        v-model:open="deleteVersionDialogOpen"
+        :open="deleteVersionDialogOpen"
         title="Delete version"
         :description="deleteVersionDialogDescription"
         surface-id="delete-version"
         body-class="grid gap-4 px-4 py-3"
+        @update:open="deleteVersionDialog.updateOpen"
         @close="closeDeleteVersionDialog"
+        @after-leave="deleteVersionDialog.afterLeave"
       >
         <div class="grid gap-3">
           <div class="border border-[color:var(--studio-shell-border)] bg-[color:var(--studio-control-bg)] px-3 py-3">
@@ -5370,7 +4769,7 @@ onBeforeUnmount(() => {
               Selected version
             </div>
             <div class="mt-2 text-[0.85rem] font-semibold text-[color:var(--studio-shell-text)]">
-              {{ deleteVersionCandidate ? getVersionLabel(deleteVersionCandidate) : 'Unknown version' }}
+              {{ deleteVersionLabel }}
             </div>
             <p class="mt-2 text-[0.74rem] leading-6 text-[color:var(--studio-shell-muted)]">
               {{
@@ -5403,12 +4802,14 @@ onBeforeUnmount(() => {
       </StudioModalFrame>
 
       <StudioModalFrame
-        v-model:open="diagramViewDialogOpen"
+        :open="diagramViewDialogOpen"
         :title="diagramViewDialogTitle"
         :description="diagramViewDialogDescription"
         surface-id="diagram-view"
         body-class="grid gap-4 px-4 py-3"
+        @update:open="diagramViewDialog.updateOpen"
         @close="closeDiagramViewDialog"
+        @after-leave="diagramViewDialog.afterLeave"
       >
         <div class="grid gap-3">
           <label class="grid gap-1">
@@ -5416,13 +4817,14 @@ onBeforeUnmount(() => {
               View name
             </span>
             <UInput
-              v-model="diagramViewDraftName"
+              :model-value="diagramViewDraftName"
               data-diagram-view-name-input="true"
               placeholder="View name"
               color="neutral"
               variant="outline"
               size="sm"
               :ui="studioFieldUi"
+              @update:model-value="diagramViewDialog.updateDraft({ name: String($event) })"
             />
           </label>
 
@@ -5461,12 +4863,14 @@ onBeforeUnmount(() => {
       </StudioModalFrame>
 
       <StudioModalFrame
-        v-model:open="comparisonDialogOpen"
+        :open="comparisonDialogOpen"
         :title="comparisonDialogTitle"
         :description="comparisonDialogDescription"
         surface-id="compare-comparison"
         body-class="grid gap-4 px-4 py-3"
+        @update:open="comparisonDialog.updateOpen"
         @close="closeComparisonDialog"
+        @after-leave="comparisonDialog.afterLeave"
       >
         <div class="grid gap-3">
           <div class="border border-[color:var(--studio-shell-border)] bg-[color:var(--studio-control-bg)] px-3 py-3">
@@ -5486,13 +4890,14 @@ onBeforeUnmount(() => {
               Comparison name
             </span>
             <UInput
-              v-model="comparisonDraftName"
+              :model-value="comparisonDraftName"
               data-compare-comparison-name-input="true"
               placeholder="Comparison name"
               color="neutral"
               variant="outline"
               size="sm"
               :ui="studioFieldUi"
+              @update:model-value="comparisonDialog.updateDraft({ name: String($event) })"
             />
           </label>
 
@@ -5523,19 +4928,22 @@ onBeforeUnmount(() => {
             color="neutral"
             variant="soft"
             :class="primaryModalButtonClass"
-            :disabled="comparisonNameError !== null"
+            :disabled="comparisonNameError !== null || isSavingComparisonDialog"
+            :loading="isSavingComparisonDialog"
             @click="saveComparisonDialog"
           />
         </template>
       </StudioModalFrame>
 
       <StudioModalFrame
-        v-model:open="compareNoteDialogOpen"
+        :open="compareNoteDialogOpen"
         :title="compareNoteDialogTitle"
         :description="compareNoteDialogDescription"
         surface-id="compare-note"
         body-class="grid gap-4 px-4 py-3"
+        @update:open="compareNoteDialog.updateOpen"
         @close="closeCompareNoteDialog"
+        @after-leave="compareNoteDialog.afterLeave"
       >
         <div class="grid gap-4">
           <div class="border border-[color:var(--studio-shell-border)] bg-[color:var(--studio-control-bg)] px-3 py-3">
@@ -5552,7 +4960,7 @@ onBeforeUnmount(() => {
               Flag
             </span>
             <USelect
-              v-model="compareNoteDraftFlag"
+              :model-value="compareNoteDraftFlag"
               :items="compareNoteFlagItems"
               value-key="value"
               label-key="label"
@@ -5560,6 +4968,7 @@ onBeforeUnmount(() => {
               variant="outline"
               size="sm"
               :ui="studioSelectUi"
+              @update:model-value="updateCompareNoteFlag"
             />
           </label>
 
@@ -5568,11 +4977,12 @@ onBeforeUnmount(() => {
               Note
             </span>
             <textarea
-              v-model="compareNoteDraftText"
+              :value="compareNoteDraftText"
               data-compare-note-input="true"
               rows="6"
               placeholder="Describe the follow-up or decision for this difference."
               :class="joinStudioClasses(textareaClass, 'min-h-[7rem]')"
+              @input="updateCompareNoteText"
             />
           </label>
         </div>
@@ -5599,20 +5009,23 @@ onBeforeUnmount(() => {
             color="neutral"
             variant="soft"
             :class="primaryModalButtonClass"
-            :disabled="!canSaveCompareNote"
+            :disabled="!canSaveCompareNote || isSavingCompareNote"
+            :loading="isSavingCompareNote"
             @click="saveCompareNoteDialog"
           />
         </template>
       </StudioModalFrame>
 
       <StudioModalFrame
-        v-model:open="compareSourceDialogOpen"
+        :open="compareSourceDialogOpen"
         :title="compareSourceDialogTitle"
         :description="compareSourceDialogDescription"
         surface-id="compare-source"
         width-class="max-w-4xl"
         body-class="grid min-h-0 gap-3 px-4 py-3"
+        @update:open="compareSourceDialog.updateOpen"
         @close="closeCompareSourceDialog"
+        @after-leave="compareSourceDialog.afterLeave"
       >
         <div
           v-if="compareSourceDialogLineLabel"
@@ -5643,12 +5056,14 @@ onBeforeUnmount(() => {
       </StudioModalFrame>
 
       <StudioModalFrame
-        v-model:open="compareExclusionsDialogOpen"
+        :open="compareExclusionsDialogOpen"
         title="Manage compare exclusions"
         :description="compareExclusionsDialogDescription"
         surface-id="compare-exclusions"
         body-class="grid min-h-0 gap-4 px-4 py-3"
+        @update:open="compareExclusionsDialog.updateOpen"
         @close="closeCompareExclusionsDialog"
+        @after-leave="compareExclusionsDialog.afterLeave"
       >
         <div class="grid gap-4">
           <div class="border border-[color:var(--studio-shell-border)] bg-[color:var(--studio-control-bg)] px-3 py-3">
@@ -5672,11 +5087,12 @@ onBeforeUnmount(() => {
               Search exclusions
             </span>
             <input
-              v-model="compareExclusionsSearchQuery"
+              :model-value="compareExclusionsSearchQuery"
               data-compare-exclusions-search="true"
               type="search"
               placeholder="Filter groups, tables, and compare entities"
               :class="joinStudioClasses(studioCompactInputClass, 'w-full')"
+              @update:model-value="compareExclusionsDialog.updateDraft({ searchQuery: String($event) })"
             >
           </label>
 
@@ -5957,22 +5373,25 @@ onBeforeUnmount(() => {
           <UButton
             label="Save exclusions"
             data-compare-exclusions-save="true"
+            :loading="isSavingCompareExclusions"
             color="neutral"
             variant="soft"
             :class="primaryModalButtonClass"
-            :disabled="!compareExclusionsDraft"
+            :disabled="!compareExclusionsDraft || isSavingCompareExclusions"
             @click="saveCompareExclusionsDialog"
           />
         </template>
       </StudioModalFrame>
 
       <StudioModalFrame
-        v-model:open="renameVersionDialogOpen"
+        :open="renameVersionDialogOpen"
         title="Rename version"
         :description="renameVersionDialogDescription"
         surface-id="rename-version"
         body-class="grid gap-4 px-4 py-3"
+        @update:open="renameVersionDialog.updateOpen"
         @close="closeRenameVersionDialog"
+        @after-leave="renameVersionDialog.afterLeave"
       >
         <div class="grid gap-3">
           <div class="border border-[color:var(--studio-shell-border)] bg-[color:var(--studio-control-bg)] px-3 py-3">
@@ -5992,13 +5411,14 @@ onBeforeUnmount(() => {
               Version name
             </span>
             <UInput
-              v-model="renameVersionDraftName"
+              :model-value="renameVersionDraftName"
               data-rename-version-name-input="true"
               placeholder="Version name"
               color="neutral"
               variant="outline"
               size="sm"
               :ui="studioFieldUi"
+              @update:model-value="renameVersionDialog.updateDraft({ name: String($event) })"
             />
           </label>
 
@@ -6047,6 +5467,7 @@ onBeforeUnmount(() => {
         @select-file="setImportPgmlFile"
         @clear-file="clearImportPgmlFile"
         @submit="submitImportPgml"
+        @after-leave="schemaImport.afterLeave('pgml')"
       />
 
       <AppDbmlImportModal
@@ -6062,12 +5483,13 @@ onBeforeUnmount(() => {
         :error-message="importDbmlError"
         :is-submitting="isSubmittingImportDbml"
         @update:open="handleImportDbmlDialogOpenChange"
-        @update:fold-identifiers-to-lowercase="importDbmlFoldIdentifiersToLowercase = $event"
+        @update:fold-identifiers-to-lowercase="editImportDbml({ foldIdentifiersToLowercase: $event })"
         @update:model-value="setImportDbmlText"
-        @update:parse-executable-comments="importDbmlParseExecutableComments = $event"
+        @update:parse-executable-comments="editImportDbml({ parseExecutableComments: $event })"
         @select-file="setImportDbmlFile"
         @clear-file="clearImportDbmlFile"
         @submit="submitImportDbml"
+        @after-leave="schemaImport.afterLeave('dbml')"
       >
         <template #before-inputs>
           <div class="grid gap-3">
@@ -6077,6 +5499,7 @@ onBeforeUnmount(() => {
               </span>
               <USelect
                 :items="importDumpBaseVersionItems"
+                :disabled="schemaImport.isBusy.value"
                 :model-value="importDbmlBaseVersionId || undefined"
                 value-key="value"
                 label-key="label"
@@ -6084,7 +5507,7 @@ onBeforeUnmount(() => {
                 variant="outline"
                 size="sm"
                 :ui="studioSelectUi"
-                @update:model-value="importDbmlBaseVersionId = typeof $event === 'string' ? $event : null"
+                @update:model-value="editImportDbml({ baseVersionId: typeof $event === 'string' ? $event : null })"
               />
             </label>
 
@@ -6120,11 +5543,12 @@ onBeforeUnmount(() => {
         :error-message="importDumpError"
         :is-submitting="isSubmittingImportDump"
         @update:open="handleImportDumpDialogOpenChange"
-        @update:fold-identifiers-to-lowercase="importDumpFoldIdentifiersToLowercase = $event"
+        @update:fold-identifiers-to-lowercase="editImportDump({ foldIdentifiersToLowercase: $event })"
         @update:model-value="setImportDumpText"
         @select-file="setImportDumpFile"
         @clear-file="clearImportDumpFile"
         @submit="submitImportDump"
+        @after-leave="schemaImport.afterLeave('pg_dump')"
       >
         <template #before-inputs>
           <div class="grid gap-3">
@@ -6134,6 +5558,7 @@ onBeforeUnmount(() => {
               </span>
               <USelect
                 :items="importDumpBaseVersionItems"
+                :disabled="schemaImport.isBusy.value"
                 :model-value="importDumpBaseVersionId || undefined"
                 value-key="value"
                 label-key="label"
@@ -6141,7 +5566,7 @@ onBeforeUnmount(() => {
                 variant="outline"
                 size="sm"
                 :ui="studioSelectUi"
-                @update:model-value="importDumpBaseVersionId = typeof $event === 'string' ? $event : null"
+                @update:model-value="editImportDump({ baseVersionId: typeof $event === 'string' ? $event : null })"
               />
             </label>
 
@@ -6181,10 +5606,11 @@ onBeforeUnmount(() => {
                 </div>
 
                 <USwitch
+                  :disabled="schemaImport.isBusy.value"
                   :model-value="importDumpRetainMatchingTableGroups"
                   color="neutral"
                   :ui="studioSwitchUi"
-                  @update:model-value="importDumpRetainMatchingTableGroups = $event === true"
+                  @update:model-value="editImportDump({ retainMatchingTableGroups: $event === true })"
                 />
               </div>
             </label>
@@ -6193,13 +5619,14 @@ onBeforeUnmount(() => {
       </AppPgDumpImportModal>
 
       <StudioModalFrame
-        :open="importExecutableAttachmentResolution !== null"
+        :open="schemaImport.isPlacing.value"
         :title="importExecutableAttachmentResolutionTitle"
         :description="importExecutableAttachmentResolutionDescription"
         surface-id="import-executable-attachments"
         body-class="grid min-h-0 gap-4 px-4 py-3"
         width-class="max-w-4xl"
         @update:open="handleImportExecutableAttachmentResolutionOpenChange"
+        @after-leave="schemaImport.afterLeave('placement')"
       >
         <div
           v-if="importExecutableAttachmentResolution"
@@ -6317,11 +5744,12 @@ onBeforeUnmount(() => {
       </StudioModalFrame>
 
       <StudioModalFrame
-        v-model:open="schemaDialogOpen"
+        :open="schemaDialogOpen"
         :title="schemaActionTitle"
         :description="schemaActionDescriptionText"
         surface-id="schema"
         body-class="grid gap-4 px-4 py-3"
+        @update:open="studioSessionStore.updateSchemaDialogOpen"
       >
         <div class="grid gap-3 lg:grid-cols-[minmax(0,0.95fr)_minmax(0,1.05fr)]">
           <div class="grid gap-3">
@@ -6333,12 +5761,13 @@ onBeforeUnmount(() => {
                 Schema Name
               </span>
               <UInput
-                v-model="schemaDialogName"
+                :model-value="schemaDialogName"
                 placeholder="Schema name"
                 color="neutral"
                 variant="outline"
                 size="sm"
                 :ui="studioFieldUi"
+                @update:model-value="updateSchemaDialogName"
               />
             </label>
 
@@ -6519,7 +5948,7 @@ onBeforeUnmount(() => {
             color="neutral"
             variant="outline"
             :class="secondaryModalButtonClass"
-            @click="schemaDialogOpen = false"
+            @click="studioSessionStore.closeSchemaDialog()"
           />
           <UButton
             v-if="schemaDialogMode === 'save'"
@@ -6542,11 +5971,12 @@ onBeforeUnmount(() => {
       </StudioModalFrame>
 
       <StudioModalFrame
-        v-model:open="loadDialogOpen"
+        :open="loadDialogOpen"
         :title="loadDialogTitle"
         :description="loadDialogDescription"
         surface-id="load"
         body-class="max-h-[min(60vh,36rem)] overflow-y-auto px-4 py-3"
+        @update:open="studioSessionStore.updateLoadDialogOpen"
       >
         <div
           v-if="currentPersistenceSource === 'browser'"
@@ -6713,22 +6143,24 @@ onBeforeUnmount(() => {
             color="neutral"
             variant="outline"
             :class="secondaryModalButtonClass"
-            @click="loadDialogOpen = false"
+            @click="studioSessionStore.closeLoadDialog()"
           />
         </template>
       </StudioModalFrame>
 
       <StudioModalFrame
-        v-model:open="tableEditorOpen"
+        :open="tableEditorOpen"
         :title="tableEditorTitle"
         :description="tableEditorDescription"
         surface-id="table-editor"
         width-class="max-w-5xl"
         body-class="grid max-h-[min(74vh,52rem)] gap-5 overflow-y-auto px-4 py-4"
+        @update:open="tableEditor.updateOpen"
         @after-leave="handleTableEditorAfterLeave"
       >
         <div
           v-if="tableEditorDraft"
+          :inert="isSavingTableEditor"
           class="contents"
         >
           <div
@@ -7243,22 +6675,25 @@ onBeforeUnmount(() => {
             color="neutral"
             variant="soft"
             :class="primaryModalButtonClass"
-            :disabled="tableEditorErrors.length > 0"
+            :disabled="tableEditorErrors.length > 0 || isSavingTableEditor"
+            :loading="isSavingTableEditor"
             @click="saveTableEditor"
           />
         </template>
       </StudioModalFrame>
 
       <StudioModalFrame
-        v-model:open="groupEditorOpen"
+        :open="groupEditorOpen"
         :title="groupEditorTitle"
         :description="groupEditorDescription"
         surface-id="group-editor"
         body-class="grid max-h-[min(60vh,32rem)] gap-5 overflow-y-auto px-4 py-4"
+        @update:open="groupEditor.updateOpen"
         @after-leave="handleGroupEditorAfterLeave"
       >
         <div
           v-if="groupEditorDraft"
+          :inert="isSavingGroupEditor"
           class="contents"
         >
           <div
@@ -7352,7 +6787,8 @@ onBeforeUnmount(() => {
             color="neutral"
             variant="soft"
             :class="primaryModalButtonClass"
-            :disabled="groupEditorErrors.length > 0"
+            :disabled="groupEditorErrors.length > 0 || isSavingGroupEditor"
+            :loading="isSavingGroupEditor"
             @click="saveGroupEditor"
           />
         </template>

@@ -1,4 +1,3 @@
-import type { Ref } from 'vue'
 import { storeToRefs } from 'pinia'
 import {
   useStudioShellStore,
@@ -24,17 +23,7 @@ export const useStudioSchemaStatus = () => {
     }
   })
 
-  const setStudioSchemaStatus = (nextState: StudioSchemaStatusState) => {
-    studioShellStore.setSchemaStatus(nextState)
-  }
-
-  const clearStudioSchemaStatus = () => {
-    studioShellStore.clearSchemaStatus()
-  }
-
   return {
-    clearStudioSchemaStatus,
-    setStudioSchemaStatus,
-    state: state as Ref<StudioSchemaStatusState>
+    state
   }
 }

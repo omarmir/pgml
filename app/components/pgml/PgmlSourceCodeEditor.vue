@@ -22,6 +22,7 @@ const {
   activateCompletionOnTyping = true,
   commitDebounceMs = 0,
   diagnosticsDelayMs = 150,
+  documentContextRevision = 0,
   externalDiagnostics = null,
   languageMode = 'pgml',
   modelValue,
@@ -31,6 +32,7 @@ const {
   activateCompletionOnTyping?: boolean
   commitDebounceMs?: number
   diagnosticsDelayMs?: number
+  documentContextRevision?: number
   externalDiagnostics?: PgmlLanguageDiagnostic[] | null
   languageMode?: SourceEditorLanguageMode
   modelValue: string
@@ -51,11 +53,15 @@ const diagnosticsCompartment = new Compartment()
 const languageCompartment = new Compartment()
 const readOnlyCompartment = new Compartment()
 let isApplyingExternalUpdate = false
-let pendingCommitTimeout: ReturnType<typeof setTimeout> | null = null
-let pendingCompletionAnalysisIdleHandle: number | null = null
-let pendingCompletionAnalysisTimeout: ReturnType<typeof setTimeout> | null = null
+type CommitSchedule = { kind: 'idle' } | { kind: 'disposed' } | { kind: 'scheduled', timeout: ReturnType<typeof setTimeout> }
+type CompletionSchedule
+  = | { kind: 'idle' }
+    | { kind: 'disposed' }
+    | { kind: 'delaying' | 'waiting-timeout', timeout: ReturnType<typeof setTimeout>, revision: number }
+    | { kind: 'waiting-idle', handle: number, revision: number }
+let commitSchedule: CommitSchedule = { kind: 'idle' }
+let completionSchedule: CompletionSchedule = { kind: 'idle' }
 let completionAnalysisRevision = 0
-let pendingCommitScheduled = false
 const effectiveCommitDebounceMs = computed(() => {
   return isAutomationEnvironment.value ? 0 : commitDebounceMs
 })
@@ -72,142 +78,77 @@ const effectiveCompletionAnalysisDelayMs = computed(() => {
 })
 
 const clearPendingCommit = () => {
-  if (pendingCommitTimeout) {
-    clearTimeout(pendingCommitTimeout)
-    pendingCommitTimeout = null
-  }
-
-  pendingCommitScheduled = false
+  if (commitSchedule.kind === 'scheduled') clearTimeout(commitSchedule.timeout)
+  if (commitSchedule.kind !== 'disposed') commitSchedule = { kind: 'idle' }
 }
-
 const clearPendingCompletionAnalysis = () => {
-  if (pendingCompletionAnalysisTimeout) {
-    clearTimeout(pendingCompletionAnalysisTimeout)
-    pendingCompletionAnalysisTimeout = null
-  }
-
-  if (pendingCompletionAnalysisIdleHandle !== null && import.meta.client && 'cancelIdleCallback' in window) {
-    window.cancelIdleCallback(pendingCompletionAnalysisIdleHandle)
-    pendingCompletionAnalysisIdleHandle = null
-  }
+  if (completionSchedule.kind === 'delaying' || completionSchedule.kind === 'waiting-timeout') clearTimeout(completionSchedule.timeout)
+  else if (completionSchedule.kind === 'waiting-idle' && import.meta.client && 'cancelIdleCallback' in window) window.cancelIdleCallback(completionSchedule.handle)
+  if (completionSchedule.kind !== 'disposed') completionSchedule = { kind: 'idle' }
 }
-
 const emitCommittedValue = (value: string) => {
+  if (commitSchedule.kind === 'disposed') return
   clearPendingCommit()
-
-  if (value === modelValue) {
-    return
-  }
-
-  emit('update:modelValue', value)
+  if (value !== modelValue) emit('update:modelValue', value)
 }
-
 const flushPendingChanges = async () => {
-  if (pendingCommitScheduled) {
-    emitCommittedValue(getValue())
-    await nextTick()
-    return
-  }
-
-  const currentValue = getValue()
-
-  if (currentValue === modelValue) {
-    return
-  }
-
-  emit('update:modelValue', currentValue)
+  if (commitSchedule.kind === 'disposed') return
+  const value = getValue()
+  if (commitSchedule.kind !== 'scheduled' && value === modelValue) return
+  emitCommittedValue(value)
   await nextTick()
 }
-
 const hasPendingChanges = () => {
-  return pendingCommitScheduled || getValue() !== modelValue
+  return commitSchedule.kind !== 'disposed' && (commitSchedule.kind === 'scheduled' || getValue() !== modelValue)
 }
-
-const runCompletionAnalysis = (revision: number) => {
-  pendingCompletionAnalysisIdleHandle = null
-  pendingCompletionAnalysisTimeout = null
-
-  if (revision !== completionAnalysisRevision || languageMode === 'sql') {
-    if (languageMode === 'sql') {
-      completionAnalysis.value = null
-    }
-
-    return
-  }
-
-  const view = viewRef.value
-
-  if (!view) {
-    return
-  }
-
-  completionAnalysis.value = analyzePgmlDocument(view.state.doc.toString())
-}
-
-const queueCompletionAnalysisExecution = (revision: number) => {
-  if (import.meta.client && 'requestIdleCallback' in window) {
-    pendingCompletionAnalysisIdleHandle = window.requestIdleCallback(() => {
-      runCompletionAnalysis(revision)
-    }, {
-      timeout: 180
-    })
-    return
-  }
-
-  pendingCompletionAnalysisTimeout = setTimeout(() => {
-    pendingCompletionAnalysisTimeout = null
-    runCompletionAnalysis(revision)
-  }, 0)
-}
-
-const scheduleCompletionAnalysis = (options: {
-  immediate?: boolean
-} = {}) => {
-  clearPendingCompletionAnalysis()
-
+const runCompletionAnalysis = (request: CompletionSchedule) => {
+  if (completionSchedule !== request || request.kind === 'idle' || request.kind === 'disposed' || request.revision !== completionAnalysisRevision) return
+  completionSchedule = { kind: 'idle' }
   if (languageMode === 'sql') {
     completionAnalysis.value = null
     return
   }
-
-  const nextRevision = completionAnalysisRevision + 1
-
-  completionAnalysisRevision = nextRevision
-
-  if (options.immediate || effectiveCompletionAnalysisDelayMs.value <= 0) {
-    queueCompletionAnalysisExecution(nextRevision)
-    return
-  }
-
-  pendingCompletionAnalysisTimeout = setTimeout(() => {
-    pendingCompletionAnalysisTimeout = null
-    queueCompletionAnalysisExecution(nextRevision)
-  }, effectiveCompletionAnalysisDelayMs.value)
+  const view = viewRef.value
+  if (view !== null) completionAnalysis.value = analyzePgmlDocument(view.state.doc.toString())
 }
-
-const queueValueCommit = () => {
-  if (readOnly) {
+const queueCompletionAnalysisExecution = (revision: number) => {
+  if (completionSchedule.kind === 'disposed') return
+  if (import.meta.client && 'requestIdleCallback' in window) {
+    const request: CompletionSchedule = { kind: 'waiting-idle', revision, handle: window.requestIdleCallback(() => runCompletionAnalysis(request), { timeout: 180 }) }
+    completionSchedule = request
+  } else {
+    const request: CompletionSchedule = { kind: 'waiting-timeout', revision, timeout: setTimeout(() => runCompletionAnalysis(request), 0) }
+    completionSchedule = request
+  }
+}
+const scheduleCompletionAnalysis = (options: { immediate?: boolean } = {}) => {
+  clearPendingCompletionAnalysis()
+  if (completionSchedule.kind === 'disposed') return
+  if (languageMode === 'sql') {
+    completionAnalysis.value = null
     return
   }
-
-  pendingCommitScheduled = true
-
+  const revision = ++completionAnalysisRevision
+  if (options.immediate || effectiveCompletionAnalysisDelayMs.value <= 0) {
+    queueCompletionAnalysisExecution(revision)
+    return
+  }
+  const request: CompletionSchedule = { kind: 'delaying', revision, timeout: setTimeout(() => {
+    if (completionSchedule === request) queueCompletionAnalysisExecution(revision)
+  }, effectiveCompletionAnalysisDelayMs.value) }
+  completionSchedule = request
+}
+const queueValueCommit = () => {
+  if (readOnly || commitSchedule.kind === 'disposed') return
+  clearPendingCommit()
   if (effectiveCommitDebounceMs.value <= 0) {
     emitCommittedValue(getValue())
     return
   }
-
-  if (pendingCommitTimeout) {
-    clearTimeout(pendingCommitTimeout)
-  }
-
-  pendingCommitTimeout = setTimeout(() => {
-    if (!pendingCommitScheduled) {
-      return
-    }
-
-    emitCommittedValue(getValue())
-  }, effectiveCommitDebounceMs.value)
+  const request: CommitSchedule = { kind: 'scheduled', timeout: setTimeout(() => {
+    if (commitSchedule === request) emitCommittedValue(getValue())
+  }, effectiveCommitDebounceMs.value) }
+  commitSchedule = request
 }
 
 const buildLanguageExtensions = () => {
@@ -298,7 +239,7 @@ const setValue = (value: string) => {
   const currentValue = viewRef.value.state.doc.toString()
 
   if (currentValue === value) {
-    if (pendingCommitScheduled && value === modelValue) {
+    if (commitSchedule.kind === 'scheduled' && value === modelValue) {
       clearPendingCommit()
     }
 
@@ -365,6 +306,11 @@ onMounted(() => {
   })
 })
 
+watch(() => documentContextRevision, () => {
+  clearPendingCommit()
+  setValue(modelValue)
+}, { flush: 'sync' })
+
 watch(() => modelValue, (nextValue) => {
   setValue(nextValue)
 })
@@ -421,6 +367,8 @@ watch(() => [
 onBeforeUnmount(() => {
   clearPendingCommit()
   clearPendingCompletionAnalysis()
+  commitSchedule = { kind: 'disposed' }
+  completionSchedule = { kind: 'disposed' }
 
   if (containerRef.value) {
     delete containerRef.value.__pgmlEditorView
@@ -433,6 +381,8 @@ onBeforeUnmount(() => {
 })
 
 defineExpose({
+  getCommittedInput: () => modelValue,
+  getDocumentContextRevision: () => documentContextRevision,
   flushPendingChanges,
   focusOffset,
   focusSourceRange,

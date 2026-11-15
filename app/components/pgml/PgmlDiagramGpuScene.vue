@@ -1,23 +1,22 @@
 <script setup lang="ts">
-import { useResizeObserver } from '@vueuse/core'
+import { useEventListener, useResizeObserver } from '@vueuse/core'
 import type { Ref } from 'vue'
 import {
+  computed,
   nextTick,
   onBeforeUnmount,
   onMounted,
   ref,
+  shallowRef,
   watch
 } from 'vue'
 import {
   buildDiagramSpatialGridIndex,
+  doesDiagramSpatialEntryIntersectBounds,
   queryDiagramSpatialGridIndex,
   type DiagramSpatialGridIndex
 } from '~/utils/diagram-spatial-index'
-import {
-  buildDiagramConnectionDragPreviewPoints,
-  type DiagramConnectionPreviewDragState,
-  type DiagramNodeDragPreview
-} from '~/utils/diagram-connection-preview'
+import type { DiagramNodeDragPreview } from '~/utils/diagram-connection-preview'
 import {
   applyDiagramRendererInitFailure,
   getDiagramRendererCapability,
@@ -61,6 +60,7 @@ import {
   type DiagramGpuTableCard,
   type DiagramGpuWorldBounds
 } from '~/utils/diagram-gpu-scene'
+import { createAnimationFrameBatcher } from '~/utils/animation-frame'
 import type { PgmlSourceRange } from '~/utils/pgml'
 
 type PixiModule = typeof import('pixi.js')
@@ -84,23 +84,24 @@ type VisibleConnectionBuckets = {
   staticLines: DiagramGpuConnectionLine[]
 }
 
-type DragSession = {
-  dragStarted?: boolean
-  groupId?: string
-  lastDragX?: number
-  lastDragY?: number
-  mode: 'pan' | 'drag' | 'select'
-  nodeId?: string
-  nodeKind?: 'group' | 'object' | 'table'
+type NodePointerSession = {
+  pointerId: number
+  nodeId: string
+  nodeKind: 'group' | 'object' | 'table'
   originClientX: number
   originClientY: number
-  originPanX: number
-  originPanY: number
-  originX?: number
-  originY?: number
-  pressedTarget: HitTarget | null
-  selectOnPress?: boolean
+  originX: number
+  originY: number
+  pressedTarget: HitTarget
+  selectOnPress: boolean
 }
+type Interaction = { kind: 'idle' }
+  | { kind: 'pan', pointerId: number, originClientX: number, originClientY: number, originPanX: number, originPanY: number }
+  | (NodePointerSession & { kind: 'node-pressed' })
+  | (NodePointerSession & { kind: 'node-dragging', position: DiagramTouchPoint })
+  | { kind: 'toggle-pressed', pointerId: number, objectId: string, pressedTarget: HitTarget }
+  | { kind: 'pinching', input: 'pointer' | 'touch', origin: TouchPinchSession }
+  | { kind: 'pinch-ending', input: 'pointer' | 'touch' }
 
 type TouchPinchSession = {
   initialCenter: DiagramTouchPoint
@@ -134,6 +135,9 @@ type HitTarget = {
 
 const {
   connections,
+  documentContextRevision = 0,
+  loadIntentRevision = 0,
+  interactionEnabled = true,
   groups,
   objects,
   rendererBackend = 'auto',
@@ -144,6 +148,9 @@ const {
   viewportResetKey = 0,
   worldBounds
 } = defineProps<{
+  documentContextRevision?: number
+  loadIntentRevision?: number
+  interactionEnabled?: boolean
   connections: DiagramGpuConnectionLine[]
   groups: DiagramGpuGroupNode[]
   objects: DiagramGpuObjectNode[]
@@ -170,17 +177,29 @@ const emit = defineEmits<{
 const hostRef: Ref<HTMLDivElement | null> = ref(null)
 const overlayRef: Ref<HTMLDivElement | null> = ref(null)
 
-let pixi: PixiModule | null = null
-let app: PixiApplication | null = null
-let stageContainer: PixiContainer | null = null
-let backgroundGraphics: PixiGraphics | null = null
-let worldContainer: PixiContainer | null = null
-let groupContainer: PixiContainer | null = null
-let staticLineGraphics: PixiGraphics | null = null
-let dynamicLineGraphics: PixiGraphics | null = null
-let groupHeaderContainer: PixiContainer | null = null
-let tableContainer: PixiContainer | null = null
-let objectContainer: PixiContainer | null = null
+type SceneResources = {
+  pixi: PixiModule
+  app: PixiApplication
+  stageContainer: PixiContainer
+  backgroundGraphics: PixiGraphics
+  worldContainer: PixiContainer
+  groupContainer: PixiContainer
+  staticLineGraphics: PixiGraphics
+  dynamicLineGraphics: PixiGraphics
+  groupHeaderContainer: PixiContainer
+  tableContainer: PixiContainer
+  objectContainer: PixiContainer
+}
+type SceneLifetime = { kind: 'idle' } | { kind: 'disposed' }
+  | { kind: 'initializing', generation: number, resumeTransform: ViewTransform | null }
+  | { kind: 'ready', generation: number, resources: SceneResources }
+  | { kind: 'failed', generation: number, resumeTransform: ViewTransform | null, error: unknown }
+const lifetime: Ref<SceneLifetime> = shallowRef({ kind: 'idle' })
+const sceneResources = computed(() => lifetime.value.kind === 'ready' ? lifetime.value.resources : null)
+let rendererGeneration = 0
+const fullRenderBatcher = createAnimationFrameBatcher()
+const transformRenderBatcher = createAnimationFrameBatcher()
+const dragPreviewRenderBatcher = createAnimationFrameBatcher()
 
 const tableSpriteEntries = new Map<string, TextureCacheEntry>()
 const groupSpriteEntries = new Map<string, TextureCacheEntry>()
@@ -198,13 +217,9 @@ const viewportHeight: Ref<number> = ref(0)
 let worldPanX = 0
 let worldPanY = 0
 let worldScale = 1
-let destroyed = false
-let dragSession: DragSession | null = null
-let touchPinchSession: TouchPinchSession | null = null
-let touchPointerPinchActive = false
+let interaction: Interaction = { kind: 'idle' }
 const activeTouchPointers = new Map<number, DiagramTouchPoint>()
-let lastClickTargetKey = ''
-let lastClickTimestamp = 0
+let lastClick: { key: string, timestamp: number } | null = null
 let activeVisibleTableIds = new Set<string>()
 let activeVisibleGroupIds = new Set<string>()
 let activeVisibleObjectIds = new Set<string>()
@@ -220,14 +235,10 @@ let cachedVisibleConnectionBuckets: VisibleConnectionBuckets = {
   dynamicLines: [],
   staticLines: []
 }
-let liveConnectionDragPreview: DiagramConnectionPreviewDragState | null = null
 let renderedStaticConnections: Array<Pick<DiagramGpuConnectionLine, 'key' | 'points'>> = []
 let renderedDynamicConnections: Array<Pick<DiagramGpuConnectionLine, 'key' | 'points'>> = []
 let liveDragPreview: DiagramNodeDragPreview | null = null
 let renderedDragPreview: DiagramNodeDragPreview | null = null
-let dragPreviewRenderScheduled = false
-let fullRenderScheduled = false
-let transformRenderScheduled = false
 let deferredFullRenderTimeout: ReturnType<typeof setTimeout> | null = null
 let lineAnimationFrame: number | null = null
 let lineAnimationOffset = 0
@@ -483,11 +494,12 @@ const quantizeTextureResolution = (value: number) => {
 }
 
 const getRendererMaxTextureDimension = () => {
-  if (!app) {
+  const scene = sceneResources.value
+  if (!scene) {
     return diagramFallbackMaxTextureDimension
   }
 
-  const renderer = app.renderer as PixiWebGLRenderer | PixiWebGPURenderer
+  const renderer = scene.app.renderer as PixiWebGLRenderer | PixiWebGPURenderer
 
   if ('gl' in renderer && renderer.gl) {
     const maxTextureSize = renderer.gl.getParameter(renderer.gl.MAX_TEXTURE_SIZE)
@@ -571,10 +583,10 @@ const worldPointFromClient = (clientX: number, clientY: number) => {
   }
 }
 
-const getDragWorldPosition = (session: DragSession, clientX: number, clientY: number) => {
+const getDragWorldPosition = (session: NodePointerSession, clientX: number, clientY: number) => {
   return {
-    x: Math.round((session.originX || 0) + ((clientX - session.originClientX) / Math.max(worldScale, 0.001))),
-    y: Math.round((session.originY || 0) + ((clientY - session.originClientY) / Math.max(worldScale, 0.001)))
+    x: Math.round(session.originX + ((clientX - session.originClientX) / Math.max(worldScale, 0.001))),
+    y: Math.round(session.originY + ((clientY - session.originClientY) / Math.max(worldScale, 0.001)))
   }
 }
 
@@ -672,59 +684,37 @@ const getTouchGesture = (touches: TouchList): DiagramTouchGesture | null => {
   )
 }
 
-const startTouchPinchSession = (gesture: DiagramTouchGesture) => {
-  // Cancel a node preview even when its coalesced frame has not rendered yet.
+const startTouchPinchSession = (gesture: DiagramTouchGesture, input: 'pointer' | 'touch') => {
+  if ((interaction.kind === 'pinching' || interaction.kind === 'pinch-ending') && interaction.input !== input) return
   emit('dragPreviewChange', null)
   setDragPreview(null)
-  setConnectionDragPreview(null)
-
-  touchPinchSession = {
-    initialCenter: gesture.center,
-    initialDistance: gesture.distance,
-    initialPan: {
-      x: worldPanX,
-      y: worldPanY
-    },
-    initialScale: worldScale
-  }
+  lastClick = null
+  interaction = { kind: 'pinching', input, origin: {
+    initialCenter: gesture.center, initialDistance: gesture.distance,
+    initialPan: { x: worldPanX, y: worldPanY }, initialScale: worldScale
+  } }
 }
 
 const resetTouchInteraction = () => {
-  touchPinchSession = null
-  touchPointerPinchActive = false
+  if (interaction.kind === 'pinching' || interaction.kind === 'pinch-ending') interaction = { kind: 'idle' }
   activeTouchPointers.clear()
 }
 
 const getPointerTouchGesture = () => {
   const [firstPoint, secondPoint] = Array.from(activeTouchPointers.values())
-
-  if (!firstPoint || !secondPoint) {
-    return null
-  }
-
-  return getDiagramTouchGesture(firstPoint, secondPoint)
+  return firstPoint && secondPoint ? getDiagramTouchGesture(firstPoint, secondPoint) : null
 }
 
-const applyPinchGestureTransform = (gesture: DiagramTouchGesture) => {
-  if (!touchPinchSession) {
-    startTouchPinchSession(gesture)
-  }
-
-  if (!touchPinchSession) {
-    return
-  }
-
+const applyPinchGestureTransform = (gesture: DiagramTouchGesture, input: 'pointer' | 'touch') => {
+  if (interaction.kind !== 'pinching') startTouchPinchSession(gesture, input)
+  if (interaction.kind !== 'pinching' || interaction.input !== input) return
+  const origin = interaction.origin
   const transform = getDiagramPinchViewportTransform({
-    currentCenter: gesture.center,
-    currentDistance: gesture.distance,
-    initialCenter: touchPinchSession.initialCenter,
-    initialDistance: touchPinchSession.initialDistance,
-    initialPan: touchPinchSession.initialPan,
-    initialScale: touchPinchSession.initialScale,
-    maxScale: diagramMaxScale,
-    minScale: getMinViewportScale()
+    currentCenter: gesture.center, currentDistance: gesture.distance,
+    initialCenter: origin.initialCenter, initialDistance: origin.initialDistance,
+    initialPan: origin.initialPan, initialScale: origin.initialScale,
+    maxScale: diagramMaxScale, minScale: getMinViewportScale()
   })
-
   worldScale = transform.scale
   worldPanX = transform.pan.x
   worldPanY = transform.pan.y
@@ -733,13 +723,33 @@ const applyPinchGestureTransform = (gesture: DiagramTouchGesture) => {
   scheduleDeferredFullRender(48)
 }
 
+const releasePointer = (pointerId: number) => {
+  if (overlayRef.value?.hasPointerCapture(pointerId)) overlayRef.value.releasePointerCapture(pointerId)
+}
+
+const cancelInteraction = () => {
+  const pointers = Array.from(activeTouchPointers.keys())
+  if ('pointerId' in interaction) pointers.push(interaction.pointerId)
+  interaction = { kind: 'idle' }
+  activeTouchPointers.clear()
+  lastClick = null
+  pointers.forEach(releasePointer)
+  emit('dragPreviewChange', null)
+  setDragPreview(null)
+}
+
+const handlePointerCancel = (event: PointerEvent) => {
+  if (activeTouchPointers.has(event.pointerId) || ('pointerId' in interaction && interaction.pointerId === event.pointerId)) cancelInteraction()
+}
+
 const updateWorldTransform = () => {
-  if (!worldContainer) {
+  const scene = sceneResources.value
+  if (!scene) {
     return
   }
 
-  worldContainer.position.set(worldPanX, worldPanY)
-  worldContainer.scale.set(worldScale)
+  scene.worldContainer.position.set(worldPanX, worldPanY)
+  scene.worldContainer.scale.set(worldScale)
   emit('scaleChange', worldScale)
   emit('transformChange', {
     panX: worldPanX,
@@ -1478,11 +1488,12 @@ const buildObjectCanvas = (node: DiagramGpuObjectNode, resolution: number) => {
 }
 
 const createTextureFromCanvas = (canvas: HTMLCanvasElement) => {
-  if (!pixi) {
+  const scene = sceneResources.value
+  if (!scene) {
     throw new Error('Pixi must be initialized before creating diagram textures.')
   }
 
-  return pixi.Texture.from({
+  return scene.pixi.Texture.from({
     alphaMode: 'premultiply-alpha-on-upload',
     resource: canvas
   })
@@ -1497,7 +1508,8 @@ const getOrCreateSpriteEntry = (
   height: number,
   buildCanvas: (resolution: number) => HTMLCanvasElement
 ) => {
-  if (!pixi) {
+  const scene = sceneResources.value
+  if (!scene) {
     return null
   }
 
@@ -1511,7 +1523,7 @@ const getOrCreateSpriteEntry = (
 
   const canvas = buildCanvas(resolution)
   const texture = createTextureFromCanvas(canvas)
-  const sprite = existingEntry?.sprite || new pixi.Sprite(texture)
+  const sprite = existingEntry?.sprite || new scene.pixi.Sprite(texture)
 
   if (existingEntry) {
     existingEntry.texture.destroy(true)
@@ -1531,39 +1543,40 @@ const getOrCreateSpriteEntry = (
 
   entries.set(key, nextEntry)
 
-  if (kind === 'table' && tableContainer && !tableContainer.children.includes(sprite)) {
-    tableContainer.addChild(sprite)
+  if (kind === 'table' && !scene.tableContainer.children.includes(sprite)) {
+    scene.tableContainer.addChild(sprite)
   }
 
-  if (kind === 'group' && groupContainer && !groupContainer.children.includes(sprite)) {
-    groupContainer.addChild(sprite)
+  if (kind === 'group' && !scene.groupContainer.children.includes(sprite)) {
+    scene.groupContainer.addChild(sprite)
   }
 
-  if (kind === 'group-header' && groupHeaderContainer && !groupHeaderContainer.children.includes(sprite)) {
-    groupHeaderContainer.addChild(sprite)
+  if (kind === 'group-header' && !scene.groupHeaderContainer.children.includes(sprite)) {
+    scene.groupHeaderContainer.addChild(sprite)
   }
 
-  if (kind === 'object' && objectContainer && !objectContainer.children.includes(sprite)) {
-    objectContainer.addChild(sprite)
+  if (kind === 'object' && !scene.objectContainer.children.includes(sprite)) {
+    scene.objectContainer.addChild(sprite)
   }
 
   return nextEntry
 }
 
 const updateBackgroundGrid = () => {
-  if (!backgroundGraphics) {
+  const scene = sceneResources.value
+  if (!scene) {
     return
   }
 
-  backgroundGraphics.clear()
-  backgroundGraphics.rect(0, 0, viewportWidth.value, viewportHeight.value).fill({
+  scene.backgroundGraphics.clear()
+  scene.backgroundGraphics.rect(0, 0, viewportWidth.value, viewportHeight.value).fill({
     alpha: 1,
     color: hexToNumber(sceneTheme.background, 0x09131a)
   })
 
   for (let x = diagramGridDotSpacing / 2; x < viewportWidth.value; x += diagramGridDotSpacing) {
     for (let y = diagramGridDotSpacing / 2; y < viewportHeight.value; y += diagramGridDotSpacing) {
-      backgroundGraphics.circle(x, y, 1).fill({
+      scene.backgroundGraphics.circle(x, y, 1).fill({
         alpha: 0.12,
         color: hexToNumber(sceneTheme.dot, 0x94a3b8)
       })
@@ -1761,7 +1774,6 @@ const publishRendererDebug = () => {
     __PGML_FORCE_GPU_SCENE__?: boolean
     __pgmlSceneRendererDebug?: {
       background: string
-      connectionDragPreview: DiagramConnectionPreviewDragState | null
       dragPreview: DiagramNodeDragPreview | null
       fallbackReason: DiagramRendererCapability['fallbackReason']
       groupHeaderSpriteCount: number
@@ -1775,7 +1787,7 @@ const publishRendererDebug = () => {
       renderedConnections: Array<Pick<DiagramGpuConnectionLine, 'key' | 'points'>>
       renderedGroupCards: Array<{ height: number, id: string, width: number, x: number, y: number }>
       renderedObjectCards: Array<{ height: number, id: string, width: number, x: number, y: number }>
-      renderedTableCards: Array<{ height: number, id: string, width: number, x: number, y: number }>
+      renderedTableCards: Array<{ height: number, id: string, visible: boolean, width: number, x: number, y: number }>
       resolvedRendererBackend: DiagramRendererCapability['resolved']
       scale: number
       tableSpriteCount: number
@@ -1784,7 +1796,6 @@ const publishRendererDebug = () => {
 
   typedWindow.__pgmlSceneRendererDebug = {
     background: sceneTheme.background,
-    connectionDragPreview: liveConnectionDragPreview,
     dragPreview: liveDragPreview,
     fallbackReason: rendererCapability.value.fallbackReason,
     groupHeaderSpriteCount: groupHeaderSpriteEntries.size,
@@ -1806,7 +1817,7 @@ const publishRendererDebug = () => {
     }),
     renderedTableCards: renderedDebugTableCards.map((table) => {
       const sprite = tableSpriteEntries.get(table.id)?.sprite
-      return sprite ? { ...table, x: sprite.x, y: sprite.y } : table
+      return sprite ? { ...table, visible: sprite.visible, x: sprite.x, y: sprite.y } : { ...table, visible: false }
     }),
     resolvedRendererBackend: rendererCapability.value.resolved,
     scale: worldScale,
@@ -1821,48 +1832,44 @@ const setRendererCapability = (nextCapability: DiagramRendererCapability) => {
 }
 
 const renderWorldTransformOnly = () => {
-  if (!app || !worldContainer) {
+  const scene = sceneResources.value
+  if (!scene) {
     return
   }
 
   updateWorldTransform()
   applyDragPreviewSpritePositions(liveDragPreview)
   publishRendererDebug()
-  app.render()
+  scene.app.render()
 }
 
 const scheduleTransformRender = () => {
-  if (transformRenderScheduled || destroyed) {
-    return
-  }
-
-  transformRenderScheduled = true
-  requestAnimationFrame(() => {
-    transformRenderScheduled = false
-    renderWorldTransformOnly()
+  const current = lifetime.value
+  if (current.kind !== 'ready') return
+  transformRenderBatcher.schedule(() => {
+    if (lifetime.value === current) renderWorldTransformOnly()
   })
 }
 
 const scheduleDeferredFullRender = (delay = 72) => {
+  const current = lifetime.value
+  if (current.kind !== 'ready') return
   if (deferredFullRenderTimeout !== null) {
     clearTimeout(deferredFullRenderTimeout)
   }
 
   deferredFullRenderTimeout = setTimeout(() => {
+    if (lifetime.value !== current) return
     deferredFullRenderTimeout = null
     scheduleFullRender()
   }, delay)
 }
 
 const scheduleFullRender = () => {
-  if (fullRenderScheduled || destroyed) {
-    return
-  }
-
-  fullRenderScheduled = true
-  requestAnimationFrame(() => {
-    fullRenderScheduled = false
-    renderScene()
+  const current = lifetime.value
+  if (current.kind !== 'ready') return
+  fullRenderBatcher.schedule(() => {
+    if (lifetime.value === current) renderScene()
   })
 }
 
@@ -1978,47 +1985,7 @@ const drawDashedPolyline = (
   }
 }
 
-const hasActiveConnectionPreview = (preview: DiagramConnectionPreviewDragState | null) => {
-  return Boolean(preview && (preview.deltaX !== 0 || preview.deltaY !== 0))
-}
-
-const getConnectionPreviewPoints = (
-  line: DiagramGpuConnectionLine,
-  preview: DiagramConnectionPreviewDragState | null
-) => {
-  if (!hasActiveConnectionPreview(preview)) {
-    return line.points
-  }
-
-  const movedFromNode = line.fromOwnerNodeId === preview?.nodeId
-  const movedToNode = line.toOwnerNodeId === preview?.nodeId
-
-  if (movedFromNode && movedToNode) {
-    return line.points.map((point) => {
-      return {
-        x: point.x + (preview?.deltaX || 0),
-        y: point.y + (preview?.deltaY || 0)
-      }
-    })
-  }
-
-  if (movedFromNode || movedToNode) {
-    return buildDiagramConnectionDragPreviewPoints(
-      line.points,
-      preview?.deltaX || 0,
-      preview?.deltaY || 0,
-      movedFromNode ? 'from' : 'to'
-    )
-  }
-
-  return line.points
-}
-
-const getDynamicConnectionPreviewNodeId = (preview: DiagramConnectionPreviewDragState | null) => {
-  if (hasActiveConnectionPreview(preview)) {
-    return preview ? preview.nodeId : null
-  }
-
+const getDynamicConnectionPreviewNodeId = () => {
   return hasActiveNodeDragPreview(liveDragPreview) && liveDragPreview ? liveDragPreview.nodeId : null
 }
 
@@ -2056,8 +2023,8 @@ const buildVisibleConnectionBuckets = (previewNodeId: string | null): VisibleCon
   }
 }
 
-const getVisibleConnectionBuckets = (preview: DiagramConnectionPreviewDragState | null) => {
-  const previewNodeId = getDynamicConnectionPreviewNodeId(preview)
+const getVisibleConnectionBuckets = () => {
+  const previewNodeId = getDynamicConnectionPreviewNodeId()
 
   if (
     cachedConnectionBucketVersion === connectionBucketCacheVersion
@@ -2075,14 +2042,15 @@ const getVisibleConnectionBuckets = (preview: DiagramConnectionPreviewDragState 
 
 const drawConnectionLines = (
   graphics: PixiGraphics,
-  lines: DiagramGpuConnectionLine[],
-  preview: DiagramConnectionPreviewDragState | null
+  lines: DiagramGpuConnectionLine[]
 ) => {
+  const scene = sceneResources.value
+  if (!scene) return
   graphics.clear()
 
   const debugConnections: Array<Pick<DiagramGpuConnectionLine, 'key' | 'points'>> = []
   const captureDebug = shouldPublishRendererDebug()
-  if (graphics === staticLineGraphics) {
+  if (graphics === scene.staticLineGraphics) {
     renderedStaticConnections = debugConnections
   } else {
     renderedDynamicConnections = debugConnections
@@ -2093,7 +2061,7 @@ const drawConnectionLines = (
   }
 
   lines.forEach((line) => {
-    const linePoints = getConnectionPreviewPoints(line, preview)
+    const linePoints = line.points
     if (captureDebug) {
       debugConnections.push({ key: line.key, points: linePoints })
     }
@@ -2137,33 +2105,33 @@ const drawConnectionLines = (
 }
 
 const renderConnectionLayer = (
-  preview: DiagramConnectionPreviewDragState | null = null,
   options: {
     includeStatic?: boolean
   } = {}
 ) => {
-  if (!staticLineGraphics || !dynamicLineGraphics) {
+  const scene = sceneResources.value
+  if (!scene) {
     return
   }
 
   const {
     includeStatic = true
   } = options
-  const visibleLines = getVisibleConnectionBuckets(preview)
-  const previewNodeId = getDynamicConnectionPreviewNodeId(preview)
+  const visibleLines = getVisibleConnectionBuckets()
+  const previewNodeId = getDynamicConnectionPreviewNodeId()
 
   if (includeStatic || previewNodeId !== activeDynamicConnectionPreviewNodeId) {
-    drawConnectionLines(staticLineGraphics, visibleLines.staticLines, null)
+    drawConnectionLines(scene.staticLineGraphics, visibleLines.staticLines)
   }
 
-  drawConnectionLines(dynamicLineGraphics, visibleLines.dynamicLines, preview)
+  drawConnectionLines(scene.dynamicLineGraphics, visibleLines.dynamicLines)
   activeDynamicConnectionPreviewNodeId = previewNodeId
 }
 
 const syncAnimatedLineLoop = () => {
-  const hasAnimatedVisibleLines = showRelationshipLines && getVisibleConnectionBuckets(
-    hasActiveConnectionPreview(liveConnectionDragPreview) ? liveConnectionDragPreview : null
-  ).dynamicLines.some((line) => {
+  const current = lifetime.value
+  if (current.kind !== 'ready') return
+  const hasAnimatedVisibleLines = showRelationshipLines && getVisibleConnectionBuckets().dynamicLines.some((line) => {
     return line.animated && line.dashed
   })
 
@@ -2182,13 +2150,14 @@ const syncAnimatedLineLoop = () => {
   }
 
   const animate = (timestamp: number) => {
+    if (lifetime.value !== current) return
     lineAnimationOffset = (timestamp * 0.042) % 24
     applyDragPreviewSpritePositions(liveDragPreview)
-    renderConnectionLayer(hasActiveConnectionPreview(liveConnectionDragPreview) ? liveConnectionDragPreview : null, {
+    renderConnectionLayer({
       includeStatic: false
     })
     publishRendererDebug()
-    app?.render()
+    current.resources.app.render()
     lineAnimationFrame = requestAnimationFrame(animate)
   }
 
@@ -2196,19 +2165,8 @@ const syncAnimatedLineLoop = () => {
 }
 
 const renderScene = () => {
-  if (
-    !app
-    || !pixi
-    || !worldContainer
-    || !groupContainer
-    || !groupHeaderContainer
-    || !staticLineGraphics
-    || !dynamicLineGraphics
-    || !tableContainer
-    || !objectContainer
-  ) {
-    return
-  }
+  const scene = sceneResources.value
+  if (!scene) return
 
   updateWorldTransform()
 
@@ -2382,113 +2340,78 @@ const renderScene = () => {
   })
 
   applyDragPreviewSpritePositions(liveDragPreview)
-  renderConnectionLayer(liveConnectionDragPreview)
+  renderConnectionLayer()
   syncAnimatedLineLoop()
 
-  groupContainer.sortChildren()
-  groupHeaderContainer.sortChildren()
-  tableContainer.sortChildren()
-  objectContainer.sortChildren()
+  scene.groupContainer.sortChildren()
+  scene.groupHeaderContainer.sortChildren()
+  scene.tableContainer.sortChildren()
+  scene.objectContainer.sortChildren()
 
   publishRendererDebug()
-  app.render()
+  scene.app.render()
 }
 
-const resetDragPreviewSpritePositions = (preview: DiagramNodeDragPreview) => {
+const setPreviewSpritePosition = (entry: TextureCacheEntry | undefined, x: number, y: number, width: number, height: number) => {
+  if (!entry) return
+  entry.sprite.position.set(x, y)
+  entry.sprite.visible = doesDiagramSpatialEntryIntersectBounds({ minX: x, minY: y, maxX: x + width, maxY: y + height }, getWorldViewportBounds(diagramNodeViewportOverscan))
+}
+
+const applyNodePreviewPosition = (preview: DiagramNodeDragPreview, reset: boolean) => {
   if (preview.kind === 'group') {
     const group = groups.find(entry => entry.id === preview.id)
     if (group) {
-      groupSpriteEntries.get(group.id)?.sprite.position.set(group.x, group.y)
-      groupHeaderSpriteEntries.get(group.id)?.sprite.position.set(group.x, group.y)
+      const x = reset ? group.x : preview.x
+      const y = reset ? group.y : preview.y
+      setPreviewSpritePosition(groupSpriteEntries.get(group.id), x, y, group.width, group.height)
+      setPreviewSpritePosition(groupHeaderSpriteEntries.get(group.id), x, y, group.width, group.height)
     }
     tables.forEach((table) => {
       if (table.groupId === preview.id) {
-        tableSpriteEntries.get(table.id)?.sprite.position.set(table.x, table.y)
+        setPreviewSpritePosition(tableSpriteEntries.get(table.id), table.x + (reset ? 0 : preview.deltaX), table.y + (reset ? 0 : preview.deltaY), table.width, table.height)
       }
     })
     return
   }
-
   if (preview.kind === 'table') {
     const table = tables.find(entry => entry.id === preview.id)
-    if (table) {
-      tableSpriteEntries.get(table.id)?.sprite.position.set(table.x, table.y)
-    }
+    if (table) setPreviewSpritePosition(tableSpriteEntries.get(table.id), reset ? table.x : preview.x, reset ? table.y : preview.y, table.width, table.height)
     return
   }
-
-  const objectNode = objects.find(entry => entry.id === preview.id)
-  if (objectNode) {
-    objectSpriteEntries.get(objectNode.id)?.sprite.position.set(objectNode.x, objectNode.y)
-  }
+  const node = objects.find(entry => entry.id === preview.id)
+  if (node) setPreviewSpritePosition(objectSpriteEntries.get(node.id), reset ? node.x : preview.x, reset ? node.y : preview.y, node.width, node.height)
 }
 
 const applyDragPreviewSpritePositions = (preview: DiagramNodeDragPreview | null) => {
   if (renderedDragPreview && (!preview || preview.id !== renderedDragPreview.id || preview.kind !== renderedDragPreview.kind)) {
-    resetDragPreviewSpritePositions(renderedDragPreview)
+    applyNodePreviewPosition(renderedDragPreview, true)
   }
   renderedDragPreview = preview
-
-  if (!preview) {
-    return
-  }
-
-  if (preview.kind === 'group') {
-    const groupEntry = groupSpriteEntries.get(preview.id)
-    const groupHeaderEntry = groupHeaderSpriteEntries.get(preview.id)
-
-    groupEntry?.sprite.position.set(preview.x, preview.y)
-    groupHeaderEntry?.sprite.position.set(preview.x, preview.y)
-
-    tables.forEach((table) => {
-      if (table.groupId !== preview.id) {
-        return
-      }
-
-      const tableEntry = tableSpriteEntries.get(table.id)
-
-      tableEntry?.sprite.position.set(table.x + preview.deltaX, table.y + preview.deltaY)
-    })
-
-    return
-  }
-
-  if (preview.kind === 'table') {
-    const tableEntry = tableSpriteEntries.get(preview.id)
-
-    tableEntry?.sprite.position.set(preview.x, preview.y)
-    return
-  }
-
-  const objectEntry = objectSpriteEntries.get(preview.id)
-
-  objectEntry?.sprite.position.set(preview.x, preview.y)
+  if (preview) applyNodePreviewPosition(preview, false)
 }
 
 const renderDragPreview = () => {
-  if (!app || !worldContainer) {
+  const scene = sceneResources.value
+  if (!scene) {
     return
   }
 
   updateWorldTransform()
   applyDragPreviewSpritePositions(liveDragPreview)
-  renderConnectionLayer(liveConnectionDragPreview, {
+  renderConnectionLayer({
     includeStatic: false
   })
   syncAnimatedLineLoop()
   publishRendererDebug()
-  app.render()
+  scene.app.render()
 }
 
 const scheduleDragPreviewRender = () => {
-  if (dragPreviewRenderScheduled || destroyed) {
-    return
-  }
-
-  dragPreviewRenderScheduled = true
-  requestAnimationFrame(() => {
-    dragPreviewRenderScheduled = false
-    renderDragPreview()
+  const current = lifetime.value
+  if (current.kind !== 'ready') return
+  dragPreviewRenderBatcher.schedule(() => {
+    if (lifetime.value === current) renderDragPreview()
   })
 }
 
@@ -2497,7 +2420,7 @@ const hasActiveNodeDragPreview = (preview: DiagramNodeDragPreview | null) => {
 }
 
 const hasAnyActivePreview = () => {
-  return hasActiveNodeDragPreview(liveDragPreview) || hasActiveConnectionPreview(liveConnectionDragPreview)
+  return hasActiveNodeDragPreview(liveDragPreview)
 }
 
 const handlePreviewStateChange = (previousPreviewActive: boolean) => {
@@ -2515,13 +2438,6 @@ const setDragPreview = (preview: DiagramNodeDragPreview | null) => {
   const previousPreviewActive = hasAnyActivePreview()
 
   liveDragPreview = preview
-  handlePreviewStateChange(previousPreviewActive)
-}
-
-const setConnectionDragPreview = (preview: DiagramConnectionPreviewDragState | null) => {
-  const previousPreviewActive = hasAnyActivePreview()
-
-  liveConnectionDragPreview = preview
   handlePreviewStateChange(previousPreviewActive)
 }
 
@@ -2559,6 +2475,12 @@ const isAtResetViewTransform = (
 }
 
 const resetView = () => {
+  const current = lifetime.value
+  if (current.kind === 'initializing' || current.kind === 'failed') {
+    lifetime.value = { ...current, resumeTransform: null }
+    return
+  }
+  if (current.kind !== 'ready') return
   const nextTransform = getResetViewTransform()
 
   worldScale = nextTransform.scale
@@ -2569,6 +2491,7 @@ const resetView = () => {
 }
 
 const focusBounds = (bounds: FocusBounds, padding = 72) => {
+  if (lifetime.value.kind !== 'ready') return
   if (bounds.width <= 0 || bounds.height <= 0 || viewportWidth.value <= 0 || viewportHeight.value <= 0) {
     return
   }
@@ -2590,6 +2513,7 @@ const focusBounds = (bounds: FocusBounds, padding = 72) => {
 }
 
 const zoomToScale = (nextScale: number, clientX: number, clientY: number) => {
+  if (lifetime.value.kind !== 'ready') return
   const bounds = hostRef.value?.getBoundingClientRect()
 
   if (!bounds) {
@@ -2621,321 +2545,143 @@ const zoomBy = (direction: 1 | -1) => {
 }
 
 const handleWheel = (event: WheelEvent) => {
+  if (lifetime.value.kind !== 'ready' || !interactionEnabled) return
   event.preventDefault()
   const zoomFactor = Math.exp((-event.deltaY / 100) * 0.12)
   zoomToScale(worldScale * zoomFactor, event.clientX, event.clientY)
 }
 
 const handlePointerDown = (event: PointerEvent) => {
+  if (lifetime.value.kind !== 'ready' || !interactionEnabled || event.button !== 0) return
   if (event.pointerType === 'touch') {
-    activeTouchPointers.set(event.pointerId, {
-      x: event.clientX,
-      y: event.clientY
-    })
+    activeTouchPointers.set(event.pointerId, { x: event.clientX, y: event.clientY })
     overlayRef.value?.setPointerCapture(event.pointerId)
-
     if (activeTouchPointers.size >= 2) {
       const gesture = getPointerTouchGesture()
-
-      dragSession = null
-      touchPointerPinchActive = true
-
       if (gesture) {
-        applyPinchGestureTransform(gesture)
+        startTouchPinchSession(gesture, 'pointer')
+        applyPinchGestureTransform(gesture, 'pointer')
       }
-
       return
     }
   }
-
-  if (event.button !== 0) {
-    return
-  }
-
-  const hitTarget = resolveHitTarget(event.clientX, event.clientY)
-  const dragTarget = hitTarget?.kind === 'object-toggle' ? null : getDragTargetForHitTarget(hitTarget)
-  const originPoint = worldPointFromClient(event.clientX, event.clientY)
-
-  if (dragTarget) {
-    dragSession = {
-      groupId: dragTarget.groupId,
-      mode: 'drag',
-      nodeId: dragTarget.id,
-      nodeKind: dragTarget.kind,
-      originClientX: event.clientX,
-      originClientY: event.clientY,
-      originPanX: worldPanX,
-      originPanY: worldPanY,
-      originX: dragTarget.originX,
-      originY: dragTarget.originY,
-      pressedTarget: hitTarget,
-      selectOnPress: dragTarget.selectOnPress
+  if (interaction.kind !== 'idle') return
+  const target = resolveHitTarget(event.clientX, event.clientY)
+  const dragTarget = target?.kind === 'object-toggle' ? null : getDragTargetForHitTarget(target)
+  if (dragTarget && target) {
+    interaction = {
+      kind: 'node-pressed', pointerId: event.pointerId,
+      nodeId: dragTarget.id, nodeKind: dragTarget.kind,
+      originClientX: event.clientX, originClientY: event.clientY,
+      originX: dragTarget.originX, originY: dragTarget.originY,
+      pressedTarget: target, selectOnPress: dragTarget.selectOnPress
     }
-  } else if (hitTarget?.kind === 'object-toggle' && hitTarget.objectId) {
-    const objectNode = objects.find(entry => entry.id === hitTarget.objectId)
-
-    if (!objectNode) {
-      return
+    if (dragTarget.selectOnPress) {
+      if (dragTarget.kind === 'table') emit('select', { kind: 'table', tableId: dragTarget.id })
+      else emit('select', { kind: dragTarget.kind, id: dragTarget.id })
     }
-
-    dragSession = {
-      mode: 'select',
-      nodeId: objectNode.id,
-      nodeKind: 'object',
-      originClientX: event.clientX,
-      originClientY: event.clientY,
-      originPanX: worldPanX,
-      originPanY: worldPanY,
-      originX: objectNode.x,
-      originY: objectNode.y,
-      pressedTarget: hitTarget
-    }
+  } else if (target?.kind === 'object-toggle' && target.objectId) {
+    interaction = { kind: 'toggle-pressed', pointerId: event.pointerId, objectId: target.objectId, pressedTarget: target }
   } else {
-    dragSession = {
-      mode: 'pan',
-      originClientX: event.clientX,
-      originClientY: event.clientY,
-      originPanX: worldPanX,
-      originPanY: worldPanY,
-      pressedTarget: hitTarget
-    }
-  }
-
-  overlayRef.value?.setPointerCapture(event.pointerId)
-
-  if (dragSession?.mode === 'pan' && !hitTarget) {
+    interaction = { kind: 'pan', pointerId: event.pointerId,
+      originClientX: event.clientX, originClientY: event.clientY, originPanX: worldPanX, originPanY: worldPanY }
     emit('select', null)
   }
-
-  if (dragSession?.mode === 'drag' && dragSession.selectOnPress && dragSession.nodeKind === 'group' && dragSession.groupId) {
-    emit('select', {
-      id: dragSession.groupId,
-      kind: 'group'
-    })
-  }
-
-  if (dragSession?.mode === 'drag' && dragSession.selectOnPress && dragSession.nodeKind === 'table' && dragSession.nodeId) {
-    emit('select', {
-      kind: 'table',
-      tableId: dragSession.nodeId
-    })
-  }
-
-  if (dragSession?.mode === 'drag' && dragSession.selectOnPress && dragSession.nodeKind === 'object' && dragSession.nodeId) {
-    emit('select', {
-      id: dragSession.nodeId,
-      kind: 'object'
-    })
-  }
-
-  if (dragSession?.pressedTarget?.kind === 'table-row' && dragSession.mode !== 'drag') {
-    emitSelectionForHitTarget(dragSession.pressedTarget)
-  }
-
-  if (!dragSession?.pressedTarget) {
-    const _originPoint = originPoint
-  }
+  overlayRef.value?.setPointerCapture(event.pointerId)
 }
 
 const handleTouchStart = (event: TouchEvent) => {
-  if (event.touches.length < 2) {
-    return
-  }
-
+  if (lifetime.value.kind !== 'ready' || !interactionEnabled) return
+  if (event.touches.length < 2) return
   const gesture = getTouchGesture(event.touches)
-
-  if (!gesture) {
-    return
-  }
-
-  dragSession = null
+  if (!gesture) return
   event.preventDefault()
-  startTouchPinchSession(gesture)
+  startTouchPinchSession(gesture, 'touch')
 }
 
 const handlePointerMove = (event: PointerEvent) => {
   if (event.pointerType === 'touch' && activeTouchPointers.has(event.pointerId)) {
-    activeTouchPointers.set(event.pointerId, {
-      x: event.clientX,
-      y: event.clientY
-    })
-
+    activeTouchPointers.set(event.pointerId, { x: event.clientX, y: event.clientY })
     if (activeTouchPointers.size >= 2) {
       const gesture = getPointerTouchGesture()
-
-      if (!gesture) {
-        return
+      if (gesture) {
+        event.preventDefault()
+        applyPinchGestureTransform(gesture, 'pointer')
       }
-
-      dragSession = null
-      touchPointerPinchActive = true
-      event.preventDefault()
-      applyPinchGestureTransform(gesture)
       return
     }
   }
-
-  if (!dragSession) {
-    return
-  }
-
-  const deltaClientX = event.clientX - dragSession.originClientX
-  const deltaClientY = event.clientY - dragSession.originClientY
-
-  if (dragSession.mode === 'pan') {
-    worldPanX = dragSession.originPanX + deltaClientX
-    worldPanY = dragSession.originPanY + deltaClientY
+  const current = interaction
+  if (!('pointerId' in current) || current.pointerId !== event.pointerId) return
+  if (current.kind === 'pan') {
+    worldPanX = current.originPanX + event.clientX - current.originClientX
+    worldPanY = current.originPanY + event.clientY - current.originClientY
     hasViewportInteraction = true
     scheduleTransformRender()
     scheduleDeferredFullRender(48)
     return
   }
-
-  if (dragSession.mode === 'select') {
-    return
-  }
-
-  if (!dragSession.nodeId || !dragSession.nodeKind) {
-    return
-  }
-
-  const movedEnoughToDrag = Math.abs(deltaClientX) > 4 || Math.abs(deltaClientY) > 4
-
-  if (!dragSession.dragStarted && !movedEnoughToDrag) {
-    return
-  }
-
-  dragSession.dragStarted = true
-  const nextPosition = getDragWorldPosition(dragSession, event.clientX, event.clientY)
-  dragSession.lastDragX = nextPosition.x
-  dragSession.lastDragY = nextPosition.y
-
-  const currentPreview: DiagramNodeDragPreview = {
-    deltaX: nextPosition.x - (dragSession.originX || 0),
-    deltaY: nextPosition.y - (dragSession.originY || 0),
-    id: dragSession.nodeId,
-    kind: dragSession.nodeKind,
-    nodeId: dragSession.nodeId,
-    originX: dragSession.originX || 0,
-    originY: dragSession.originY || 0,
-    x: nextPosition.x,
-    y: nextPosition.y
-  }
-
-  emit('dragPreviewChange', currentPreview)
+  if (current.kind === 'toggle-pressed') return
+  const deltaX = event.clientX - current.originClientX
+  const deltaY = event.clientY - current.originClientY
+  if (current.kind === 'node-pressed' && Math.abs(deltaX) <= 4 && Math.abs(deltaY) <= 4) return
+  const position = getDragWorldPosition(current, event.clientX, event.clientY)
+  interaction = { ...current, kind: 'node-dragging', position }
+  const preview: DiagramNodeDragPreview = { deltaX: position.x - current.originX, deltaY: position.y - current.originY,
+    id: current.nodeId, kind: current.nodeKind, nodeId: current.nodeId,
+    originX: current.originX, originY: current.originY, x: position.x, y: position.y }
+  emit('dragPreviewChange', preview)
 }
 
 const handleTouchMove = (event: TouchEvent) => {
-  if (event.touches.length < 2) {
-    return
-  }
-
+  if (lifetime.value.kind !== 'ready' || !interactionEnabled) return
+  if (event.touches.length < 2) return
   const gesture = getTouchGesture(event.touches)
-
-  if (!gesture) {
-    return
-  }
-
+  if (!gesture) return
   event.preventDefault()
-  applyPinchGestureTransform(gesture)
+  applyPinchGestureTransform(gesture, 'touch')
 }
 
 const handlePointerUp = (event: PointerEvent) => {
   if (event.pointerType === 'touch') {
     activeTouchPointers.delete(event.pointerId)
-
-    if (overlayRef.value?.hasPointerCapture(event.pointerId)) {
-      overlayRef.value.releasePointerCapture(event.pointerId)
-    }
-
-    if (touchPointerPinchActive) {
+    if (interaction.kind === 'pinching' || interaction.kind === 'pinch-ending') {
+      const input = interaction.input
       if (activeTouchPointers.size >= 2) {
         const gesture = getPointerTouchGesture()
-
-        if (gesture) {
-          startTouchPinchSession(gesture)
-        }
-
-        return
-      }
-
-      if (activeTouchPointers.size === 0) {
-        resetTouchInteraction()
-      } else {
-        touchPinchSession = null
-      }
-
-      dragSession = null
+        if (gesture) startTouchPinchSession(gesture, 'pointer')
+      } else interaction = activeTouchPointers.size === 0 ? { kind: 'idle' } : { kind: 'pinch-ending', input }
+      releasePointer(event.pointerId)
       return
     }
   }
-
-  if (!dragSession) {
-    if (overlayRef.value?.hasPointerCapture(event.pointerId)) {
-      overlayRef.value.releasePointerCapture(event.pointerId)
-    }
-
+  const current = interaction
+  if (!('pointerId' in current) || current.pointerId !== event.pointerId) return
+  interaction = { kind: 'idle' }
+  releasePointer(event.pointerId)
+  if (current.kind === 'node-dragging') {
+    lastClick = null
+    emit('moveEnd', { id: current.nodeId, kind: current.nodeKind, x: current.position.x, y: current.position.y })
     return
   }
-
-  if (overlayRef.value?.hasPointerCapture(event.pointerId)) {
-    overlayRef.value.releasePointerCapture(event.pointerId)
+  if (current.kind === 'pan') return
+  if (current.kind === 'toggle-pressed') emit('toggleObjectCollapsed', current.objectId)
+  const key = emitSelectionForHitTarget(current.pressedTarget)
+  const timestamp = Date.now()
+  if (key.length > 0 && lastClick?.key === key && timestamp - lastClick.timestamp < 300 && current.pressedTarget.sourceRange) {
+    emit('focusSource', current.pressedTarget.sourceRange)
   }
-
-  if (dragSession.dragStarted && dragSession.nodeId && dragSession.nodeKind && dragSession.mode === 'drag') {
-    const finalPosition = typeof dragSession.lastDragX === 'number' && typeof dragSession.lastDragY === 'number'
-      ? {
-          x: dragSession.lastDragX,
-          y: dragSession.lastDragY
-        }
-      : getDragWorldPosition(dragSession, event.clientX, event.clientY)
-
-    emit('moveEnd', {
-      id: dragSession.nodeId,
-      kind: dragSession.nodeKind,
-      x: finalPosition.x,
-      y: finalPosition.y
-    })
-  }
-
-  if (!dragSession.dragStarted) {
-    if (dragSession.pressedTarget?.kind === 'object-toggle' && dragSession.pressedTarget.objectId) {
-      emit('toggleObjectCollapsed', dragSession.pressedTarget.objectId)
-    }
-
-    const key = emitSelectionForHitTarget(dragSession.pressedTarget)
-    const now = Date.now()
-
-    if (
-      key.length > 0
-      && key === lastClickTargetKey
-      && now - lastClickTimestamp < 300
-      && dragSession.pressedTarget?.sourceRange
-    ) {
-      emit('focusSource', dragSession.pressedTarget.sourceRange)
-    }
-
-    lastClickTargetKey = key
-    lastClickTimestamp = now
-  }
-
-  dragSession = null
+  lastClick = key.length > 0 ? { key, timestamp } : null
 }
 
 const handleTouchEnd = (event: TouchEvent) => {
+  if (interaction.kind !== 'pinching' && interaction.kind !== 'pinch-ending') return
+  if (interaction.input === 'pointer' && activeTouchPointers.size > 0) return
   if (event.touches.length >= 2) {
     const gesture = getTouchGesture(event.touches)
-
-    if (!gesture) {
-      resetTouchInteraction()
-      return
-    }
-
-    startTouchPinchSession(gesture)
-    return
-  }
-
-  resetTouchInteraction()
+    if (gesture) startTouchPinchSession(gesture, 'touch')
+  } else if (event.touches.length === 1) interaction = { kind: 'pinch-ending', input: 'touch' }
+  else resetTouchInteraction()
 }
 
 const isTouchInteractionWithinViewport = (event: TouchEvent) => {
@@ -2963,7 +2709,7 @@ const handleWindowTouchStart = (event: TouchEvent) => {
 }
 
 const handleWindowTouchMove = (event: TouchEvent) => {
-  if (!touchPinchSession && !isTouchInteractionWithinViewport(event)) {
+  if (interaction.kind !== 'pinching' && !isTouchInteractionWithinViewport(event)) {
     return
   }
 
@@ -2971,7 +2717,7 @@ const handleWindowTouchMove = (event: TouchEvent) => {
 }
 
 const handleWindowTouchEnd = (event: TouchEvent) => {
-  if (!touchPinchSession && !isTouchInteractionWithinViewport(event)) {
+  if (interaction.kind !== 'pinching' && !isTouchInteractionWithinViewport(event)) {
     return
   }
 
@@ -3034,114 +2780,41 @@ const getRendererCapabilitySnapshot = () => {
   })
 }
 
-const initPixi = async (initialTransform: ViewTransform | null = null) => {
-  if (!(hostRef.value instanceof HTMLDivElement) || app) {
-    return
-  }
+const rendererDestroyOptions = { removeView: true, releaseGlobalResources: false } satisfies Parameters<PixiApplication['destroy']>[0]
 
-  const pixiModule = await import('pixi.js')
-
-  pixi = pixiModule
-  const initApplication = async (preference: SceneRendererPreference) => {
-    const nextApp = new pixiModule.Application()
-
-    await nextApp.init({
-      antialias: true,
-      autoDensity: true,
-      autoStart: false,
-      backgroundAlpha: 0,
-      preference,
-      resolution: Math.max(window.devicePixelRatio || 1, 1)
-    })
-
-    return nextApp
-  }
-  const initialRendererCapability = getRendererCapabilitySnapshot()
-  const preferredRenderer = initialRendererCapability.resolved
-
-  activeRendererPreference = preferredRenderer
-  setRendererCapability(initialRendererCapability)
-
+const destroyApplication = (application: PixiApplication) => {
   try {
-    app = await initApplication(preferredRenderer)
-  } catch (error) {
-    if (preferredRenderer !== 'webgpu') {
-      throw error
-    }
-
-    app = await initApplication('webgl')
-    activeRendererPreference = 'webgl'
-    setRendererCapability(applyDiagramRendererInitFailure(initialRendererCapability))
+    application.destroy(rendererDestroyOptions, { children: true, texture: true })
+  } catch {
+    // Pixi's destroy plugins assume init completed; release partial resources separately.
+    const cleanup = [
+      () => application.stage?.destroy({ children: true }),
+      () => application.renderer?.destroy(rendererDestroyOptions)
+    ]
+    cleanup.forEach((release) => {
+      try {
+        release()
+      } catch {
+        // A partially initialized renderer may already have released its context.
+      }
+    })
   }
-
-  if (!(hostRef.value instanceof HTMLDivElement) || !app || !pixi) {
-    return
-  }
-
-  activeRendererPreference = app.renderer.type === pixiModule.RendererType.WEBGPU ? 'webgpu' : 'webgl'
-  if (preferredRenderer === 'webgpu' && activeRendererPreference === 'webgl') {
-    setRendererCapability(applyDiagramRendererInitFailure(initialRendererCapability))
-  }
-
-  syncMaxSpriteTextureDimension()
-  app.canvas.className = 'pointer-events-none absolute inset-0 h-full w-full'
-  hostRef.value.prepend(app.canvas)
-
-  stageContainer = new pixi.Container()
-  backgroundGraphics = new pixi.Graphics()
-  worldContainer = new pixi.Container()
-  groupContainer = new pixi.Container()
-  staticLineGraphics = new pixi.Graphics()
-  dynamicLineGraphics = new pixi.Graphics()
-  groupHeaderContainer = new pixi.Container()
-  tableContainer = new pixi.Container()
-  objectContainer = new pixi.Container()
-
-  groupContainer.sortableChildren = true
-  groupHeaderContainer.sortableChildren = true
-  tableContainer.sortableChildren = true
-  objectContainer.sortableChildren = true
-
-  worldContainer.addChild(groupContainer)
-  worldContainer.addChild(staticLineGraphics)
-  worldContainer.addChild(dynamicLineGraphics)
-  worldContainer.addChild(groupHeaderContainer)
-  worldContainer.addChild(tableContainer)
-  worldContainer.addChild(objectContainer)
-  stageContainer.addChild(backgroundGraphics)
-  stageContainer.addChild(worldContainer)
-  app.stage.addChild(stageContainer)
-
-  measureViewport()
-  app.renderer.resize(viewportWidth.value, viewportHeight.value)
-  refreshSceneTheme()
-  updateBackgroundGrid()
-  rebuildSpatialIndices()
-  if (initialTransform) {
-    hasViewportInteraction = true
-    worldPanX = initialTransform.panX
-    worldPanY = initialTransform.panY
-    worldScale = initialTransform.scale
-  } else {
-    resetView()
-  }
-  renderScene()
 }
 
-const destroyPixi = () => {
-  destroyed = true
-  resetTouchInteraction()
+const releaseScene = (next: SceneLifetime) => {
+  const current = lifetime.value
+  lifetime.value = next
+  cancelInteraction()
   liveDragPreview = null
   renderedDragPreview = null
-  liveConnectionDragPreview = null
-  dragPreviewRenderScheduled = false
+  fullRenderBatcher.cancel()
+  transformRenderBatcher.cancel()
+  dragPreviewRenderBatcher.cancel()
   connectionBucketCacheVersion = 0
   cachedConnectionBucketVersion = -1
   cachedConnectionBucketPreviewNodeId = null
-  cachedVisibleConnectionBuckets = {
-    dynamicLines: [],
-    staticLines: []
-  }
+  cachedVisibleConnectionBuckets = { dynamicLines: [], staticLines: [] }
+  activeDynamicConnectionPreviewNodeId = null
   if (deferredFullRenderTimeout !== null) {
     clearTimeout(deferredFullRenderTimeout)
     deferredFullRenderTimeout = null
@@ -3150,39 +2823,116 @@ const destroyPixi = () => {
     cancelAnimationFrame(lineAnimationFrame)
     lineAnimationFrame = null
   }
-  destroyAllTextures()
-  app?.destroy(true, {
-    children: true,
-    texture: true
-  })
-  app = null
-  pixi = null
+  lineAnimationOffset = 0
+  if (current.kind === 'ready') {
+    destroyAllTextures()
+    destroyApplication(current.resources.app)
+  }
   maxSpriteTextureDimension = diagramFallbackMaxTextureDimension
-  stageContainer = null
-  backgroundGraphics = null
-  worldContainer = null
-  groupContainer = null
-  staticLineGraphics = null
-  dynamicLineGraphics = null
-  activeDynamicConnectionPreviewNodeId = null
-  groupHeaderContainer = null
-  tableContainer = null
-  objectContainer = null
 }
 
-const restartPixi = async () => {
-  const previousTransform: ViewTransform | null = app
-    ? {
-        panX: worldPanX,
-        panY: worldPanY,
-        scale: worldScale
-      }
-    : null
+const ownsInitialization = (generation: number) => lifetime.value.kind === 'initializing' && lifetime.value.generation === generation
 
-  destroyPixi()
-  destroyed = false
-  await nextTick()
-  await initPixi(previousTransform)
+const initPixi = async (resumeTransform: ViewTransform | null = null) => {
+  if (lifetime.value.kind === 'disposed' || !(hostRef.value instanceof HTMLDivElement)) return
+  const host = hostRef.value
+  const generation = ++rendererGeneration
+  releaseScene({ kind: 'initializing', generation, resumeTransform })
+  let candidate: PixiApplication | null = null
+  try {
+    const pixi = await import('pixi.js')
+    if (!ownsInitialization(generation) || hostRef.value !== host) return
+    const capability = getRendererCapabilitySnapshot()
+    const initApplication = async (preference: SceneRendererPreference) => {
+      const application = new pixi.Application()
+      try {
+        await application.init({ antialias: true, autoDensity: true, autoStart: false,
+          backgroundAlpha: 0, preference, resolution: Math.max(window.devicePixelRatio || 1, 1) })
+        return application
+      } catch (error) {
+        destroyApplication(application)
+        throw error
+      }
+    }
+    try {
+      candidate = await initApplication(capability.resolved)
+    } catch (error) {
+      if (!ownsInitialization(generation) || hostRef.value !== host) return
+      if (capability.resolved !== 'webgpu') throw error
+      candidate = await initApplication('webgl')
+    }
+    if (!ownsInitialization(generation) || hostRef.value !== host) {
+      destroyApplication(candidate)
+      return
+    }
+    const resources: SceneResources = {
+      app: candidate, pixi,
+      stageContainer: new pixi.Container(), backgroundGraphics: new pixi.Graphics(),
+      worldContainer: new pixi.Container(), groupContainer: new pixi.Container(),
+      staticLineGraphics: new pixi.Graphics(), dynamicLineGraphics: new pixi.Graphics(),
+      groupHeaderContainer: new pixi.Container(), tableContainer: new pixi.Container(), objectContainer: new pixi.Container()
+    }
+    resources.groupContainer.sortableChildren = true
+    resources.groupHeaderContainer.sortableChildren = true
+    resources.tableContainer.sortableChildren = true
+    resources.objectContainer.sortableChildren = true
+    resources.worldContainer.addChild(resources.groupContainer)
+    resources.worldContainer.addChild(resources.staticLineGraphics)
+    resources.worldContainer.addChild(resources.dynamicLineGraphics)
+    resources.worldContainer.addChild(resources.groupHeaderContainer)
+    resources.worldContainer.addChild(resources.tableContainer)
+    resources.worldContainer.addChild(resources.objectContainer)
+    resources.stageContainer.addChild(resources.backgroundGraphics)
+    resources.stageContainer.addChild(resources.worldContainer)
+    candidate.stage.addChild(resources.stageContainer)
+    const current = lifetime.value
+    if (current.kind !== 'initializing' || current.generation !== generation) {
+      destroyApplication(candidate)
+      return
+    }
+    const transform = current.resumeTransform
+    lifetime.value = { kind: 'ready', generation, resources }
+    activeRendererPreference = candidate.renderer.type === pixi.RendererType.WEBGPU ? 'webgpu' : 'webgl'
+    setRendererCapability(capability.resolved === 'webgpu' && activeRendererPreference === 'webgl'
+      ? applyDiagramRendererInitFailure(capability)
+      : capability)
+    candidate.canvas.className = 'pointer-events-none absolute inset-0 h-full w-full'
+    host.prepend(candidate.canvas)
+    syncMaxSpriteTextureDimension()
+    measureViewport()
+    candidate.renderer.resize(viewportWidth.value, viewportHeight.value)
+    refreshSceneTheme()
+    updateBackgroundGrid()
+    rebuildSpatialIndices()
+    if (transform !== null) {
+      hasViewportInteraction = true
+      worldPanX = transform.panX
+      worldPanY = transform.panY
+      worldScale = transform.scale
+    } else resetView()
+    renderScene()
+  } catch (error) {
+    const current = lifetime.value
+    if (current.kind === 'ready' && current.generation === generation) {
+      releaseScene({ kind: 'failed', generation, resumeTransform, error })
+    } else {
+      if (candidate !== null) destroyApplication(candidate)
+      if (current.kind === 'initializing' && current.generation === generation) {
+        lifetime.value = { kind: 'failed', generation, resumeTransform: current.resumeTransform, error }
+      }
+    }
+  }
+}
+
+const destroyPixi = () => releaseScene({ kind: 'disposed' })
+
+const restartPixi = async () => {
+  const current = lifetime.value
+  if (current.kind === 'disposed') return
+  const transform: ViewTransform | null = current.kind === 'ready'
+    ? { panX: worldPanX, panY: worldPanY, scale: worldScale }
+    : current.kind === 'initializing' || current.kind === 'failed' ? current.resumeTransform : null
+  await initPixi(transform)
 }
 
 const syncViewportLayout = () => {
@@ -3196,9 +2946,7 @@ const syncViewportLayout = () => {
   measureViewport()
   refreshSceneTheme()
   updateBackgroundGrid()
-  if (app) {
-    app.renderer.resize(viewportWidth.value, viewportHeight.value)
-  }
+  sceneResources.value?.app.renderer.resize(viewportWidth.value, viewportHeight.value)
 
   if (shouldRefitView) {
     resetView()
@@ -3235,6 +2983,7 @@ const watchSceneTheme = () => {
 watch(
   () => viewportResetKey,
   () => {
+    cancelInteraction()
     nextTick(() => {
       resetView()
     })
@@ -3299,20 +3048,23 @@ watch(
   { deep: true }
 )
 
-useResizeObserver(hostRef, syncViewportLayout)
+watch([() => documentContextRevision, () => loadIntentRevision, () => interactionEnabled], cancelInteraction)
 
-onMounted(async () => {
+useResizeObserver(hostRef, syncViewportLayout)
+if (import.meta.client) useEventListener(window, 'blur', cancelInteraction)
+
+onMounted(() => {
   if (import.meta.client) {
     shouldDisableConnectionCulling = /Android/i.test(navigator.userAgent) || window.matchMedia('(pointer: coarse)').matches
   }
 
-  await initPixi()
   watchSceneTheme()
   window.addEventListener('resize', syncViewportLayout)
   window.addEventListener('touchstart', handleWindowTouchStart, { passive: false })
   window.addEventListener('touchmove', handleWindowTouchMove, { passive: false })
   window.addEventListener('touchend', handleWindowTouchEnd, { passive: false })
   window.addEventListener('touchcancel', handleWindowTouchEnd, { passive: false })
+  void initPixi()
 })
 
 onBeforeUnmount(() => {
@@ -3327,17 +3079,19 @@ onBeforeUnmount(() => {
 })
 
 defineExpose<{
+  cancelInteraction: () => void
+  handleWheel: (event: WheelEvent) => void
   focusBounds: (bounds: FocusBounds, padding?: number) => void
   getScale: () => number
   resetView: () => void
-  setConnectionDragPreview: (preview: DiagramConnectionPreviewDragState | null) => void
   setDragPreview: (preview: DiagramNodeDragPreview | null) => void
   zoomBy: (direction: 1 | -1) => void
 }>({
+  cancelInteraction,
+  handleWheel,
   focusBounds,
   getScale: () => worldScale,
   resetView,
-  setConnectionDragPreview,
   setDragPreview,
   zoomBy
 })
@@ -3349,12 +3103,28 @@ defineExpose<{
     class="absolute inset-0 overflow-hidden"
   >
     <div
+      v-if="lifetime.kind === 'failed'"
+      role="alert"
+      class="absolute inset-0 z-[3] flex flex-col items-center justify-center gap-3 p-6 text-center text-sm"
+    >
+      <p>The diagram could not start.</p>
+      <button
+        type="button"
+        class="border px-3 py-1.5"
+        @click="restartPixi"
+      >
+        Retry diagram
+      </button>
+    </div>
+    <div
       ref="overlayRef"
+      data-diagram-gesture-surface="true"
       class="absolute inset-0 z-[2] touch-none"
       @pointerdown="handlePointerDown"
       @pointermove="handlePointerMove"
       @pointerup="handlePointerUp"
-      @pointercancel="handlePointerUp"
+      @pointercancel="handlePointerCancel"
+      @lostpointercapture="handlePointerCancel"
       @wheel="handleWheel"
     />
   </div>

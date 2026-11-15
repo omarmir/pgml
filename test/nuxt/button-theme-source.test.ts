@@ -87,7 +87,6 @@ describe('Shared button theming source', () => {
     expect(canvasFile).toContain('const exportPanelButtonClass = joinStudioClasses(')
     expect(canvasFile).toContain('diagramRasterExportScaleFactors')
     expect(canvasFile).toContain(':data-diagram-export-button="`png-${scaleFactor}x`"')
-    expect(canvasFile).toContain('@click="exportPng(scaleFactor)"')
     expect(canvasFile).toContain(':class="exportPanelButtonClass"')
     expect(versionsPanelFile).toContain('studioPanelActionButtonClass')
     expect(comparePanelFile).toContain('studioPanelActionButtonClass')

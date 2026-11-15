@@ -1,10 +1,15 @@
+import { enableAutoUnmount } from '@vue/test-utils'
 import { mountSuspended } from '@nuxt/test-utils/runtime'
 import { defineComponent } from 'vue'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
+import { usePgmlStudioSchemas } from '../../app/composables/usePgmlStudioSchemas'
 import { usePgmlStudioComputerFiles } from '../../app/composables/usePgmlStudioComputerFiles'
 import { resetStudioWorkspaceState } from '../../app/composables/useStudioWorkspaceState'
+import { useStudioSessionStore } from '../../app/stores/studio-session'
 import * as computerFiles from '../../app/utils/computer-files'
+
+enableAutoUnmount(afterEach)
 
 describe('usePgmlStudioComputerFiles', () => {
   beforeEach(() => {
@@ -14,6 +19,306 @@ describe('usePgmlStudioComputerFiles', () => {
   afterEach(() => {
     vi.useRealTimers()
     vi.restoreAllMocks()
+  })
+
+  it('runs a joined live adapter writer when the original queued passive owner unmounts', async () => {
+    const source = ref('original')
+    let first!: ReturnType<typeof usePgmlStudioComputerFiles>
+    let second!: ReturnType<typeof usePgmlStudioComputerFiles>
+    let finish!: (value: computerFiles.PgmlRecentComputerFileWriteResult) => void
+    const pending = new Promise<computerFiles.PgmlRecentComputerFileWriteResult>((resolve) => {
+      finish = resolve
+    })
+    const staleWriter = vi.fn(() => pending)
+    const liveWriter = vi.fn(async () => ({ ok: true, entry: { id: 'A', name: 'A', updatedAt: 'latest' } } satisfies computerFiles.PgmlRecentComputerFileWriteResult))
+    const oldHost = await mountSuspended(defineComponent({ setup() {
+      first = usePgmlStudioComputerFiles({ source, buildSchemaText: () => source.value,
+        fileOperations: { listRecentComputerFiles: async () => [], writeRecentComputerFile: staleWriter } })
+      return () => null
+    } }))
+    first.syncLoadedComputerFile({ entry: { id: 'A', name: 'A', updatedAt: 'old' }, text: 'original' })
+    source.value = 'one'
+    const held = first.saveSchemaToComputerFile()
+    vi.useFakeTimers()
+    source.value = 'two'
+    await nextTick()
+    const newHost = await mountSuspended(defineComponent({ setup() {
+      second = usePgmlStudioComputerFiles({ source, buildSchemaText: () => source.value,
+        fileOperations: { listRecentComputerFiles: async () => [], writeRecentComputerFile: liveWriter } })
+      return () => null
+    } }))
+    await vi.advanceTimersByTimeAsync(5100)
+    oldHost.unmount()
+    finish({ ok: true, entry: { id: 'A', name: 'A', updatedAt: 'first' } })
+    await held
+    await vi.advanceTimersByTimeAsync(0)
+    await nextTick()
+    expect(staleWriter).toHaveBeenCalledTimes(1)
+    expect(liveWriter).toHaveBeenCalledOnce()
+    expect(liveWriter).toHaveBeenCalledWith({ recentFileId: 'A', text: 'two' }, { permissionMode: 'passive' })
+    expect(second.hasPendingComputerFileChanges.value).toBe(false)
+    newHost.unmount()
+  })
+
+  it('resumes dirty passive file autosave after a different document load cancels', async () => {
+    const source = ref('original')
+    const write = vi.fn(async () => ({ ok: true, entry: { id: 'A', name: 'A', updatedAt: 'saved' } } satisfies computerFiles.PgmlRecentComputerFileWriteResult))
+    let api!: ReturnType<typeof usePgmlStudioComputerFiles>
+    const wrapper = await mountSuspended(defineComponent({ setup() {
+      api = usePgmlStudioComputerFiles({ source, buildSchemaText: () => source.value,
+        fileOperations: { listRecentComputerFiles: async () => [], writeRecentComputerFile: write } })
+      return () => null
+    } }))
+    api.syncLoadedComputerFile({ entry: { id: 'A', name: 'A', updatedAt: 'old' }, text: 'original' })
+    vi.useFakeTimers()
+    source.value = 'dirty file'
+    await nextTick()
+    const store = useStudioSessionStore()
+    const intent = store.beginWorkspaceLoad('gist')
+    await vi.advanceTimersByTimeAsync(6000)
+    expect(write).not.toHaveBeenCalled()
+    store.cancelWorkspaceLoad(intent)
+    await nextTick()
+    await vi.advanceTimersByTimeAsync(6000)
+    expect(write).toHaveBeenCalledOnce()
+    expect(write).toHaveBeenCalledWith({ recentFileId: 'A', text: 'dirty file' }, { permissionMode: 'passive' })
+    expect(api.hasPendingComputerFileChanges.value).toBe(false)
+    wrapper.unmount()
+  })
+
+  it('never drains a newly accepted browser document into an older file after its active write settles', async () => {
+    const store = useStudioSessionStore()
+    const source = ref('file original')
+    let files!: ReturnType<typeof usePgmlStudioComputerFiles>
+    let browser!: ReturnType<typeof usePgmlStudioSchemas>
+    let finish!: (value: { ok: true, entry: { id: string, name: string, updatedAt: string } }) => void
+    const pending = new Promise<{ ok: true, entry: { id: string, name: string, updatedAt: string } }>((resolve) => {
+      finish = resolve
+    })
+    const writes: string[] = []
+    const wrapper = await mountSuspended(defineComponent({ setup() {
+      files = usePgmlStudioComputerFiles({ source, buildSchemaText: () => source.value, enabled: computed(() => store.currentSourceKind === 'file'),
+        fileOperations: { listRecentComputerFiles: async () => [], writeRecentComputerFile: async ({ text }) => {
+          writes.push(text)
+          return writes.length === 1 ? pending : { ok: true, entry: { id: 'A', name: 'A', updatedAt: 'new' } }
+        } } })
+      browser = usePgmlStudioSchemas({ source, buildSchemaText: () => source.value, canEmbedLayout: computed(() => true), initialSource: '', restoreLatestOnSetup: false,
+        autosaveEnabled: computed(() => store.currentSourceKind === 'browser'), browserPersistenceEnabled: computed(() => store.currentSourceKind === 'browser') })
+      return () => null
+    } }))
+    files.syncLoadedComputerFile({ entry: { id: 'A', name: 'A', updatedAt: 'old' }, text: 'file original' })
+    vi.useFakeTimers()
+    source.value = 'file edited'
+    await nextTick()
+    await vi.advanceTimersByTimeAsync(5000)
+    expect(writes).toEqual(['file edited'])
+    browser.loadSavedSchema({ id: 'B', name: 'B', updatedAt: 'now', text: 'browser B source' })
+    finish({ ok: true, entry: { id: 'A', name: 'A', updatedAt: 'saved' } })
+    await vi.advanceTimersByTimeAsync(0)
+    await nextTick()
+    expect(writes).toEqual(['file edited'])
+    expect(source.value).toBe('browser B source')
+    expect(store.currentSourceKind).toBe('browser')
+    wrapper.unmount()
+  })
+
+  it('keeps a newly selected file intact when an older save completes', async () => {
+    const source = ref('A original')
+    let finish!: (value: { ok: true, entry: { id: string, name: string, updatedAt: string } }) => void
+    const write = new Promise<{ ok: true, entry: { id: string, name: string, updatedAt: string } }>((resolve) => {
+      finish = resolve
+    })
+    let api!: ReturnType<typeof usePgmlStudioComputerFiles>
+    await mountSuspended(defineComponent({
+      setup() {
+        api = usePgmlStudioComputerFiles({
+          source, buildSchemaText: () => source.value,
+          fileOperations: { listRecentComputerFiles: async () => [], writeRecentComputerFile: () => write }
+        })
+        return () => null
+      }
+    }))
+    api.syncLoadedComputerFile({ entry: { id: 'A', name: 'A', updatedAt: 'old' }, text: 'A original' })
+    source.value = 'A edited'
+    const saving = api.saveSchemaToComputerFile()
+    api.syncLoadedComputerFile({ entry: { id: 'B', name: 'B', updatedAt: 'B time' }, text: 'B original' })
+    finish({ ok: true, entry: { id: 'A', name: 'A saved', updatedAt: 'new' } })
+    expect(await saving).toBe(false)
+    expect(api.currentComputerFileId.value).toBe('B')
+    expect(api.currentComputerFileName.value).toBe('B')
+    expect(api.currentComputerFileUpdatedAt.value).toBe('B time')
+    expect(api.hasPendingComputerFileChanges.value).toBe(false)
+    expect(api.hasSavedComputerFileInSession.value).toBe(false)
+  })
+
+  it('ignores an older file load that finishes after a newer load', async () => {
+    const source = ref('')
+    type Loaded = { entry: { id: string, name: string, updatedAt: string }, text: string }
+    let finishA!: (value: Loaded) => void
+    const loadingA = new Promise<Loaded>((resolve) => {
+      finishA = resolve
+    })
+    let api!: ReturnType<typeof usePgmlStudioComputerFiles>
+    await mountSuspended(defineComponent({
+      setup() {
+        api = usePgmlStudioComputerFiles({ source, buildSchemaText: () => source.value,
+          fileOperations: {
+            listRecentComputerFiles: async () => [],
+            loadRecentComputerFile: async id => id === 'A' ? loadingA : { entry: { id: 'B', name: 'B', updatedAt: 'B time' }, text: 'B original' }
+          }
+        })
+        return () => null
+      }
+    }))
+    const old = api.loadRecentComputerFileById('A')
+    expect(await api.loadRecentComputerFileById('B')).toBe(true)
+    finishA({ entry: { id: 'A', name: 'A', updatedAt: 'old' }, text: 'A original' })
+    expect(await old).toBe(false)
+    expect(source.value).toBe('B original')
+    expect(api.currentComputerFileId.value).toBe('B')
+  })
+
+  it('discards pending loads after unmount and preserves the next shared session', async () => {
+    const source = ref('')
+    type Loaded = { entry: { id: string, name: string, updatedAt: string }, text: string }
+    let finish!: (value: Loaded) => void
+    const loading = new Promise<Loaded>((resolve) => {
+      finish = resolve
+    })
+    let first!: ReturnType<typeof usePgmlStudioComputerFiles>
+    const wrapper = await mountSuspended(defineComponent({
+      setup() {
+        first = usePgmlStudioComputerFiles({ source, buildSchemaText: () => source.value,
+          fileOperations: { listRecentComputerFiles: async () => [], loadRecentComputerFile: () => loading }
+        })
+        return () => null
+      }
+    }))
+    const pending = first.loadRecentComputerFileById('A')
+    wrapper.unmount()
+    let second!: ReturnType<typeof usePgmlStudioComputerFiles>
+    await mountSuspended(defineComponent({
+      setup() {
+        second = usePgmlStudioComputerFiles({ source, buildSchemaText: () => source.value,
+          fileOperations: { listRecentComputerFiles: async () => [] }
+        })
+        return () => null
+      }
+    }))
+    second.syncLoadedComputerFile({ entry: { id: 'B', name: 'B', updatedAt: 'B time' }, text: 'B original' })
+    finish({ entry: { id: 'A', name: 'A', updatedAt: 'old' }, text: 'A original' })
+    expect(await pending).toBe(false)
+    expect(source.value).toBe('B original')
+    expect(second.currentComputerFileId.value).toBe('B')
+  })
+
+  it('shares the physical write queue across adapter remounts', async () => {
+    const source = ref('')
+    type Entry = { id: string, name: string, updatedAt: string }
+    let finish!: (value: { ok: true, entry: Entry }) => void
+    const held = new Promise<{ ok: true, entry: Entry }>((resolve) => {
+      finish = resolve
+    })
+    const writes: string[] = []
+    const writeRecentComputerFile = vi.fn(async ({ text }: { recentFileId: string, text: string }) => {
+      writes.push(text)
+      return text === 'first' ? held : { ok: true as const, entry: { id: 'A', name: 'A', updatedAt: text } }
+    })
+    let first!: ReturnType<typeof usePgmlStudioComputerFiles>
+    const wrapper = await mountSuspended(defineComponent({ setup() {
+      first = usePgmlStudioComputerFiles({ source, buildSchemaText: () => source.value,
+        fileOperations: { listRecentComputerFiles: async () => [], writeRecentComputerFile } })
+      return () => null
+    } }))
+    first.syncLoadedComputerFile({ entry: { id: 'A', name: 'A', updatedAt: 'old' }, text: 'original' })
+    source.value = 'first'
+    const savingFirst = first.saveSchemaToComputerFile()
+    wrapper.unmount()
+    let second!: ReturnType<typeof usePgmlStudioComputerFiles>
+    await mountSuspended(defineComponent({ setup() {
+      second = usePgmlStudioComputerFiles({ source, buildSchemaText: () => source.value,
+        fileOperations: { listRecentComputerFiles: async () => [], writeRecentComputerFile } })
+      return () => null
+    } }))
+    source.value = 'second'
+    const savingSecond = second.saveSchemaToComputerFile()
+    expect(writes).toEqual(['first'])
+    expect(JSON.stringify(useStudioSessionStore().$state)).not.toContain('Promise')
+    finish({ ok: true, entry: { id: 'A', name: 'A', updatedAt: 'first' } })
+    await Promise.all([savingFirst, savingSecond])
+    expect(writes).toEqual(['first', 'second'])
+    expect(second.currentComputerFileUpdatedAt.value).toBe('second')
+    expect(second.hasPendingComputerFileChanges.value).toBe(false)
+  })
+
+  it.each(['older-first', 'newer-first'])('keeps the latest intent across two live adapters (%s)', async (order) => {
+    const source = ref('')
+    type Loaded = { entry: { id: string, name: string, updatedAt: string }, text: string }
+    let finishA!: (value: Loaded) => void
+    let finishB!: (value: Loaded) => void
+    const loadingA = new Promise<Loaded>((resolve) => {
+      finishA = resolve
+    })
+    const loadingB = new Promise<Loaded>((resolve) => {
+      finishB = resolve
+    })
+    const mountAdapter = async () => {
+      let api!: ReturnType<typeof usePgmlStudioComputerFiles>
+      await mountSuspended(defineComponent({ setup() {
+        api = usePgmlStudioComputerFiles({ source, buildSchemaText: () => source.value,
+          fileOperations: { listRecentComputerFiles: async () => [], loadRecentComputerFile: id => id === 'A' ? loadingA : loadingB } })
+        return () => null
+      } }))
+      return api
+    }
+    const first = await mountAdapter()
+    const second = await mountAdapter()
+    const old = first.loadRecentComputerFileById('A')
+    const latest = second.loadRecentComputerFileById('B')
+    const A = { entry: { id: 'A', name: 'A', updatedAt: 'old' }, text: 'A original' }
+    const B = { entry: { id: 'B', name: 'B', updatedAt: 'new' }, text: 'B original' }
+    if (order === 'older-first') {
+      finishA(A)
+      expect(await old).toBe(false)
+      finishB(B)
+    } else {
+      finishB(B)
+      expect(await latest).toBe(true)
+      finishA(A)
+    }
+    expect(await old).toBe(false)
+    expect(await latest).toBe(true)
+    expect(source.value).toBe('B original')
+    expect(first.currentComputerFileId.value).toBe('B')
+    expect(second.currentComputerFileId.value).toBe('B')
+  })
+
+  it('does not start an unmounted autosave and resumes dirty work in the next adapter', async () => {
+    vi.useFakeTimers()
+    const source = ref('')
+    const writeRecentComputerFile = vi.fn(async ({ recentFileId }: { recentFileId: string, text: string }) => ({ ok: true as const, entry: { id: recentFileId, name: 'A', updatedAt: 'saved' } }))
+    const mountAdapter = async () => {
+      let api!: ReturnType<typeof usePgmlStudioComputerFiles>
+      const wrapper = await mountSuspended(defineComponent({ setup() {
+        api = usePgmlStudioComputerFiles({ source, buildSchemaText: () => source.value,
+          fileOperations: { listRecentComputerFiles: async () => [], writeRecentComputerFile } })
+        return () => null
+      } }))
+      return { api, wrapper }
+    }
+    const first = await mountAdapter()
+    first.api.syncLoadedComputerFile({ entry: { id: 'A', name: 'A', updatedAt: 'old' }, text: 'original' })
+    source.value = 'dirty before remount'
+    await nextTick()
+    first.wrapper.unmount()
+    await vi.advanceTimersByTimeAsync(5000)
+    expect(writeRecentComputerFile).not.toHaveBeenCalled()
+    const second = await mountAdapter()
+    expect(second.api.hasPendingComputerFileChanges.value).toBe(true)
+    await vi.advanceTimersByTimeAsync(5000)
+    expect(writeRecentComputerFile).toHaveBeenCalledTimes(1)
+    expect(writeRecentComputerFile).toHaveBeenCalledWith({ recentFileId: 'A', text: 'dirty before remount' }, { permissionMode: 'passive' })
+    expect(second.api.hasPendingComputerFileChanges.value).toBe(false)
   })
 
   it('loads a recent computer file and autosaves edits back to it', async () => {

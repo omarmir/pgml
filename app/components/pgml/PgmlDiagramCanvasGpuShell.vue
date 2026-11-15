@@ -1,7 +1,12 @@
 <script setup lang="ts">
+import { createAnimationFrameBatcher } from '~/utils/animation-frame'
+import { useDiagramRoutingWorker } from '~/composables/useDiagramRoutingWorker'
+import { readBrowserStorageItem, writeBrowserStorageItem } from '~/utils/browser-storage'
+import { useWindowPointerSession } from '~/composables/useWindowPointerSession'
+import { useDialogDraft } from '~/composables/useDialogDraft'
+import type { DeepReadonly, ComponentPublicInstance, CSSProperties, Ref } from 'vue'
 import { useResizeObserver } from '@vueuse/core'
-import type { ComponentPublicInstance, CSSProperties, Ref } from 'vue'
-import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, shallowRef, watch } from 'vue'
 import { studioSelectUi, studioSwitchUi } from '~/constants/ui'
 import StudioModalFrame from '~/components/studio/StudioModalFrame.vue'
 import PgmlDiagramConnectionCanvas from '~/components/pgml/PgmlDiagramConnectionCanvas.vue'
@@ -100,6 +105,7 @@ import type {
   PgmlCompareNoteFilters,
   PgmlCompareNoiseFilters,
   PgmlCustomType,
+  PgmlIndex,
   PgmlNodeProperties,
   PgmlRoutine,
   PgmlSchemaModel,
@@ -133,11 +139,13 @@ import {
   createPgmlDetailMetadataDraftFromTrigger
 } from '~/utils/pgml-detail-popover-metadata'
 import { normalizePgmlSequenceMetadataEntries } from '~/utils/pgml-sequence-metadata'
+import { formatPgmlIndexKeyForSource, getPgmlIndexKeys } from '~/utils/pgml-index-keys'
 import type { PgmlVersionMigrationStepBundle } from '~/utils/pgml-version-migration'
 import { normalizeSvgPaint } from '~/utils/svg-paint'
 import {
   diagramToolPanelTabIconByValue,
   diagramToolPanelTabLabelByValue,
+  type DiagramExportRequest,
   type DiagramPanelTab,
   type DiagramToolPanelTab,
   type StudioMobileCanvasView
@@ -153,10 +161,11 @@ import {
 } from '~/utils/uiStyles'
 
 type DiagramCanvasExposed = {
+  cancelInteraction: () => void
+  handleWheel: (event: WheelEvent) => void
   getScale: () => number
   focusBounds: (bounds: { height: number, width: number, x: number, y: number }, padding?: number) => void
   resetView: () => void
-  setConnectionDragPreview: (preview: ActiveConnectionDragPreview | null) => void
   setDragPreview: (preview: DiagramNodeDragPreview | null) => void
   zoomBy: (direction: 1 | -1) => void
 }
@@ -172,11 +181,6 @@ type MeasuredBounds = DiagramRoutingMeasuredBounds
 type RoutingWorkerGeometryInput = DiagramRoutingGeometryInput
 
 type RoutingWorkerDescriptorInput = DiagramRoutingDescriptorInput
-
-type RoutingWorkerResponse = {
-  lines: DiagramGpuConnectionLine[]
-  requestId: number
-}
 
 type RoutingGeometryRegistry = {
   columnGeometry: Map<string, RoutingWorkerGeometryInput>
@@ -300,7 +304,7 @@ const getInitialRendererBackendPreference = (): DiagramRendererBackend => {
     return 'auto'
   }
 
-  const storedValue = window.localStorage.getItem(diagramRendererPreferenceStorageKey)
+  const storedValue = readBrowserStorageItem(diagramRendererPreferenceStorageKey)
 
   if (!storedValue || !isDiagramRendererBackend(storedValue)) {
     return 'auto'
@@ -314,8 +318,6 @@ type DetailPopoverPlacement = {
   top: number
   width: number
 }
-
-type ActiveConnectionDragPreview = DiagramNodeDragPreview
 
 type PendingNodePositionOverride = {
   expiresAt: number
@@ -394,6 +396,11 @@ type DetailPopoverMetadataEditorSpec = {
   toReplacementText: (nextDraft: PgmlDetailPopoverMetadataDraft) => string | null
 }
 
+type DetailEditContext = { key: string, inputSource: string, sourceRange: PgmlSourceRange, documentRevision: number }
+type DetailEditState = { kind: 'view' }
+  | (DetailEditContext & { kind: 'source', spec: DetailPopoverEditorSpec, source: string })
+  | (DetailEditContext & { kind: 'metadata', spec: DetailPopoverMetadataEditorSpec, draft: PgmlDetailPopoverMetadataDraft })
+
 type VersionMigrationArtifactsProps = {
   // The shell owns the versions panel render branch, so naming the migration
   // prop bundle here keeps the contract readable despite the large prop list.
@@ -441,7 +448,11 @@ const {
   compareTargetLabel = 'Target',
   diagramViewItems = [],
   diagramViewSettings = null,
+  documentContextRevision = 0,
+  loadIntentRevision = 0,
+  modelIsCurrent = true,
   exportBaseName = 'pgml-schema',
+  exportInProgress = false,
   exportPreferenceKey = 'name:pgml-schema',
   hasBlockingSourceErrors = false,
   mobileActiveView = null,
@@ -478,7 +489,7 @@ const {
   compareEntries?: PgmlDiagramCompareEntry[]
   compareExcludedLabels?: string[]
   compareExcludedSummary?: string | null
-  compareEntityFilters?: PgmlCompareEntityFilters
+  compareEntityFilters?: DeepReadonly<PgmlCompareEntityFilters>
   compareHiddenExcludedLabelCount?: number
   compareNoteFilters?: PgmlCompareNoteFilters
   compareNotes?: PgmlCompareNote[]
@@ -489,6 +500,10 @@ const {
   compareTargetLabel?: string
   diagramViewItems?: DiagramViewItem[]
   diagramViewSettings?: DiagramViewSettings | null
+  documentContextRevision?: number
+  loadIntentRevision?: number
+  modelIsCurrent?: boolean
+  exportInProgress?: boolean
   exportBaseName?: string
   exportPreferenceKey?: string
   hasBlockingSourceErrors?: boolean
@@ -508,6 +523,7 @@ const {
 }>()
 
 const emit = defineEmits<{
+  exportDiagram: [request: DiagramExportRequest]
   createCompareComparison: []
   createGroup: []
   createTable: [groupName: string | null]
@@ -549,12 +565,13 @@ const sceneRef: Ref<DiagramCanvasExposed | null> = ref(null)
 const planeRef: Ref<HTMLDivElement | null> = ref(null)
 const viewportRef: Ref<HTMLDivElement | null> = ref(null)
 const detailPopoverRef: Ref<HTMLDivElement | null> = ref(null)
+const zoomToolbarRef: Ref<HTMLDivElement | null> = ref(null)
+const zoomToolbarBottomInset: Ref<number> = ref(56)
 const selectedSelection: Ref<DiagramGpuSelection | null> = ref(null)
 const selectedCompareEntryId: Ref<string | null> = ref(null)
-const isEditingDetailSource: Ref<boolean> = ref(false)
-const isEditingDetailMetadata: Ref<boolean> = ref(false)
-const detailPopoverEditorSource: Ref<string> = ref('')
-const detailPopoverMetadataDraft: Ref<PgmlDetailPopoverMetadataDraft | null> = ref(null)
+const detailEdit: Ref<DetailEditState> = ref({ kind: 'view' })
+const isEditingDetailSource = computed(() => detailEdit.value.kind === 'source')
+const isEditingDetailMetadata = computed(() => detailEdit.value.kind === 'metadata')
 const activePanelTab: Ref<DiagramPanelTab> = ref('inspector')
 const activeToolPanelTab: Ref<DiagramToolPanelTab> = ref('versions')
 const isDesktopSidePanelOpen: Ref<boolean> = ref(true)
@@ -572,8 +589,8 @@ const showProcedures: Ref<boolean> = ref(true)
 const showTriggers: Ref<boolean> = ref(true)
 const showTables: Ref<boolean> = ref(true)
 const showGroups: Ref<boolean> = ref(true)
-const isDiagramVisibilityDialogOpen: Ref<boolean> = ref(false)
-const diagramVisibilityDraft: Ref<DiagramVisibilitySettings | null> = ref(null)
+const diagramVisibilityDialog = useDialogDraft<DiagramVisibilitySettings>({ context: () => [documentContextRevision, activeDiagramViewId, previewTargetId] })
+const { isOpen: isDiagramVisibilityDialogOpen, draft: diagramVisibilityDraft } = diagramVisibilityDialog
 const shouldRenderSvgConnectionOverlay: Ref<boolean> = ref(false)
 const shouldPreferMainThreadConnectionRouting: Ref<boolean> = ref(false)
 const snapToGrid: Ref<boolean> = ref(true)
@@ -602,39 +619,49 @@ const detailPopoverSize: Ref<MeasuredSize> = ref({
 const entitySearchQuery: Ref<string> = ref('')
 const entitySearchInputRef: Ref<HTMLInputElement | null> = ref(null)
 const routedConnectionLines: Ref<DiagramGpuConnectionLine[]> = ref([])
-const liveConnectionPreviewLines: Ref<DiagramGpuConnectionLine[]> = ref([])
-const activeConnectionDragPreview: Ref<ActiveConnectionDragPreview | null> = ref(null)
+type PreviewPresentation = { preview: DiagramNodeDragPreview, lines: DiagramGpuConnectionLine[] }
+type ConnectionPreviewState = { kind: 'idle' }
+  | { kind: 'pending', preview: DiagramNodeDragPreview, presented: PreviewPresentation | null }
+  | ({ kind: 'dragging' } & PreviewPresentation)
+  | { kind: 'settled', lines: DiagramGpuConnectionLine[] }
+  | { kind: 'settling', lines: DiagramGpuConnectionLine[], requestId: number }
+const connectionPreview: Ref<ConnectionPreviewState> = shallowRef({ kind: 'idle' })
+const liveConnectionPreviewLines = computed(() => {
+  const current = connectionPreview.value
+  if (current.kind === 'idle') return []
+  if (current.kind === 'pending') return current.presented === null ? [] : current.presented.lines
+  return current.lines
+})
+const liveConnectionPreviewBatcher = createAnimationFrameBatcher()
 const pendingNodePositionOverrides: Ref<Record<string, PendingNodePositionOverride>> = ref({})
 const groupLayoutStates: Ref<Record<string, DiagramGpuGroupNode>> = ref({})
 const floatingTableStates: Ref<Record<string, DiagramGpuNodeLayoutState>> = ref({})
 const objectLayoutStates: Ref<Record<string, DiagramGpuObjectNode>> = ref({})
 const diagramPendingNodePositionOverrideTtlMs = 5000
+type LayoutOwner = { documentRevision: number, viewId: string | null, previewId: string }
+type LayoutContext = { kind: 'current' | 'awaiting-model', owner: LayoutOwner }
+const currentLayoutOwner = (): LayoutOwner => ({ documentRevision: documentContextRevision, viewId: activeDiagramViewId, previewId: previewTargetId })
+const sameLayoutOwner = (left: LayoutOwner, right: LayoutOwner) => left.documentRevision === right.documentRevision && left.viewId === right.viewId && left.previewId === right.previewId
+const layoutContext: Ref<LayoutContext> = shallowRef({ kind: 'awaiting-model', owner: currentLayoutOwner() })
+const layoutInteractionsEnabled = computed(() => layoutContext.value.kind === 'current' && sameLayoutOwner(layoutContext.value.owner, currentLayoutOwner()))
 
-let automationPlaneDragSession: {
-  element: HTMLElement
+type AutomationDragOrigin = {
   id: string
-  kind: 'group' | 'object' | 'table'
-  lastDragX: number
-  lastDragY: number
+  nodeKind: 'group' | 'object' | 'table'
   originClientX: number
   originClientY: number
   originX: number
   originY: number
   pointerId: number
-  started: boolean
-} | null = null
+}
+type AutomationDragSession = (AutomationDragOrigin & { kind: 'pressed' })
+  | (AutomationDragOrigin & { kind: 'dragging', x: number, y: number })
+let automationPlaneDragSession: AutomationDragSession | null = null
+const { startPointerSession, cancelPointerSession } = useWindowPointerSession()
 let activeAutomationNodeDragPreview: DiagramNodeDragPreview | null = null
-let liveSceneNodeDragPreview: DiagramNodeDragPreview | null = null
-let liveSceneConnectionDragPreview: ActiveConnectionDragPreview | null = null
-let pendingLiveConnectionPreview: DiagramNodeDragPreview | null = null
-let liveConnectionPreviewFrame: number | null = null
-let routingWorker: Worker | null = null
+const routing = useDiagramRoutingWorker()
 let latestConnectionRequestId = 0
 const automationPlaneNodeElements = new Map<string, HTMLElement>()
-const pendingRoutingRequests = new Map<number, {
-  reject: (reason?: unknown) => void
-  resolve: (lines: DiagramGpuConnectionLine[]) => void
-}>()
 const rendererBackendItems: DiagramRendererOption[] = [
   {
     label: 'Auto',
@@ -799,7 +826,7 @@ const restoreRendererBackendPreference = () => {
     return
   }
 
-  const storedValue = window.localStorage.getItem(diagramRendererPreferenceStorageKey)
+  const storedValue = readBrowserStorageItem(diagramRendererPreferenceStorageKey)
 
   if (!storedValue || !isDiagramRendererBackend(storedValue)) {
     return
@@ -813,7 +840,7 @@ const persistRendererBackendPreference = (nextValue: DiagramRendererBackend) => 
     return
   }
 
-  window.localStorage.setItem(diagramRendererPreferenceStorageKey, nextValue)
+  writeBrowserStorageItem(diagramRendererPreferenceStorageKey, nextValue)
 }
 
 const handleRendererBackendModelUpdate = (nextValue: string | number | undefined) => {
@@ -1296,11 +1323,12 @@ const getSequenceOwnedTableIds = (sequence: PgmlSequence) => {
   return getSequenceAttachedTableIds(model.tables, sequence)
 }
 
-const buildIndexSubtitle = (index: { columns: string[], type: string }) => {
+const buildIndexSubtitle = (index: Pick<PgmlIndex, 'columns' | 'keys' | 'type'>) => {
   const parts = [index.type.toUpperCase()]
+  const keys = getPgmlIndexKeys(index).map(formatPgmlIndexKeyForSource)
 
-  if (index.columns.length > 0) {
-    parts.push(index.columns.join(', '))
+  if (keys.length > 0) {
+    parts.push(keys.join(', '))
   }
 
   return parts.join(' · ')
@@ -1360,7 +1388,7 @@ const tableAttachmentState = computed<TableAttachmentState>(() => {
           color: attachmentKindColors.Index,
           details: [
             `Type: ${index.type.toUpperCase()}`,
-            `Columns: ${index.columns.join(', ')}`
+            `Columns: ${getPgmlIndexKeys(index).map(formatPgmlIndexKeyForSource).join(', ')}`
           ],
           flags: [],
           id: `index:${index.name}`,
@@ -1928,6 +1956,17 @@ const computeGroupLayout = (
 }
 
 const syncLayoutStates = () => {
+  const owner = currentLayoutOwner()
+  if (!sameLayoutOwner(layoutContext.value.owner, owner) || layoutContext.value.kind === 'awaiting-model') {
+    layoutContext.value = { kind: 'awaiting-model', owner }
+    if (!modelIsCurrent) return
+    pendingNodePositionOverrides.value = {}
+    groupLayoutStates.value = {}
+    floatingTableStates.value = {}
+    objectLayoutStates.value = {}
+    layoutContext.value = { kind: 'current', owner }
+  }
+
   const nextGroupStates: Record<string, DiagramGpuGroupNode> = {}
   const nextTableStates: Record<string, DiagramGpuNodeLayoutState> = {}
   const nextObjectStates: Record<string, DiagramGpuObjectNode> = {}
@@ -2549,32 +2588,17 @@ const applyAutomationNodeDragPreview = (preview: DiagramNodeDragPreview | null) 
   element.style.willChange = 'transform'
 }
 
-const setSceneConnectionDragPreview = (preview: ActiveConnectionDragPreview | null) => {
-  liveSceneConnectionDragPreview = preview
-  sceneRef.value?.setConnectionDragPreview(preview)
-}
-
 const setSceneDragPreview = (preview: DiagramNodeDragPreview | null) => {
-  liveSceneNodeDragPreview = preview
   sceneRef.value?.setDragPreview(preview)
 }
 
-const hasConnectionDragPreview = (preview: ActiveConnectionDragPreview | null) => {
+const hasConnectionDragPreview = (preview: DiagramNodeDragPreview | null) => {
   return Boolean(preview && (preview.deltaX !== 0 || preview.deltaY !== 0))
 }
 
-const resetLiveConnectionPreviewState = (options: {
-  clearLines?: boolean
-} = {}) => {
-  pendingLiveConnectionPreview = null
-  if (liveConnectionPreviewFrame !== null) {
-    cancelAnimationFrame(liveConnectionPreviewFrame)
-    liveConnectionPreviewFrame = null
-  }
-
-  if (options.clearLines !== false) {
-    liveConnectionPreviewLines.value = []
-  }
+const resetLiveConnectionPreviewState = () => {
+  liveConnectionPreviewBatcher.cancel()
+  connectionPreview.value = { kind: 'idle' }
 }
 
 const getAutomationGroupTables = (groupId: string) => {
@@ -2767,87 +2791,51 @@ const startAutomationPlaneNodeDrag = (
   event: PointerEvent,
   node: AutomationPlaneNode
 ) => {
-  if (!(event.currentTarget instanceof HTMLElement)) {
+  if (!layoutInteractionsEnabled.value || event.button !== 0 || !(event.currentTarget instanceof HTMLElement)) return
+  if (event.pointerType === 'touch' && automationPlaneDragSession !== null && automationPlaneDragSession.pointerId !== event.pointerId) {
+    cancelPointerSession()
     return
   }
-
-  if (node.kind === 'group') {
-    selectAutomationGroup(node.id)
-  } else if (node.kind === 'table') {
-    handleAutomationTableClick(node.id)
-  } else {
-    handleAutomationObjectClick(node.id)
-  }
+  cancelPointerSession()
+  if (node.kind === 'group') selectAutomationGroup(node.id)
+  else if (node.kind === 'table') handleAutomationTableClick(node.id)
+  else handleAutomationObjectClick(node.id)
 
   automationPlaneDragSession = {
-    element: event.currentTarget,
-    id: node.id,
-    kind: node.kind,
-    lastDragX: node.x,
-    lastDragY: node.y,
-    originClientX: event.clientX,
-    originClientY: event.clientY,
-    originX: node.x,
-    originY: node.y,
-    pointerId: event.pointerId,
-    started: false
+    kind: 'pressed', id: node.id, nodeKind: node.kind,
+    originClientX: event.clientX, originClientY: event.clientY,
+    originX: node.x, originY: node.y, pointerId: event.pointerId
   }
-  automationPlaneDragSession.element.setPointerCapture(event.pointerId)
-}
-
-const handleAutomationPlanePointerMove = (event: PointerEvent) => {
-  if (!automationPlaneDragSession || automationPlaneDragSession.pointerId !== event.pointerId) {
-    return
-  }
-
-  if (!(event.currentTarget instanceof HTMLElement) || event.currentTarget !== automationPlaneDragSession.element) {
-    return
-  }
-
-  const deltaClientX = event.clientX - automationPlaneDragSession.originClientX
-  const deltaClientY = event.clientY - automationPlaneDragSession.originClientY
-  const deltaX = (event.clientX - automationPlaneDragSession.originClientX) / Math.max(sceneTransform.value.scale, 0.001)
-  const deltaY = (event.clientY - automationPlaneDragSession.originClientY) / Math.max(sceneTransform.value.scale, 0.001)
-  const movedEnoughToDrag = Math.abs(deltaClientX) > 4 || Math.abs(deltaClientY) > 4
-
-  if (!automationPlaneDragSession.started && !movedEnoughToDrag) {
-    return
-  }
-
-  automationPlaneDragSession.started = true
-  automationPlaneDragSession.lastDragX = automationPlaneDragSession.originX + deltaX
-  automationPlaneDragSession.lastDragY = automationPlaneDragSession.originY + deltaY
-  handleSceneDragPreviewChange({
-    id: automationPlaneDragSession.id,
-    kind: automationPlaneDragSession.kind,
-    x: automationPlaneDragSession.lastDragX,
-    y: automationPlaneDragSession.lastDragY
+  startPointerSession(event, {
+    captureTarget: event.currentTarget,
+    onMove: handleAutomationPlanePointerMove,
+    onFinish: handleAutomationPlanePointerUp,
+    onCancel: () => {
+      automationPlaneDragSession = null
+      handleSceneDragPreviewChange(null)
+    }
   })
 }
 
+const handleAutomationPlanePointerMove = (event: PointerEvent) => {
+  const session = automationPlaneDragSession
+  if (session === null || session.pointerId !== event.pointerId) return
+  const deltaClientX = event.clientX - session.originClientX
+  const deltaClientY = event.clientY - session.originClientY
+  if (session.kind === 'pressed' && Math.abs(deltaClientX) <= 4 && Math.abs(deltaClientY) <= 4) return
+  const x = session.originX + deltaClientX / Math.max(sceneTransform.value.scale, 0.001)
+  const y = session.originY + deltaClientY / Math.max(sceneTransform.value.scale, 0.001)
+  automationPlaneDragSession = { ...session, kind: 'dragging', x, y }
+  handleSceneDragPreviewChange({ id: session.id, kind: session.nodeKind, x, y })
+}
+
 const handleAutomationPlanePointerUp = (event: PointerEvent) => {
-  if (!automationPlaneDragSession || automationPlaneDragSession.pointerId !== event.pointerId) {
-    return
-  }
-
-  if (!(event.currentTarget instanceof HTMLElement) || event.currentTarget !== automationPlaneDragSession.element) {
-    return
-  }
-
-  if (automationPlaneDragSession.element.hasPointerCapture(event.pointerId)) {
-    automationPlaneDragSession.element.releasePointerCapture(event.pointerId)
-  }
-
-  if (automationPlaneDragSession.started) {
-    handleSceneMoveEnd({
-      id: automationPlaneDragSession.id,
-      kind: automationPlaneDragSession.kind,
-      x: automationPlaneDragSession.lastDragX,
-      y: automationPlaneDragSession.lastDragY
-    })
-  }
-
+  const session = automationPlaneDragSession
+  if (session === null || session.pointerId !== event.pointerId) return
   automationPlaneDragSession = null
+  if (session.kind === 'dragging') {
+    handleSceneMoveEnd({ id: session.id, kind: session.nodeKind, x: session.x, y: session.y })
+  }
 }
 
 const tableColorById = computed(() => {
@@ -3177,7 +3165,7 @@ const automationConnectionCanvasLayers = computed(() => {
         path: buildConnectionPath(styledLine)
       }
     }),
-    activeConnectionDragPreview.value
+    null
   )
 })
 
@@ -3208,35 +3196,6 @@ const nodeOrderById = computed(() => {
 
   return entries
 })
-
-const getRoutingWorker = () => {
-  if (routingWorker) {
-    return routingWorker
-  }
-
-  const worker = new Worker(new URL('../../workers/diagram-routing.worker.ts', import.meta.url), {
-    type: 'module'
-  })
-
-  worker.onmessage = (event: MessageEvent<RoutingWorkerResponse>) => {
-    const pendingRequest = pendingRoutingRequests.get(event.data.requestId)
-
-    if (!pendingRequest) {
-      return
-    }
-
-    pendingRoutingRequests.delete(event.data.requestId)
-    pendingRequest.resolve(event.data.lines)
-  }
-  worker.onerror = (error) => {
-    pendingRoutingRequests.forEach((pendingRequest) => {
-      pendingRequest.reject(error)
-    })
-    pendingRoutingRequests.clear()
-  }
-  routingWorker = worker
-  return worker
-}
 
 const createBounds = (x: number, y: number, width: number, height: number): MeasuredBounds => {
   return {
@@ -4185,20 +4144,6 @@ const buildMainThreadFallbackConnectionLines = (
   })
 }
 
-const routeConnectionLinesWithWorker = async (
-  request: DiagramRoutingRequest
-) => {
-  const worker = getRoutingWorker()
-
-  return await new Promise<DiagramGpuConnectionLine[]>((resolve, reject) => {
-    pendingRoutingRequests.set(request.requestId, {
-      reject,
-      resolve
-    })
-    worker.postMessage(request)
-  })
-}
-
 const computeLiveConnectionPreviewLines = (
   preview: DiagramNodeDragPreview
 ) => {
@@ -4221,69 +4166,41 @@ const computeLiveConnectionPreviewLines = (
 }
 
 const flushLiveConnectionPreviewRequest = () => {
-  liveConnectionPreviewFrame = null
-  const preview = pendingLiveConnectionPreview
-  pendingLiveConnectionPreview = null
-
-  if (!preview) {
-    return
-  }
-
-  liveConnectionPreviewLines.value = computeLiveConnectionPreviewLines(preview)
-  activeConnectionDragPreview.value = null
-  setSceneConnectionDragPreview(null)
+  const current = connectionPreview.value
+  if (current.kind !== 'pending') return
+  const preview = current.preview
+  const lines = computeLiveConnectionPreviewLines(preview)
+  connectionPreview.value = { kind: 'dragging', preview, lines }
   setSceneDragPreview(preview)
   applyAutomationNodeDragPreview(shouldRenderAutomationPlane.value ? preview : null)
 }
 
 const scheduleLiveConnectionPreview = (preview: DiagramNodeDragPreview) => {
-  pendingLiveConnectionPreview = preview
-
-  if (liveConnectionPreviewFrame !== null) {
-    return
-  }
-
-  // Route incident relationships before the scene's next frame so endpoint legs stay outside moved cards.
-  liveConnectionPreviewFrame = requestAnimationFrame(flushLiveConnectionPreviewRequest)
+  const current = connectionPreview.value
+  const presented = current.kind === 'dragging'
+    ? { preview: current.preview, lines: current.lines }
+    : current.kind === 'pending' ? current.presented : null
+  connectionPreview.value = { kind: 'pending', preview, presented }
+  // Present routed incident lines and moved sprites together in the next frame.
+  liveConnectionPreviewBatcher.schedule(flushLiveConnectionPreviewRequest)
 }
 
 const computeConnectionLines = async (options: {
   preserveDragPreviewUntilSettled?: boolean
 } = {}) => {
-  const currentConnectionDragPreview = hasConnectionDragPreview(liveSceneConnectionDragPreview)
-    ? liveSceneConnectionDragPreview
-    : activeConnectionDragPreview.value
-  const preservedDragPreview = options.preserveDragPreviewUntilSettled
-    ? currentConnectionDragPreview
-    : null
-
-  if ((liveSceneNodeDragPreview || currentConnectionDragPreview || liveConnectionPreviewLines.value.length > 0) && !options.preserveDragPreviewUntilSettled) {
-    return
-  }
-
+  if (connectionPreview.value.kind !== 'idle' && !options.preserveDragPreviewUntilSettled) return
   latestConnectionRequestId += 1
   const requestId = latestConnectionRequestId
-
-  const clearPreservedDragPreview = () => {
-    if (preservedDragPreview && liveSceneConnectionDragPreview === preservedDragPreview) {
-      setSceneConnectionDragPreview(null)
-    }
-
-    if (preservedDragPreview && activeConnectionDragPreview.value === preservedDragPreview) {
-      activeConnectionDragPreview.value = null
-    }
-
-    liveConnectionPreviewLines.value = []
+  const current = connectionPreview.value
+  if (current.kind === 'settled' || current.kind === 'settling') {
+    connectionPreview.value = { kind: 'settling', lines: current.lines, requestId }
   }
-
   const commitSettledLines = (nextLines: DiagramGpuConnectionLine[], backend: DiagramRoutingBackend) => {
-    if (requestId !== latestConnectionRequestId || liveSceneNodeDragPreview) {
-      return
-    }
-
+    const preview = connectionPreview.value
+    if (routing.isDisposed() || requestId !== latestConnectionRequestId || preview.kind === 'pending' || preview.kind === 'dragging') return
     activeRoutingBackend.value = backend
     routedConnectionLines.value = nextLines
-    clearPreservedDragPreview()
+    if (preview.kind === 'settling' && preview.requestId === requestId) connectionPreview.value = { kind: 'idle' }
   }
 
   const descriptors = buildConnectionRoutingDescriptors(geometryRegistry.value)
@@ -4303,7 +4220,7 @@ const computeConnectionLines = async (options: {
   }
 
   try {
-    const lines = await routeConnectionLinesWithWorker(routingRequest)
+    const lines = await routing.route(routingRequest)
 
     commitSettledLines(
       lines.length > 0 ? lines : buildMainThreadFallbackConnectionLines(routingRequest),
@@ -4955,14 +4872,8 @@ const canEditSelectedDetailMetadata = computed(() => {
     && selectedDetailMetadataEditorSpec.value !== null
 })
 
-const detailPopoverSourceHasChanges = computed(() => {
-  return detailPopoverEditorSource.value !== (selectedDetailEditorSpec.value?.source || '')
-})
-
-const detailPopoverMetadataHasChanges = computed(() => {
-  return JSON.stringify(detailPopoverMetadataDraft.value)
-    !== JSON.stringify(selectedDetailMetadataEditorSpec.value?.draft || null)
-})
+const detailPopoverSourceHasChanges = computed(() => detailEdit.value.kind === 'source' && detailEdit.value.source !== detailEdit.value.spec.source)
+const detailPopoverMetadataHasChanges = computed(() => detailEdit.value.kind === 'metadata' && JSON.stringify(detailEdit.value.draft) !== JSON.stringify(detailEdit.value.spec.draft))
 
 const detailPopoverEditButtonLabel = computed(() => {
   return selectedDetailEditorSpec.value?.languageMode === 'sql' ? 'Edit SQL' : 'Edit block'
@@ -4989,7 +4900,7 @@ const detailPopoverViewportInsetBottom = computed(() => {
     return 12
   }
 
-  return shouldShowZoomToolbar.value ? 56 : 12
+  return shouldShowZoomToolbar.value ? zoomToolbarBottomInset.value : 12
 })
 
 const detailPopoverViewportInsetRight = computed(() => {
@@ -5155,86 +5066,51 @@ const getDetailPopoverFlagStyle = (flag: TableAttachmentFlag) => {
 }
 
 const closeDetailPopover = () => {
-  isEditingDetailSource.value = false
-  isEditingDetailMetadata.value = false
+  detailEdit.value = { kind: 'view' }
   selectedSelection.value = null
 }
-
-const syncDetailPopoverEditorSource = () => {
-  detailPopoverEditorSource.value = selectedDetailEditorSpec.value?.source || ''
+const updateDetailPopoverEditorSource = (source: string) => {
+  if (detailEdit.value.kind === 'source') detailEdit.value = { ...detailEdit.value, source }
 }
-
-const syncDetailPopoverMetadataDraft = () => {
-  detailPopoverMetadataDraft.value = selectedDetailMetadataEditorSpec.value
-    ? clonePgmlDetailPopoverMetadataDraft(selectedDetailMetadataEditorSpec.value.draft)
-    : null
+const updateDetailPopoverMetadataDraft = (draft: PgmlDetailPopoverMetadataDraft) => {
+  if (detailEdit.value.kind === 'metadata') detailEdit.value = { ...detailEdit.value, draft }
 }
-
-const updateDetailPopoverMetadataDraft = (nextDraft: PgmlDetailPopoverMetadataDraft) => {
-  detailPopoverMetadataDraft.value = nextDraft
-}
-
 const openDetailPopoverSourceEditor = () => {
-  if (!canEditSelectedDetailSource.value) {
-    return
-  }
-
-  isEditingDetailMetadata.value = false
-  syncDetailPopoverEditorSource()
-  isEditingDetailSource.value = true
+  const spec = selectedDetailEditorSpec.value
+  const sourceRange = selectedDetailPopover.value?.sourceRange
+  if (!canEditSelectedDetailSource.value || spec === null || !sourceRange) return
+  detailEdit.value = { kind: 'source', key: selectedDetailEditorKey.value, inputSource: sourceText,
+    sourceRange: { ...sourceRange }, documentRevision: documentContextRevision, spec, source: spec.source }
 }
-
 const openDetailPopoverMetadataEditor = () => {
-  if (!canEditSelectedDetailMetadata.value) {
-    return
-  }
-
-  isEditingDetailSource.value = false
-  syncDetailPopoverMetadataDraft()
-  isEditingDetailMetadata.value = true
+  const spec = selectedDetailMetadataEditorSpec.value
+  const sourceRange = selectedDetailPopover.value?.sourceRange
+  if (!canEditSelectedDetailMetadata.value || spec === null || !sourceRange) return
+  detailEdit.value = { kind: 'metadata', key: selectedDetailEditorKey.value, inputSource: sourceText,
+    sourceRange: { ...sourceRange }, documentRevision: documentContextRevision, spec, draft: clonePgmlDetailPopoverMetadataDraft(spec.draft) }
 }
-
 const cancelDetailPopoverSourceEditor = () => {
-  syncDetailPopoverEditorSource()
-  isEditingDetailSource.value = false
+  if (detailEdit.value.kind === 'source') detailEdit.value = { kind: 'view' }
 }
-
 const cancelDetailPopoverMetadataEditor = () => {
-  syncDetailPopoverMetadataDraft()
-  isEditingDetailMetadata.value = false
+  if (detailEdit.value.kind === 'metadata') detailEdit.value = { kind: 'view' }
 }
-
+const ownsDetailEdit = (edit: DetailEditContext) => edit.key === selectedDetailEditorKey.value && edit.inputSource === sourceText && edit.documentRevision === documentContextRevision
 const applyDetailPopoverSourceEditor = () => {
-  const sourceRange = selectedDetailPopover.value?.sourceRange
-  const replacementText = selectedDetailEditorSpec.value?.toReplacementText(detailPopoverEditorSource.value) || null
-
-  if (!sourceRange || !canEditSelectedDetailSource.value || replacementText === null) {
-    return
-  }
-
-  emit('replaceSourceRange', {
-    nextText: replacementText,
-    sourceRange
-  })
-  isEditingDetailSource.value = false
+  const edit = detailEdit.value
+  if (edit.kind !== 'source' || !canEditSelectedDetailSource.value || !ownsDetailEdit(edit)) return
+  const replacementText = edit.spec.toReplacementText(edit.source)
+  if (replacementText === null || replacementText.length === 0) return
+  emit('replaceSourceRange', { nextText: replacementText, sourceRange: edit.sourceRange })
+  detailEdit.value = { kind: 'view' }
 }
-
 const applyDetailPopoverMetadataEditor = () => {
-  const sourceRange = selectedDetailPopover.value?.sourceRange
-  const nextDraft = detailPopoverMetadataDraft.value
-  const replacementText = nextDraft
-    ? selectedDetailMetadataEditorSpec.value?.toReplacementText(nextDraft) || null
-    : null
-
-  if (!sourceRange || !canEditSelectedDetailMetadata.value || replacementText === null) {
-    return
-  }
-
-  emit('replaceSourceRange', {
-    nextText: replacementText,
-    sourceRange
-  })
-  isEditingDetailMetadata.value = false
+  const edit = detailEdit.value
+  if (edit.kind !== 'metadata' || !canEditSelectedDetailMetadata.value || !ownsDetailEdit(edit)) return
+  const replacementText = edit.spec.toReplacementText(edit.draft)
+  if (replacementText === null || replacementText.length === 0) return
+  emit('replaceSourceRange', { nextText: replacementText, sourceRange: edit.sourceRange })
+  detailEdit.value = { kind: 'view' }
 }
 
 const diagramSelectionEquals = (left: DiagramGpuSelection | null, right: DiagramGpuSelection) => {
@@ -5399,12 +5275,11 @@ const getCurrentDiagramVisibilitySettings = (): DiagramVisibilitySettings => {
 }
 
 const openDiagramVisibilityDialog = () => {
-  diagramVisibilityDraft.value = getCurrentDiagramVisibilitySettings()
-  isDiagramVisibilityDialogOpen.value = true
+  diagramVisibilityDialog.open(getCurrentDiagramVisibilitySettings())
 }
 
 const closeDiagramVisibilityDialog = () => {
-  isDiagramVisibilityDialogOpen.value = false
+  diagramVisibilityDialog.close()
 }
 
 const updateDiagramVisibilityDraft = (key: DiagramVisibilitySettingKey, value: boolean) => {
@@ -5412,10 +5287,7 @@ const updateDiagramVisibilityDraft = (key: DiagramVisibilitySettingKey, value: b
     return
   }
 
-  diagramVisibilityDraft.value = {
-    ...diagramVisibilityDraft.value,
-    [key]: value
-  }
+  diagramVisibilityDialog.updateDraft({ [key]: value })
 }
 
 const applyDiagramVisibilityDraft = () => {
@@ -5712,8 +5584,19 @@ const floatingPanelStyle: CSSProperties = {
 
 const diagramPanelSurfaceClass = computed(() => {
   return isMobilePanelView.value
-    ? 'absolute inset-0 z-[3] grid min-h-0 w-full grid-rows-[auto_auto_minmax(0,1fr)] overflow-hidden'
-    : 'absolute bottom-3 right-3 top-14 z-[3] grid w-[320px] grid-rows-[auto_auto_minmax(0,1fr)] overflow-hidden border max-[900px]:left-3 max-[900px]:w-auto'
+    ? 'absolute inset-0 z-[3] grid min-h-0 w-full grid-rows-[auto_auto_minmax(0,1fr)] scroll-py-3 overflow-x-hidden overflow-y-auto'
+    : 'absolute bottom-3 right-3 top-14 z-[3] grid w-[320px] grid-rows-[auto_auto_minmax(0,1fr)] scroll-py-3 overflow-x-hidden overflow-y-auto border max-[900px]:left-3 max-[900px]:w-auto'
+})
+
+const diagramPanelSurfaceStyle = computed<CSSProperties>(() => {
+  if (isMobilePanelView.value || !shouldShowZoomToolbar.value) {
+    return floatingPanelStyle
+  }
+
+  return {
+    ...floatingPanelStyle,
+    bottom: `${zoomToolbarBottomInset.value}px`
+  }
 })
 
 const toolPanelSurfaceClass = computed(() => {
@@ -5778,6 +5661,7 @@ const updateGroupState = (
     emitLayout?: boolean
   } = {}
 ) => {
+  if (!layoutInteractionsEnabled.value) return
   const current = groupLayoutStates.value[id]
 
   if (!current) {
@@ -5806,6 +5690,7 @@ const updateTableState = (
     emitLayout?: boolean
   } = {}
 ) => {
+  if (!layoutInteractionsEnabled.value) return
   const current = floatingTableStates.value[id]
 
   if (!current) {
@@ -5832,6 +5717,7 @@ const updateObjectState = (
     emitLayout?: boolean
   } = {}
 ) => {
+  if (!layoutInteractionsEnabled.value) return
   const current = objectLayoutStates.value[id]
 
   if (!current) {
@@ -5896,6 +5782,7 @@ const getSnappedSceneNodePosition = (payload: { x: number, y: number }) => {
 const updateSceneDragPreview = (
   payload: { id: string, kind: 'group' | 'object' | 'table', x: number, y: number }
 ) => {
+  if (!layoutInteractionsEnabled.value) return
   const currentState = getSceneNodeState(payload)
 
   if (!currentState) {
@@ -5920,14 +5807,13 @@ const updateSceneDragPreview = (
 const commitSceneNodePosition = (
   payload: { id: string, kind: 'group' | 'object' | 'table', x: number, y: number }
 ) => {
+  if (!layoutInteractionsEnabled.value) return
   const currentState = getSceneNodeState(payload)
 
   if (!currentState) {
     resetLiveConnectionPreviewState()
     setSceneDragPreview(null)
-    setSceneConnectionDragPreview(null)
     applyAutomationNodeDragPreview(null)
-    activeConnectionDragPreview.value = null
     return
   }
 
@@ -5975,25 +5861,17 @@ const commitSceneNodePosition = (
   }
 
   resetLiveConnectionPreviewState()
-  liveConnectionPreviewLines.value = settledPreviewLines
-  setSceneConnectionDragPreview(null)
+  connectionPreview.value = { kind: 'settled', lines: settledPreviewLines }
   setSceneDragPreview(null)
   applyAutomationNodeDragPreview(null)
-
-  if (shouldRenderAutomationPlane.value) {
-    activeConnectionDragPreview.value = null
-    return
-  }
-
-  activeConnectionDragPreview.value = null
 }
 
 const handleSceneDragPreviewChange = (payload: { id: string, kind: 'group' | 'object' | 'table', x: number, y: number } | null) => {
   if (!payload) {
+    if (automationPlaneDragSession !== null) cancelPointerSession()
     resetLiveConnectionPreviewState()
     setSceneDragPreview(null)
-    setSceneConnectionDragPreview(null)
-    activeConnectionDragPreview.value = null
+    applyAutomationNodeDragPreview(null)
     return
   }
 
@@ -6039,8 +5917,20 @@ const measureElementSize = (element: HTMLElement | null): MeasuredSize => {
   }
 }
 
+const syncZoomToolbarBottomInset = () => {
+  if (!viewportRef.value || !zoomToolbarRef.value) {
+    return
+  }
+
+  const viewportBounds = viewportRef.value.getBoundingClientRect()
+  const toolbarBounds = zoomToolbarRef.value.getBoundingClientRect()
+
+  zoomToolbarBottomInset.value = Math.max(12, Math.ceil(viewportBounds.bottom - toolbarBounds.top + 12))
+}
+
 const syncViewportSize = () => {
   viewportSize.value = measureElementSize(viewportRef.value)
+  syncZoomToolbarBottomInset()
 }
 
 const syncDetailPopoverSize = () => {
@@ -6325,56 +6215,81 @@ const buildExportSvg = () => {
   }
 }
 
+type RasterExportRequest = { fileName: string, documentRevision: number }
+type RasterExportState = { kind: 'idle' } | { kind: 'disposed' }
+  | { kind: 'decoding' | 'encoding', request: RasterExportRequest, cancel: () => void }
+let rasterExport: RasterExportState = { kind: 'idle' }
+const ownsRasterExport = (request: RasterExportRequest) => 'request' in rasterExport && rasterExport.request === request && request.documentRevision === documentContextRevision
+const cancelRasterExport = () => {
+  const pending = rasterExport
+  if ('request' in pending) {
+    rasterExport = { kind: 'idle' }
+    pending.cancel()
+  }
+}
+watch(() => documentContextRevision, cancelRasterExport, { flush: 'sync' })
 const exportSvg = async () => {
+  if (rasterExport.kind !== 'idle') return
   const result = buildExportSvg()
-  const blob = new Blob([result.svg], {
-    type: 'image/svg+xml;charset=utf-8'
-  })
-
+  const blob = new Blob([result.svg], { type: 'image/svg+xml;charset=utf-8' })
   downloadBlob(blob, `${exportBaseName}-diagram.svg`)
 }
-
 const exportPng = async (scaleFactor: number) => {
+  if (rasterExport.kind !== 'idle') return
+  const request: RasterExportRequest = { fileName: `${exportBaseName}-diagram.png`, documentRevision: documentContextRevision }
   const result = buildExportSvg()
-  const blob = new Blob([result.svg], {
-    type: 'image/svg+xml;charset=utf-8'
-  })
+  const blob = new Blob([result.svg], { type: 'image/svg+xml;charset=utf-8' })
   const objectUrl = URL.createObjectURL(blob)
-
   try {
-    const image = await new Promise<HTMLImageElement>((resolve, reject) => {
-      const nextImage = new Image()
-
-      nextImage.onload = () => resolve(nextImage)
-      nextImage.onerror = () => reject(new Error('Unable to render diagram export.'))
-      nextImage.src = objectUrl
+    const image = await new Promise<HTMLImageElement | null>((resolve, reject) => {
+      const image = new Image()
+      const clear = () => {
+        image.onload = null
+        image.onerror = null
+      }
+      const pending: RasterExportState = { kind: 'decoding', request, cancel: () => {
+        clear()
+        image.src = ''
+        resolve(null)
+      } }
+      rasterExport = pending
+      image.onload = () => {
+        if (rasterExport !== pending) return
+        clear()
+        resolve(image)
+      }
+      image.onerror = () => {
+        if (rasterExport !== pending) return
+        clear()
+        reject(new Error('Unable to render diagram export.'))
+      }
+      image.src = objectUrl
     })
+    if (image === null || !ownsRasterExport(request)) return
     const canvas = document.createElement('canvas')
     const context = canvas.getContext('2d')
-
-    if (!context) {
-      throw new Error('Unable to create export canvas.')
-    }
-
+    if (context === null) throw new Error('Unable to create export canvas.')
     canvas.width = Math.ceil(result.width * scaleFactor)
     canvas.height = Math.ceil(result.height * scaleFactor)
     context.setTransform(scaleFactor, 0, 0, scaleFactor, 0, 0)
     context.drawImage(image, 0, 0, result.width, result.height)
-
-    const pngBlob = await new Promise<Blob>((resolve, reject) => {
+    const pngBlob = await new Promise<Blob | null>((resolve, reject) => {
+      const pending: RasterExportState = { kind: 'encoding', request, cancel: () => {
+        canvas.width = 0
+        canvas.height = 0
+        resolve(null)
+      } }
+      rasterExport = pending
       canvas.toBlob((output) => {
-        if (!output) {
-          reject(new Error('Unable to encode PNG export.'))
-          return
-        }
-
-        resolve(output)
+        if (rasterExport !== pending) return
+        if (output === null) reject(new Error('Unable to encode PNG export.'))
+        else resolve(output)
       }, 'image/png')
     })
-
-    downloadBlob(pngBlob, `${exportBaseName}-diagram.png`)
+    if (pngBlob !== null && ownsRasterExport(request)) downloadBlob(pngBlob, request.fileName)
   } finally {
     URL.revokeObjectURL(objectUrl)
+    if (ownsRasterExport(request)) cancelRasterExport()
   }
 }
 
@@ -6387,15 +6302,33 @@ const exportDiagram = async (format: 'svg' | 'png', scaleFactor = 1) => {
   await exportPng(scaleFactor)
 }
 
+const cancelCanvasInteraction = () => {
+  cancelPointerSession()
+  sceneRef.value?.cancelInteraction()
+  resetLiveConnectionPreviewState()
+  setSceneDragPreview(null)
+  applyAutomationNodeDragPreview(null)
+  latestConnectionRequestId += 1
+  routing.cancel()
+}
+
+watch(() => loadIntentRevision, () => {
+  cancelCanvasInteraction()
+  void computeConnectionLines()
+}, { flush: 'sync' })
+
 watch(
-  () => model,
+  [() => model, () => documentContextRevision, () => activeDiagramViewId, () => previewTargetId, () => modelIsCurrent],
   () => {
+    const owner = currentLayoutOwner()
+    if (!sameLayoutOwner(layoutContext.value.owner, owner)) {
+      cancelCanvasInteraction()
+      pendingNodePositionOverrides.value = {}
+      layoutContext.value = { kind: 'awaiting-model', owner }
+    }
     syncLayoutStates()
   },
-  {
-    deep: true,
-    immediate: true
-  }
+  { deep: true, immediate: true }
 )
 
 watch(
@@ -6427,7 +6360,6 @@ watch(
     if (!nextValue) {
       resetLiveConnectionPreviewState()
       applyAutomationNodeDragPreview(null)
-      activeConnectionDragPreview.value = null
       return
     }
 
@@ -6503,12 +6435,9 @@ watch(
 )
 
 watch(
-  () => [selectedDetailEditorKey.value, sourceText],
+  () => [selectedDetailEditorKey.value, sourceText, documentContextRevision],
   () => {
-    isEditingDetailSource.value = false
-    isEditingDetailMetadata.value = false
-    syncDetailPopoverEditorSource()
-    syncDetailPopoverMetadataDraft()
+    detailEdit.value = { kind: 'view' }
   },
   {
     immediate: true
@@ -6519,7 +6448,7 @@ watch(
   () => canEditSelectedDetailSource.value,
   (canEdit) => {
     if (!canEdit) {
-      isEditingDetailSource.value = false
+      if (detailEdit.value.kind === 'source') detailEdit.value = { kind: 'view' }
     }
   },
   {
@@ -6531,7 +6460,7 @@ watch(
   () => canEditSelectedDetailMetadata.value,
   (canEdit) => {
     if (!canEdit) {
-      isEditingDetailMetadata.value = false
+      if (detailEdit.value.kind === 'metadata') detailEdit.value = { kind: 'view' }
     }
   },
   {
@@ -6716,6 +6645,7 @@ watch(
 
 useResizeObserver(viewportRef, syncViewportSize)
 useResizeObserver(detailPopoverRef, syncDetailPopoverSize)
+useResizeObserver(zoomToolbarRef, syncZoomToolbarBottomInset)
 
 onMounted(() => {
   if (!import.meta.client) {
@@ -6741,26 +6671,22 @@ onMounted(() => {
 })
 
 onBeforeUnmount(() => {
+  const pendingExport = rasterExport
+  rasterExport = { kind: 'disposed' }
+  if ('request' in pendingExport) pendingExport.cancel()
   automationPlaneDragSession = null
   resetLiveConnectionPreviewState()
   applyAutomationNodeDragPreview(null)
-  activeConnectionDragPreview.value = null
-  liveSceneConnectionDragPreview = null
   automationPlaneNodeElements.clear()
-  routingWorker?.terminate()
-  routingWorker = null
-  pendingRoutingRequests.clear()
+  latestConnectionRequestId += 1
+  routing.dispose()
 })
 
 defineExpose<{
   exportDiagram: (format: 'svg' | 'png', scaleFactor?: number) => Promise<void>
-  exportPng: (scaleFactor: number) => Promise<void>
-  exportSvg: () => Promise<void>
   getNodeLayoutProperties: () => Record<string, PgmlNodeProperties>
 }>({
   exportDiagram,
-  exportPng,
-  exportSvg,
   getNodeLayoutProperties
 })
 </script>
@@ -6775,6 +6701,9 @@ defineExpose<{
     <PgmlDiagramGpuScene
       ref="sceneRef"
       :connections="displayedConnectionLines"
+      :document-context-revision="documentContextRevision"
+      :load-intent-revision="loadIntentRevision"
+      :interaction-enabled="layoutInteractionsEnabled"
       :groups="groupNodes"
       :objects="objectNodes"
       :renderer-backend="rendererBackend"
@@ -6802,6 +6731,7 @@ defineExpose<{
         data-diagram-plane="true"
         class="relative origin-top-left"
         :style="automationPlaneStyle"
+        @wheel.prevent.stop="sceneRef?.handleWheel($event)"
       >
         <div
           v-for="node in automationPlaneNodes"
@@ -6810,12 +6740,13 @@ defineExpose<{
           :data-node-anchor="node.id"
           :data-table-anchor="node.kind === 'table' ? node.id : undefined"
           :data-selection-active="(node.kind === 'group' && isGroupSelectionActive(node.id)) || (node.kind === 'object' && isObjectSelectionActive(node.id)) || (node.kind === 'table' && isTableSelectionActive(node.id)) ? 'true' : undefined"
-          class="pointer-events-auto absolute select-none overflow-hidden"
+          class="pointer-events-auto absolute touch-none select-none overflow-hidden"
           :style="[
             {
               background: getNodeBackground(node.color, node.kind),
               borderColor: node.kind === 'group' ? 'transparent' : getNodeBorderColor(node.color, node.kind),
-              borderWidth: node.kind === 'group' ? '0' : '1px',
+              borderWidth: node.kind === 'object' ? '1px' : '0',
+              outlineColor: getNodeBorderColor(node.color, node.kind),
               height: `${node.height}px`,
               left: `${node.x}px`,
               top: `${node.y}px`,
@@ -6827,7 +6758,7 @@ defineExpose<{
               : undefined
           ]"
           :class="[
-            node.kind === 'group' ? 'rounded-[2px]' : 'border',
+            node.kind === 'group' ? 'rounded-[2px]' : node.kind === 'table' ? 'outline outline-1 -outline-offset-1' : 'border',
             node.kind === 'table' || node.kind === 'object'
               ? 'hover:ring-1 hover:ring-[color:var(--studio-ring)]'
               : '',
@@ -6838,9 +6769,6 @@ defineExpose<{
           @click.stop="node.kind === 'group' ? selectAutomationGroup(node.id) : node.kind === 'table' ? handleAutomationTableClick(node.id) : handleAutomationObjectClick(node.id)"
           @dblclick.stop="node.kind === 'group' ? handleAutomationGroupDoubleClick(node.id) : node.kind === 'table' ? handleAutomationTableDoubleClick(node.id) : handleAutomationObjectDoubleClick(node.id)"
           @pointerdown="node.kind === 'group' ? handleAutomationPlaneGroupSurfacePointerDown($event, node) : handleAutomationPlaneNodeSurfacePointerDown($event, node)"
-          @pointermove="handleAutomationPlanePointerMove"
-          @pointerup="handleAutomationPlanePointerUp"
-          @pointercancel="handleAutomationPlanePointerUp"
         >
           <div
             v-if="node.kind === 'group'"
@@ -6867,9 +6795,6 @@ defineExpose<{
                 }
                 : undefined"
             @pointerdown="startAutomationPlaneNodeDrag($event, node)"
-            @pointermove="handleAutomationPlanePointerMove"
-            @pointerup="handleAutomationPlanePointerUp"
-            @pointercancel="handleAutomationPlanePointerUp"
           >
             <div class="min-w-0">
               <span
@@ -6912,6 +6837,7 @@ defineExpose<{
                 class="h-5 rounded-none border border-[color:var(--studio-rail)] px-1 text-[color:var(--studio-shell-muted)] hover:bg-[color:var(--studio-surface-hover)] hover:text-[color:var(--studio-shell-text)]"
                 :aria-label="`Add table to ${node.title}`"
                 :title="`Add table to ${node.title}`"
+                :disabled="!canEditDetailSource || hasBlockingSourceErrors"
                 @pointerdown.stop
                 @click.stop="emit('createTable', node.title)"
               />
@@ -6925,6 +6851,7 @@ defineExpose<{
                 class="h-5 w-5 rounded-none border border-[color:var(--studio-rail)] px-0 text-[color:var(--studio-shell-muted)] hover:bg-[color:var(--studio-surface-hover)] hover:text-[color:var(--studio-shell-text)]"
                 aria-label="Edit group"
                 title="Edit group"
+                :disabled="!canEditDetailSource || hasBlockingSourceErrors"
                 @pointerdown.stop
                 @click.stop="emit('editGroup', node.title)"
               />
@@ -6951,6 +6878,7 @@ defineExpose<{
                 class="h-5 w-5 rounded-none border border-[color:var(--studio-rail)] px-0 text-[color:var(--studio-shell-muted)] hover:bg-[color:var(--studio-surface-hover)] hover:text-[color:var(--studio-shell-text)]"
                 aria-label="Edit table"
                 title="Edit table"
+                :disabled="!canEditDetailSource || hasBlockingSourceErrors"
                 @pointerdown.stop
                 @click.stop="emit('editTable', node.id)"
               />
@@ -6978,7 +6906,7 @@ defineExpose<{
                 :key="table.id"
                 :data-table-anchor="table.id"
                 :data-selection-active="isTableSelectionActive(table.id) ? 'true' : undefined"
-                class="relative min-w-0 self-start overflow-hidden rounded-[2px] border border-[color:var(--studio-shell-border)] bg-[color:var(--studio-table-surface)] hover:ring-1 hover:ring-[color:var(--studio-ring)]"
+                class="relative min-w-0 self-start overflow-hidden rounded-[2px] outline outline-1 -outline-offset-1 outline-[color:var(--studio-shell-border)] bg-[color:var(--studio-table-surface)] hover:ring-1 hover:ring-[color:var(--studio-ring)]"
                 :style="[
                   getAutomationGroupTableLayoutStyle(node.id, table.id),
                   isTableSelectionActive(table.id) ? getSelectionGlowStyle(table.color) : undefined
@@ -6987,9 +6915,6 @@ defineExpose<{
                 @click.stop="handleAutomationTableClick(table.id)"
                 @dblclick.stop="handleAutomationTableDoubleClick(table.id)"
                 @pointerdown="handleAutomationPlaneGroupedTablePointerDown($event, node)"
-                @pointermove="handleAutomationPlanePointerMove"
-                @pointerup="handleAutomationPlanePointerUp"
-                @pointercancel="handleAutomationPlanePointerUp"
               >
                 <div
                   class="flex items-start justify-between gap-2 border-b border-[color:var(--studio-divider)] px-2 py-1.5"
@@ -7017,12 +6942,13 @@ defineExpose<{
                     class="h-5 w-5 rounded-none border border-[color:var(--studio-rail)] px-0 text-[color:var(--studio-shell-muted)] hover:bg-[color:var(--studio-surface-hover)] hover:text-[color:var(--studio-shell-text)]"
                     aria-label="Edit table"
                     title="Edit table"
+                    :disabled="!canEditDetailSource || hasBlockingSourceErrors"
                     @pointerdown.stop
                     @click.stop="emit('editTable', table.id)"
                   />
                 </div>
 
-                <div class="grid gap-px bg-[color:var(--studio-divider)]">
+                <div class="grid divide-y divide-[color:var(--studio-divider)] bg-[color:var(--studio-divider)]">
                   <PgmlDiagramTableRows
                     :attachment-popover-content="attachmentPopoverContent"
                     :attachment-popover-ui="attachmentPopoverUi"
@@ -7049,7 +6975,7 @@ defineExpose<{
 
           <div
             v-else-if="node.kind === 'table'"
-            class="grid gap-px bg-[color:var(--studio-divider)]"
+            class="grid divide-y divide-[color:var(--studio-divider)] bg-[color:var(--studio-divider)]"
           >
             <PgmlDiagramTableRows
               :attachment-popover-content="attachmentPopoverContent"
@@ -7099,7 +7025,6 @@ defineExpose<{
         </div>
 
         <PgmlDiagramConnectionCanvas
-          :active-drag="activeConnectionDragPreview"
           :height="automationPlaneHeight"
           :layers="automationConnectionCanvasLayers"
           :preview-paths="{}"
@@ -7113,7 +7038,6 @@ defineExpose<{
       class="pointer-events-none absolute inset-0 z-[2] overflow-hidden"
     >
       <PgmlDiagramConnectionCanvas
-        :active-drag="activeConnectionDragPreview"
         :content-transform="svgConnectionOverlayTransform"
         :height="automationPlaneHeight"
         :layers="automationConnectionCanvasLayers"
@@ -7210,21 +7134,22 @@ defineExpose<{
           class="min-h-0 overflow-auto pr-1"
         >
           <PgmlDetailPopoverSourceEditor
-            v-if="isEditingDetailSource"
-            v-model="detailPopoverEditorSource"
-            :description="selectedDetailEditorSpec?.description"
-            :language-mode="selectedDetailEditorSpec?.languageMode || 'pgml'"
-            :original-value="selectedDetailEditorSpec?.source || ''"
-            :title="selectedDetailEditorSpec?.title || 'Editing PGML block'"
+            v-if="detailEdit.kind === 'source'"
+            :model-value="detailEdit.source"
+            :description="detailEdit.spec.description"
+            :language-mode="detailEdit.spec.languageMode"
+            :original-value="detailEdit.spec.source"
+            :title="detailEdit.spec.title"
+            @update:model-value="updateDetailPopoverEditorSource"
           />
 
           <PgmlDetailPopoverMetadataEditor
-            v-else-if="isEditingDetailMetadata && detailPopoverMetadataDraft"
-            :model-value="detailPopoverMetadataDraft"
-            :description="selectedDetailMetadataEditorSpec?.description"
-            :original-value="selectedDetailMetadataEditorSpec?.draft || detailPopoverMetadataDraft"
+            v-else-if="detailEdit.kind === 'metadata'"
+            :model-value="detailEdit.draft"
+            :description="detailEdit.spec.description"
+            :original-value="detailEdit.spec.draft"
             :routine-items="routineMetadataSelectItems"
-            :title="selectedDetailMetadataEditorSpec?.title || 'Editing metadata'"
+            :title="detailEdit.spec.title"
             @update:model-value="updateDetailPopoverMetadataDraft"
           />
 
@@ -7320,6 +7245,7 @@ defineExpose<{
       class="pointer-events-none absolute bottom-3 left-6 right-3 z-[4] flex justify-center"
     >
       <div
+        ref="zoomToolbarRef"
         data-diagram-zoom-toolbar="true"
         class="pointer-events-auto flex min-w-0 max-w-full flex-wrap items-center justify-center gap-1 border px-1 py-1"
         :style="floatingPanelStyle"
@@ -7524,7 +7450,7 @@ defineExpose<{
       v-if="isDiagramPanelVisible"
       data-diagram-panel="true"
       :class="diagramPanelSurfaceClass"
-      :style="floatingPanelStyle"
+      :style="diagramPanelSurfaceStyle"
     >
       <div class="flex items-start justify-between gap-3 border-b border-[color:var(--studio-divider)] px-3 py-2.5">
         <div class="min-w-0 flex-1">
@@ -7575,6 +7501,7 @@ defineExpose<{
               variant="outline"
               size="xs"
               :class="sidePanelActionButtonClass"
+              :disabled="!canEditDetailSource || hasBlockingSourceErrors"
               @click="emit('createTable', null)"
             />
             <UButton
@@ -7585,6 +7512,7 @@ defineExpose<{
               variant="outline"
               size="xs"
               :class="sidePanelActionButtonClass"
+              :disabled="!canEditDetailSource || hasBlockingSourceErrors"
               @click="emit('createGroup')"
             />
           </div>
@@ -7785,6 +7713,7 @@ defineExpose<{
               variant="outline"
               size="xs"
               :class="sidePanelActionButtonClass"
+              :disabled="!canEditDetailSource || hasBlockingSourceErrors"
               @click="emit('createTable', selectedGroup.title)"
             />
             <UButton
@@ -7794,6 +7723,7 @@ defineExpose<{
               variant="outline"
               size="xs"
               :class="sidePanelActionButtonClass"
+              :disabled="!canEditDetailSource || hasBlockingSourceErrors"
               @click="emit('editGroup', selectedGroup.title)"
             />
             <UButton
@@ -7909,6 +7839,7 @@ defineExpose<{
               variant="outline"
               size="xs"
               :class="sidePanelActionButtonClass"
+              :disabled="!canEditDetailSource || hasBlockingSourceErrors"
               @click="emit('editTable', selectedTable.id)"
             />
             <UButton
@@ -8023,7 +7954,7 @@ defineExpose<{
 
       <div
         v-else-if="activePanelTab === 'entities'"
-        class="grid min-h-0 grid-rows-[auto_minmax(0,1fr)] overflow-hidden"
+        class="grid min-h-min grid-rows-[auto_minmax(4rem,1fr)] overflow-hidden"
       >
         <div class="grid gap-2 border-b border-[color:var(--studio-divider)] px-3 py-3">
           <label class="grid gap-1">
@@ -8069,7 +8000,7 @@ defineExpose<{
         <div
           data-diagram-panel-scroll="true"
           data-studio-scrollable="true"
-          class="grid content-start gap-2 overflow-auto overflow-x-hidden px-3 py-3"
+          class="grid content-start gap-2 scroll-py-3 overflow-auto overflow-x-hidden px-3 py-3"
           @wheel.stop
         >
           <div
@@ -8139,6 +8070,7 @@ defineExpose<{
                     :class="browserItemActionButtonClass"
                     :aria-label="getBrowserGroupEditLabel(groupItem)"
                     :title="getBrowserGroupEditLabel(groupItem)"
+                    :disabled="!canEditDetailSource || hasBlockingSourceErrors"
                     @click="emit('editGroup', groupItem.label)"
                   >
                     Edit
@@ -8561,8 +8493,8 @@ defineExpose<{
               variant="outline"
               size="sm"
               :class="exportPanelButtonClass"
-              :disabled="hasBlockingSourceErrors"
-              @click="exportPng(scaleFactor)"
+              :disabled="hasBlockingSourceErrors || exportInProgress"
+              @click="emit('exportDiagram', { format: 'png', scaleFactor })"
             />
           </div>
           <UButton
@@ -8572,8 +8504,8 @@ defineExpose<{
             variant="outline"
             size="sm"
             :class="exportPanelButtonClass"
-            :disabled="hasBlockingSourceErrors"
-            @click="exportSvg"
+            :disabled="hasBlockingSourceErrors || exportInProgress"
+            @click="emit('exportDiagram', { format: 'svg' })"
           />
         </div>
       </div>
@@ -8748,9 +8680,9 @@ defineExpose<{
       surface-id="diagram-view-settings"
       width-class="max-w-xl"
       body-class="px-4 py-4"
-      @update:open="isDiagramVisibilityDialogOpen = $event"
-      @close="diagramVisibilityDraft = null"
-      @after-leave="diagramVisibilityDraft = null"
+      @update:open="diagramVisibilityDialog.updateOpen"
+      @close="closeDiagramVisibilityDialog"
+      @after-leave="diagramVisibilityDialog.afterLeave"
     >
       <div
         v-if="diagramVisibilityDraft"

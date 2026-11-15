@@ -217,6 +217,19 @@ const runIdbRequest = <T>(request: IDBRequest<T>) => {
   })
 }
 
+const runIdbWriteRequest = <T>(transaction: IDBTransaction, request: IDBRequest<T>) => {
+  return new Promise<void>((resolve, reject) => {
+    const rejectTransaction = () => {
+      reject(transaction.error ?? request.error ?? new Error('The computer-file transaction did not commit.'))
+    }
+
+    transaction.oncomplete = () => resolve()
+    transaction.onabort = rejectTransaction
+    transaction.onerror = rejectTransaction
+    request.onerror = () => reject(request.error)
+  })
+}
+
 const openPgmlComputerFileDatabase = () => {
   return new Promise<IDBDatabase>((resolve, reject) => {
     const candidateWindow = getClientWindow()
@@ -256,7 +269,7 @@ const createIndexedDbPgmlComputerFileStore = async () => {
       delete: async (id: string) => {
         const transaction = database.transaction(pgmlComputerFileStoreName, 'readwrite')
 
-        await runIdbRequest(transaction.objectStore(pgmlComputerFileStoreName).delete(id))
+        await runIdbWriteRequest(transaction, transaction.objectStore(pgmlComputerFileStoreName).delete(id))
       },
       getAll: async () => {
         const transaction = database.transaction(pgmlComputerFileStoreName, 'readonly')
@@ -272,7 +285,7 @@ const createIndexedDbPgmlComputerFileStore = async () => {
       put: async (record: StoredPgmlRecentComputerFile) => {
         const transaction = database.transaction(pgmlComputerFileStoreName, 'readwrite')
 
-        await runIdbRequest(transaction.objectStore(pgmlComputerFileStoreName).put(record))
+        await runIdbWriteRequest(transaction, transaction.objectStore(pgmlComputerFileStoreName).put(record))
       }
     } satisfies PgmlComputerFileStore
   } catch {
@@ -452,18 +465,17 @@ export const createComputerPgmlFile = async (
   options?: PgmlComputerFileActionOptions
 ): Promise<PgmlComputerFileResult | null> => {
   const access = getPgmlFileSystemAccessApi(options)
-  const store = await getPgmlComputerFileStore(options)
-
-  if (!access || !store) {
+  if (!access) {
     return null
   }
 
   try {
-    const handle = await access.showSaveFilePicker({
+    const [handle, store] = await Promise.all([access.showSaveFilePicker({
       excludeAcceptAllOption: true,
       suggestedName: ensurePgmlFileName(input.name),
       types: pgmlFileTypeFilters
-    })
+    }), getPgmlComputerFileStore(options)])
+    if (store === null) return null
 
     if (!await ensureComputerFilePermission(handle, {
       interactive: true
@@ -497,18 +509,17 @@ export const openComputerPgmlFile = async (
   options?: PgmlComputerFileActionOptions
 ): Promise<PgmlComputerFileResult | null> => {
   const access = getPgmlFileSystemAccessApi(options)
-  const store = await getPgmlComputerFileStore(options)
-
-  if (!access || !store) {
+  if (!access) {
     return null
   }
 
   try {
-    const handles = await access.showOpenFilePicker({
+    const [handles, store] = await Promise.all([access.showOpenFilePicker({
       excludeAcceptAllOption: true,
       multiple: false,
       types: pgmlFileTypeFilters
-    })
+    }), getPgmlComputerFileStore(options)])
+    if (store === null) return null
     const handle = handles[0]
 
     if (!handle || !await ensureComputerFilePermission(handle, {

@@ -3,17 +3,21 @@ export const getBrowserStorage = () => {
     return null
   }
 
-  const storage = window.localStorage
+  try {
+    const storage = window.localStorage
 
-  if (
-    typeof storage?.getItem !== 'function'
-    || typeof storage.setItem !== 'function'
-    || typeof storage.removeItem !== 'function'
-  ) {
+    if (
+      typeof storage?.getItem !== 'function'
+      || typeof storage.setItem !== 'function'
+      || typeof storage.removeItem !== 'function'
+    ) {
+      return null
+    }
+
+    return storage
+  } catch {
     return null
   }
-
-  return storage
 }
 
 export const readBrowserStorageItem = (key: string) => {

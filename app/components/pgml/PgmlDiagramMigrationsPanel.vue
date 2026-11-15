@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import JSZip from 'jszip'
 import type { Ref } from 'vue'
-import { computed, ref, watchEffect } from 'vue'
+import { computed, ref, shallowRef, watch, watchEffect, onScopeDispose } from 'vue'
 import type { PgmlVersionMigrationStepBundle } from '~/utils/pgml-version-migration'
 import {
   joinStudioClasses,
@@ -46,7 +46,13 @@ const {
   migrationWarnings?: string[]
 }>()
 
-const copyState: Ref<'idle' | 'success' | 'error'> = ref('idle')
+type MigrationCopyState = { kind: 'idle' } | { kind: 'disposed' }
+  | { kind: 'copying', artifactKey: string }
+  | { kind: 'success' | 'error', artifactKey: string, resetTimer: number }
+const copyState: Ref<MigrationCopyState> = shallowRef({ kind: 'idle' })
+type MigrationDownloadState = { kind: 'idle' } | { kind: 'disposed' } | { kind: 'failed', message: string }
+  | { kind: 'preparing', artifacts: PgmlVersionMigrationArtifact[], fileName: string }
+const downloadState: Ref<MigrationDownloadState> = shallowRef({ kind: 'idle' })
 const activeMigrationFormat: Ref<PgmlMigrationFormat> = ref('sql')
 const activeMigrationScope: Ref<PgmlMigrationSelectionScope> = ref('combined')
 const migrationActionButtonClass = joinStudioClasses(studioPanelActionButtonClass, 'justify-center')
@@ -273,8 +279,11 @@ const downloadMigrationBlob = (blob: Blob, fileName: string) => {
 
   anchor.href = objectUrl
   anchor.download = fileName
-  anchor.click()
-  URL.revokeObjectURL(objectUrl)
+  try {
+    anchor.click()
+  } finally {
+    URL.revokeObjectURL(objectUrl)
+  }
 }
 
 const downloadMigrationArtifactFile = (artifact: PgmlVersionMigrationArtifact) => {
@@ -285,61 +294,69 @@ const downloadMigrationArtifactFile = (artifact: PgmlVersionMigrationArtifact) =
   downloadMigrationBlob(blob, artifact.fileName)
 }
 
-const buildMigrationArchiveFileName = (format: PgmlMigrationFormat) => {
-  return `${combinedMigrationArtifacts.value[format].fileName}.zip`
+const copyArtifactKey = computed(() => JSON.stringify([activeMigrationFormat.value, activeMigrationScope.value, activeMigrationContent.value]))
+const copyFeedback = computed(() => copyState.value.kind === 'success' ? 'Copied' : copyState.value.kind === 'error' ? 'Copy failed' : '')
+const clearCopyFeedback = () => {
+  if (copyState.value.kind === 'success' || copyState.value.kind === 'error') {
+    window.clearTimeout(copyState.value.resetTimer)
+    copyState.value = { kind: 'idle' }
+  }
 }
-
-const downloadMigrationArtifactArchive = async (
-  artifacts: PgmlVersionMigrationArtifact[],
-  format: PgmlMigrationFormat
-) => {
-  // Combined history downloads need to preserve the on-disk migration order
-  // while still giving the user one transferable artifact. The zip keeps the
-  // numbered step files intact so replay-by-filename still works after extract.
-  const archive = new JSZip()
-
-  artifacts.forEach((artifact) => {
-    archive.file(artifact.fileName, artifact.content)
-  })
-
-  const blob = await archive.generateAsync({
-    type: 'blob'
-  })
-
-  downloadMigrationBlob(blob, buildMigrationArchiveFileName(format))
-}
-
+watch(copyArtifactKey, clearCopyFeedback, { flush: 'sync' })
 const handleCopyMigration = async () => {
-  if (activeMigrationContent.value.trim().length === 0) {
-    return
-  }
-
+  if (copyState.value.kind === 'copying' || copyState.value.kind === 'disposed' || activeMigrationContent.value.trim().length === 0) return
+  clearCopyFeedback()
+  const request: MigrationCopyState = { kind: 'copying', artifactKey: copyArtifactKey.value }
+  const content = activeMigrationContent.value
+  copyState.value = request
+  let outcome: 'success' | 'error' = 'success'
   try {
-    await navigator.clipboard.writeText(activeMigrationContent.value)
-    copyState.value = 'success'
+    await navigator.clipboard.writeText(content)
   } catch {
-    copyState.value = 'error'
+    outcome = 'error'
   }
-
-  window.setTimeout(() => {
-    copyState.value = 'idle'
-  }, 1600)
+  if (copyState.value !== request) return
+  if (request.artifactKey !== copyArtifactKey.value) {
+    copyState.value = { kind: 'idle' }
+    return
+  }
+  const feedback: MigrationCopyState = { kind: outcome, artifactKey: request.artifactKey, resetTimer: window.setTimeout(() => {
+    if (copyState.value === feedback) copyState.value = { kind: 'idle' }
+  }, 1600) }
+  copyState.value = feedback
 }
+onScopeDispose(() => {
+  clearCopyFeedback()
+  copyState.value = { kind: 'disposed' }
+  downloadState.value = { kind: 'disposed' }
+})
 
+const failMigrationDownload = (error: unknown) => {
+  if (downloadState.value.kind === 'disposed') return
+  downloadState.value = { kind: 'failed', message: error instanceof Error && error.message.trim().length > 0 ? error.message : 'Unable to prepare the migration download.' }
+}
 const handleDownloadMigration = async () => {
-  if (activeMigrationDownloadArtifacts.value.length === 0) {
-    return
+  if (downloadState.value.kind === 'preparing' || downloadState.value.kind === 'disposed') return
+  const artifacts = activeMigrationDownloadArtifacts.value.map(artifact => ({ ...artifact }))
+  if (artifacts.length === 0) return
+  downloadState.value = { kind: 'idle' }
+  try {
+    if (artifacts.length === 1) {
+      downloadMigrationArtifactFile(artifacts[0]!)
+      return
+    }
+    const request: MigrationDownloadState = { kind: 'preparing', artifacts,
+      fileName: `${combinedMigrationArtifacts.value[activeMigrationFormat.value].fileName}.zip` }
+    downloadState.value = request
+    const archive = new JSZip()
+    for (const artifact of request.artifacts) archive.file(artifact.fileName, artifact.content)
+    const blob = await archive.generateAsync({ type: 'blob' })
+    if (downloadState.value !== request) return
+    downloadMigrationBlob(blob, request.fileName)
+    downloadState.value = { kind: 'idle' }
+  } catch (error) {
+    failMigrationDownload(error)
   }
-
-  if (hasMigrationArchive.value) {
-    await downloadMigrationArtifactArchive(
-      activeMigrationDownloadArtifacts.value,
-      activeMigrationFormat.value
-    )
-    return
-  }
-
-  downloadMigrationArtifactFile(activeMigrationDownloadArtifacts.value[0]!)
 }
 
 watchEffect(() => {
@@ -407,25 +424,40 @@ watchEffect(() => {
         </button>
         <UButton
           :data-version-migration-copy="activeMigrationFormat"
-          :label="copyState === 'success' ? 'Copied' : (copyState === 'error' ? 'Copy failed' : `Copy ${activeMigrationLabel}`)"
+          :label="copyFeedback.length > 0 ? copyFeedback : `Copy ${activeMigrationLabel}`"
+          :loading="copyState.kind === 'copying'"
           color="neutral"
           variant="outline"
           size="sm"
           :class="migrationActionButtonClass"
-          :disabled="!hasActiveMigration"
+          :disabled="!hasActiveMigration || copyState.kind === 'copying'"
           @click="handleCopyMigration"
         />
         <UButton
           :data-version-migration-download="activeMigrationFormat"
-          :label="migrationDownloadLabel"
+          :label="downloadState.kind === 'preparing' ? 'Preparing download' : migrationDownloadLabel"
+          :loading="downloadState.kind === 'preparing'"
           color="neutral"
           variant="outline"
           size="sm"
           :class="migrationActionButtonClass"
-          :disabled="!hasActiveMigration"
+          :disabled="!hasActiveMigration || downloadState.kind === 'preparing'"
           @click="handleDownloadMigration"
         />
       </div>
+
+      <p
+        v-if="downloadState.kind === 'failed'"
+        role="alert"
+        class="text-sm text-[color:var(--studio-shell-error)]"
+      >
+        {{ downloadState.message }}
+      </p>
+      <span
+        class="sr-only"
+        role="status"
+        aria-live="polite"
+      >{{ copyFeedback }}</span>
 
       <div
         v-if="hasStepMigrationFiles"

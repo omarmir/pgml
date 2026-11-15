@@ -5,6 +5,7 @@ import {
   type PgmlSequenceMetadataEntry
 } from './pgml-sequence-metadata'
 import { normalizePgmlTypeExpression } from './pgml-types'
+import type { PgsqlParserModule } from './pgsql-parser-adapter'
 
 export type PgmlExecutableParserVersion = 15 | 16 | 17
 
@@ -87,18 +88,12 @@ export type PgmlSequenceSemanticModel = {
   status: PgmlExecutableParseStatus
 }
 
-type PgsqlParserModule = {
-  loadModule: () => Promise<void>
-  parseSync: (query: string) => {
-    stmts?: Array<{
-      stmt?: unknown
-    }>
-  }
-}
-
 const defaultParserVersion: PgmlExecutableParserVersion = 17
-const parserLoadPromiseByVersion = new Map<PgmlExecutableParserVersion, Promise<PgsqlParserModule>>()
-const parserModuleByVersion = new Map<PgmlExecutableParserVersion, PgsqlParserModule>()
+type ParserState = { kind: 'loading', promise: Promise<PgsqlParserModule> }
+  | { kind: 'ready', module: PgsqlParserModule }
+  | { kind: 'failed', error: unknown }
+
+const parserStateByVersion = new Map<PgmlExecutableParserVersion, ParserState>()
 const routineSemanticCache = new Map<string, PgmlRoutineSemanticModel>()
 const triggerSemanticCache = new Map<string, PgmlTriggerSemanticModel>()
 const sequenceSemanticCache = new Map<string, PgmlSequenceSemanticModel>()
@@ -152,32 +147,36 @@ const loadVersionParserModule = async (version: PgmlExecutableParserVersion): Pr
 export const initializePgmlExecutableParser = async (
   version: PgmlExecutableParserVersion = defaultParserVersion
 ) => {
-  const existingModule = parserModuleByVersion.get(version)
+  const state = parserStateByVersion.get(version)
 
-  if (existingModule) {
-    return existingModule
-  }
-
-  const existingPromise = parserLoadPromiseByVersion.get(version)
-
-  if (existingPromise) {
-    return existingPromise
+  if (state) {
+    switch (state.kind) {
+      case 'ready':
+        return state.module
+      case 'loading':
+        return state.promise
+      case 'failed':
+        throw state.error
+    }
   }
 
   const nextPromise = loadVersionParserModule(version).then(async (module) => {
     await module.loadModule()
-    parserModuleByVersion.set(version, module)
+    parserStateByVersion.set(version, { kind: 'ready', module })
     return module
+  }).catch((error: unknown) => {
+    parserStateByVersion.set(version, { kind: 'failed', error })
+    throw error
   })
 
-  parserLoadPromiseByVersion.set(version, nextPromise)
+  parserStateByVersion.set(version, { kind: 'loading', promise: nextPromise })
   return nextPromise
 }
 
 export const isPgmlExecutableParserReady = (
   version: PgmlExecutableParserVersion = defaultParserVersion
 ) => {
-  return parserModuleByVersion.has(version)
+  return parserStateByVersion.get(version)?.kind === 'ready'
 }
 
 const buildCacheKey = (
@@ -424,9 +423,9 @@ const parseWithLoadedParserSync = (
   source: string,
   version: PgmlExecutableParserVersion
 ) => {
-  const parserModule = parserModuleByVersion.get(version) || null
+  const state = parserStateByVersion.get(version)
 
-  if (!parserModule) {
+  if (!state || state.kind !== 'ready') {
     return {
       diagnostics: [] as PgmlExecutableParseDiagnostic[],
       statements: [] as unknown[],
@@ -435,7 +434,7 @@ const parseWithLoadedParserSync = (
   }
 
   try {
-    const parsed = parserModule.parseSync(source)
+    const parsed = state.module.parseSync(source)
     const statements = (parsed.stmts || [])
       .map(statement => statement.stmt || null)
       .filter(statement => statement !== null) as unknown[]
@@ -880,7 +879,9 @@ export const buildPgmlRoutineSemanticModel = (
       status: parsed.status
     }
 
-    routineSemanticCache.set(cacheKey, result)
+    if (result.status !== 'unavailable') {
+      routineSemanticCache.set(cacheKey, result)
+    }
     return result
   }
 
@@ -946,7 +947,9 @@ export const buildPgmlTriggerSemanticModel = (
       status: parsed.status
     }
 
-    triggerSemanticCache.set(cacheKey, result)
+    if (result.status !== 'unavailable') {
+      triggerSemanticCache.set(cacheKey, result)
+    }
     return result
   }
 
@@ -1012,7 +1015,9 @@ export const buildPgmlSequenceSemanticModel = (
       status: parsed.status
     }
 
-    sequenceSemanticCache.set(cacheKey, result)
+    if (result.status !== 'unavailable') {
+      sequenceSemanticCache.set(cacheKey, result)
+    }
     return result
   }
 

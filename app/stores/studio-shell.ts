@@ -1,5 +1,5 @@
 import type { DropdownMenuItem } from '@nuxt/ui'
-import { ref, shallowRef, type Ref } from 'vue'
+import { computed, ref, shallowRef, type Ref } from 'vue'
 import { defineStore } from 'pinia'
 
 export type StudioHeaderMenu = {
@@ -67,17 +67,39 @@ export const useStudioShellStore = defineStore('studio-shell', () => {
     schemaStatusVisible.value = false
   }
 
+  let chromeOwner: symbol | null = null
+  const acquireWorkspaceChrome = () => {
+    const owner = Symbol('workspace chrome')
+    chromeOwner = owner
+    return {
+      setHeaderActions: (state: StudioHeaderActionState) => {
+        if (chromeOwner === owner) setHeaderActions(state)
+      },
+      clearHeaderActions: () => {
+        if (chromeOwner === owner) clearHeaderActions()
+      },
+      setSchemaStatus: (state: StudioSchemaStatusState) => {
+        if (chromeOwner === owner) setSchemaStatus(state)
+      },
+      clearSchemaStatus: () => {
+        if (chromeOwner === owner) clearSchemaStatus()
+      },
+      release: () => {
+        if (chromeOwner !== owner) return
+        chromeOwner = null
+        clearHeaderActions()
+        clearSchemaStatus()
+      }
+    }
+  }
   return {
-    clearHeaderActions,
-    clearSchemaStatus,
-    headerMenus,
-    isHeaderLoading,
-    schemaStatusAction,
-    schemaStatusDetail,
-    schemaStatusName,
-    schemaStatusSaveState,
-    schemaStatusVisible,
-    setHeaderActions,
-    setSchemaStatus
+    acquireWorkspaceChrome,
+    headerMenus: computed(() => headerMenus.value),
+    isHeaderLoading: computed(() => isHeaderLoading.value),
+    schemaStatusAction: computed(() => schemaStatusAction.value),
+    schemaStatusDetail: computed(() => schemaStatusDetail.value),
+    schemaStatusName: computed(() => schemaStatusName.value),
+    schemaStatusSaveState: computed(() => schemaStatusSaveState.value),
+    schemaStatusVisible: computed(() => schemaStatusVisible.value)
   }
 })

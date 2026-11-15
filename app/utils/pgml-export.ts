@@ -4,6 +4,7 @@ import type {
   PgmlCustomType,
   PgmlDomainType,
   PgmlEnumType,
+  PgmlIndex,
   PgmlReference,
   PgmlRoutine,
   PgmlSchemaModel,
@@ -11,6 +12,7 @@ import type {
   PgmlTable,
   PgmlTrigger
 } from './pgml'
+import { formatPgmlIndexKeyForSql, getPgmlIndexKeys } from './pgml-index-keys'
 
 export type PgmlExportFormat = 'sql' | 'kysely'
 export type PgmlKyselyTypeStyle = 'pragmatic' | 'strict' | 'loose'
@@ -101,7 +103,9 @@ const ensureSqlStatement = (value: string) => {
     return ''
   }
 
-  return trimmed.endsWith(';') ? trimmed : `${trimmed};`
+  const lastLine = trimmed.slice(trimmed.lastIndexOf('\n') + 1)
+  // A possible EOF line comment needs its separator on the next line, even when the comment ends in ';'.
+  return trimmed.endsWith(';') && !lastLine.includes('--') ? trimmed : `${trimmed}\n;`
 }
 
 const escapeTemplateLiteralContent = (value: string) => {
@@ -183,9 +187,12 @@ const buildCreateCustomTypeStatement = (customType: PgmlCustomType, warnings: Se
   return `CREATE TYPE ${formatQualifiedSqlName(customType.name)} AS (\n${customType.fields.map(field => `  ${quoteSqlIdentifier(field.name)} ${field.type}`).join(',\n')}\n);`
 }
 
-const buildCreateSequenceStatement = (sequence: PgmlSequence) => {
+const buildSequenceStatements = (sequence: PgmlSequence) => {
   if (sequence.source) {
-    return ensureSqlStatement(sequence.source)
+    return {
+      createStatement: null,
+      postTableStatement: ensureSqlStatement(sequence.source)
+    }
   }
 
   const metadataByKey = sequence.metadata.reduce<Record<string, string>>((entries, entry) => {
@@ -225,14 +232,25 @@ const buildCreateSequenceStatement = (sequence: PgmlSequence) => {
     parts.push('CYCLE')
   }
 
-  if (metadataByKey.owned_by) {
-    parts.push(`OWNED BY ${metadataByKey.owned_by}`)
+  return {
+    createStatement: `${parts.join('\n  ')};`,
+    postTableStatement: metadataByKey.owned_by
+      ? `ALTER SEQUENCE ${formatQualifiedSqlName(sequence.name)} OWNED BY ${metadataByKey.owned_by};`
+      : null
   }
-
-  return `${parts.join('\n  ')};`
 }
 
-const buildCreateTableStatement = (table: PgmlTable, warnings: Set<string>) => {
+const buildTableConstraintClause = (constraint: PgmlTable['constraints'][number]) => {
+  const normalizedExpression = constraint.expression.trim()
+  const isCheck = !/^(?:primary key|unique|foreign key)\b/i.test(normalizedExpression)
+  const expression = /^(?:primary key|unique|foreign key|check)\b/i.test(normalizedExpression)
+    ? normalizedExpression
+    : `CHECK (${constraint.expression})`
+
+  return { isCheck, sql: `CONSTRAINT ${quoteSqlIdentifier(constraint.name)} ${expression}` }
+}
+
+const buildCreateTableStatement = (table: PgmlTable, warnings: Set<string>, deferExpressions: boolean) => {
   const primaryKeyColumns = table.columns
     .filter(column => column.modifiers.includes('pk'))
     .map(column => column.name)
@@ -250,7 +268,7 @@ const buildCreateTableStatement = (table: PgmlTable, warnings: Set<string>) => {
       columnParts.push('UNIQUE')
     }
 
-    if (defaultValue) {
+    if (defaultValue && !deferExpressions) {
       columnParts.push(`DEFAULT ${defaultValue}`)
     }
 
@@ -266,14 +284,11 @@ const buildCreateTableStatement = (table: PgmlTable, warnings: Set<string>) => {
   }
 
   table.constraints.forEach((constraint) => {
-    const normalizedExpression = constraint.expression.trim()
+    const clause = buildTableConstraintClause(constraint)
 
-    if (/^(?:primary key|unique|foreign key|check)\b/i.test(normalizedExpression)) {
-      lines.push(`  CONSTRAINT ${quoteSqlIdentifier(constraint.name)} ${normalizedExpression}`)
-      return
+    if (!deferExpressions || !clause.isCheck) {
+      lines.push(`  ${clause.sql}`)
     }
-
-    lines.push(`  CONSTRAINT ${quoteSqlIdentifier(constraint.name)} CHECK (${constraint.expression})`)
   })
 
   return `CREATE TABLE ${formatQualifiedSqlName(table.fullName)} (\n${lines.join(',\n')}\n);`
@@ -361,8 +376,10 @@ const buildReferenceStatements = (references: PgmlReference[], warnings: Set<str
   }, [])
 }
 
-const buildIndexStatement = (table: PgmlTable, indexName: string, columns: string[], indexType: string) => {
-  return `CREATE INDEX ${quoteSqlIdentifier(indexName)} ON ${formatQualifiedSqlName(table.fullName)} USING ${indexType} (${formatSqlIdentifierList(columns)});`
+const buildIndexStatement = (table: PgmlTable, index: PgmlIndex) => {
+  const keys = getPgmlIndexKeys(index).map(formatPgmlIndexKeyForSql)
+
+  return `CREATE INDEX ${quoteSqlIdentifier(index.name)} ON ${formatQualifiedSqlName(table.fullName)} USING ${index.type || 'btree'} (${keys.join(', ')});`
 }
 
 const buildExecutableSourceStatement = (
@@ -390,19 +407,50 @@ const buildSqlStatements = (model: PgmlSchemaModel) => {
     }
   })
 
-  model.sequences.forEach((sequence) => {
-    statements.push(buildCreateSequenceStatement(sequence))
+  const sequenceStatements = model.sequences.map(sequence => buildSequenceStatements(sequence))
+  const deferTableExpressions = model.sequences.some(sequence => Boolean(sequence.source))
+
+  sequenceStatements.forEach(({ createStatement }) => {
+    if (createStatement) {
+      statements.push(createStatement)
+    }
   })
 
   model.tables.forEach((table) => {
-    statements.push(buildCreateTableStatement(table, warnings))
+    statements.push(buildCreateTableStatement(table, warnings, deferTableExpressions))
   })
+
+  sequenceStatements.forEach(({ postTableStatement }) => {
+    if (postTableStatement) {
+      statements.push(postTableStatement)
+    }
+  })
+
+  if (deferTableExpressions) {
+    model.tables.forEach((table) => {
+      table.columns.forEach((column) => {
+        const defaultValue = getColumnDefaultValue(column)
+
+        if (defaultValue) {
+          statements.push(`ALTER TABLE ${formatQualifiedSqlName(table.fullName)} ALTER COLUMN ${quoteSqlIdentifier(column.name)} SET DEFAULT ${defaultValue};`)
+        }
+      })
+
+      table.constraints.forEach((constraint) => {
+        const clause = buildTableConstraintClause(constraint)
+
+        if (clause.isCheck) {
+          statements.push(`ALTER TABLE ${formatQualifiedSqlName(table.fullName)} ADD ${clause.sql};`)
+        }
+      })
+    })
+  }
 
   buildReferenceStatements(model.references, warnings).forEach(statement => statements.push(statement))
 
   model.tables.forEach((table) => {
     table.indexes.forEach((index) => {
-      statements.push(buildIndexStatement(table, index.name, index.columns, index.type || 'btree'))
+      statements.push(buildIndexStatement(table, index))
     })
   })
 

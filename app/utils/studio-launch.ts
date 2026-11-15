@@ -153,11 +153,48 @@ export const getStudioLaunchRequestKey = (request: StudioLaunchRequest) => {
 }
 
 const getStudioLaunchSessionStorage = () => {
-  if (typeof globalThis.sessionStorage === 'undefined') {
+  try {
+    return typeof globalThis.sessionStorage === 'undefined' ? null : globalThis.sessionStorage
+  } catch {
+    return null
+  }
+}
+
+const parseStoredPreloadedFileStudioLaunch = (value: unknown): StoredPreloadedFileStudioLaunch | null => {
+  if (
+    value === null || typeof value !== 'object'
+    || !('requestKey' in value) || typeof value.requestKey !== 'string'
+    || !('payload' in value) || value.payload === null || typeof value.payload !== 'object'
+  ) {
     return null
   }
 
-  return globalThis.sessionStorage
+  const payload = value.payload
+
+  if (
+    !('text' in payload) || typeof payload.text !== 'string'
+    || !('entry' in payload) || payload.entry === null || typeof payload.entry !== 'object'
+  ) {
+    return null
+  }
+
+  const entry = payload.entry
+
+  if (
+    !('id' in entry) || typeof entry.id !== 'string'
+    || !('name' in entry) || typeof entry.name !== 'string'
+    || !('updatedAt' in entry) || typeof entry.updatedAt !== 'string'
+  ) {
+    return null
+  }
+
+  return {
+    payload: {
+      entry: { id: entry.id, name: entry.name, updatedAt: entry.updatedAt },
+      text: payload.text
+    },
+    requestKey: value.requestKey
+  }
 }
 
 export const authorizeStudioLaunchAccess = () => {
@@ -167,9 +204,12 @@ export const authorizeStudioLaunchAccess = () => {
     return false
   }
 
-  sessionStorage.setItem(studioLaunchAccessStorageKey, studioLaunchAccessGrantedValue)
-
-  return true
+  try {
+    sessionStorage.setItem(studioLaunchAccessStorageKey, studioLaunchAccessGrantedValue)
+    return true
+  } catch {
+    return false
+  }
 }
 
 export const clearStudioLaunchAccess = () => {
@@ -179,9 +219,12 @@ export const clearStudioLaunchAccess = () => {
     return false
   }
 
-  sessionStorage.removeItem(studioLaunchAccessStorageKey)
-
-  return true
+  try {
+    sessionStorage.removeItem(studioLaunchAccessStorageKey)
+    return true
+  } catch {
+    return false
+  }
 }
 
 export const hasStudioLaunchAccess = () => {
@@ -191,7 +234,11 @@ export const hasStudioLaunchAccess = () => {
     return false
   }
 
-  return sessionStorage.getItem(studioLaunchAccessStorageKey) === studioLaunchAccessGrantedValue
+  try {
+    return sessionStorage.getItem(studioLaunchAccessStorageKey) === studioLaunchAccessGrantedValue
+  } catch {
+    return false
+  }
 }
 
 export const primePreloadedFileStudioLaunch = (
@@ -209,7 +256,11 @@ export const primePreloadedFileStudioLaunch = (
     requestKey: getStudioLaunchRequestKey(request)
   }
 
-  sessionStorage.setItem(preloadedFileStudioLaunchStorageKey, JSON.stringify(storedLaunch))
+  try {
+    sessionStorage.setItem(preloadedFileStudioLaunchStorageKey, JSON.stringify(storedLaunch))
+  } catch {
+    return
+  }
 }
 
 export const consumePreloadedFileStudioLaunch = (request: FileStudioLaunchRequest) => {
@@ -219,14 +270,28 @@ export const consumePreloadedFileStudioLaunch = (request: FileStudioLaunchReques
     return null
   }
 
-  const rawValue = sessionStorage.getItem(preloadedFileStudioLaunchStorageKey)
-
-  if (!rawValue) {
-    return null
-  }
-
   try {
-    const storedLaunch = JSON.parse(rawValue) as StoredPreloadedFileStudioLaunch
+    const rawValue = sessionStorage.getItem(preloadedFileStudioLaunchStorageKey)
+
+    if (!rawValue) {
+      return null
+    }
+
+    let storedLaunch: StoredPreloadedFileStudioLaunch | null
+
+    try {
+      const parsedValue: unknown = JSON.parse(rawValue)
+
+      storedLaunch = parseStoredPreloadedFileStudioLaunch(parsedValue)
+    } catch {
+      sessionStorage.removeItem(preloadedFileStudioLaunchStorageKey)
+      return null
+    }
+
+    if (storedLaunch === null) {
+      sessionStorage.removeItem(preloadedFileStudioLaunchStorageKey)
+      return null
+    }
 
     if (storedLaunch.requestKey !== getStudioLaunchRequestKey(request)) {
       return null
@@ -234,9 +299,8 @@ export const consumePreloadedFileStudioLaunch = (request: FileStudioLaunchReques
 
     sessionStorage.removeItem(preloadedFileStudioLaunchStorageKey)
 
-    return storedLaunch.payload
+    return storedLaunch.payload.entry.id === request.recentFileId ? storedLaunch.payload : null
   } catch {
-    sessionStorage.removeItem(preloadedFileStudioLaunchStorageKey)
     return null
   }
 }

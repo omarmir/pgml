@@ -4,6 +4,27 @@ import { tokenizePgmlSource } from '../../app/utils/pgml-codemirror'
 import { validVersionedEditorSource } from './pgml-editor-fixtures'
 
 describe('PGML CodeMirror tokenization', () => {
+  it('does not reinterpret source-like text inside an opaque SQL body', () => {
+    const source = `Function public.message() returns text {
+  source: $sql$
+  SELECT $payload$
+source: $inner$
+Table fake {
+}
+$payload$;
+  $sql$
+}
+Table public.items {
+  item_id uuid
+}`
+    const tokens = tokenizePgmlSource(source)
+
+    expect(tokens).toEqual(expect.arrayContaining([
+      { value: 'source: $inner$', type: 'string' },
+      { value: 'uuid', type: 'className' }
+    ]))
+  })
+
   it('assigns a dedicated token type to column types without recoloring the column name', () => {
     const source = `Table public.users {
   id uuid [pk]

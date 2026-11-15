@@ -22,6 +22,8 @@ import {
   getPgmlDiagnostics
 } from './pgml-language'
 
+type PgmlLinePhase = { kind: 'ordinary' | 'declaration' } | { kind: 'column-row', next: 'identifier' | 'type' | 'rest' }
+
 type PgmlStreamState = {
   // The current innermost block drives contextual styling such as column type
   // highlighting inside tables and composites.
@@ -30,9 +32,7 @@ type PgmlStreamState = {
   // manually to keep token decisions aligned with nested PGML blocks.
   blockStack: string[]
   // Table-like rows need different styling for identifier vs type positions.
-  lineIdentifierIndex: number
-  lineAllowsColumnTypeHighlight: boolean
-  lineIsBlockDeclaration: boolean
+  linePhase: PgmlLinePhase
   lastNamedTokenType: string | null
   // Property-aware tokens such as `base`, `based_on`, and `parent` influence
   // how the next identifier should be colored.
@@ -278,9 +278,7 @@ const syncPgmlLineState = (lineText: string, state: PgmlStreamState) => {
   }
 
   state.blockKind = state.blockStack[state.blockStack.length - 1] || null
-  state.lineIdentifierIndex = 0
-  state.lineAllowsColumnTypeHighlight = allowsColumnTypeHighlight(state.blockKind)
-  state.lineIsBlockDeclaration = false
+  state.linePhase = allowsColumnTypeHighlight(state.blockKind) ? { kind: 'column-row', next: 'identifier' } : { kind: 'ordinary' }
   state.lastNamedTokenType = null
   state.lastPropertyName = null
 
@@ -294,27 +292,28 @@ const syncPgmlLineState = (lineText: string, state: PgmlStreamState) => {
 
     state.blockStack.push(contextualBlockKind)
     state.blockKind = contextualBlockKind
-    state.lineAllowsColumnTypeHighlight = false
-    state.lineIsBlockDeclaration = true
+    state.linePhase = { kind: 'declaration' }
   }
 }
 
 const readPgmlToken = (stream: StringStream, state: PgmlStreamState) => {
   if (stream.sol()) {
+    if (state.sourceDelimiter) {
+      stream.skipToEnd()
+
+      if (stream.string.includes(state.sourceDelimiter)) {
+        state.sourceDelimiter = null
+      }
+
+      return 'string'
+    }
+
     syncPgmlLineState(stream.string, state)
 
     const delimiter = findSourceDelimiter(stream.string.trim())
 
     if (delimiter !== null && delimiter.length > 0) {
       state.sourceDelimiter = delimiter
-    }
-
-    // Source blocks are treated as opaque string content until their matching
-    // delimiter closes, so SQL bodies do not confuse the PGML tokenizer.
-    if (state.sourceDelimiter && stream.string.includes(state.sourceDelimiter) && !stream.string.trim().startsWith('source:') && !stream.string.trim().startsWith('definition:')) {
-      stream.skipToEnd()
-      state.sourceDelimiter = null
-      return 'string'
     }
   }
 
@@ -347,14 +346,14 @@ const readPgmlToken = (stream: StringStream, state: PgmlStreamState) => {
     // VersionSet / Workspace / Version / Snapshot now share the same block
     // keyword path as classic PGML blocks so scoped document views highlight
     // exactly like the full raw editor.
-    state.lineAllowsColumnTypeHighlight = false
+    if (state.linePhase.kind === 'column-row') state.linePhase = { kind: 'ordinary' }
     state.lastNamedTokenType = 'keyword'
     state.lastPropertyName = null
     return 'keyword'
   }
 
   if (stream.match(pgmlNestedKeywordPattern)) {
-    state.lineAllowsColumnTypeHighlight = false
+    if (state.linePhase.kind === 'column-row') state.linePhase = { kind: 'ordinary' }
     state.lastNamedTokenType = 'keyword'
     state.lastPropertyName = null
     return 'keyword'
@@ -386,21 +385,21 @@ const readPgmlToken = (stream: StringStream, state: PgmlStreamState) => {
   }
 
   if (stream.match(/[A-Za-z_][A-Za-z0-9_]*/)) {
-    if (state.lineAllowsColumnTypeHighlight && state.lineIdentifierIndex === 0) {
-      state.lineIdentifierIndex += 1
+    if (state.linePhase.kind === 'column-row' && state.linePhase.next === 'identifier') {
+      state.linePhase = { kind: 'column-row', next: 'type' }
       state.lastNamedTokenType = 'variableName'
       state.lastPropertyName = null
       return 'variableName'
     }
 
-    if (state.lineAllowsColumnTypeHighlight && state.lineIdentifierIndex === 1) {
-      state.lineIdentifierIndex += 1
+    if (state.linePhase.kind === 'column-row' && state.linePhase.next === 'type') {
+      state.linePhase = { kind: 'column-row', next: 'rest' }
       state.lastNamedTokenType = 'className'
       state.lastPropertyName = null
       return 'className'
     }
 
-    if (state.lineIsBlockDeclaration && (state.blockKind === 'Enum' || state.blockKind === 'Domain')) {
+    if (state.linePhase.kind === 'declaration' && (state.blockKind === 'Enum' || state.blockKind === 'Domain')) {
       state.lastNamedTokenType = 'typeName'
       state.lastPropertyName = null
       return 'typeName'
@@ -432,9 +431,7 @@ export const tokenizePgmlSource = (source: string) => {
   const state: PgmlStreamState = {
     blockKind: null,
     blockStack: [],
-    lineIdentifierIndex: 0,
-    lineAllowsColumnTypeHighlight: false,
-    lineIsBlockDeclaration: false,
+    linePhase: { kind: 'ordinary' },
     lastNamedTokenType: null,
     lastPropertyName: null,
     sourceDelimiter: null
@@ -465,9 +462,7 @@ const pgmlStreamParser = StreamLanguage.define<PgmlStreamState>({
   startState: () => ({
     blockKind: null,
     blockStack: [],
-    lineIdentifierIndex: 0,
-    lineAllowsColumnTypeHighlight: false,
-    lineIsBlockDeclaration: false,
+    linePhase: { kind: 'ordinary' },
     lastNamedTokenType: null,
     lastPropertyName: null,
     sourceDelimiter: null
@@ -476,9 +471,7 @@ const pgmlStreamParser = StreamLanguage.define<PgmlStreamState>({
   copyState: state => ({
     blockKind: state.blockKind,
     blockStack: [...state.blockStack],
-    lineIdentifierIndex: state.lineIdentifierIndex,
-    lineAllowsColumnTypeHighlight: state.lineAllowsColumnTypeHighlight,
-    lineIsBlockDeclaration: state.lineIsBlockDeclaration,
+    linePhase: { ...state.linePhase },
     lastNamedTokenType: state.lastNamedTokenType,
     lastPropertyName: state.lastPropertyName,
     sourceDelimiter: state.sourceDelimiter

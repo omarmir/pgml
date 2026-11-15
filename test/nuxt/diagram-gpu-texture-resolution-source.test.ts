@@ -14,7 +14,7 @@ describe('diagram GPU texture resolution source', () => {
     expect(sceneFile).toContain('const diagramTextureResolutionStep = 0.125')
     expect(sceneFile).toContain('let maxSpriteTextureDimension = diagramFallbackMaxTextureDimension')
     expect(sceneFile).toContain('const getRendererMaxTextureDimension = () => {')
-    expect(sceneFile).toContain('const renderer = app.renderer as PixiWebGLRenderer | PixiWebGPURenderer')
+    expect(sceneFile).toContain('const renderer = scene.app.renderer as PixiWebGLRenderer | PixiWebGPURenderer')
     expect(sceneFile).toContain('renderer.gl.getParameter(renderer.gl.MAX_TEXTURE_SIZE)')
     expect(sceneFile).toContain('renderer.gpu?.device?.limits?.maxTextureDimension2D')
     expect(sceneFile).toContain('const syncMaxSpriteTextureDimension = () => {')

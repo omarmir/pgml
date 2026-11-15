@@ -10,11 +10,12 @@ import {
   clonePgmlCompareExclusions,
   clonePgmlCompareNotes,
   clonePgmlCompareNoiseFilters,
-  type PgmlCompareExclusions,
+  type PgmlCompareExclusionsInput,
   type PgmlCompareEntityKind,
   type PgmlCompareNote,
   type PgmlCompareNoiseFilters,
   type PgmlCustomType,
+  type PgmlIndex,
   type PgmlRoutine,
   type PgmlSchemaModel,
   type PgmlSourceRange
@@ -25,6 +26,7 @@ import type {
   PgmlSchemaDiff
 } from './pgml-diff'
 import { normalizeImportedQualifiedName } from './pgml-import-normalization'
+import { formatPgmlIndexKeyForSource, getPgmlIndexKeys } from './pgml-index-keys'
 
 export type PgmlDiagramCompareEntityKind = PgmlCompareEntityKind
 
@@ -417,6 +419,19 @@ const formatCompareSnapshot = (value: unknown) => {
   }
 
   return JSON.stringify(buildStableSnapshotValue(value), null, 2)
+}
+
+const buildIndexCompareValue = (index: PgmlIndex | undefined) => {
+  if (!index) {
+    return null
+  }
+
+  return {
+    columns: getPgmlIndexKeys(index).map(formatPgmlIndexKeyForSource),
+    name: index.name,
+    tableName: index.tableName,
+    type: index.type
+  }
 }
 
 const formatFieldValue = (value: unknown) => {
@@ -1017,7 +1032,7 @@ export const getPgmlDiagramCompareChangeColor = (kind: PgmlDiffChangeKind) => {
 
 export const filterPgmlDiagramCompareEntriesForExclusions = (
   entries: PgmlDiagramCompareEntry[],
-  exclusions?: Partial<PgmlCompareExclusions> | null
+  exclusions?: PgmlCompareExclusionsInput | null
 ) => {
   const excludedEntityIds = new Set(clonePgmlCompareExclusions(exclusions).entityIds)
 
@@ -1201,23 +1216,25 @@ export const buildPgmlDiagramCompareEntries = (
       const tableId = entry.after?.tableId || entry.before?.tableId || null
       const attachmentId = entry.after?.index.name || entry.before?.index.name || null
       const targetTable = findTableById(targetModel, tableId)
+      const beforeValue = buildIndexCompareValue(entry.before?.index)
+      const afterValue = buildIndexCompareValue(entry.after?.index)
 
       return {
-        afterSnapshot: formatCompareSnapshot(entry.after?.index),
+        afterSnapshot: formatCompareSnapshot(afterValue),
         baseNodeIds: buildNodeIds(entry.before?.tableId),
-        beforeSnapshot: formatCompareSnapshot(entry.before?.index),
+        beforeSnapshot: formatCompareSnapshot(beforeValue),
         changeKind: entry.kind,
         changedFields: entry.changes || [],
         description: buildEntryDescription(
           entry.kind,
           'index',
           entry.label,
-          entry.before?.index || null,
-          entry.after?.index || null,
+          beforeValue,
+          afterValue,
           entry.changes || []
         ),
         entityKind: 'index',
-        fields: buildFieldRecords(entry.before?.index || null, entry.after?.index || null, entry.changes || []),
+        fields: buildFieldRecords(beforeValue, afterValue, entry.changes || []),
         id: `index:${entry.id}`,
         label: entry.label,
         rowKey: entry.after && attachmentId ? `index:${attachmentId}` : null,
@@ -1240,8 +1257,8 @@ export const buildPgmlDiagramCompareEntries = (
     },
     entries: diff.indexes,
     getNoiseComparisonValues: entry => ({
-      after: entry.after?.index || null,
-      before: entry.before?.index || null
+      after: buildIndexCompareValue(entry.after?.index),
+      before: buildIndexCompareValue(entry.before?.index)
     })
   }))
 

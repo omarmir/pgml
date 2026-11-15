@@ -1,3 +1,4 @@
+import { enableAutoUnmount } from '@vue/test-utils'
 import { mountSuspended } from '@nuxt/test-utils/runtime'
 import { defineComponent, type Ref } from 'vue'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -35,6 +36,8 @@ const installLocalStorage = () => {
   return localStorage
 }
 
+enableAutoUnmount(afterEach)
+
 describe('usePgmlStudioSchemas', () => {
   beforeEach(() => {
     installLocalStorage().clear()
@@ -43,6 +46,29 @@ describe('usePgmlStudioSchemas', () => {
 
   afterEach(() => {
     vi.useRealTimers()
+  })
+
+  it('resumes dirty autosave when a document load cancels without changing the existing source', async () => {
+    const source = ref('original')
+    let api!: ReturnType<typeof usePgmlStudioSchemas>
+    const wrapper = await mountSuspended(defineComponent({ setup() {
+      api = usePgmlStudioSchemas({ source, initialSource: '', buildSchemaText: () => source.value, canEmbedLayout: computed(() => true), restoreLatestOnSetup: false })
+      return () => null
+    } }))
+    await api.saveSchemaToBrowser()
+    vi.useFakeTimers()
+    source.value = 'dirty source'
+    await nextTick()
+    const store = useStudioSessionStore()
+    const intent = store.beginWorkspaceLoad('file')
+    await vi.advanceTimersByTimeAsync(6000)
+    expect(window.localStorage.getItem('pgml-studio-schemas-v1')).not.toContain('dirty source')
+    store.cancelWorkspaceLoad(intent)
+    await nextTick()
+    await vi.advanceTimersByTimeAsync(6000)
+    expect(window.localStorage.getItem('pgml-studio-schemas-v1')).toContain('dirty source')
+    expect(api.hasPendingLocalChanges.value).toBe(false)
+    wrapper.unmount()
   })
 
   it('reads saved schemas, lets the save dialog target an existing item, and overwrites it', async () => {
@@ -135,7 +161,7 @@ describe('usePgmlStudioSchemas', () => {
     expect(api.currentSchemaName.value).toBe(activeSchema.name)
 
     if (action === 'cancel') {
-      api.schemaDialogOpen.value = false
+      api.closeSchemaDialog()
       await vi.advanceTimersByTimeAsync(5000)
 
       const targetAfterCancel = api.orderedSavedSchemas.value.find(schema => schema.id === overwriteTarget.id)
@@ -262,7 +288,7 @@ describe('usePgmlStudioSchemas', () => {
     }))
 
     api.openSchemaDialog('save')
-    api.schemaDialogName.value = 'Primary schema'
+    api.updateSchemaDialogName('Primary schema')
     await expect(api.saveSchemaToBrowser()).resolves.toBe(true)
 
     const savedSchema = api.orderedSavedSchemas.value[0]

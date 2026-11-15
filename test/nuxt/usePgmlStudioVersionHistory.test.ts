@@ -1,5 +1,5 @@
 import { mountSuspended } from '@nuxt/test-utils/runtime'
-import { defineComponent } from 'vue'
+import { defineComponent, isReadonly } from 'vue'
 import { beforeEach, describe, expect, it } from 'vitest'
 
 import {
@@ -93,6 +93,40 @@ const createSerializedImplementationDocument = (workspaceSource = importedWorksp
 describe('usePgmlStudioVersionHistory', () => {
   beforeEach(() => {
     resetStudioWorkspaceState()
+  })
+
+  it('changes editor mode through its explicit transition and exposes readonly selections', async () => {
+    const { api } = await mountVersionHistoryComposable()
+    expect(isReadonly(api.editorMode)).toBe(true)
+    expect(isReadonly(api.compareExclusions.value)).toBe(true)
+    api.setEditorMode('document')
+    expect(api.editorMode.value).toBe('document')
+    api.setEditorMode('head')
+    expect(api.editorMode.value).toBe('head')
+  })
+
+  it('initializes history when session storage access is denied', async () => {
+    const descriptor = Object.getOwnPropertyDescriptor(globalThis, 'sessionStorage')
+
+    Object.defineProperty(globalThis, 'sessionStorage', {
+      configurable: true,
+      get: () => {
+        throw new DOMException('Storage disabled', 'SecurityError')
+      }
+    })
+
+    try {
+      const { api } = await mountVersionHistoryComposable()
+
+      expect(api.selectedComparisonId.value).toBeNull()
+      expect(createDesignCheckpoint(api).name).toBe('Initial design')
+    } finally {
+      if (descriptor) {
+        Object.defineProperty(globalThis, 'sessionStorage', descriptor)
+      } else {
+        Reflect.deleteProperty(globalThis, 'sessionStorage')
+      }
+    }
   })
 
   it('normalizes malformed workspace indentation when the history composable boots', async () => {

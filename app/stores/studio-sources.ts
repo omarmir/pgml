@@ -1,6 +1,7 @@
 import { nanoid } from 'nanoid'
-import { ref, type Ref } from 'vue'
+import { computed, ref, shallowRef, type Ref } from 'vue'
 import { defineStore } from 'pinia'
+import { useAsyncOperation } from '../composables/useAsyncOperation'
 import { useStudioSessionStore } from './studio-session'
 import type { PgmlRecentComputerFile } from '../utils/computer-files'
 import {
@@ -51,52 +52,64 @@ const orderGithubGistFiles = (files: PgmlGistFile[]) => {
   return [...files].sort((left, right) => left.filename.localeCompare(right.filename))
 }
 
+type GistConnectionState = { kind: 'disconnected' } | { kind: 'remembered', metadata: PgmlGistConnectionMetadata } | { kind: 'connected', metadata: PgmlGistConnectionMetadata, token: string }
+type SourceFeedback = { kind: 'idle' } | { kind: 'failed', message: string }
+
 export const useStudioSourcesStore = defineStore('studio-sources', () => {
   const studioSessionStore = useStudioSessionStore()
   const browserSchemas: Ref<SavedPgmlSchema[]> = ref([])
-  const browserSchemasError: Ref<string | null> = ref(null)
-  const githubGistConnection: Ref<PgmlGistConnectionMetadata | null> = ref(readPgmlGistConnectionMetadata())
-  const githubGistError: Ref<string | null> = ref(null)
+  const browserFeedback: Ref<SourceFeedback> = shallowRef({ kind: 'idle' })
+  const browserSchemasError = computed(() => browserFeedback.value.kind === 'failed' ? browserFeedback.value.message : null)
+  const rememberedConnection = readPgmlGistConnectionMetadata()
+  const gistConnectionState: Ref<GistConnectionState> = shallowRef(rememberedConnection === null ? { kind: 'disconnected' } : { kind: 'remembered', metadata: rememberedConnection })
+  const githubGistConnection = computed(() => gistConnectionState.value.kind === 'disconnected' ? null : gistConnectionState.value.metadata)
+  const gistFeedback: Ref<SourceFeedback> = shallowRef({ kind: 'idle' })
+  const githubGistError = computed(() => gistFeedback.value.kind === 'failed' ? gistFeedback.value.message : null)
+  const setGistError = (message: string | null) => {
+    gistFeedback.value = message === null ? { kind: 'idle' } : { kind: 'failed', message }
+  }
+  let gistActionRevision = 0
+  let connectionRevision = 0
+  const gistConnectOperation = useAsyncOperation()
+  const gistLoadOperation = useAsyncOperation()
   const githubGistFiles: Ref<PgmlGistFile[]> = ref([])
-  const githubGistToken: Ref<string | null> = ref(null)
-  const isRefreshingBrowserSchemas: Ref<boolean> = ref(false)
-  const isRefreshingGithubGistFiles: Ref<boolean> = ref(false)
-  const isRefreshingRecentComputerFiles: Ref<boolean> = ref(false)
+  const githubGistToken = computed(() => gistConnectionState.value.kind === 'connected' ? gistConnectionState.value.token : null)
+  const isRefreshingBrowserSchemas = computed(() => false)
+  const gistRefreshOperation = useAsyncOperation()
+  const isRefreshingGithubGistFiles = gistRefreshOperation.pending
+  const recentFilesOperation = useAsyncOperation()
+  const isRefreshingRecentComputerFiles = recentFilesOperation.pending
   const recentComputerFiles: Ref<PgmlRecentComputerFile[]> = ref([])
-  const recentComputerFilesError: Ref<string | null> = ref(null)
+  const recentComputerFilesError = recentFilesOperation.error
 
   const refreshBrowserSchemas = () => {
-    isRefreshingBrowserSchemas.value = true
-
     try {
       browserSchemas.value = readSavedPgmlSchemasFromBrowserStorage()
-      browserSchemasError.value = null
+      browserFeedback.value = { kind: 'idle' }
 
       return browserSchemas.value
     } catch {
-      browserSchemasError.value = browserSchemaRefreshErrorMessage
+      browserFeedback.value = { kind: 'failed', message: browserSchemaRefreshErrorMessage }
 
       return browserSchemas.value
-    } finally {
-      isRefreshingBrowserSchemas.value = false
     }
   }
 
   const persistBrowserSchemas = (schemas: SavedPgmlSchema[]) => {
     if (studioSessionStore.currentSourceKind !== 'browser') {
-      browserSchemasError.value = browserSchemaSaveErrorMessage
+      browserFeedback.value = { kind: 'failed', message: browserSchemaSaveErrorMessage }
       return false
     }
 
     const nextSchemas = orderSavedSchemas(schemas)
 
     if (!persistSavedPgmlSchemasToBrowserStorage(nextSchemas)) {
-      browserSchemasError.value = browserSchemaSaveErrorMessage
+      browserFeedback.value = { kind: 'failed', message: browserSchemaSaveErrorMessage }
       return false
     }
 
     browserSchemas.value = nextSchemas
-    browserSchemasError.value = null
+    browserFeedback.value = { kind: 'idle' }
 
     return true
   }
@@ -110,7 +123,7 @@ export const useStudioSourcesStore = defineStore('studio-sources', () => {
     text: string
   }) => {
     if (studioSessionStore.currentSourceKind !== 'browser') {
-      browserSchemasError.value = browserSchemaSaveErrorMessage
+      browserFeedback.value = { kind: 'failed', message: browserSchemaSaveErrorMessage }
       return null
     }
 
@@ -129,28 +142,21 @@ export const useStudioSourcesStore = defineStore('studio-sources', () => {
   }
 
   const refreshRecentComputerFiles = async () => {
-    isRefreshingRecentComputerFiles.value = true
-
-    try {
-      recentComputerFiles.value = await listRecentComputerPgmlFiles()
-      recentComputerFilesError.value = null
-
-      return recentComputerFiles.value
-    } catch (error) {
-      recentComputerFilesError.value = getActionErrorMessage(error, recentComputerFilesRefreshErrorMessage)
-
-      return recentComputerFiles.value
-    } finally {
-      isRefreshingRecentComputerFiles.value = false
-    }
+    await recentFilesOperation.run({
+      task: listRecentComputerPgmlFiles,
+      apply: (files) => { recentComputerFiles.value = files },
+      onError: error => getActionErrorMessage(error, recentComputerFilesRefreshErrorMessage)
+    })
+    return recentComputerFiles.value
   }
 
   const deleteRecentComputerFile = async (recentFileId: string) => {
+    recentFilesOperation.invalidate()
     try {
       const didDelete = await deleteRecentComputerPgmlFile(recentFileId)
 
       if (!didDelete) {
-        recentComputerFilesError.value = recentComputerFileDeleteErrorMessage
+        recentFilesOperation.fail(recentComputerFileDeleteErrorMessage)
 
         return false
       }
@@ -158,125 +164,107 @@ export const useStudioSourcesStore = defineStore('studio-sources', () => {
       recentComputerFiles.value = recentComputerFiles.value.filter((file) => {
         return file.id !== recentFileId
       })
-      recentComputerFilesError.value = null
+      recentFilesOperation.invalidate()
 
       return true
     } catch (error) {
-      recentComputerFilesError.value = getActionErrorMessage(error, recentComputerFileDeleteErrorMessage)
+      recentFilesOperation.fail(getActionErrorMessage(error, recentComputerFileDeleteErrorMessage))
 
       return false
     }
   }
 
-  const hasGithubGistToken = () => {
-    return githubGistToken.value !== null && githubGistToken.value.trim().length > 0
-  }
-
-  const connectGithubGist = async (input: {
-    gistId: string
-    token: string
-  }) => {
-    try {
-      const files = await loadPgmlGistFiles({
-        gistId: input.gistId,
-        token: input.token
-      })
-      const metadata = createPgmlGistConnectionMetadata({
-        gistId: input.gistId,
-        selectedFilename: files[0]?.filename || null
-      })
-
-      if (!persistPgmlGistConnectionMetadata(metadata)) {
-        githubGistError.value = githubGistSaveErrorMessage
-        return false
-      }
-
-      githubGistConnection.value = metadata
-      githubGistFiles.value = files
-      githubGistToken.value = input.token
-      githubGistError.value = null
-
-      return true
-    } catch (error) {
-      githubGistError.value = getActionErrorMessage(error, githubGistConnectErrorMessage)
-
-      return false
+  const connectGithubGist = async (input: { gistId: string, token: string }) => {
+    const actionId = ++gistActionRevision
+    const result = await gistConnectOperation.run({
+      task: () => loadPgmlGistFiles({ gistId: input.gistId, token: input.token }),
+      apply: (files) => {
+        const metadata = createPgmlGistConnectionMetadata({ gistId: input.gistId, selectedFilename: files[0]?.filename ?? null })
+        if (!persistPgmlGistConnectionMetadata(metadata)) throw new Error(githubGistSaveErrorMessage)
+        connectionRevision += 1
+        gistRefreshOperation.invalidate()
+        gistLoadOperation.invalidate()
+        gistConnectionState.value = { kind: 'connected', metadata, token: input.token }
+        githubGistFiles.value = files
+      },
+      onError: error => getActionErrorMessage(error, githubGistConnectErrorMessage)
+    })
+    if (actionId === gistActionRevision) {
+      if (result.kind === 'applied') setGistError(null)
+      if (result.kind === 'failed') setGistError(gistConnectOperation.error.value)
     }
+    return result.kind === 'applied'
   }
 
   const refreshGithubGistFiles = async () => {
-    if (!githubGistConnection.value || !hasGithubGistToken()) {
-      return githubGistFiles.value
+    const connection = githubGistConnection.value
+    const token = githubGistToken.value
+    if (connection === null || token === null || token.trim().length === 0) return githubGistFiles.value
+    const actionId = ++gistActionRevision
+    const result = await gistRefreshOperation.run({
+      task: () => loadPgmlGistFiles({ gistId: connection.gistId, token }),
+      apply: (files) => { githubGistFiles.value = files },
+      onError: error => getActionErrorMessage(error, githubGistRefreshErrorMessage)
+    })
+    if (actionId === gistActionRevision) {
+      if (result.kind === 'applied') setGistError(null)
+      if (result.kind === 'failed') setGistError(gistRefreshOperation.error.value)
     }
-
-    isRefreshingGithubGistFiles.value = true
-
-    try {
-      githubGistFiles.value = await loadPgmlGistFiles({
-        gistId: githubGistConnection.value.gistId,
-        token: githubGistToken.value || ''
-      })
-      githubGistError.value = null
-
-      return githubGistFiles.value
-    } catch (error) {
-      githubGistError.value = getActionErrorMessage(error, githubGistRefreshErrorMessage)
-
-      return githubGistFiles.value
-    } finally {
-      isRefreshingGithubGistFiles.value = false
-    }
+    return githubGistFiles.value
   }
 
   const loadGithubGistPgmlFile = async (filename: string) => {
-    if (!githubGistConnection.value || !hasGithubGistToken()) {
-      githubGistError.value = githubGistMissingTokenErrorMessage
+    const connection = gistConnectionState.value
+    if (connection.kind !== 'connected') {
+      setGistError(githubGistMissingTokenErrorMessage)
       return null
     }
-
-    try {
-      const loadedFile = await loadPgmlGistFile({
-        filename,
-        gistId: githubGistConnection.value.gistId,
-        token: githubGistToken.value || ''
-      })
-
-      githubGistError.value = null
-
-      return loadedFile
-    } catch (error) {
-      githubGistError.value = getActionErrorMessage(error, githubGistRefreshErrorMessage)
-
-      return null
+    const actionId = ++gistActionRevision
+    const result = await gistLoadOperation.run({
+      task: () => loadPgmlGistFile({ filename, gistId: connection.metadata.gistId, token: connection.token }),
+      apply: () => {},
+      onError: error => getActionErrorMessage(error, githubGistRefreshErrorMessage)
+    })
+    if (actionId === gistActionRevision) {
+      if (result.kind === 'applied') setGistError(null)
+      if (result.kind === 'failed') setGistError(gistLoadOperation.error.value)
     }
+    return result.kind === 'applied' ? result.value : null
   }
 
   const saveGithubGistPgmlFile = async (input: {
+    gistId: string
     filename: string
     text: string
   }) => {
-    if (!githubGistConnection.value || !hasGithubGistToken()) {
-      githubGistError.value = githubGistMissingTokenErrorMessage
+    const connection = githubGistConnection.value
+    const token = githubGistToken.value
+    if (connection === null || token === null || token.trim().length === 0 || connection.gistId !== input.gistId) {
+      setGistError(githubGistMissingTokenErrorMessage)
       return null
     }
 
+    const actionId = ++gistActionRevision
+    const revision = connectionRevision
     try {
       const savedFile = await savePgmlGistFile({
         filename: input.filename,
-        gistId: githubGistConnection.value.gistId,
+        gistId: input.gistId,
         text: input.text,
-        token: githubGistToken.value || ''
+        token
       })
 
+      if (revision !== connectionRevision) return savedFile
+      gistRefreshOperation.invalidate()
       githubGistFiles.value = orderGithubGistFiles([
         savedFile,
         ...githubGistFiles.value.filter(file => file.filename !== savedFile.filename)
       ])
-      githubGistError.value = null
+      if (actionId === gistActionRevision) setGistError(null)
 
       return savedFile
     } catch (error) {
-      githubGistError.value = getActionErrorMessage(error, githubGistSaveErrorMessage)
+      if (actionId === gistActionRevision && revision === connectionRevision) setGistError(getActionErrorMessage(error, githubGistSaveErrorMessage))
 
       return null
     }
@@ -291,7 +279,12 @@ export const useStudioSourcesStore = defineStore('studio-sources', () => {
       name: normalizeSchemaName(input.name)
     })
 
+    if (githubGistConnection.value === null) {
+      setGistError(githubGistMissingTokenErrorMessage)
+      return null
+    }
     return await saveGithubGistPgmlFile({
+      gistId: githubGistConnection.value.gistId,
       filename,
       text: input.text
     })

@@ -7,9 +7,7 @@ describe('diagram compare exclusions source', () => {
     const entityKindOrderBlock = pageFile.match(/const compareExclusionEntityKindOrder: PgmlDiagramCompareEntityKind\[] = \[[\s\S]*?\]/)?.[0] || ''
     const exclusionOptionsBlock = pageFile.match(/data-compare-exclusion-options="true"[\s\S]*?data-compare-exclusion-schemas-section="true"/)?.[0] || ''
 
-    expect(pageFile).toContain('const compareExclusionsTypeFilter: Ref<CompareExclusionTypeFilterValue> = ref(\'all\')')
     expect(pageFile).toContain('const compareExclusionTypeFilterItems = computed<CompareExclusionTypeFilterItem[]>(() => {')
-    expect(pageFile).toContain('const setCompareExclusionsTypeFilter = (value: CompareExclusionTypeFilterValue) => {')
     expect(pageFile).toContain('const isCompareExclusionsTypeFilterActive = (value: CompareExclusionTypeFilterValue) => {')
     expect(pageFile).toContain('data-compare-exclusion-schemas-section="true"')
     expect(pageFile).toContain('data-compare-exclusion-schema-section="section.schemaOption.value"')
@@ -24,7 +22,7 @@ describe('diagram compare exclusions source', () => {
     expect(pageFile).toContain('data-compare-exclusion-entity-section="section.entityKind"')
     expect(pageFile).toContain('data-compare-exclusion-option="option.id"')
     expect(pageFile).toContain('clonePgmlCompareExclusions(activeCompareExclusions.value)')
-    expect(pageFile).toContain('setCurrentCompareExclusions(compareExclusionsDraft.value)')
+    expect(pageFile).toContain('setCurrentCompareExclusions(draft.exclusions)')
     expect(pageFile).toContain('const filteredCompareExclusionGroupSections = computed(() => {')
     expect(pageFile).toContain('const filteredCompareExclusionSchemaSections = computed(() => {')
     expect(pageFile).toContain('const filteredCompareExclusionUngroupedTableOptions = computed(() => {')

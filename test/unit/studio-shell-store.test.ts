@@ -10,8 +10,9 @@ describe('studio shell store', () => {
 
   it('stores and clears header action state', () => {
     const store = useStudioShellStore()
+    const publisher = store.acquireWorkspaceChrome()
 
-    store.setHeaderActions({
+    publisher.setHeaderActions({
       isLoading: true,
       menus: [{
         icon: 'i-lucide-file-stack',
@@ -27,7 +28,7 @@ describe('studio shell store', () => {
     expect(store.headerMenus[0]?.label).toBe('Schema')
     expect(store.headerMenus[0]?.items[0]?.[0]?.label).toBe('Save schema')
 
-    store.clearHeaderActions()
+    publisher.clearHeaderActions()
 
     expect(store.isHeaderLoading).toBe(false)
     expect(store.headerMenus).toEqual([])
@@ -35,9 +36,10 @@ describe('studio shell store', () => {
 
   it('stores and clears schema status state', () => {
     const store = useStudioShellStore()
+    const publisher = store.acquireWorkspaceChrome()
     const onSelect = vi.fn()
 
-    store.setSchemaStatus({
+    publisher.setSchemaStatus({
       action: {
         disabled: false,
         icon: 'i-lucide-save',
@@ -61,7 +63,7 @@ describe('studio shell store', () => {
 
     expect(onSelect).toHaveBeenCalledOnce()
 
-    store.clearSchemaStatus()
+    publisher.clearSchemaStatus()
 
     expect(store.schemaStatusAction).toBe(null)
     expect(store.schemaStatusDetail).toBe('')
@@ -69,4 +71,27 @@ describe('studio shell store', () => {
     expect(store.schemaStatusSaveState).toBe('pending')
     expect(store.schemaStatusVisible).toBe(false)
   })
+})
+
+it('only the current workspace lease publishes or clears chrome, including late old release', () => {
+  setActivePinia(createPinia())
+  const store = useStudioShellStore()
+  const old = store.acquireWorkspaceChrome()
+  old.setHeaderActions({ isLoading: true, menus: [{ id: 'old', label: 'Old', icon: '', items: [] }] })
+  const current = store.acquireWorkspaceChrome()
+  current.setHeaderActions({ isLoading: false, menus: [{ id: 'current', label: 'Current', icon: '', items: [] }] })
+  current.setSchemaStatus({ action: null, detail: 'Current saved', name: 'Current', saveState: 'saved', visible: true })
+  old.setHeaderActions({ isLoading: true, menus: [] })
+  old.setSchemaStatus({ action: null, detail: 'Old failed', name: 'Old', saveState: 'error', visible: true })
+  old.clearHeaderActions()
+  old.clearSchemaStatus()
+  old.release()
+  expect(store.headerMenus[0]?.id).toBe('current')
+  expect(store.schemaStatusName).toBe('Current')
+  expect(store.schemaStatusSaveState).toBe('saved')
+  current.release()
+  expect(store.headerMenus).toEqual([])
+  expect(store.schemaStatusVisible).toBe(false)
+  current.setHeaderActions({ isLoading: true, menus: [] })
+  expect(store.isHeaderLoading).toBe(false)
 })

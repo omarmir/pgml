@@ -1,3 +1,5 @@
+export type DiagramExportRequest = { format: 'svg' } | { format: 'png', scaleFactor: number }
+
 export type DiagramPanelTab = 'inspector' | 'entities' | 'export'
 
 export type DiagramToolPanelTab = 'compare' | 'migrations' | 'versions'

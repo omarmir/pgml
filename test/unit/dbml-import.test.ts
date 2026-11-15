@@ -4,6 +4,76 @@ import { convertDbmlToPgml, deriveDbmlSchemaName } from '../../app/utils/dbml-im
 import { parsePgml } from '../../app/utils/pgml'
 
 describe('DBML import utilities', () => {
+  it('keeps comment-derived indexes with their table after nested blocks', () => {
+    const result = convertDbmlToPgml({
+      dbml: `Table first_items {
+  id integer
+  Indexes {
+    id [name: existing_lookup]
+  }
+}
+Table second_items {
+  id integer
+}
+/*
+CREATE INDEX first_lookup ON first_items USING btree (id);
+CREATE INDEX second_lookup ON second_items USING btree (id);
+*/`,
+      parseExecutableComments: true
+    })
+    const model = parsePgml(result.pgml)
+
+    expect(model.tables[0]?.indexes.map(index => index.name)).toEqual(['existing_lookup', 'first_lookup'])
+    expect(model.tables[1]?.indexes.map(index => index.name)).toEqual(['second_lookup'])
+  })
+
+  it('resets serial-column table ownership after nested table content', () => {
+    const result = convertDbmlToPgml({
+      dbml: `Table first_items {
+  id serial [pk]
+  Indexes {
+    id [unique]
+  }
+}
+Table second_items {
+  id bigserial [pk]
+}`
+    })
+    const model = parsePgml(result.pgml)
+
+    expect(model.tables.map(table => table.columns[0]?.type)).toEqual(['integer', 'bigint'])
+    expect(model.sequences.map(sequence => ({
+      name: sequence.name,
+      owner: sequence.metadata.find(entry => entry.key === 'owned_by')?.value
+    }))).toEqual([
+      { name: 'public.first_items_id_seq', owner: 'public.first_items.id' },
+      { name: 'public.second_items_id_seq', owner: 'public.second_items.id' }
+    ])
+  })
+
+  it('keeps statement delimiters inside executable comment dollar bodies', () => {
+    const result = convertDbmlToPgml({
+      dbml: `Table items {
+  id integer
+}
+/*
+CREATE FUNCTION public.item_notice() RETURNS trigger AS $fn$
+BEGIN
+  RAISE NOTICE 'value;--literal';
+  RETURN NEW;
+END;
+$fn$ LANGUAGE plpgsql;
+*/`,
+      parseExecutableComments: true
+    })
+    const model = parsePgml(result.pgml)
+
+    expect(model.functions).toHaveLength(1)
+    expect(model.functions[0]?.source).toContain('RAISE NOTICE \'value;--literal\';')
+    expect(model.functions[0]?.source).toContain('RETURN NEW;')
+    expect(model.tables[0]?.fullName).toBe('public.items')
+  })
+
   it('converts DBML-like schema blocks into importable PGML and strips Project metadata', () => {
     const result = convertDbmlToPgml({
       dbml: `Project commerce {

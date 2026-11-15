@@ -197,7 +197,7 @@ describe('studio sources store', () => {
     const sessionStore = useStudioSessionStore()
     const store = useStudioSourcesStore()
 
-    sessionStore.currentSourceKind = 'gist'
+    sessionStore.commitWorkspaceLoad(sessionStore.beginWorkspaceLoad('gist'), () => {})
 
     expect(store.persistBrowserSchemas([
       {
@@ -233,9 +233,10 @@ describe('studio sources store', () => {
 
     vi.mocked(persistPgmlGistConnectionMetadata).mockClear()
     vi.mocked(persistSavedPgmlSchemasToBrowserStorage).mockClear()
-    sessionStore.currentSourceKind = 'gist'
+    sessionStore.commitWorkspaceLoad(sessionStore.beginWorkspaceLoad('gist'), () => {})
 
     await expect(store.saveGithubGistPgmlFile({
+      gistId: 'gist-1',
       filename: 'gist-backed.pgml',
       text: 'Table public.gist_backed {\n  id uuid [pk]\n}'
     })).resolves.toEqual(expect.objectContaining({
@@ -289,5 +290,84 @@ describe('studio sources store', () => {
     expect(deleteRecentComputerPgmlFile).toHaveBeenCalledWith('recent-file-1')
     expect(store.recentComputerFiles).toEqual([])
     expect(store.recentComputerFilesError).toBeNull()
+  })
+  it('keeps latest recent inventory and busy ownership when reads finish out of order', async () => {
+    type Files = Awaited<ReturnType<typeof listRecentComputerPgmlFiles>>
+    let finishOld!: (value: Files) => void
+    let finishNew!: (value: Files) => void
+    vi.mocked(listRecentComputerPgmlFiles)
+      .mockImplementationOnce(() => new Promise((resolve) => {
+        finishOld = resolve
+      }))
+      .mockImplementationOnce(() => new Promise((resolve) => {
+        finishNew = resolve
+      }))
+    const store = useStudioSourcesStore()
+    const old = store.refreshRecentComputerFiles()
+    const latest = store.refreshRecentComputerFiles()
+    finishOld([{ id: 'old', name: 'old', updatedAt: 'old' }])
+    await old
+    expect(store.isRefreshingRecentComputerFiles).toBe(true)
+    finishNew([{ id: 'new', name: 'new', updatedAt: 'new' }])
+    await latest
+    expect(store.recentComputerFiles.map(file => file.id)).toEqual(['new'])
+    expect(store.isRefreshingRecentComputerFiles).toBe(false)
+  })
+
+  it('does not resurrect deleted recents from a pending inventory read', async () => {
+    let finish!: (value: Awaited<ReturnType<typeof listRecentComputerPgmlFiles>>) => void
+    vi.mocked(listRecentComputerPgmlFiles).mockImplementationOnce(() => new Promise((resolve) => {
+      finish = resolve
+    }))
+    const store = useStudioSourcesStore()
+    store.recentComputerFiles = [{ id: 'delete', name: 'delete', updatedAt: 'old' }]
+    const pending = store.refreshRecentComputerFiles()
+    expect(await store.deleteRecentComputerFile('delete')).toBe(true)
+    finish([{ id: 'delete', name: 'delete', updatedAt: 'old' }])
+    await pending
+    expect(store.recentComputerFiles).toEqual([])
+    expect(store.recentComputerFilesError).toBeNull()
+  })
+
+  it('ignores old Gist inventory after connecting another Gist', async () => {
+    const store = useStudioSourcesStore()
+    await store.connectGithubGist({ gistId: 'A', token: 'A token' })
+    let finish!: (value: Awaited<ReturnType<typeof loadPgmlGistFiles>>) => void
+    vi.mocked(loadPgmlGistFiles).mockImplementationOnce(() => new Promise((resolve) => {
+      finish = resolve
+    }))
+    const pending = store.refreshGithubGistFiles()
+    await store.connectGithubGist({ gistId: 'B', token: 'B token' })
+    finish([{ gistId: 'A', filename: 'A.pgml', size: 1, updatedAt: 'old' }])
+    await pending
+    expect(store.githubGistConnection?.gistId).toBe('B')
+    expect(store.githubGistFiles).toEqual([])
+    expect(store.isRefreshingGithubGistFiles).toBe(false)
+  })
+
+  it('keeps the latest successful connection when an older connect resolves later', async () => {
+    let finish!: (value: Awaited<ReturnType<typeof loadPgmlGistFiles>>) => void
+    vi.mocked(loadPgmlGistFiles).mockImplementationOnce(() => new Promise((resolve) => {
+      finish = resolve
+    }))
+    const store = useStudioSourcesStore()
+    const old = store.connectGithubGist({ gistId: 'A', token: 'A token' })
+    expect(await store.connectGithubGist({ gistId: 'B', token: 'B token' })).toBe(true)
+    finish([{ gistId: 'A', filename: 'A.pgml', size: 1, updatedAt: 'old' }])
+    expect(await old).toBe(false)
+    expect(store.githubGistConnection?.gistId).toBe('B')
+    expect(store.githubGistToken).toBe('B token')
+    expect(store.githubGistFiles).toEqual([])
+    expect(persistPgmlGistConnectionMetadata).toHaveBeenCalledTimes(1)
+  })
+
+  it('retains an authorized connection if a reconnect fails', async () => {
+    const store = useStudioSourcesStore()
+    await store.connectGithubGist({ gistId: 'A', token: 'A token' })
+    vi.mocked(loadPgmlGistFiles).mockRejectedValueOnce(new Error('Remote unavailable'))
+    expect(await store.connectGithubGist({ gistId: 'B', token: 'B token' })).toBe(false)
+    expect(store.githubGistConnection?.gistId).toBe('A')
+    expect(store.githubGistToken).toBe('A token')
+    expect(store.githubGistError).toBe('Remote unavailable')
   })
 })

@@ -8,6 +8,30 @@ import {
 import { buildVersionedCompletionFixture, validVersionedEditorSource } from './pgml-editor-fixtures'
 
 describe('PGML language utility', () => {
+  it('keeps opaque source context bounds and unclosed diagnostics at the source opener', () => {
+    const opening = '  source: $fn$'
+    const source = `Function public.example() returns text {
+${opening}
+  SELECT '}';
+  $fn$
+}`
+    const analysis = analyzePgmlDocument(source)
+
+    expect(analysis.diagnostics.filter(diagnostic => diagnostic.code === 'pgml/source-unclosed')).toEqual([])
+    expect(analysis.contexts).toEqual(expect.arrayContaining([
+      expect.objectContaining({ kind: 'source', from: source.indexOf(opening), startLine: 2, endLine: 4 })
+    ]))
+
+    const unclosed = source.replace('  $fn$\n', '')
+    const diagnostic = analyzePgmlDocument(unclosed).diagnostics.find(entry => entry.code === 'pgml/source-unclosed')
+
+    expect(diagnostic).toEqual(expect.objectContaining({
+      from: unclosed.indexOf(opening),
+      to: unclosed.indexOf(opening) + opening.length,
+      line: 2
+    }))
+  })
+
   it('collects no diagnostics for a structurally valid document', () => {
     const source = `TableGroup Core {
   users

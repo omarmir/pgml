@@ -1,3 +1,7 @@
+type SqlScanMode = { kind: 'normal' | 'single-quoted' | 'double-quoted' | 'line-comment' }
+  | { kind: 'dollar-quoted', delimiter: string }
+  | { kind: 'block-comment', depth: number }
+
 export const normalizeWhitespace = (value: string) => {
   return value.replaceAll(/\s+/g, ' ').trim()
 }
@@ -12,12 +16,8 @@ export const normalizeExecutableSqlText = (value: string | null | undefined): st
   }
 
   let normalized = ''
-  let blockCommentDepth = 0
-  let doubleQuoted = false
-  let inLineComment = false
-  let singleQuoted = false
+  let mode: SqlScanMode = { kind: 'normal' }
   let pendingWhitespace = false
-  let dollarQuoted: string | null = null
 
   const appendToken = (token: string) => {
     if (pendingWhitespace && normalized.length > 0) {
@@ -32,29 +32,33 @@ export const normalizeExecutableSqlText = (value: string | null | undefined): st
     const character = value[index] || ''
     const nextCharacter = value[index + 1] || ''
 
-    if (inLineComment) {
+    if (mode.kind === 'line-comment') {
       if (character === '\n') {
-        inLineComment = false
+        mode = { kind: 'normal' }
         pendingWhitespace = normalized.length > 0
       }
 
       continue
     }
 
-    if (blockCommentDepth > 0) {
+    if (mode.kind === 'block-comment') {
       if (character === '/' && nextCharacter === '*') {
-        blockCommentDepth += 1
+        mode.depth += 1
         index += 1
       } else if (character === '*' && nextCharacter === '/') {
-        blockCommentDepth -= 1
+        mode.depth -= 1
+
+        if (mode.depth === 0) {
+          mode = { kind: 'normal' }
+        }
         index += 1
       }
 
       continue
     }
 
-    if (dollarQuoted) {
-      const endIndex = value.indexOf(dollarQuoted, index)
+    if (mode.kind === 'dollar-quoted') {
+      const endIndex = value.indexOf(mode.delimiter, index)
 
       if (endIndex < 0) {
         const innerValue = value.slice(index)
@@ -64,12 +68,12 @@ export const normalizeExecutableSqlText = (value: string | null | undefined): st
 
       const innerValue = value.slice(index, endIndex)
       appendToken(`$body$${normalizeExecutableSqlText(innerValue) || ''}$body$`)
-      index = endIndex + dollarQuoted.length - 1
-      dollarQuoted = null
+      index = endIndex + mode.delimiter.length - 1
+      mode = { kind: 'normal' }
       continue
     }
 
-    if (singleQuoted) {
+    if (mode.kind === 'single-quoted') {
       appendToken(character)
 
       if (character === '\'' && nextCharacter === '\'') {
@@ -79,13 +83,13 @@ export const normalizeExecutableSqlText = (value: string | null | undefined): st
       }
 
       if (character === '\'') {
-        singleQuoted = false
+        mode = { kind: 'normal' }
       }
 
       continue
     }
 
-    if (doubleQuoted) {
+    if (mode.kind === 'double-quoted') {
       appendToken(character)
 
       if (character === '"' && nextCharacter === '"') {
@@ -95,32 +99,32 @@ export const normalizeExecutableSqlText = (value: string | null | undefined): st
       }
 
       if (character === '"') {
-        doubleQuoted = false
+        mode = { kind: 'normal' }
       }
 
       continue
     }
 
     if (character === '-' && nextCharacter === '-') {
-      inLineComment = true
+      mode = { kind: 'line-comment' }
       index += 1
       continue
     }
 
     if (character === '/' && nextCharacter === '*') {
-      blockCommentDepth += 1
+      mode = { kind: 'block-comment', depth: 1 }
       index += 1
       continue
     }
 
     if (character === '\'') {
-      singleQuoted = true
+      mode = { kind: 'single-quoted' }
       appendToken(character)
       continue
     }
 
     if (character === '"') {
-      doubleQuoted = true
+      mode = { kind: 'double-quoted' }
       appendToken(character)
       continue
     }
@@ -130,8 +134,8 @@ export const normalizeExecutableSqlText = (value: string | null | undefined): st
       const match = remainder.match(/^\$[A-Za-z0-9_]*\$/u)
 
       if (match) {
-        dollarQuoted = match[0]
-        index += dollarQuoted.length - 1
+        mode = { kind: 'dollar-quoted', delimiter: match[0] }
+        index += mode.delimiter.length - 1
         continue
       }
     }

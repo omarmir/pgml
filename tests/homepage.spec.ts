@@ -33,6 +33,25 @@ const chooseImportedWorkspace = async (page: Page, label: 'Open Analysis' | 'Ope
   await page.getByRole('button', { name: label }).click()
 }
 
+test('home launches remain usable when session storage is denied until reload', async ({ goto, page }) => {
+  await page.addInitScript(() => {
+    Object.defineProperty(window, 'sessionStorage', {
+      configurable: true,
+      get: () => { throw new DOMException('Storage denied', 'SecurityError') }
+    })
+  })
+  await goto('/')
+  await page.locator('[data-source-card="browser-local-storage"]').getByRole('link', { name: 'Open bundled example' }).click()
+  await expect(page).toHaveURL(url => url.pathname === '/diagram')
+  await expect.poll(async () => readPgmlEditorValue(getPgmlEditor(page))).toContain('TableGroup Core')
+  await page.getByRole('button', { name: 'Workspace', exact: true }).click()
+  await page.getByRole('menuitem', { name: 'Analysis' }).click()
+  await expect(page).toHaveURL(url => url.pathname === '/analysis')
+  await expect(page.locator('[data-analysis-workspace="true"]')).toBeVisible()
+  await page.reload()
+  await expect(page).toHaveURL(url => url.pathname === '/')
+})
+
 test('home page exposes the three schema-source lanes and the import actions', async ({ goto, page }) => {
   await goto('/')
 
@@ -745,4 +764,129 @@ test('spec page keeps the table of contents pinned while scrolling', async ({ go
     const box = await tableOfContents.boundingBox()
     return box ? Math.round(box.y) : null
   }).toBeGreaterThanOrEqual(72)
+})
+
+test('DBML upload retains captured options while a file read is pending and rejects close or duplicate submit', async ({ goto, page }) => {
+  await page.addInitScript(() => {
+    const read = File.prototype.text
+    File.prototype.text = function () {
+      const source = read.call(this)
+      return new Promise<string>((resolve) => {
+        Object.defineProperty(window, '__finishSchemaImportRead', { configurable: true, value: async () => resolve(await source) })
+      })
+    }
+  })
+  await goto('/')
+  await page.locator('[data-source-card="browser-local-storage"]').getByRole('button', { name: 'Import DBML into browser storage' }).click()
+  const modal = getDbmlImportDialog(page)
+  const options = modal.getByRole('switch')
+  await options.nth(0).click()
+  await options.nth(1).click()
+  await modal.locator('input[type="file"]').setInputFiles({ name: 'captured.dbml', mimeType: 'text/plain', buffer: Buffer.from('Table CamelCase {\n  ID integer [pk]\n}') })
+  await modal.getByRole('button', { name: 'Import into browser storage' }).click()
+  await expect(options.nth(0)).toBeDisabled()
+  await expect(options.nth(1)).toBeDisabled()
+  await modal.getByRole('button', { name: 'Close', exact: true }).click()
+  await expect(modal).toBeVisible()
+  await expect(options.nth(0)).toBeChecked()
+  await expect(options.nth(1)).toBeChecked()
+  await page.evaluate(() => {
+    const release = Object.getOwnPropertyDescriptor(window, '__finishSchemaImportRead')?.value
+    if (typeof release !== 'function') throw new Error('Import read has not started')
+    return release()
+  })
+  await chooseImportedWorkspace(page, 'Open Diagram')
+  await expect.poll(() => readPgmlEditorValue(getPgmlEditor(page))).toContain('Table public.camelcase')
+})
+
+test('an imported schema remains available to retry when its browser save fails', async ({ goto, page }) => {
+  await goto('/')
+  await page.locator('[data-source-card="browser-local-storage"]').getByRole('button', { name: 'Import DBML into browser storage' }).click()
+  const modal = getDbmlImportDialog(page)
+  await modal.locator('textarea').fill('Project retry_import { database_type: \'PostgreSQL\' }\nTable users {\n  id integer [pk]\n}')
+  await modal.getByRole('button', { name: 'Import into browser storage' }).click()
+  const destination = page.locator('[data-studio-modal-surface="imported-schema-launch"]')
+  await expect(destination).toContainText('retry_import')
+  await page.evaluate(() => {
+    const write = Storage.prototype.setItem
+    Storage.prototype.setItem = function (key, value) {
+      if (key === 'pgml-studio-schemas-v1') {
+        Storage.prototype.setItem = write
+        throw new DOMException('Storage denied', 'SecurityError')
+      }
+      return write.call(this, key, value)
+    }
+  })
+  await destination.getByRole('button', { name: 'Open Diagram' }).click()
+  await expect(destination).toBeVisible()
+  await expect(destination).toContainText('retry_import')
+  await expect(destination.getByRole('alert')).toHaveText('Unable to save to local storage.')
+  await destination.getByRole('button', { name: 'Open Diagram' }).click()
+  await expect.poll(() => readPgmlEditorValue(getPgmlEditor(page))).toContain('Table public.users')
+  await expect(page.locator('[data-studio-schema-name="true"]')).toHaveText('retry_import')
+})
+
+test('a pending Gist connection owns its captured credentials and cannot close or submit twice', async ({ goto, page }) => {
+  let release!: () => void
+  let requests = 0
+  await page.route('https://api.github.com/gists/owned-connection', async (route) => {
+    requests += 1
+    await new Promise<void>((resolve) => {
+      release = resolve
+    })
+    await route.fulfill({ json: { id: 'owned-connection', files: {}, updated_at: '2026-01-01T00:00:00Z' } })
+  })
+  await goto('/')
+  const connect = page.locator('[data-source-card="github-gist"]').getByRole('button', { name: 'Connect GitHub Gist' })
+  await connect.click()
+  const modal = page.locator('[data-studio-modal-surface="github-gist-connect"]')
+  await modal.locator('input[name="username"]').fill('owned-connection')
+  await modal.locator('input[name="password"]').fill('secret-captured-token')
+  await modal.getByRole('button', { name: 'Connect Gist', exact: true }).click()
+  await expect.poll(() => requests).toBe(1)
+  await expect(modal.locator('input[name="password"]')).toBeDisabled()
+  await modal.getByRole('button', { name: 'Close', exact: true }).click()
+  await expect(modal).toBeVisible()
+  await expect(modal.locator('input[name="username"]')).toHaveValue('owned-connection')
+  release()
+  await expect(modal).toHaveCount(0)
+  expect(await page.evaluate(() => JSON.stringify(localStorage))).not.toContain('secret-captured-token')
+})
+
+test('file consent keeps its imported payload after picker cancellation and rejects another action while pending', async ({ goto, page }) => {
+  await installMockComputerFiles(page)
+  await goto('/')
+  const fileId = await queueMockComputerSave(page, 'retry-native.pgml')
+  await page.locator('[data-source-card="computer-saved-file"]').getByRole('button', { name: 'Import into a new file' }).click()
+  const modal = getPgDumpImportDialog(page)
+  await modal.locator('textarea').fill('CREATE TABLE public.retained_import (id integer);')
+  await modal.getByRole('button', { name: 'Import into new file' }).click()
+  await chooseImportedWorkspace(page, 'Open Diagram')
+  await page.evaluate(() => {
+    const access = Object.getOwnPropertyDescriptor(window, '__PGML_FILE_SYSTEM_ACCESS__')?.value
+    const original = access.showSaveFilePicker
+    let calls = 0
+    access.showSaveFilePicker = () => {
+      calls += 1
+      Object.defineProperty(window, '__consentPickerCalls', { configurable: true, value: calls })
+      return new Promise((_resolve, reject) => {
+        Object.defineProperty(window, '__cancelConsentPicker', { configurable: true, value: () => {
+          access.showSaveFilePicker = original
+          reject(new DOMException('Cancelled', 'AbortError'))
+        } })
+      })
+    }
+  })
+  const consent = page.locator('[data-studio-modal-surface="computer-file-access"]')
+  await consent.getByRole('button', { name: 'Continue to save dialog' }).click()
+  await expect(consent.getByRole('button', { name: 'Cancel', exact: true })).toBeDisabled()
+  await consent.getByRole('button', { name: 'Close', exact: true }).click()
+  await expect(consent).toBeVisible()
+  expect(await page.evaluate(() => Object.getOwnPropertyDescriptor(window, '__consentPickerCalls')?.value)).toBe(1)
+  await page.evaluate(() => Object.getOwnPropertyDescriptor(window, '__cancelConsentPicker')?.value())
+  await expect(consent.getByRole('button', { name: 'Continue to save dialog' })).toBeEnabled()
+  await consent.getByRole('button', { name: 'Continue to save dialog' }).click()
+  await expect.poll(() => readPgmlEditorValue(getPgmlEditor(page))).toContain('Table public.retained_import')
+  const state = await readMockComputerFileState(page)
+  expect(fileId === null ? '' : state?.files[fileId]?.text).toContain('Table public.retained_import')
 })

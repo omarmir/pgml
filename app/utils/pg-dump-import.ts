@@ -1,6 +1,8 @@
+import { readBalancedSection, splitTopLevelSqlList, type SqlQuoteMode, type SqlStatementMode } from './sql-scan'
 import { normalizeSchemaName } from './studio-browser-schemas'
 import { canonicalizeImportedPgmlSource } from './pgml-import-normalization'
 import { extractPgmlSequenceSourceDefinition } from './pgml-sequence-metadata'
+import { foldPgmlIndexKeyIdentifiers, formatPgmlIndexKeyForSource, parsePgmlIndexKeys, type PgmlIndexKey } from './pgml-index-keys'
 
 type PgDumpImportColumn = {
   modifiers: string[]
@@ -14,7 +16,7 @@ type PgDumpImportConstraint = {
 }
 
 type PgDumpImportIndex = {
-  columns: string[]
+  keys: PgmlIndexKey[]
   name: string
   type: string
 }
@@ -194,41 +196,41 @@ const stripPgDumpCopySections = (source: string) => {
 const splitSqlStatements = (source: string) => {
   const statements: string[] = []
   let current = ''
-  let blockCommentDepth = 0
-  let doubleQuoted = false
-  let inLineComment = false
-  let singleQuoted = false
-  let dollarQuoted: string | null = null
+  let mode: SqlStatementMode = { kind: 'normal' }
 
   for (let index = 0; index < source.length; index += 1) {
     const character = source[index] || ''
     const nextCharacter = source[index + 1] || ''
 
-    if (inLineComment) {
+    if (mode.kind === 'line-comment') {
       if (character === '\n') {
-        inLineComment = false
+        mode = { kind: 'normal' }
       }
 
       continue
     }
 
-    if (blockCommentDepth > 0) {
+    if (mode.kind === 'block-comment') {
       if (character === '/' && nextCharacter === '*') {
-        blockCommentDepth += 1
+        mode.depth += 1
         index += 1
       } else if (character === '*' && nextCharacter === '/') {
-        blockCommentDepth -= 1
+        mode.depth -= 1
+
+        if (mode.depth === 0) {
+          mode = { kind: 'normal' }
+        }
         index += 1
       }
 
       continue
     }
 
-    if (dollarQuoted) {
-      if (source.startsWith(dollarQuoted, index)) {
-        current += dollarQuoted
-        index += dollarQuoted.length - 1
-        dollarQuoted = null
+    if (mode.kind === 'dollar-quoted') {
+      if (source.startsWith(mode.delimiter, index)) {
+        current += mode.delimiter
+        index += mode.delimiter.length - 1
+        mode = { kind: 'normal' }
         continue
       }
 
@@ -236,7 +238,7 @@ const splitSqlStatements = (source: string) => {
       continue
     }
 
-    if (singleQuoted) {
+    if (mode.kind === 'single-quoted') {
       current += character
 
       if (character === '\'' && nextCharacter === '\'') {
@@ -246,13 +248,13 @@ const splitSqlStatements = (source: string) => {
       }
 
       if (character === '\'') {
-        singleQuoted = false
+        mode = { kind: 'normal' }
       }
 
       continue
     }
 
-    if (doubleQuoted) {
+    if (mode.kind === 'double-quoted') {
       current += character
 
       if (character === '"' && nextCharacter === '"') {
@@ -262,32 +264,32 @@ const splitSqlStatements = (source: string) => {
       }
 
       if (character === '"') {
-        doubleQuoted = false
+        mode = { kind: 'normal' }
       }
 
       continue
     }
 
     if (character === '-' && nextCharacter === '-') {
-      inLineComment = true
+      mode = { kind: 'line-comment' }
       index += 1
       continue
     }
 
     if (character === '/' && nextCharacter === '*') {
-      blockCommentDepth += 1
+      mode = { kind: 'block-comment', depth: 1 }
       index += 1
       continue
     }
 
     if (character === '\'') {
-      singleQuoted = true
+      mode = { kind: 'single-quoted' }
       current += character
       continue
     }
 
     if (character === '"') {
-      doubleQuoted = true
+      mode = { kind: 'double-quoted' }
       current += character
       continue
     }
@@ -297,9 +299,9 @@ const splitSqlStatements = (source: string) => {
       const match = remainder.match(/^\$[A-Za-z0-9_]*\$/u)
 
       if (match) {
-        dollarQuoted = match[0]
-        current += dollarQuoted
-        index += dollarQuoted.length - 1
+        mode = { kind: 'dollar-quoted', delimiter: match[0] }
+        current += mode.delimiter
+        index += mode.delimiter.length - 1
         continue
       }
     }
@@ -325,268 +327,6 @@ const splitSqlStatements = (source: string) => {
   }
 
   return statements
-}
-
-const splitTopLevelSqlList = (value: string) => {
-  const entries: string[] = []
-  let current = ''
-  let curlyDepth = 0
-  let squareDepth = 0
-  let roundDepth = 0
-  let doubleQuoted = false
-  let singleQuoted = false
-  let dollarQuoted: string | null = null
-
-  for (let index = 0; index < value.length; index += 1) {
-    const character = value[index] || ''
-    const nextCharacter = value[index + 1] || ''
-
-    if (dollarQuoted) {
-      if (value.startsWith(dollarQuoted, index)) {
-        current += dollarQuoted
-        index += dollarQuoted.length - 1
-        dollarQuoted = null
-        continue
-      }
-
-      current += character
-      continue
-    }
-
-    if (singleQuoted) {
-      current += character
-
-      if (character === '\'' && nextCharacter === '\'') {
-        current += nextCharacter
-        index += 1
-        continue
-      }
-
-      if (character === '\'') {
-        singleQuoted = false
-      }
-
-      continue
-    }
-
-    if (doubleQuoted) {
-      current += character
-
-      if (character === '"' && nextCharacter === '"') {
-        current += nextCharacter
-        index += 1
-        continue
-      }
-
-      if (character === '"') {
-        doubleQuoted = false
-      }
-
-      continue
-    }
-
-    if (character === '\'') {
-      singleQuoted = true
-      current += character
-      continue
-    }
-
-    if (character === '"') {
-      doubleQuoted = true
-      current += character
-      continue
-    }
-
-    if (character === '$') {
-      const remainder = value.slice(index)
-      const match = remainder.match(/^\$[A-Za-z0-9_]*\$/u)
-
-      if (match) {
-        dollarQuoted = match[0]
-        current += dollarQuoted
-        index += dollarQuoted.length - 1
-        continue
-      }
-    }
-
-    if (character === '(') {
-      roundDepth += 1
-      current += character
-      continue
-    }
-
-    if (character === ')') {
-      roundDepth = Math.max(0, roundDepth - 1)
-      current += character
-      continue
-    }
-
-    if (character === '[') {
-      squareDepth += 1
-      current += character
-      continue
-    }
-
-    if (character === ']') {
-      squareDepth = Math.max(0, squareDepth - 1)
-      current += character
-      continue
-    }
-
-    if (character === '{') {
-      curlyDepth += 1
-      current += character
-      continue
-    }
-
-    if (character === '}') {
-      curlyDepth = Math.max(0, curlyDepth - 1)
-      current += character
-      continue
-    }
-
-    if (character === ',' && roundDepth === 0 && squareDepth === 0 && curlyDepth === 0) {
-      const entry = current.trim()
-
-      if (entry.length > 0) {
-        entries.push(entry)
-      }
-
-      current = ''
-      continue
-    }
-
-    current += character
-  }
-
-  const trailingEntry = current.trim()
-
-  if (trailingEntry.length > 0) {
-    entries.push(trailingEntry)
-  }
-
-  return entries
-}
-
-const readBalancedSection = (
-  value: string,
-  startIndex: number,
-  delimiters: {
-    close: string
-    open: string
-  } = {
-    close: ')',
-    open: '('
-  }
-) => {
-  let current = ''
-  let depth = 0
-  let doubleQuoted = false
-  let singleQuoted = false
-  let dollarQuoted: string | null = null
-
-  for (let index = startIndex; index < value.length; index += 1) {
-    const character = value[index] || ''
-    const nextCharacter = value[index + 1] || ''
-
-    if (dollarQuoted) {
-      if (value.startsWith(dollarQuoted, index)) {
-        current += dollarQuoted
-        index += dollarQuoted.length - 1
-        dollarQuoted = null
-        continue
-      }
-
-      current += character
-      continue
-    }
-
-    if (singleQuoted) {
-      current += character
-
-      if (character === '\'' && nextCharacter === '\'') {
-        current += nextCharacter
-        index += 1
-        continue
-      }
-
-      if (character === '\'') {
-        singleQuoted = false
-      }
-
-      continue
-    }
-
-    if (doubleQuoted) {
-      current += character
-
-      if (character === '"' && nextCharacter === '"') {
-        current += nextCharacter
-        index += 1
-        continue
-      }
-
-      if (character === '"') {
-        doubleQuoted = false
-      }
-
-      continue
-    }
-
-    if (character === '\'') {
-      singleQuoted = true
-      current += character
-      continue
-    }
-
-    if (character === '"') {
-      doubleQuoted = true
-      current += character
-      continue
-    }
-
-    if (character === '$') {
-      const remainder = value.slice(index)
-      const match = remainder.match(/^\$[A-Za-z0-9_]*\$/u)
-
-      if (match) {
-        dollarQuoted = match[0]
-        current += dollarQuoted
-        index += dollarQuoted.length - 1
-        continue
-      }
-    }
-
-    if (character === delimiters.open) {
-      depth += 1
-
-      if (depth > 1) {
-        current += character
-      }
-
-      continue
-    }
-
-    if (character === delimiters.close) {
-      depth -= 1
-
-      if (depth === 0) {
-        return {
-          content: current,
-          endIndex: index
-        }
-      }
-
-      current += character
-      continue
-    }
-
-    if (depth > 0) {
-      current += character
-    }
-  }
-
-  return null
 }
 
 const splitIdentifierParts = (value: string) => {
@@ -739,59 +479,57 @@ const isKeywordBoundary = (value: string, startIndex: number, keyword: string) =
 }
 
 const findTopLevelKeywordIndex = (value: string, keywords: string[]) => {
-  let doubleQuoted = false
   let roundDepth = 0
   let squareDepth = 0
-  let singleQuoted = false
-  let dollarQuoted: string | null = null
+  let mode: SqlQuoteMode = { kind: 'normal' }
   const lowercase = value.toLowerCase()
 
   for (let index = 0; index < value.length; index += 1) {
     const character = value[index] || ''
     const nextCharacter = value[index + 1] || ''
 
-    if (dollarQuoted) {
-      if (value.startsWith(dollarQuoted, index)) {
-        index += dollarQuoted.length - 1
-        dollarQuoted = null
+    if (mode.kind === 'dollar-quoted') {
+      if (value.startsWith(mode.delimiter, index)) {
+        index += mode.delimiter.length - 1
+        mode = { kind: 'normal' }
       }
 
       continue
     }
 
-    if (singleQuoted) {
+    if (mode.kind === 'single-quoted') {
       if (character === '\'' && nextCharacter === '\'') {
         index += 1
         continue
       }
 
       if (character === '\'') {
-        singleQuoted = false
+        mode = { kind: 'normal' }
       }
 
       continue
     }
 
-    if (doubleQuoted) {
+    if (mode.kind === 'double-quoted') {
       if (character === '"' && nextCharacter === '"') {
         index += 1
         continue
       }
 
       if (character === '"') {
-        doubleQuoted = false
+        mode = { kind: 'normal' }
       }
 
       continue
     }
 
     if (character === '\'') {
-      singleQuoted = true
+      mode = { kind: 'single-quoted' }
       continue
     }
 
     if (character === '"') {
-      doubleQuoted = true
+      mode = { kind: 'double-quoted' }
       continue
     }
 
@@ -800,8 +538,8 @@ const findTopLevelKeywordIndex = (value: string, keywords: string[]) => {
       const match = remainder.match(/^\$[A-Za-z0-9_]*\$/u)
 
       if (match) {
-        dollarQuoted = match[0]
-        index += dollarQuoted.length - 1
+        mode = { kind: 'dollar-quoted', delimiter: match[0] }
+        index += mode.delimiter.length - 1
         continue
       }
     }
@@ -1370,22 +1108,17 @@ const parseAlterTableStatement = (statement: string, tables: Map<string, PgDumpI
 }
 
 const parseCreateIndexDefinition = (statement: string) => {
-  const normalized = normalizeSqlWhitespace(statement)
-  const keywordMatch = normalized.match(/^create\s+(unique\s+)?index\s+/iu)
+  const rawStatement = statement.trim()
+  const keywordMatch = rawStatement.match(/^create\s+(unique\s+)?index\s+/iu)
 
   if (!keywordMatch) {
     return null
   }
 
-  let remainder = normalized.slice(keywordMatch[0].length).trim()
-
-  if (remainder.toLowerCase().startsWith('concurrently ')) {
-    remainder = remainder.slice('concurrently '.length).trim()
-  }
-
-  if (remainder.toLowerCase().startsWith('if not exists ')) {
-    remainder = remainder.slice('if not exists '.length).trim()
-  }
+  let remainder = rawStatement.slice(keywordMatch[0].length)
+    .replace(/^concurrently\s+/iu, '')
+    .replace(/^if\s+not\s+exists\s+/iu, '')
+    .trim()
 
   const indexIdentifier = readSqlIdentifier(remainder)
 
@@ -1395,15 +1128,13 @@ const parseCreateIndexDefinition = (statement: string) => {
 
   remainder = remainder.slice(indexIdentifier.nextIndex).trim()
 
-  if (!remainder.toLowerCase().startsWith('on ')) {
+  const onKeyword = remainder.match(/^on\s+/iu)
+
+  if (!onKeyword) {
     return null
   }
 
-  remainder = remainder.slice('on '.length).trim()
-
-  if (remainder.toLowerCase().startsWith('only ')) {
-    remainder = remainder.slice('only '.length).trim()
-  }
+  remainder = remainder.slice(onKeyword[0].length).replace(/^only\s+/iu, '').trim()
 
   const tableIdentifier = readSqlIdentifier(remainder)
 
@@ -1415,8 +1146,10 @@ const parseCreateIndexDefinition = (statement: string) => {
 
   let indexType = 'btree'
 
-  if (remainder.toLowerCase().startsWith('using ')) {
-    remainder = remainder.slice('using '.length).trim()
+  const usingKeyword = remainder.match(/^using\s+/iu)
+
+  if (usingKeyword) {
+    remainder = remainder.slice(usingKeyword[0].length).trim()
 
     const methodIdentifier = readSqlIdentifier(remainder)
 
@@ -1440,23 +1173,25 @@ const parseCreateIndexDefinition = (statement: string) => {
     return null
   }
 
-  const columns = splitTopLevelSqlList(columnsSection.content)
+  const keys = parsePgmlIndexKeys(columnsSection.content)
 
-  if (columns.length === 0) {
+  if (keys.length === 0) {
     return null
   }
 
   return {
-    columns: columns.map((column) => {
-      return trimSqlIdentifier(column)
-    }),
+    keys,
     name: trimSqlIdentifier(indexIdentifier.raw),
     tableName: normalizeQualifiedName(tableIdentifier.raw),
     type: indexType
   } satisfies PgDumpImportIndex & { tableName: string }
 }
 
-const parseCreateIndexStatement = (statement: string, tables: Map<string, PgDumpImportTable>) => {
+const parseCreateIndexStatement = (
+  statement: string,
+  tables: Map<string, PgDumpImportTable>,
+  options: PgDumpImportIdentifierNormalizationOptions
+) => {
   const parsedIndex = parseCreateIndexDefinition(statement)
 
   if (!parsedIndex) {
@@ -1464,9 +1199,14 @@ const parseCreateIndexStatement = (statement: string, tables: Map<string, PgDump
   }
 
   const table = ensureTable(tables, parsedIndex.tableName)
+  const importedIdentifierNames = options.foldIdentifiersToLowercase
+    ? new Set([...table.columns.map(column => column.name), ...table.name.split('.')])
+    : null
 
   table.indexes.push({
-    columns: parsedIndex.columns,
+    keys: options.foldIdentifiersToLowercase
+      ? parsedIndex.keys.map(key => foldPgmlIndexKeyIdentifiers(key, importedIdentifierNames))
+      : parsedIndex.keys,
     name: parsedIndex.name,
     type: parsedIndex.type
   })
@@ -1710,14 +1450,10 @@ const shouldIgnoreStatement = (statement: string) => {
 const renderTable = (table: PgDumpImportTable) => {
   const lines = [`Table ${table.name} {`]
   const inlineIndexes = table.indexes.filter((index) => {
-    return index.columns.every((column) => {
-      return !column.includes('(') && !column.includes(')')
-    })
+    return index.keys.every(key => key.kind === 'column')
   })
   const structuredIndexes = table.indexes.filter((index) => {
-    return index.columns.some((column) => {
-      return column.includes('(') || column.includes(')')
-    })
+    return index.keys.some(key => key.kind !== 'column')
   })
 
   table.columns.forEach((column) => {
@@ -1735,14 +1471,14 @@ const renderTable = (table: PgDumpImportTable) => {
   })
 
   inlineIndexes.forEach((index) => {
-    lines.push(`  Index ${index.name} (${index.columns.join(', ')}) [type: ${index.type}]`)
+    lines.push(`  Index ${index.name} (${index.keys.map(formatPgmlIndexKeyForSource).join(', ')}) [type: ${index.type}]`)
   })
 
   if (structuredIndexes.length > 0) {
     lines.push('  Indexes {')
 
     structuredIndexes.forEach((index) => {
-      lines.push(`    (${index.columns.join(', ')}) [name: ${index.name}, type: ${index.type}]`)
+      lines.push(`    (${index.keys.map(formatPgmlIndexKeyForSource).join(', ')}) [name: ${index.name}, type: ${index.type}]`)
     })
 
     lines.push('  }')
@@ -1843,7 +1579,7 @@ export const convertPgDumpToPgml = (input: {
     }
 
     if (normalized.startsWith('create index ') || normalized.startsWith('create unique index ')) {
-      parseCreateIndexStatement(statement, accumulator.tables)
+      parseCreateIndexStatement(statement, accumulator.tables, input)
       return
     }
 

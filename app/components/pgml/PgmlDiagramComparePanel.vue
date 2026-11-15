@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import type { Ref } from 'vue'
+import type { DeepReadonly, Ref } from 'vue'
 import { computed, ref } from 'vue'
 import { studioSelectUi } from '~/constants/ui'
 import PgmlDiagramCompareEntryList from '~/components/pgml/PgmlDiagramCompareEntryList.vue'
@@ -83,7 +83,7 @@ const {
     value: string
   }>
   compareTargetId: string
-  compareEntityFilters?: PgmlCompareEntityFilters
+  compareEntityFilters?: DeepReadonly<PgmlCompareEntityFilters>
   excludedLabels?: string[]
   excludedSummary?: string | null
   entries: PgmlDiagramCompareEntry[]
@@ -529,7 +529,7 @@ const buildCompareExportInput = (): PgmlCompareExportInput => {
     comparisonLabel,
     contextEntries: visibleContextEntries.value,
     detailViewMode: detailViewMode.value as PgmlCompareExportDetailViewMode,
-    entityKindFilters: selectedEntityKinds.value,
+    entityKindFilters: [...selectedEntityKinds.value],
     entries: filteredEntries.value,
     excludedLabels,
     excludedSummary,

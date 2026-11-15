@@ -1,3 +1,4 @@
+import { readBalancedSection, splitTopLevelSqlList, type SqlStatementMode } from './sql-scan'
 import { normalizePgmlCompatSource } from './pgml-dbml-compat'
 
 type DbmlCommentRoutineImport = {
@@ -156,268 +157,6 @@ const normalizeImportedTableName = (value: string) => {
   return `public.${cleanedValue}`
 }
 
-const splitTopLevelSqlList = (value: string) => {
-  const entries: string[] = []
-  let current = ''
-  let curlyDepth = 0
-  let squareDepth = 0
-  let roundDepth = 0
-  let doubleQuoted = false
-  let singleQuoted = false
-  let dollarQuoted: string | null = null
-
-  for (let index = 0; index < value.length; index += 1) {
-    const character = value[index] || ''
-    const nextCharacter = value[index + 1] || ''
-
-    if (dollarQuoted) {
-      if (value.startsWith(dollarQuoted, index)) {
-        current += dollarQuoted
-        index += dollarQuoted.length - 1
-        dollarQuoted = null
-        continue
-      }
-
-      current += character
-      continue
-    }
-
-    if (singleQuoted) {
-      current += character
-
-      if (character === '\'' && nextCharacter === '\'') {
-        current += nextCharacter
-        index += 1
-        continue
-      }
-
-      if (character === '\'') {
-        singleQuoted = false
-      }
-
-      continue
-    }
-
-    if (doubleQuoted) {
-      current += character
-
-      if (character === '"' && nextCharacter === '"') {
-        current += nextCharacter
-        index += 1
-        continue
-      }
-
-      if (character === '"') {
-        doubleQuoted = false
-      }
-
-      continue
-    }
-
-    if (character === '\'') {
-      singleQuoted = true
-      current += character
-      continue
-    }
-
-    if (character === '"') {
-      doubleQuoted = true
-      current += character
-      continue
-    }
-
-    if (character === '$') {
-      const remainder = value.slice(index)
-      const match = remainder.match(/^\$[A-Za-z0-9_]*\$/u)
-
-      if (match) {
-        dollarQuoted = match[0]
-        current += dollarQuoted
-        index += dollarQuoted.length - 1
-        continue
-      }
-    }
-
-    if (character === '(') {
-      roundDepth += 1
-      current += character
-      continue
-    }
-
-    if (character === ')') {
-      roundDepth = Math.max(0, roundDepth - 1)
-      current += character
-      continue
-    }
-
-    if (character === '[') {
-      squareDepth += 1
-      current += character
-      continue
-    }
-
-    if (character === ']') {
-      squareDepth = Math.max(0, squareDepth - 1)
-      current += character
-      continue
-    }
-
-    if (character === '{') {
-      curlyDepth += 1
-      current += character
-      continue
-    }
-
-    if (character === '}') {
-      curlyDepth = Math.max(0, curlyDepth - 1)
-      current += character
-      continue
-    }
-
-    if (character === ',' && roundDepth === 0 && squareDepth === 0 && curlyDepth === 0) {
-      const entry = current.trim()
-
-      if (entry.length > 0) {
-        entries.push(entry)
-      }
-
-      current = ''
-      continue
-    }
-
-    current += character
-  }
-
-  const trailingEntry = current.trim()
-
-  if (trailingEntry.length > 0) {
-    entries.push(trailingEntry)
-  }
-
-  return entries
-}
-
-const readBalancedSection = (
-  value: string,
-  startIndex: number,
-  delimiters: {
-    close: string
-    open: string
-  } = {
-    close: ')',
-    open: '('
-  }
-) => {
-  let current = ''
-  let depth = 0
-  let doubleQuoted = false
-  let singleQuoted = false
-  let dollarQuoted: string | null = null
-
-  for (let index = startIndex; index < value.length; index += 1) {
-    const character = value[index] || ''
-    const nextCharacter = value[index + 1] || ''
-
-    if (dollarQuoted) {
-      if (value.startsWith(dollarQuoted, index)) {
-        current += dollarQuoted
-        index += dollarQuoted.length - 1
-        dollarQuoted = null
-        continue
-      }
-
-      current += character
-      continue
-    }
-
-    if (singleQuoted) {
-      current += character
-
-      if (character === '\'' && nextCharacter === '\'') {
-        current += nextCharacter
-        index += 1
-        continue
-      }
-
-      if (character === '\'') {
-        singleQuoted = false
-      }
-
-      continue
-    }
-
-    if (doubleQuoted) {
-      current += character
-
-      if (character === '"' && nextCharacter === '"') {
-        current += nextCharacter
-        index += 1
-        continue
-      }
-
-      if (character === '"') {
-        doubleQuoted = false
-      }
-
-      continue
-    }
-
-    if (character === '\'') {
-      singleQuoted = true
-      current += character
-      continue
-    }
-
-    if (character === '"') {
-      doubleQuoted = true
-      current += character
-      continue
-    }
-
-    if (character === '$') {
-      const remainder = value.slice(index)
-      const match = remainder.match(/^\$[A-Za-z0-9_]*\$/u)
-
-      if (match) {
-        dollarQuoted = match[0]
-        current += dollarQuoted
-        index += dollarQuoted.length - 1
-        continue
-      }
-    }
-
-    if (character === delimiters.open) {
-      depth += 1
-
-      if (depth > 1) {
-        current += character
-      }
-
-      continue
-    }
-
-    if (character === delimiters.close) {
-      depth -= 1
-
-      if (depth === 0) {
-        return {
-          content: current,
-          endIndex: index
-        }
-      }
-
-      current += character
-      continue
-    }
-
-    if (depth > 0) {
-      current += character
-    }
-  }
-
-  return null
-}
-
 const parseRoutineSignature = (statement: string, keyword: 'function' | 'procedure') => {
   const normalized = normalizeSqlWhitespace(statement)
   const replacePrefix = normalized.toLowerCase().startsWith(`create or replace ${keyword} `) ? ' [replace]' : ''
@@ -486,47 +225,47 @@ const collectDbmlBlockCommentRanges = (source: string) => {
 
 const readFirstSqlStatement = (source: string) => {
   let current = ''
-  let blockCommentDepth = 0
-  let doubleQuoted = false
-  let inLineComment = false
-  let singleQuoted = false
-  let dollarQuoted: string | null = null
+  let mode: SqlStatementMode = { kind: 'normal' }
 
   for (let index = 0; index < source.length; index += 1) {
     const character = source[index] || ''
     const nextCharacter = source[index + 1] || ''
 
-    if (inLineComment) {
+    if (mode.kind === 'line-comment') {
       current += character
 
       if (character === '\n') {
-        inLineComment = false
+        mode = { kind: 'normal' }
       }
 
       continue
     }
 
-    if (blockCommentDepth > 0) {
+    if (mode.kind === 'block-comment') {
       current += character
 
       if (character === '/' && nextCharacter === '*') {
         current += nextCharacter
-        blockCommentDepth += 1
+        mode.depth += 1
         index += 1
       } else if (character === '*' && nextCharacter === '/') {
         current += nextCharacter
-        blockCommentDepth -= 1
+        mode.depth -= 1
+
+        if (mode.depth === 0) {
+          mode = { kind: 'normal' }
+        }
         index += 1
       }
 
       continue
     }
 
-    if (dollarQuoted) {
-      if (source.startsWith(dollarQuoted, index)) {
-        current += dollarQuoted
-        index += dollarQuoted.length - 1
-        dollarQuoted = null
+    if (mode.kind === 'dollar-quoted') {
+      if (source.startsWith(mode.delimiter, index)) {
+        current += mode.delimiter
+        index += mode.delimiter.length - 1
+        mode = { kind: 'normal' }
         continue
       }
 
@@ -534,7 +273,7 @@ const readFirstSqlStatement = (source: string) => {
       continue
     }
 
-    if (singleQuoted) {
+    if (mode.kind === 'single-quoted') {
       current += character
 
       if (character === '\'' && nextCharacter === '\'') {
@@ -544,13 +283,13 @@ const readFirstSqlStatement = (source: string) => {
       }
 
       if (character === '\'') {
-        singleQuoted = false
+        mode = { kind: 'normal' }
       }
 
       continue
     }
 
-    if (doubleQuoted) {
+    if (mode.kind === 'double-quoted') {
       current += character
 
       if (character === '"' && nextCharacter === '"') {
@@ -560,14 +299,14 @@ const readFirstSqlStatement = (source: string) => {
       }
 
       if (character === '"') {
-        doubleQuoted = false
+        mode = { kind: 'normal' }
       }
 
       continue
     }
 
     if (character === '-' && nextCharacter === '-') {
-      inLineComment = true
+      mode = { kind: 'line-comment' }
       current += character
       current += nextCharacter
       index += 1
@@ -575,7 +314,7 @@ const readFirstSqlStatement = (source: string) => {
     }
 
     if (character === '/' && nextCharacter === '*') {
-      blockCommentDepth += 1
+      mode = { kind: 'block-comment', depth: 1 }
       current += character
       current += nextCharacter
       index += 1
@@ -583,13 +322,13 @@ const readFirstSqlStatement = (source: string) => {
     }
 
     if (character === '\'') {
-      singleQuoted = true
+      mode = { kind: 'single-quoted' }
       current += character
       continue
     }
 
     if (character === '"') {
-      doubleQuoted = true
+      mode = { kind: 'double-quoted' }
       current += character
       continue
     }
@@ -599,9 +338,9 @@ const readFirstSqlStatement = (source: string) => {
       const match = remainder.match(/^\$[A-Za-z0-9_]*\$/u)
 
       if (match) {
-        dollarQuoted = match[0]
-        current += dollarQuoted
-        index += dollarQuoted.length - 1
+        mode = { kind: 'dollar-quoted', delimiter: match[0] }
+        current += mode.delimiter
+        index += mode.delimiter.length - 1
         continue
       }
     }
@@ -1024,10 +763,7 @@ const injectCommentDerivedIndexes = (source: string, indexes: DbmlCommentIndexIm
     existingIndexNames: Set<string>
     indent: string
   }>()
-  let tableDepth = 0
-  let currentTableName: string | null = null
-  let currentTableIndent = '  '
-  let currentTableExistingIndexNames = new Set<string>()
+  let tableState: { name: string, depth: number, indent: string, existingIndexNames: Set<string> } | null = null
 
   indexes.forEach((index) => {
     const existingIndexes = groupedIndexes.get(index.tableName) || []
@@ -1041,14 +777,16 @@ const injectCommentDerivedIndexes = (source: string, indexes: DbmlCommentIndexIm
   visibleLines.forEach((visibleLine, index) => {
     const trimmedVisibleLine = visibleLine.trim()
 
-    if (tableDepth === 0) {
+    if (!tableState) {
       const tableHeaderMatch = trimmedVisibleLine.match(/^Table\s+([^\s]+)(?:\s+in\s+.+)?\s*\{$/u)
 
       if (tableHeaderMatch) {
-        currentTableName = normalizeImportedTableName(tableHeaderMatch[1] || '')
-        currentTableIndent = `${originalLines[index]?.match(/^[ \t]*/u)?.[0] || ''}  `
-        currentTableExistingIndexNames = new Set<string>()
-        tableDepth = 1
+        tableState = {
+          name: normalizeImportedTableName(tableHeaderMatch[1] || ''),
+          indent: `${originalLines[index]?.match(/^[ \t]*/u)?.[0] || ''}  `,
+          existingIndexNames: new Set<string>(),
+          depth: 1
+        }
         return
       }
 
@@ -1058,22 +796,20 @@ const injectCommentDerivedIndexes = (source: string, indexes: DbmlCommentIndexIm
     const existingIndexName = readExistingIndexNameFromTableLine(trimmedVisibleLine)
 
     if (existingIndexName) {
-      currentTableExistingIndexNames.add(existingIndexName)
+      tableState.existingIndexNames.add(existingIndexName)
     }
 
     const openBraceCount = (visibleLine.match(/\{/g) || []).length
     const closeBraceCount = (visibleLine.match(/\}/g) || []).length
-    tableDepth += openBraceCount - closeBraceCount
+    tableState.depth += openBraceCount - closeBraceCount
 
-    if (tableDepth <= 0 && currentTableName) {
-      locatedTables.set(currentTableName, {
+    if (tableState.depth <= 0 && tableState.name) {
+      locatedTables.set(tableState.name, {
         endLine: index,
-        existingIndexNames: new Set(currentTableExistingIndexNames),
-        indent: currentTableIndent
+        existingIndexNames: new Set(tableState.existingIndexNames),
+        indent: tableState.indent
       })
-      currentTableName = null
-      currentTableExistingIndexNames = new Set<string>()
-      tableDepth = 0
+      tableState = null
     }
   })
 

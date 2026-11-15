@@ -1,6 +1,7 @@
 import { readFileSync } from 'node:fs'
 
 import { expect, test } from '@nuxt/test-utils/playwright'
+import { openTableEditorFromInspector } from './helpers/diagram-editor'
 import {
   installMockComputerFiles,
   primeMockComputerFile,
@@ -167,6 +168,7 @@ Properties "public.users" {
   await page.getByRole('menuitem', { name: 'Save schema' }).click()
   await page.getByPlaceholder('Schema name').fill('Hidden users')
   await page.getByRole('button', { name: 'Save to browser' }).click()
+  await expect(page.locator('[data-studio-modal-surface="schema"]')).toHaveCount(0)
 
   const savedSchemas = await page.evaluate(() => {
     return JSON.parse(window.localStorage.getItem('pgml-studio-schemas-v1') || '[]')
@@ -237,6 +239,57 @@ test('studio restores the most recently saved schema after reload and shows its 
   await expect.poll(async () => readPgmlEditorValue(getPgmlEditor(page))).toMatch(/Table public\.latest \{/)
   await expect(page.locator('[data-studio-schema-name="true"]')).toHaveText('Latest schema')
   await expect(page.locator('[data-studio-schema-status]')).toHaveCount(0)
+})
+
+test('failed file launch into another studio route retains the accepted browser document and save target', async ({ goto, page }) => {
+  await installMockComputerFiles(page)
+  await goto('/')
+  await page.evaluate(() => window.localStorage.setItem('pgml-studio-schemas-v1', JSON.stringify([
+    { id: 'accepted-browser', name: 'Accepted browser', text: 'Table public.accepted_browser {\n id int [pk]\n}', updatedAt: '2026-11-14T12:00:00.000Z' }
+  ])))
+  await goto('/diagram?source=browser&launch=saved&schema=accepted-browser')
+  await expect.poll(async () => readPgmlEditorValue(getPgmlEditor(page))).toContain('accepted_browser')
+  await expect(page.locator('[data-studio-schema-name="true"]')).toHaveText('Accepted browser')
+  await page.evaluate(async () => {
+    const files: unknown = Reflect.get(window, '__PGML_COMPUTER_FILE_STORE__')
+    if (typeof files !== 'object' || files === null || !('getById' in files) || typeof files.getById !== 'function') throw new Error('Missing file boundary')
+    const original = files.getById
+    files.getById = async (id: string) => {
+      if (id === 'missing-source-switch') {
+        Reflect.set(window, '__failedFileLaunchRead', true)
+        return null
+      }
+      return await original.call(files, id)
+    }
+    const root = document.getElementById('__nuxt')
+    if (root === null) throw new Error('Missing Nuxt root')
+    const app: unknown = Reflect.get(root, '__vue_app__')
+    if (typeof app !== 'object' || app === null || !('config' in app)) throw new Error('Missing Vue app')
+    const config = app.config
+    if (typeof config !== 'object' || config === null || !('globalProperties' in config)) throw new Error('Missing app properties')
+    const properties = config.globalProperties
+    if (typeof properties !== 'object' || properties === null || !('$router' in properties)) throw new Error('Missing router')
+    const router = properties.$router
+    if (typeof router !== 'object' || router === null || !('push' in router) || typeof router.push !== 'function') throw new Error('Missing router push')
+    await router.push('/analysis?source=file&launch=recent&file=missing-source-switch')
+  })
+  await expect.poll(() => page.evaluate(() => Reflect.get(window, '__failedFileLaunchRead'))).toBe(true)
+  await expect.poll(() => new URL(page.url()).pathname).toBe('/analysis')
+  expect(new URL(page.url()).searchParams.get('source')).toBe('file')
+  await expect(page.locator('[data-studio-schema-name="true"]')).toHaveText('Accepted browser')
+  await expect(page.getByLabel('Notifications (F8)').getByText('Unable to open the selected file.', { exact: true })).toBeVisible()
+  await page.getByRole('button', { name: 'Schema', exact: true }).click()
+  await page.getByRole('menuitem', { name: 'Save schema', exact: true }).click()
+  await expect(page.locator('[data-studio-modal-surface="schema"]').getByRole('button', { name: 'Overwrite saved schema', exact: true })).toBeVisible()
+  await page.locator('[data-studio-modal-surface="schema"]').getByRole('button', { name: 'Cancel', exact: true }).click()
+  await expect(page.locator('[data-studio-modal-surface="schema"]')).toHaveCount(0)
+  await page.getByRole('button', { name: 'Schema', exact: true }).click()
+  await page.getByRole('menuitem', { name: 'Download schema', exact: true }).click()
+  const downloading = page.waitForEvent('download')
+  await page.getByRole('button', { name: 'Download .pgml', exact: true }).click()
+  const path = await (await downloading).path()
+  if (path === null) throw new Error('Missing downloaded schema')
+  expect(readFileSync(path, 'utf8')).toContain('accepted_browser')
 })
 
 test('missing browser-saved launch targets start blank instead of booting the bundled example', async ({ goto, page }) => {
@@ -879,7 +932,7 @@ test('light mode keeps modal secondary actions and select highlights readable', 
 test('dark mode keeps select highlights readable', async ({ goto, page }) => {
   await goto('/diagram')
 
-  await page.locator('[data-table-edit-button="public.users"]').dispatchEvent('click')
+  await openTableEditorFromInspector(page, 'public.users')
   await page.getByLabel('Table schema').click()
   await page.keyboard.press('ArrowDown')
 

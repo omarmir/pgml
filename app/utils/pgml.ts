@@ -9,6 +9,7 @@ import {
   normalizePgmlCompatSource,
   parseDbmlCompatibleCheckDefinition,
   parseDbmlCompatibleIndexDefinition,
+  parsePgmlInlineIndexDefinition,
   parsePgmlCompatibleReference
 } from './pgml-dbml-compat'
 import { normalizeImportedTableColumnReference } from './pgml-import-normalization'
@@ -26,6 +27,7 @@ import {
   type PgmlTriggerSemanticModel
 } from './pgml-executable-parser'
 import { normalizePgmlTypeExpression } from './pgml-types'
+import type { PgmlIndexKey } from './pgml-index-keys'
 
 export type PgmlColumn = {
   customMetadata: PgmlMetadataEntry[]
@@ -58,6 +60,7 @@ export type PgmlIndex = {
   name: string
   tableName: string
   columns: string[]
+  keys?: PgmlIndexKey[]
   type: string
   sourceRange?: PgmlSourceRange
 }
@@ -112,6 +115,8 @@ export type PgmlCompareExclusions = {
   schemaNames: string[]
   tableIds: string[]
 }
+
+export type PgmlCompareExclusionsInput = { readonly [Key in keyof PgmlCompareExclusions]?: readonly string[] }
 
 export type PgmlCompareNoteFlag = 'pending' | 'ignore' | 'fixed' | 'blocked'
 
@@ -461,10 +466,10 @@ export const clonePgmlCompareNotes = (
 }
 
 export const clonePgmlCompareExclusions = (
-  exclusions?: Partial<PgmlCompareExclusions> | null
+  exclusions?: PgmlCompareExclusionsInput | null
 ): PgmlCompareExclusions => {
   const normalizeValues = (
-    values: string[],
+    values: readonly string[],
     predicate?: (value: string) => boolean
   ) => {
     return Array.from(new Set(
@@ -729,13 +734,6 @@ const getModifierValue = (modifiers: string[], key: string) => {
   }
 
   return modifier.slice(modifier.indexOf(':') + 1).trim().toLowerCase()
-}
-
-const parseBracketParts = (value: string) => {
-  return value
-    .split(',')
-    .map(part => part.trim())
-    .filter(part => part.length > 0)
 }
 
 const parseListValue = (value: string) => {
@@ -1112,7 +1110,7 @@ export const getSequenceAttachedTableIds = (
 
 export const filterPgmlSchemaModelForCompareExclusions = (
   model: PgmlSchemaModel,
-  exclusions: Partial<PgmlCompareExclusions>
+  exclusions: PgmlCompareExclusionsInput
 ) => {
   const normalizedExclusions = clonePgmlCompareExclusions(exclusions)
 
@@ -3105,6 +3103,7 @@ const parseTable = (block: NamedBlock) => {
           name: indexDefinition.name || createGeneratedTableIndexName(nameTarget.table, indexDefinition.columns, indexes.length + 1),
           tableName: `${nameTarget.schema}.${nameTarget.table}`,
           columns: indexDefinition.columns,
+          keys: indexDefinition.keys,
           type: indexDefinition.type || 'btree',
           sourceRange: {
             startLine: sourceLine + nestedEntry.startIndex + 1,
@@ -3142,20 +3141,15 @@ const parseTable = (block: NamedBlock) => {
       continue
     }
 
-    const indexMatch = trimmed.match(/^Index\s+([^\s(]+)\s*\(([^)]*)\)(?:\s*\[([^\]]+)\])?$/)
+    const indexDefinition = parsePgmlInlineIndexDefinition(trimmed)
 
-    if (indexMatch) {
-      const indexName = readMatch(indexMatch[1])
-      const indexColumns = readMatch(indexMatch[2])
-      const indexOptions = readMatch(indexMatch[3])
-      const parts = indexOptions ? parseBracketParts(indexOptions) : []
-      const typePart = parts.find(part => part.startsWith('type:'))
-
+    if (indexDefinition) {
       indexes.push({
-        name: cleanName(indexName),
+        name: indexDefinition.name,
         tableName: `${nameTarget.schema}.${nameTarget.table}`,
-        columns: indexColumns.split(',').map(value => cleanName(value)),
-        type: typePart ? typePart.replace('type:', '').trim() : 'btree',
+        columns: indexDefinition.columns,
+        keys: indexDefinition.keys,
+        type: indexDefinition.type || 'btree',
         sourceRange: {
           startLine: sourceLine,
           endLine: sourceLine

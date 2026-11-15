@@ -114,19 +114,17 @@ const normalizeDbmlSerialColumns = (source: string) => {
   const visibleLines = normalizePgmlCompatSource(source).split('\n')
   const nextLines: string[] = []
   const generatedSequenceBlocks: string[] = []
-  let tableDepth = 0
-  let currentTable: ReturnType<typeof parseImportedTableName> | null = null
+  let tableState: { table: ReturnType<typeof parseImportedTableName>, depth: number } | null = null
 
   originalLines.forEach((originalLine, index) => {
     const visibleLine = visibleLines[index] || ''
     const trimmedVisibleLine = visibleLine.trim()
 
-    if (tableDepth === 0) {
+    if (!tableState) {
       const tableHeaderMatch = trimmedVisibleLine.match(/^Table\s+([^\s]+)(?:\s+in\s+.+)?\s*\{$/)
 
       if (tableHeaderMatch) {
-        currentTable = parseImportedTableName(tableHeaderMatch[1] || '')
-        tableDepth = 1
+        tableState = { table: parseImportedTableName(tableHeaderMatch[1] || ''), depth: 1 }
         nextLines.push(originalLine)
         return
       }
@@ -135,13 +133,8 @@ const normalizeDbmlSerialColumns = (source: string) => {
       return
     }
 
-    if (!currentTable) {
-      nextLines.push(originalLine)
-      return
-    }
-
     if (
-      tableDepth === 1
+      tableState.depth === 1
       && trimmedVisibleLine.length > 0
       && !trimmedVisibleLine.endsWith('{')
       && trimmedVisibleLine !== '}'
@@ -155,9 +148,9 @@ const normalizeDbmlSerialColumns = (source: string) => {
         const modifierGroup = columnMatch[4] || ''
         const suffix = originalLine.slice(visibleLine.trimEnd().length)
         const nextBaseType = normalizeSerialBaseType(serialType)
-        const sequenceName = `${currentTable.table}_${columnName}_seq`
-        const qualifiedSequenceName = `${currentTable.schema}.${sequenceName}`
-        const ownedByTarget = `${currentTable.fullName}.${columnName}`
+        const sequenceName = `${tableState.table.table}_${columnName}_seq`
+        const qualifiedSequenceName = `${tableState.table.schema}.${sequenceName}`
+        const ownedByTarget = `${tableState.table.fullName}.${columnName}`
         const modifiers = modifierGroup
           .split(',')
           .map(part => part.trim())
@@ -178,11 +171,10 @@ const normalizeDbmlSerialColumns = (source: string) => {
 
     const openBraceCount = (visibleLine.match(/\{/g) || []).length
     const closeBraceCount = (visibleLine.match(/\}/g) || []).length
-    tableDepth += openBraceCount - closeBraceCount
+    tableState.depth += openBraceCount - closeBraceCount
 
-    if (tableDepth <= 0) {
-      tableDepth = 0
-      currentTable = null
+    if (tableState.depth <= 0) {
+      tableState = null
     }
   })
 

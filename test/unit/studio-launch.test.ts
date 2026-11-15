@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it } from 'vitest'
 
 import {
   authorizeStudioLaunchAccess,
@@ -16,6 +16,126 @@ import {
   parseStudioLaunchQuery,
   parseBrowserStudioLaunchQuery
 } from '../../app/utils/studio-launch'
+
+describe('unavailable launch session storage', () => {
+  const originalDescriptor = Object.getOwnPropertyDescriptor(globalThis, 'sessionStorage')
+  const request = {
+    launch: 'recent',
+    recentFileId: 'recent-file-1',
+    source: 'file'
+  } as const
+
+  afterEach(() => {
+    if (originalDescriptor) {
+      Object.defineProperty(globalThis, 'sessionStorage', originalDescriptor)
+    } else {
+      Reflect.deleteProperty(globalThis, 'sessionStorage')
+    }
+  })
+
+  const expectUnavailableStorage = () => {
+    expect(authorizeStudioLaunchAccess()).toBe(false)
+    expect(clearStudioLaunchAccess()).toBe(false)
+    expect(hasStudioLaunchAccess()).toBe(false)
+    expect(() => primePreloadedFileStudioLaunch(request, {
+      entry: { id: 'recent-file-1', name: 'Schema', updatedAt: '2026-11-14T12:00:00.000Z' },
+      text: 'Table users { id int }'
+    })).not.toThrow()
+    expect(consumePreloadedFileStudioLaunch(request)).toBeNull()
+  }
+
+  it('handles a denied sessionStorage getter', () => {
+    Object.defineProperty(globalThis, 'sessionStorage', {
+      configurable: true,
+      get: () => {
+        throw new DOMException('Storage disabled', 'SecurityError')
+      }
+    })
+
+    expectUnavailableStorage()
+  })
+
+  it('handles denied session storage reads, writes, and removals', () => {
+    const fail = () => {
+      throw new DOMException('Storage disabled', 'SecurityError')
+    }
+
+    Object.defineProperty(globalThis, 'sessionStorage', {
+      configurable: true,
+      value: { getItem: fail, removeItem: fail, setItem: fail }
+    })
+
+    expectUnavailableStorage()
+  })
+})
+
+describe('preloaded launch payload validation', () => {
+  const originalDescriptor = Object.getOwnPropertyDescriptor(globalThis, 'sessionStorage')
+  const request = {
+    launch: 'recent',
+    recentFileId: 'recent-file-1',
+    source: 'file'
+  } as const
+  const storageKey = 'pgml-studio-file-launch-v1'
+  const validPayload = {
+    entry: {
+      id: 'recent-file-1',
+      name: 'Schema',
+      updatedAt: '2026-11-14T12:00:00.000Z'
+    },
+    text: 'Table users { id int }'
+  }
+
+  afterEach(() => {
+    if (originalDescriptor) {
+      Object.defineProperty(globalThis, 'sessionStorage', originalDescriptor)
+    } else {
+      Reflect.deleteProperty(globalThis, 'sessionStorage')
+    }
+  })
+
+  it.each([
+    null,
+    [],
+    'launch',
+    {},
+    { requestKey: getStudioLaunchRequestKey(request), payload: {} },
+    { requestKey: getStudioLaunchRequestKey(request), payload: { entry: validPayload.entry } },
+    { requestKey: getStudioLaunchRequestKey(request), payload: { ...validPayload, text: 7 } },
+    { requestKey: getStudioLaunchRequestKey(request), payload: { ...validPayload, entry: null } },
+    { requestKey: getStudioLaunchRequestKey(request), payload: { ...validPayload, entry: { ...validPayload.entry, id: 7 } } },
+    { requestKey: getStudioLaunchRequestKey(request), payload: { ...validPayload, entry: { ...validPayload.entry, name: null } } },
+    { requestKey: getStudioLaunchRequestKey(request), payload: { ...validPayload, entry: { ...validPayload.entry, updatedAt: false } } },
+    { requestKey: getStudioLaunchRequestKey(request), payload: { ...validPayload, entry: { ...validPayload.entry, id: 'different-file' } } }
+  ].map(value => ({ value })))('discards malformed persisted launch $value so normal file loading can recover', ({ value }) => {
+    const values = new Map([[storageKey, JSON.stringify(value)]])
+
+    Object.defineProperty(globalThis, 'sessionStorage', {
+      configurable: true,
+      value: {
+        getItem: (key: string) => values.get(key),
+        removeItem: (key: string) => values.delete(key)
+      }
+    })
+
+    expect(consumePreloadedFileStudioLaunch(request)).toBeNull()
+    expect(values.has(storageKey)).toBe(false)
+  })
+
+  it('returns unavailable when a preloaded launch cannot be consumed exactly once', () => {
+    Object.defineProperty(globalThis, 'sessionStorage', {
+      configurable: true,
+      value: {
+        getItem: () => JSON.stringify({ requestKey: getStudioLaunchRequestKey(request), payload: validPayload }),
+        removeItem: () => {
+          throw new DOMException('Storage disabled', 'SecurityError')
+        }
+      }
+    })
+
+    expect(consumePreloadedFileStudioLaunch(request)).toBeNull()
+  })
+})
 
 describe('studio launch utilities', () => {
   it('builds explicit query payloads for the browser-backed launch paths', () => {

@@ -1,3 +1,5 @@
+import { useStudioSessionStore } from '~/stores/studio-session'
+import { computed, readonly } from 'vue'
 import type { ComputedRef, Ref } from 'vue'
 import {
   buildPgmlDirectIncrementCompareRelationshipSummary,
@@ -139,11 +141,15 @@ const normalizeSnapshotSource = (value: string, includeLayout: boolean) => {
 const selectedComparisonSessionStorageKey = 'pgml-studio-selected-comparison-id-v1'
 
 const readPersistedSelectedComparisonId = () => {
-  if (!import.meta.client || typeof globalThis.sessionStorage === 'undefined') {
+  if (!import.meta.client) {
     return null
   }
 
   try {
+    if (typeof globalThis.sessionStorage === 'undefined') {
+      return null
+    }
+
     const value = globalThis.sessionStorage.getItem(selectedComparisonSessionStorageKey)
 
     return value && value.trim().length > 0 ? value : null
@@ -153,11 +159,15 @@ const readPersistedSelectedComparisonId = () => {
 }
 
 const writePersistedSelectedComparisonId = (value: string | null) => {
-  if (!import.meta.client || typeof globalThis.sessionStorage === 'undefined') {
+  if (!import.meta.client) {
     return
   }
 
   try {
+    if (typeof globalThis.sessionStorage === 'undefined') {
+      return
+    }
+
     if (value === null) {
       globalThis.sessionStorage.removeItem(selectedComparisonSessionStorageKey)
       return
@@ -597,6 +607,7 @@ export const usePgmlStudioVersionHistory = (
     source: Ref<string>
   }
 ) => {
+  const studioSessionStore = useStudioSessionStore()
   const initialSelectedComparisonId = readPersistedSelectedComparisonId()
   const initialWorkspaceSource = normalizeSnapshotSource(input.source.value, true)
 
@@ -766,6 +777,7 @@ export const usePgmlStudioVersionHistory = (
   }
 
   const resetDocument = (workspaceSource = '') => {
+    studioSessionStore.supersedeWorkspaceDocument()
     setDocument(createInitialPgmlDocument({
       name: input.documentName.value,
       workspaceSource
@@ -779,6 +791,7 @@ export const usePgmlStudioVersionHistory = (
     }))
   }
   const loadPreparedDocument = (document: PgmlVersionSetDocument) => {
+    studioSessionStore.supersedeWorkspaceDocument()
     setDocument(document, {
       preserveSelectedComparison: true
     })
@@ -1533,6 +1546,7 @@ export const usePgmlStudioVersionHistory = (
       updatedAt: inputOptions.updatedAt,
       views: inputOptions.views
     })
+    studioSessionStore.supersedeWorkspaceDocument()
     documentState.value = nextDocument
     input.source.value = getPgmlDocumentBlockPreviewSource(nextDocument.workspace)
     resetWorkspaceSelectionState(inputOptions.selectionBaseId)
@@ -1602,6 +1616,10 @@ export const usePgmlStudioVersionHistory = (
     })
   }
 
+  const setEditorMode = (mode: PgmlVersionedDocumentEditorMode) => {
+    editorMode.value = mode
+  }
+
   const setDocumentEditorScope = (nextScope: PgmlDocumentEditorScope) => {
     documentEditorScope.value = normalizePgmlDocumentEditorScope(documentState.value, nextScope)
   }
@@ -1613,17 +1631,17 @@ export const usePgmlStudioVersionHistory = (
   return {
     activeDiagramViewId,
     activeDiagramViewName,
-    compareBaseId,
-    compareExclusions,
-    compareEntityFilters,
-    compareNoteFilters,
-    compareNoiseFilters,
+    compareBaseId: readonly(compareBaseId),
+    compareExclusions: readonly(compareExclusions),
+    compareEntityFilters: readonly(compareEntityFilters),
+    compareNoteFilters: readonly(compareNoteFilters),
+    compareNoiseFilters: readonly(compareNoiseFilters),
     compareBaseSource,
     compareBaseVersion,
     comparisonItems,
     comparisons,
     compareRelationshipSummary,
-    compareTargetId,
+    compareTargetId: readonly(compareTargetId),
     compareTargetSource,
     compareTargetVersion,
     canCheckpoint,
@@ -1639,8 +1657,8 @@ export const usePgmlStudioVersionHistory = (
     diagramViewItems,
     diagramViewSettings,
     deleteActiveDiagramView,
-    documentEditorScope,
-    editorMode,
+    documentEditorScope: readonly(documentEditorScope),
+    editorMode: readonly(editorMode),
     hasDesignVersions,
     hasImplementationVersions,
     hasVersions,
@@ -1649,7 +1667,7 @@ export const usePgmlStudioVersionHistory = (
     loadPreparedDocument,
     leafVersions,
     previewSource,
-    previewTargetId,
+    previewTargetId: readonly(previewTargetId),
     replaceWorkspaceFromImportedSnapshot,
     replaceWorkspaceFromVersion,
     renameActiveDiagramView,
@@ -1660,7 +1678,7 @@ export const usePgmlStudioVersionHistory = (
     selectComparison,
     selectDiagramView,
     selectedComparison,
-    selectedComparisonId,
+    selectedComparisonId: readonly(selectedComparisonId),
     pruneSelectedComparisonNotes,
     serializeCurrentDocument,
     setSchemaMetadata,
@@ -1671,6 +1689,7 @@ export const usePgmlStudioVersionHistory = (
     setCurrentCompareNoiseFilters,
     saveSelectedComparisonNote,
     setDocumentEditorScope,
+    setEditorMode,
     setPreviewTarget,
     latestDesignVersion,
     latestLeafDesignVersion,

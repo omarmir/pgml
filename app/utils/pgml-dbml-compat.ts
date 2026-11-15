@@ -1,3 +1,11 @@
+import { getPgmlIndexKeyValue, parsePgmlIndexKeys, type PgmlIndexKey } from './pgml-index-keys'
+import { readBalancedSection } from './sql-scan'
+
+type BracketQuoteMode = { kind: 'normal' | 'single-quoted' | 'double-quoted' | 'backtick' }
+type CompatLineMode = BracketQuoteMode | { kind: 'block-comment' }
+type CompatSourceMode = { kind: 'pgml', blockComment: boolean }
+  | { kind: 'source', delimiter: string, resumeBlockComment: boolean }
+
 export type PgmlCompatibleRelation = '>' | '<' | '-'
 
 export type PgmlCompatibleReferenceDeclaration = {
@@ -13,6 +21,7 @@ export type PgmlCompatibleReferenceDeclaration = {
 
 export type PgmlCompatibleIndexDefinition = {
   columns: string[]
+  keys: PgmlIndexKey[]
   name: string | null
   type: string | null
   unique: boolean
@@ -37,9 +46,7 @@ const cleanName = (value: string) => value.replaceAll('"', '').trim()
 export const splitBracketParts = (value: string) => {
   const parts: string[] = []
   let currentPart = ''
-  let insideSingleQuote = false
-  let insideDoubleQuote = false
-  let insideBacktick = false
+  let mode: BracketQuoteMode = { kind: 'normal' }
   let parenthesisDepth = 0
   let bracketDepth = 0
 
@@ -47,7 +54,7 @@ export const splitBracketParts = (value: string) => {
     const character = value[index] || ''
     const nextCharacter = value[index + 1] || ''
 
-    if (insideSingleQuote) {
+    if (mode.kind === 'single-quoted') {
       currentPart += character
 
       if (character === '\'' && nextCharacter === '\'') {
@@ -57,13 +64,13 @@ export const splitBracketParts = (value: string) => {
       }
 
       if (character === '\'') {
-        insideSingleQuote = false
+        mode = { kind: 'normal' }
       }
 
       continue
     }
 
-    if (insideDoubleQuote) {
+    if (mode.kind === 'double-quoted') {
       currentPart += character
 
       if (character === '"' && nextCharacter === '"') {
@@ -73,36 +80,36 @@ export const splitBracketParts = (value: string) => {
       }
 
       if (character === '"') {
-        insideDoubleQuote = false
+        mode = { kind: 'normal' }
       }
 
       continue
     }
 
-    if (insideBacktick) {
+    if (mode.kind === 'backtick') {
       currentPart += character
 
       if (character === '`') {
-        insideBacktick = false
+        mode = { kind: 'normal' }
       }
 
       continue
     }
 
     if (character === '\'') {
-      insideSingleQuote = true
+      mode = { kind: 'single-quoted' }
       currentPart += character
       continue
     }
 
     if (character === '"') {
-      insideDoubleQuote = true
+      mode = { kind: 'double-quoted' }
       currentPart += character
       continue
     }
 
     if (character === '`') {
-      insideBacktick = true
+      mode = { kind: 'backtick' }
       currentPart += character
       continue
     }
@@ -169,7 +176,7 @@ const getBracketOptionValue = (
   return option.slice(option.indexOf(':') + 1).trim().toLowerCase()
 }
 
-const splitTrailingBracketOptions = (value: string) => {
+export const splitTrailingBracketOptions = (value: string) => {
   const trimmedValue = value.trim()
 
   if (!trimmedValue.endsWith(']')) {
@@ -179,51 +186,49 @@ const splitTrailingBracketOptions = (value: string) => {
     }
   }
 
-  let insideSingleQuote = false
-  let insideDoubleQuote = false
-  let insideBacktick = false
+  let mode: BracketQuoteMode = { kind: 'normal' }
   let bracketDepth = 0
 
   for (let index = trimmedValue.length - 1; index >= 0; index -= 1) {
     const character = trimmedValue[index] || ''
     const previousCharacter = trimmedValue[index - 1] || ''
 
-    if (insideSingleQuote) {
+    if (mode.kind === 'single-quoted') {
       if (character === '\'' && previousCharacter !== '\'') {
-        insideSingleQuote = false
+        mode = { kind: 'normal' }
       }
 
       continue
     }
 
-    if (insideDoubleQuote) {
+    if (mode.kind === 'double-quoted') {
       if (character === '"' && previousCharacter !== '"') {
-        insideDoubleQuote = false
+        mode = { kind: 'normal' }
       }
 
       continue
     }
 
-    if (insideBacktick) {
+    if (mode.kind === 'backtick') {
       if (character === '`') {
-        insideBacktick = false
+        mode = { kind: 'normal' }
       }
 
       continue
     }
 
     if (character === '\'') {
-      insideSingleQuote = true
+      mode = { kind: 'single-quoted' }
       continue
     }
 
     if (character === '"') {
-      insideDoubleQuote = true
+      mode = { kind: 'double-quoted' }
       continue
     }
 
     if (character === '`') {
-      insideBacktick = true
+      mode = { kind: 'backtick' }
       continue
     }
 
@@ -281,22 +286,19 @@ const stripCommentsFromLine = (
   isInsideBlockComment: boolean
 ) => {
   const characters = Array.from(line)
-  let insideBlockComment = isInsideBlockComment
-  let insideSingleQuote = false
-  let insideDoubleQuote = false
-  let insideBacktick = false
+  let mode: CompatLineMode = { kind: isInsideBlockComment ? 'block-comment' : 'normal' }
   let index = 0
 
   while (index < characters.length) {
     const character = characters[index] || ''
     const nextCharacter = characters[index + 1] || ''
 
-    if (insideBlockComment) {
+    if (mode.kind === 'block-comment') {
       characters[index] = ' '
 
       if (character === '*' && nextCharacter === '/') {
         characters[index + 1] = ' '
-        insideBlockComment = false
+        mode = { kind: 'normal' }
         index += 2
         continue
       }
@@ -305,37 +307,37 @@ const stripCommentsFromLine = (
       continue
     }
 
-    if (insideSingleQuote) {
+    if (mode.kind === 'single-quoted') {
       if (character === '\'' && nextCharacter === '\'') {
         index += 2
         continue
       }
 
       if (character === '\'') {
-        insideSingleQuote = false
+        mode = { kind: 'normal' }
       }
 
       index += 1
       continue
     }
 
-    if (insideDoubleQuote) {
+    if (mode.kind === 'double-quoted') {
       if (character === '"' && nextCharacter === '"') {
         index += 2
         continue
       }
 
       if (character === '"') {
-        insideDoubleQuote = false
+        mode = { kind: 'normal' }
       }
 
       index += 1
       continue
     }
 
-    if (insideBacktick) {
+    if (mode.kind === 'backtick') {
       if (character === '`') {
-        insideBacktick = false
+        mode = { kind: 'normal' }
       }
 
       index += 1
@@ -343,19 +345,19 @@ const stripCommentsFromLine = (
     }
 
     if (character === '\'') {
-      insideSingleQuote = true
+      mode = { kind: 'single-quoted' }
       index += 1
       continue
     }
 
     if (character === '"') {
-      insideDoubleQuote = true
+      mode = { kind: 'double-quoted' }
       index += 1
       continue
     }
 
     if (character === '`') {
-      insideBacktick = true
+      mode = { kind: 'backtick' }
       index += 1
       continue
     }
@@ -363,7 +365,7 @@ const stripCommentsFromLine = (
     if (character === '/' && nextCharacter === '*') {
       characters[index] = ' '
       characters[index + 1] = ' '
-      insideBlockComment = true
+      mode = { kind: 'block-comment' }
       index += 2
       continue
     }
@@ -380,7 +382,7 @@ const stripCommentsFromLine = (
   }
 
   return {
-    isInsideBlockComment: insideBlockComment,
+    isInsideBlockComment: mode.kind === 'block-comment',
     line: characters.join('')
   }
 }
@@ -389,28 +391,27 @@ export const normalizePgmlCompatSource = (source: string) => {
   const normalizedSource = source.replaceAll('\r\n', '\n')
   const lines = normalizedSource.split('\n')
   const nextLines: string[] = []
-  let isInsideBlockComment = false
-  let sourceDelimiter: string | null = null
+  let mode: CompatSourceMode = { kind: 'pgml', blockComment: false }
 
   lines.forEach((line) => {
-    if (sourceDelimiter) {
+    if (mode.kind === 'source') {
       nextLines.push(line)
 
-      if (line.includes(sourceDelimiter)) {
-        sourceDelimiter = null
+      if (line.includes(mode.delimiter)) {
+        mode = { kind: 'pgml', blockComment: mode.resumeBlockComment }
       }
 
       return
     }
 
-    const normalizedLine = stripCommentsFromLine(line, isInsideBlockComment)
+    const normalizedLine = stripCommentsFromLine(line, mode.blockComment)
     nextLines.push(normalizedLine.line)
-    isInsideBlockComment = normalizedLine.isInsideBlockComment
+    mode = { kind: 'pgml', blockComment: normalizedLine.isInsideBlockComment }
 
     const detectedDelimiter = findSourceDelimiter(normalizedLine.line)
 
     if (detectedDelimiter && detectedDelimiter.length > 0) {
-      sourceDelimiter = detectedDelimiter
+      mode = { kind: 'source', delimiter: detectedDelimiter, resumeBlockComment: mode.blockComment }
     }
   })
 
@@ -493,24 +494,44 @@ export const parseDbmlCompatibleIndexDefinition = (value: string): PgmlCompatibl
   }
 
   const rawColumnValue = parsedValue.body
-  const columnList = rawColumnValue.startsWith('(') && rawColumnValue.endsWith(')')
-    ? rawColumnValue.slice(1, -1)
-    : rawColumnValue
+  const section = rawColumnValue.startsWith('(') ? readBalancedSection(rawColumnValue, 0) : null
+
+  if (rawColumnValue.startsWith('(') && (!section || section.endIndex !== rawColumnValue.length - 1)) {
+    return null
+  }
+
+  const columnList = section ? section.content : rawColumnValue
+  const keys = parsePgmlIndexKeys(columnList)
   const options = parsedValue.options ? splitBracketParts(parsedValue.options) : []
   const nameEntry = options.find(option => option.startsWith('name:'))
   const typeEntry = options.find(option => option.startsWith('type:'))
   const whereEntry = options.find(option => option.startsWith('where:'))
 
   return {
-    columns: columnList
-      .split(',')
-      .map(column => cleanName(column))
-      .filter(column => column.length > 0),
+    columns: keys.map(getPgmlIndexKeyValue),
+    keys,
     name: nameEntry ? nameEntry.replace(/^name:\s*/, '').replaceAll(/^['"`]+|['"`]+$/g, '').trim() : null,
     type: typeEntry ? typeEntry.replace(/^type:\s*/, '').trim() : null,
     unique: options.includes('unique'),
     where: whereEntry ? whereEntry.replace(/^where:\s*/, '').trim() : null
   }
+}
+
+export const parsePgmlInlineIndexDefinition = (value: string) => {
+  const header = value.match(/^Index\s+([^\s(]+)\s*(?=\()/u)
+
+  if (!header || header[1] === undefined) {
+    return null
+  }
+
+  const body = value.slice(header[0].length)
+  const definition = parseDbmlCompatibleIndexDefinition(body)
+
+  if (!definition) {
+    return null
+  }
+
+  return { ...definition, name: cleanName(header[1]), options: splitTrailingBracketOptions(body).options }
 }
 
 export const parseDbmlCompatibleCheckDefinition = (value: string): PgmlCompatibleCheckDefinition | null => {
@@ -533,23 +554,19 @@ export const parseDbmlCompatibleCheckDefinition = (value: string): PgmlCompatibl
 
 export const collectDbmlCompatibleMultilineEntries = (lines: string[]) => {
   const entries: PgmlCompatibleMultilineEntry[] = []
-  let currentLines: string[] = []
-  let currentStartIndex = 0
-  let insideEntry = false
+  let entry: { lines: string[], startIndex: number } | null = null
 
-  lines.forEach((line, index) => {
+  for (const [index, line] of lines.entries()) {
     const trimmedLine = line.trim()
 
-    if (!insideEntry) {
+    if (!entry) {
       if (trimmedLine.length === 0) {
-        return
+        continue
       }
 
-      currentLines = [trimmedLine]
-      currentStartIndex = index
-      insideEntry = (trimmedLine.match(/`/g) || []).length % 2 === 1
-
-      if (!insideEntry) {
+      if ((trimmedLine.match(/`/g) || []).length % 2 === 1) {
+        entry = { lines: [trimmedLine], startIndex: index }
+      } else {
         entries.push({
           endIndex: index,
           startIndex: index,
@@ -557,27 +574,26 @@ export const collectDbmlCompatibleMultilineEntries = (lines: string[]) => {
         })
       }
 
-      return
+      continue
     }
 
-    currentLines.push(trimmedLine)
+    entry.lines.push(trimmedLine)
 
     if ((trimmedLine.match(/`/g) || []).length % 2 === 1) {
       entries.push({
         endIndex: index,
-        startIndex: currentStartIndex,
-        text: currentLines.join('\n')
+        startIndex: entry.startIndex,
+        text: entry.lines.join('\n')
       })
-      currentLines = []
-      insideEntry = false
+      entry = null
     }
-  })
+  }
 
-  if (insideEntry) {
+  if (entry) {
     entries.push({
       endIndex: lines.length - 1,
-      startIndex: currentStartIndex,
-      text: currentLines.join('\n')
+      startIndex: entry.startIndex,
+      text: entry.lines.join('\n')
     })
   }
 

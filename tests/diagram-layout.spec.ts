@@ -2480,3 +2480,23 @@ test('connection lines stay out of every table group header and do not run along
   expect(diagnostics?.headerHits.length || 0).toBeLessThanOrEqual(2)
   expect(diagnostics?.borderHits).toEqual([])
 })
+
+test('pending native editor input survives compact viewport remounts in both directions', async ({ goto, page }) => {
+  await page.addInitScript(() => Object.defineProperty(navigator, 'webdriver', { configurable: true, get: () => false }))
+  await page.setViewportSize({ width: 1280, height: 800 })
+  await goto('/diagram')
+  const seed = `Table public.buffered {\n${Array.from({ length: 850 }, (_, index) => `  field_${index} text`).join('\n')}\n}`
+  await setPgmlEditorValue(getPgmlEditor(page), seed)
+  await page.locator('[data-diagram-panel-tab="entities"]').click()
+  await expect(page.getByRole('button', { name: 'Table buffered', exact: true })).toBeVisible()
+  for (const [width, marker] of [[700, 'compact_pending'], [1280, 'desktop_pending']] as const) {
+    const quickEditor = page.locator('[data-mobile-quick-view="pgml"]')
+    if (await quickEditor.isVisible()) await quickEditor.click()
+    await getPgmlEditor(page).locator('.cm-content').focus()
+    await page.keyboard.press('ControlOrMeta+End')
+    await page.keyboard.insertText(`\n// ${marker}`)
+    await page.setViewportSize({ width, height: 800 })
+    await expect(quickEditor).toHaveCount(width === 700 ? 1 : 0)
+    await expect.poll(() => readPgmlEditorValue(getPgmlEditor(page))).toContain(marker)
+  }
+})

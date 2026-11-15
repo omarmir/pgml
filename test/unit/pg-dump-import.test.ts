@@ -7,6 +7,22 @@ import {
 } from '../../app/utils/pg-dump-import'
 
 describe('pg_dump import utilities', () => {
+  it('keeps SQL delimiter characters inside quotes and dollar bodies during statement splitting', () => {
+    const sql = `-- ignored semicolon ; and quote '
+/* outer ; /* nested */ comment */
+CREATE TABLE public.items (id integer, label text DEFAULT 'a;''b');
+CREATE FUNCTION public.item_label() RETURNS text LANGUAGE sql AS $fn$
+  SELECT 'value;--literal';
+$fn$;
+CREATE TABLE public.other_items (id integer);`
+    const model = parsePgml(convertPgDumpToPgml({ sql }).pgml)
+
+    expect(model.tables.map(table => table.fullName)).toEqual(['public.items', 'public.other_items'])
+    expect(model.tables[0]?.columns.find(column => column.name === 'label')?.modifiers)
+      .toContain('default: \'a;\'\'b\'')
+    expect(model.functions[0]?.source).toContain('SELECT \'value;--literal\';')
+  })
+
   it('converts text pg_dump SQL into PGML schema objects that the studio can parse', () => {
     const sql = `CREATE TYPE public.role_kind AS ENUM ('owner', 'analyst');
 CREATE DOMAIN public.email_address AS text CHECK ((VALUE <> ''::text));

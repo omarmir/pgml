@@ -1,3 +1,4 @@
+import { formatPgmlIndexKeyForSource, getPgmlIndexKeys } from './pgml-index-keys'
 import type {
   PgmlConstraint,
   PgmlCustomType,
@@ -348,7 +349,7 @@ const isReferenceOnlyColumnDiff = (
 
 const normalizeIndexValue = (index: PgmlIndex) => {
   return {
-    columns: [...index.columns],
+    columns: getPgmlIndexKeys(index).map(formatPgmlIndexKeyForSource),
     name: index.name,
     type: index.type
   }

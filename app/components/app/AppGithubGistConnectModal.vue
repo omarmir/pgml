@@ -24,6 +24,7 @@ const {
 }>()
 
 const emit = defineEmits<{
+  'after-leave': []
   'submit': []
   'update:gistId': [value: string]
   'update:open': [value: boolean]
@@ -36,6 +37,10 @@ const modalSecondaryButtonClass = studioButtonClasses.secondary
 const infoPanelClass = 'grid gap-2 border border-[color:var(--studio-shell-border)] bg-[color:var(--studio-control-bg)] px-3 py-3'
 const errorPanelClass = 'grid gap-1 border border-[color:var(--studio-shell-error)]/40 bg-[color:var(--studio-shell-error)]/8 px-3 py-3 text-[0.74rem] text-[color:var(--studio-shell-error)]'
 
+const handleAfterLeave = () => {
+  tokenInputRef.value?.blur()
+  emit('after-leave')
+}
 const handleSubmit = () => {
   emit('submit')
 }
@@ -49,7 +54,7 @@ const handleSubmit = () => {
     surface-id="github-gist-connect"
     body-class="grid gap-4 px-4 py-3"
     @update:open="emit('update:open', $event)"
-    @after-leave="tokenInputRef?.blur()"
+    @after-leave="handleAfterLeave"
   >
     <form
       class="grid gap-4"

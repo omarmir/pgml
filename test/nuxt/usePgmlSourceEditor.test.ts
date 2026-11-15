@@ -20,6 +20,8 @@ describe('usePgmlSourceEditor', () => {
           flushPendingChanges: async () => undefined,
           focusOffset: () => undefined,
           focusSourceRange,
+          getCommittedInput: () => '',
+          getDocumentContextRevision: () => 0,
           getScrollTop: () => 0,
           getValue: () => '',
           hasPendingChanges: () => false,

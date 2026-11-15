@@ -27,6 +27,7 @@ const {
 }>()
 
 const emit = defineEmits<{
+  'after-leave': []
   'clear-file': []
   'select-file': [files: FileList | null]
   'submit': []
@@ -91,6 +92,7 @@ const handleTextInput = (event: Event) => {
     surface-id="pgml-import"
     body-class="grid gap-4 px-4 py-3"
     @update:open="emit('update:open', $event)"
+    @after-leave="emit('after-leave')"
   >
     <div class="grid gap-4">
       <div :class="importRulesClass">

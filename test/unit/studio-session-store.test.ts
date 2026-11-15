@@ -53,6 +53,68 @@ describe('studio session store', () => {
     expect(store.launchAuthorized).toBe(false)
   })
 
+  it('authorizes the live session when session storage is denied and revokes it explicitly', () => {
+    Object.defineProperty(globalThis, 'sessionStorage', {
+      configurable: true,
+      get: () => { throw new Error('Storage denied') }
+    })
+    const store = useStudioSessionStore()
+
+    expect(store.hasLaunchAccess()).toBe(false)
+    expect(store.authorizeLaunchAccess()).toBe(false)
+    expect(store.hasLaunchAccess()).toBe(true)
+    store.resetStudioUiState()
+    expect(store.hasLaunchAccess()).toBe(true)
+    expect(store.clearLaunchAccess()).toBe(false)
+    expect(store.hasLaunchAccess()).toBe(false)
+    expect(store.hasLaunchAccess()).toBe(false)
+    setActivePinia(createPinia())
+    expect(useStudioSessionStore().hasLaunchAccess()).toBe(false)
+  })
+
+  it('does not restore a stale persisted grant after revocation fails to remove storage', () => {
+    const store = useStudioSessionStore()
+    store.authorizeLaunchAccess()
+    Object.defineProperty(globalThis, 'sessionStorage', {
+      configurable: true,
+      value: {
+        getItem: () => 'granted',
+        removeItem: () => { throw new Error('Storage denied') }
+      }
+    })
+
+    expect(store.clearLaunchAccess()).toBe(false)
+    expect(store.hasLaunchAccess()).toBe(false)
+    expect(store.syncLaunchAuthorized()).toBe(false)
+  })
+
+  it('restores persisted access only when a new live session is created', () => {
+    useStudioSessionStore().authorizeLaunchAccess()
+    setActivePinia(createPinia())
+    expect(useStudioSessionStore().hasLaunchAccess()).toBe(true)
+    useStudioSessionStore().clearLaunchAccess()
+    setActivePinia(createPinia())
+    expect(useStudioSessionStore().hasLaunchAccess()).toBe(false)
+  })
+
+  it('keeps dialogs exclusive and ignores completion for an earlier dialog revision', () => {
+    const store = useStudioSessionStore()
+    store.openLoadDialog()
+    store.openSchemaDialog('save', { name: 'First', targetId: null })
+    const revision = store.schemaDialogRevision
+    expect(store.loadDialogOpen).toBe(false)
+    store.openSchemaDialog('download', { name: 'Second', targetId: null })
+    store.closeSchemaDialog(revision)
+    expect(store.schemaDialogOpen).toBe(true)
+    expect(store.schemaDialogName).toBe('Second')
+    store.updateSchemaDialogOpen(false)
+    expect(store.schemaDialogName).toBeNull()
+    store.openLoadDialog()
+    expect(store.schemaDialogOpen).toBe(false)
+    store.updateLoadDialogOpen(false)
+    expect(store.loadDialogOpen).toBe(false)
+  })
+
   it('stores and consumes a preloaded file launch payload once', () => {
     const store = useStudioSessionStore()
     const request = {
@@ -87,14 +149,30 @@ describe('studio session store', () => {
     expect(store.consumePreloadedFileLaunch(request)).toBeNull()
   })
 
+  it('advances document context only for accepted replacement and keeps source ownership with commit', () => {
+    const store = useStudioSessionStore()
+    const initial = store.workspaceDocumentRevision
+    const failed = store.beginWorkspaceLoad('file')
+    expect(store.currentSourceKind).toBe('browser')
+    expect(store.workspaceDocumentRevision).toBe(initial)
+    store.cancelWorkspaceLoad(failed)
+    expect(store.workspaceDocumentRevision).toBe(initial)
+    const accepted = store.beginWorkspaceLoad('gist')
+    store.commitWorkspaceLoad(accepted, () => store.supersedeWorkspaceDocument())
+    expect(store.currentSourceKind).toBe('gist')
+    expect(store.workspaceDocumentRevision).toBe(initial + 1)
+    store.supersedeWorkspaceDocument()
+    expect(store.workspaceDocumentRevision).toBe(initial + 2)
+  })
+
   it('resets shared studio session ui state', () => {
     const store = useStudioSessionStore()
 
     store.appliedLaunchKey = 'browser:saved:example'
-    store.currentSourceKind = 'file'
+    store.commitWorkspaceLoad(store.beginWorkspaceLoad('file'), () => {})
     store.includeLayoutInSchema = false
     store.openLoadDialog()
-    store.openSchemaDialog('download')
+    store.openSchemaDialog('download', { name: 'Schema', targetId: null })
 
     store.resetStudioUiState()
 

@@ -1,5 +1,5 @@
-import type { ComputedRef, Ref } from 'vue'
-import { watchDebounced } from '@vueuse/core'
+import { onScopeDispose, type ComputedRef, type Ref } from 'vue'
+import { useStudioAutosave } from './useStudioAutosave'
 import { storeToRefs } from 'pinia'
 import { useStudioSourcesStore } from '~/stores/studio-sources'
 import {
@@ -12,9 +12,8 @@ import {
   type PgmlRecentComputerFileWriteResult
 } from '~/utils/computer-files'
 import { formatSavedPgmlSchemaTime } from '~/utils/studio-browser-schemas'
-import { useStudioWorkspaceComputerFileState } from './useStudioWorkspaceState'
+import { useStudioSessionStore, type ApplyStudioLoadedText, type StudioLoadIntent } from '~/stores/studio-session'
 
-const computerFileAutosaveDebounceMs = 5000
 const computerFileSaveErrorMessage = 'Unable to save to the selected file.'
 const computerFileOpenErrorMessage = 'Unable to open the selected file.'
 const computerFileMissingErrorMessage = 'The selected file is no longer available.'
@@ -41,7 +40,7 @@ type ComputerFileOperations = {
 }
 
 type UsePgmlStudioComputerFilesOptions = {
-  applyLoadedFileText?: (value: string) => void
+  applyLoadedFileText?: ApplyStudioLoadedText
   buildSchemaText: (includeLayout: boolean) => string
   enabled?: ComputedRef<boolean>
   fileOperations?: Partial<ComputerFileOperations>
@@ -61,15 +60,24 @@ export const usePgmlStudioComputerFiles = ({
 }: UsePgmlStudioComputerFilesOptions) => {
   const studioSourcesStore = useStudioSourcesStore()
   const { recentComputerFiles } = storeToRefs(studioSourcesStore)
-  const {
-    computerFileSaveError,
-    currentComputerFileId,
-    currentComputerFileName,
-    currentComputerFileUpdatedAt,
-    hasSavedComputerFileInSession,
-    isSavingToComputerFile,
-    lastPersistedSnapshot
-  } = useStudioWorkspaceComputerFileState()
+  const studioSessionStore = useStudioSessionStore()
+  const session = studioSessionStore.getComputerPersistence()
+  const target = computed(() => session.selection.value.kind === 'selected' ? session.selection.value.target : null)
+  const computerFileSaveError = session.error
+  const currentComputerFileId = computed(() => target.value === null ? null : target.value.id)
+  const currentComputerFileName = computed(() => target.value === null ? '' : target.value.name)
+  const currentComputerFileUpdatedAt = computed(() => target.value === null ? null : target.value.updatedAt)
+  const hasSavedComputerFileInSession = session.hasSavedInSession
+  const isSavingToComputerFile = session.isSaving
+  const lastPersistedSnapshot = session.persistedSnapshot
+  let scopeActive = true
+  let loadRequest = 0
+  let activeLoadIntent: StudioLoadIntent | null = null
+  onScopeDispose(() => {
+    scopeActive = false
+    loadRequest += 1
+    if (activeLoadIntent !== null) studioSessionStore.cancelWorkspaceLoad(activeLoadIntent)
+  })
   const autosaveEnabled = enabled ?? computed(() => true)
   const passiveComputerFileWritesSupported = computed(() => supportsPassiveRecentComputerFileWrites())
   const operations: ComputerFileOperations = {
@@ -138,115 +146,92 @@ export const usePgmlStudioComputerFiles = ({
   const syncLoadedComputerFile = (payload: {
     entry: PgmlRecentComputerFile
     text: string
-  }) => {
+  }, intent: StudioLoadIntent = studioSessionStore.beginWorkspaceLoad('file')) => {
+    activeLoadIntent = intent
+    const commitPersistence = () => {
+      loadRequest += 1
+      session.select(payload.entry, getSnapshot(payload.text))
+    }
     if (applyLoadedFileText) {
-      applyLoadedFileText(payload.text)
-    } else {
+      return applyLoadedFileText({ text: payload.text, intent, commitPersistence })
+    }
+    return studioSessionStore.commitWorkspaceLoad(intent, () => {
       source.value = payload.text
-    }
-
-    currentComputerFileId.value = payload.entry.id
-    currentComputerFileName.value = payload.entry.name
-    currentComputerFileUpdatedAt.value = payload.entry.updatedAt
-    hasSavedComputerFileInSession.value = false
-    lastPersistedSnapshot.value = getSnapshot(payload.text)
-    computerFileSaveError.value = null
+      commitPersistence()
+    })
   }
 
-  const loadRecentComputerFileById = async (recentFileId: string) => {
-    try {
-      const loadedFile = await operations.loadRecentComputerFile(recentFileId)
-
-      if (!loadedFile) {
-        computerFileSaveError.value = computerFileOpenErrorMessage
-        return false
-      }
-
-      syncLoadedComputerFile(loadedFile)
-      await refreshRecentComputerFiles()
-
-      return true
-    } catch {
-      computerFileSaveError.value = computerFileOpenErrorMessage
-      return false
-    }
-  }
-
-  const openComputerFileFromPicker = async () => {
-    try {
-      const loadedFile = await operations.openComputerFile()
-
-      if (!loadedFile) {
-        return false
-      }
-
-      syncLoadedComputerFile(loadedFile)
-      await refreshRecentComputerFiles()
-
-      return true
-    } catch {
-      computerFileSaveError.value = computerFileOpenErrorMessage
-      return false
-    }
-  }
-
-  const persistCurrentComputerFile = async (
-    text: string,
-    options: PersistCurrentComputerFileOptions
+  const loadComputerFile = async (
+    read: () => Promise<{ entry: PgmlRecentComputerFile, text: string } | null>,
+    intent: StudioLoadIntent
   ) => {
+    activeLoadIntent = intent
+    const requestId = ++loadRequest
+    const loadId = session.beginLoad()
+    session.clearError()
+    const generation = session.generation.value
+    let accepted = false
     try {
-      if (!currentComputerFileId.value) {
-        computerFileSaveError.value = computerFileSaveErrorMessage
+      const loadedFile = await read()
+      if (!studioSessionStore.ownsWorkspaceLoad(intent) || !scopeActive || !session.ownsLoad(loadId) || requestId !== loadRequest || generation !== session.generation.value) return false
+      if (!loadedFile) {
+        session.fail(computerFileOpenErrorMessage)
         return false
       }
-
-      const updatedFile = await operations.writeRecentComputerFile({
-        recentFileId: currentComputerFileId.value,
-        text
-      }, {
-        permissionMode: options.interactive ? 'interactive' : 'passive'
-      })
-
-      if (!updatedFile.ok) {
-        computerFileSaveError.value = getComputerFileSaveFailureMessage(updatedFile, options)
-        return false
-      }
-
-      currentComputerFileName.value = updatedFile.entry.name
-      currentComputerFileUpdatedAt.value = updatedFile.entry.updatedAt
-      hasSavedComputerFileInSession.value = true
-      lastPersistedSnapshot.value = getSnapshot(text)
-      computerFileSaveError.value = null
-      await refreshRecentComputerFiles()
-
-      return true
-    } catch (error) {
-      computerFileSaveError.value = getComputerFileActionErrorMessage(error, computerFileSaveErrorMessage)
+      accepted = await syncLoadedComputerFile(loadedFile, intent)
+      if (accepted) void refreshRecentComputerFiles().catch(() => {})
+      return accepted && studioSessionStore.ownsWorkspaceLoad(intent) && scopeActive
+    } catch {
+      if (studioSessionStore.ownsWorkspaceLoad(intent) && scopeActive) session.fail(computerFileOpenErrorMessage)
       return false
-    }
-  }
-
-  const saveSchemaToComputerFile = async () => {
-    const text = getCurrentText()
-
-    isSavingToComputerFile.value = true
-
-    try {
-      return await persistCurrentComputerFile(text, {
-        interactive: true
-      })
     } finally {
-      await nextTick()
-      isSavingToComputerFile.value = false
+      if (!accepted) studioSessionStore.cancelWorkspaceLoad(intent)
     }
   }
+  const loadRecentComputerFileById = (recentFileId: string, intent: StudioLoadIntent = studioSessionStore.beginWorkspaceLoad('file')) => {
+    return loadComputerFile(() => operations.loadRecentComputerFile(recentFileId), intent)
+  }
+  const openComputerFileFromPicker = (intent: StudioLoadIntent = studioSessionStore.beginWorkspaceLoad('file')) => {
+    return loadComputerFile(operations.openComputerFile, intent)
+  }
+
+  watch(currentSnapshot, snapshot => session.observe(snapshot), { immediate: true, flush: 'sync' })
+
+  const isPassiveWriteEligible = () => scopeActive && autosaveEnabled.value && !studioSessionStore.isWorkspaceLoading && passiveComputerFileWritesSupported.value
+  const persistCurrentComputerFile = (snapshot: string, options: PersistCurrentComputerFileOptions) => {
+    const selected = target.value
+    if (selected === null) {
+      session.fail(computerFileSaveErrorMessage)
+      return Promise.resolve(false)
+    }
+    return session.save({
+      target: selected,
+      snapshot,
+      mode: options.interactive ? 'manual' : 'autosave',
+      isAutosaveEligible: isPassiveWriteEligible,
+      onError: error => getComputerFileActionErrorMessage(error, computerFileSaveErrorMessage),
+      write: async (capturedTarget, capturedSnapshot) => {
+        const updatedFile = await operations.writeRecentComputerFile({
+          recentFileId: capturedTarget.id,
+          text: parseSnapshot(capturedSnapshot).text
+        }, { permissionMode: options.interactive ? 'interactive' : 'passive' })
+        if (!updatedFile.ok) {
+          return { ok: false, message: getComputerFileSaveFailureMessage(updatedFile, options) }
+        }
+        void refreshRecentComputerFiles().catch(() => {})
+        return { ok: true, target: updatedFile.entry }
+      }
+    })
+  }
+  const saveSchemaToComputerFile = () => persistCurrentComputerFile(currentSnapshot.value, { interactive: true })
 
   const formatSavedAt = (value: string) => formatSavedPgmlSchemaTime(value)
   const persistAutosaveSnapshotsToCurrentComputerFile = async (snapshot: string) => {
+    const generation = session.generation.value
     let nextSnapshot = snapshot
 
-    while (nextSnapshot !== lastPersistedSnapshot.value) {
-      const didSave = await persistCurrentComputerFile(parseSnapshot(nextSnapshot).text, {
+    while (isPassiveWriteEligible() && generation === session.generation.value && nextSnapshot !== lastPersistedSnapshot.value) {
+      const didSave = await persistCurrentComputerFile(nextSnapshot, {
         interactive: false
       })
 
@@ -259,32 +244,14 @@ export const usePgmlStudioComputerFiles = ({
   }
 
   if (import.meta.client) {
-    void refreshRecentComputerFiles()
+    void refreshRecentComputerFiles().catch(() => {})
   }
 
-  watchDebounced(currentSnapshot, async (nextSnapshot) => {
-    if (
-      !autosaveEnabled.value
-      || !passiveComputerFileWritesSupported.value
-      || !currentComputerFileId.value
-    ) {
-      return
-    }
-    if (nextSnapshot === lastPersistedSnapshot.value) {
-      return
-    }
-
-    isSavingToComputerFile.value = true
-
-    try {
-      await persistAutosaveSnapshotsToCurrentComputerFile(nextSnapshot)
-    } finally {
-      await nextTick()
-      isSavingToComputerFile.value = false
-    }
-  }, {
-    debounce: computerFileAutosaveDebounceMs,
-    maxWait: computerFileAutosaveDebounceMs
+  useStudioAutosave({
+    snapshot: currentSnapshot,
+    eligible: computed(() => isPassiveWriteEligible() && hasPendingComputerFileChanges.value),
+    resumeOnSetup: hasPendingComputerFileChanges.value,
+    save: persistAutosaveSnapshotsToCurrentComputerFile
   })
 
   return {

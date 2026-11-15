@@ -1,6 +1,7 @@
 import { createPinia, setActivePinia } from 'pinia'
 import { beforeEach, describe, expect, it } from 'vitest'
 
+import { useStudioShellStore } from '../../app/stores/studio-shell'
 import { useStudioHeaderActions } from '../../app/composables/useStudioHeaderActions'
 import { useStudioSchemaStatus } from '../../app/composables/useStudioSchemaStatus'
 
@@ -10,7 +11,8 @@ describe('studio shared state composables', () => {
   })
 
   it('stores and clears header menus', () => {
-    const { clearStudioHeaderActions, setStudioHeaderActions, state } = useStudioHeaderActions()
+    const { state } = useStudioHeaderActions()
+    const { clearHeaderActions: clearStudioHeaderActions, setHeaderActions: setStudioHeaderActions } = useStudioShellStore().acquireWorkspaceChrome()
 
     setStudioHeaderActions({
       isLoading: true,
@@ -37,7 +39,8 @@ describe('studio shared state composables', () => {
   })
 
   it('stores and clears schema status', () => {
-    const { clearStudioSchemaStatus, setStudioSchemaStatus, state } = useStudioSchemaStatus()
+    const { state } = useStudioSchemaStatus()
+    const { clearSchemaStatus: clearStudioSchemaStatus, setSchemaStatus: setStudioSchemaStatus } = useStudioShellStore().acquireWorkspaceChrome()
 
     setStudioSchemaStatus({
       action: null,

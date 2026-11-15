@@ -1,19 +1,8 @@
 import {
-  preparePgmlDocumentForLoad,
-  type PgmlVersionSetDocument
+  preparePgmlDocumentForLoad
 } from '../utils/pgml-document'
 
-type PgmlDocumentLoadWorkerRequest = {
-  documentName: string
-  rawText: string
-  revision: number
-}
-
-type PgmlDocumentLoadWorkerResponse = {
-  document: PgmlVersionSetDocument | null
-  error: string | null
-  revision: number
-}
+import type { PgmlDocumentLoadWorkerRequest, PgmlDocumentLoadWorkerResponse } from '../utils/pgml-document-load'
 
 self.onmessage = (event: MessageEvent<PgmlDocumentLoadWorkerRequest>) => {
   try {
@@ -23,14 +12,14 @@ self.onmessage = (event: MessageEvent<PgmlDocumentLoadWorkerRequest>) => {
     })
 
     self.postMessage({
+      kind: 'loaded',
       document,
-      error: null,
       revision: event.data.revision
     } satisfies PgmlDocumentLoadWorkerResponse)
   } catch (error) {
     self.postMessage({
-      document: null,
-      error: error instanceof Error ? error.message : 'Unable to open that PGML document.',
+      kind: 'failed',
+      message: error instanceof Error ? error.message : 'Unable to open that PGML document.',
       revision: event.data.revision
     } satisfies PgmlDocumentLoadWorkerResponse)
   }

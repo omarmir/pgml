@@ -11,6 +11,7 @@ import {
   type PgmlTable
 } from './pgml'
 import { hasStoredPgmlTableWidthScale } from './pgml-node-properties'
+import { formatPgmlIndexKeyForSource, getPgmlIndexKeys } from './pgml-index-keys'
 
 export type PgmlEditableColumnDraft = {
   id: string
@@ -287,7 +288,7 @@ const serializeTableBlock = (draft: PgmlEditableTableDraft) => {
   draft.preservedIndexes.forEach((index) => {
     const typeSuffix = index.type.length > 0 ? ` [type: ${index.type}]` : ''
 
-    lines.push(`  Index ${index.name} (${index.columns.join(', ')})${typeSuffix}`)
+    lines.push(`  Index ${index.name} (${getPgmlIndexKeys(index).map(formatPgmlIndexKeyForSource).join(', ')})${typeSuffix}`)
   })
 
   draft.preservedConstraints.forEach((constraint) => {

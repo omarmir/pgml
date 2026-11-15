@@ -29,13 +29,11 @@ describe('diagram page source', () => {
       'prepareImportedExecutableAttachments',
       'applyImportedExecutableAttachmentSelections',
       'retainPgmlTableGroupsFromBaseSource',
-      'const importDumpRetainMatchingTableGroups: Ref<boolean> = ref(true)',
+      'retainMatchingTableGroups: true',
       'Retain matching table groups from base version',
       'Keep TableGroup assignments from the selected base when the imported dump contains the same tables.',
       'data-import-executable-attachment-dialog="true"',
       'data-import-loading="true"',
-      'const deleteVersionDialogOpen: Ref<boolean> = ref(false)',
-      'const deleteVersionId: Ref<string | null> = ref(null)',
       '@version-import-dbml="openImportDbmlDialog"',
       '@version-import-dump="openImportDumpDialog"',
       '@version-import-pgml="openImportPgmlDialog"',
@@ -49,14 +47,11 @@ describe('diagram page source', () => {
       'active: candidate.selectedTableIds.length === 0',
       'extraClass: \'px-2 py-1 font-mono text-[0.58rem] uppercase tracking-[0.08em]\'',
       'buildPgmlCheckpointName(versionDocument.value',
-      'checkpointNameIsSuggested',
       ':can-create-checkpoint="canCheckpoint"',
       ':active-diagram-view-id="activeDiagramViewId"',
       ':can-delete-diagram-view="canDeleteDiagramView"',
       ':diagram-view-items="diagramViewItems"',
       ':diagram-view-settings="diagramViewSettings"',
-      'const diagramViewDialogOpen: Ref<boolean> = ref(false)',
-      'const diagramViewDialogMode: Ref<DiagramViewDialogMode> = ref(\'create\')',
       'const diagramViewNameError = computed(() => {',
       'data-diagram-view-name-input="true"',
       'data-diagram-view-save="true"',
@@ -92,6 +87,12 @@ describe('diagram page source', () => {
 
     expect(file).toContain('const shouldIncludeLayout = includeLayout && canEmbedLayout.value')
     expect(file).not.toContain('const shouldIncludeLayout = includeLayout && canEmbedLayout.value && canvasRef.value !== null')
+  })
+
+  it('serializes the canonical reactive source for persistence after editor actions flush', () => {
+    const file = readSourceFile('app/components/studio/StudioWorkspacePage.vue')
+    expect(file).toContain('return serializeCurrentDocument(shouldIncludeLayout, source.value)')
+    expect(file).not.toContain('serializeCurrentDocument(shouldIncludeLayout, getLiveWorkspaceSource())')
   })
 
   it('prefers the reactive workspace source unless the editor has uncommitted local edits', () => {

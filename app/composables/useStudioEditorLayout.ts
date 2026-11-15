@@ -66,7 +66,7 @@ export const useStudioEditorLayout = () => {
     // even if the window changes size mid-interaction.
     const containerWidth = layoutShellRef.value.clientWidth
 
-    startPointerSession({
+    startPointerSession(event, {
       frameThrottle: true,
       onMove: (moveEvent: PointerEvent) => {
         editorPanelWidth.value = clampStudioEditorWidth(

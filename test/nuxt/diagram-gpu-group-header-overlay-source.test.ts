@@ -5,7 +5,6 @@ describe('diagram GPU group header overlay source', () => {
   it('renders group headers in a dedicated layer above connections and below tables', () => {
     const sceneFile = readSourceFile('app/components/pgml/PgmlDiagramGpuScene.vue')
 
-    expect(sceneFile).toContain('let groupHeaderContainer: PixiContainer | null = null')
     expect(sceneFile).toContain('let groupHeaderSpriteEntries = new Map<string, TextureCacheEntry>()')
     expect(sceneFile).toContain('kind: \'group\' | \'group-header\' | \'object\' | \'table\'')
     expect(sceneFile).toContain('const compositeColors = (foreground: string, background: string) => {')
@@ -31,11 +30,11 @@ describe('diagram GPU group header overlay source', () => {
     expect(sceneFile).toContain('const chipBaseFill = compositeColors(sceneTheme.control, bodyOverlayFill)')
     expect(sceneFile).toContain('const chipStrokeColor = compositeColors(sceneTheme.rail, chipBaseFill)')
     expect(sceneFile).toContain('drawHeaderChip(context, pillX, 9, pillWidth, pill, fontMonoSmallRegular, pillColors)')
-    expect(sceneFile).toContain('worldContainer.addChild(groupContainer)')
-    expect(sceneFile).toContain('worldContainer.addChild(staticLineGraphics)')
-    expect(sceneFile).toContain('worldContainer.addChild(dynamicLineGraphics)')
-    expect(sceneFile).toContain('worldContainer.addChild(groupHeaderContainer)')
-    expect(sceneFile).toContain('worldContainer.addChild(tableContainer)')
+    expect(sceneFile).toContain('resources.worldContainer.addChild(resources.groupContainer)')
+    expect(sceneFile).toContain('resources.worldContainer.addChild(resources.staticLineGraphics)')
+    expect(sceneFile).toContain('resources.worldContainer.addChild(resources.dynamicLineGraphics)')
+    expect(sceneFile).toContain('resources.worldContainer.addChild(resources.groupHeaderContainer)')
+    expect(sceneFile).toContain('resources.worldContainer.addChild(resources.tableContainer)')
   })
 
   it('keeps the header tint blended into the group shell instead of outlining a separate header box', () => {

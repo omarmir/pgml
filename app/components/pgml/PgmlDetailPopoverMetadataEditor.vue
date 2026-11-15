@@ -729,29 +729,33 @@ const getKindLabel = (kind: PgmlDetailMetadataDraftKind) => {
 
         <div class="grid gap-2">
           <div class="flex items-center justify-between gap-3">
-            <span :class="studioCompactFieldKickerClass">Indexed columns</span>
+            <span :class="studioCompactFieldKickerClass">Indexed keys</span>
             <button
               type="button"
               data-detail-metadata-add-index-column="true"
               :class="compactButtonClass"
               @click="addKnownListItem('indexColumns')"
             >
-              Add column
+              Add key
             </button>
           </div>
+          <p class="text-[0.64rem] leading-5 text-[color:var(--studio-shell-label)]">
+            Wrap SQL expressions in backticks, for example <code class="font-mono">`amount + 1`</code>.
+          </p>
           <div
             v-if="getKnownListItems('indexColumns').length"
             class="grid gap-2"
           >
             <div
-              v-for="entry in getKnownListItems('indexColumns')"
+              v-for="(entry, keyIndex) in getKnownListItems('indexColumns')"
               :key="entry.id"
               class="grid gap-2 sm:grid-cols-[minmax(0,1fr)_auto]"
             >
               <UInput
                 :model-value="entry.value"
                 data-detail-metadata-index-column="true"
-                placeholder="Column name"
+                :aria-label="`Index key ${keyIndex + 1}`"
+                placeholder="Column or SQL expression"
                 color="neutral"
                 variant="outline"
                 size="sm"

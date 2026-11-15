@@ -12,6 +12,7 @@ const {
   activateCompletionOnTyping = true,
   commitDebounceMs = 0,
   diagnosticsDelayMs = 150,
+  documentContextRevision = 0,
   documentScope = 'all',
   documentScopeItems = [],
   editorMode,
@@ -28,6 +29,7 @@ const {
   activateCompletionOnTyping?: boolean
   commitDebounceMs?: number
   diagnosticsDelayMs?: number
+  documentContextRevision?: number
   documentScope?: string
   documentScopeItems?: Array<{
     label: string
@@ -134,6 +136,7 @@ const updateDocumentScope = (value: unknown) => {
         :activate-completion-on-typing="activateCompletionOnTyping"
         :commit-debounce-ms="commitDebounceMs"
         :diagnostics-delay-ms="diagnosticsDelayMs"
+        :document-context-revision="documentContextRevision"
         :external-diagnostics="sourceDiagnostics"
         placeholder="Paste PGML here..."
         :read-only="readOnly"

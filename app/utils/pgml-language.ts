@@ -6,6 +6,7 @@ import {
   normalizePgmlCompatSource,
   parseDbmlCompatibleCheckDefinition,
   parseDbmlCompatibleIndexDefinition,
+  parsePgmlInlineIndexDefinition,
   parsePgmlCompatibleReference
 } from './pgml-dbml-compat'
 
@@ -656,8 +657,7 @@ const collectRawBlocks = (
     let depth = 1
     let blockEndLine = line
     let bodyIndex = index + 1
-    let sourceDelimiter: string | null = null
-    let sourceStartLine: PgmlLineInfo | null = null
+    let sourceState: { delimiter: string, startLine: PgmlLineInfo } | null = null
 
     while (bodyIndex < lines.length && depth > 0) {
       const bodyLine = lines[bodyIndex]
@@ -666,20 +666,19 @@ const collectRawBlocks = (
         break
       }
 
-      if (sourceDelimiter) {
+      if (sourceState) {
         body.push(bodyLine)
 
-        if (bodyLine.text.includes(sourceDelimiter)) {
+        if (bodyLine.text.includes(sourceState.delimiter)) {
           contexts.push({
             kind: 'source',
             blockKind: kind,
-            from: sourceStartLine ? sourceStartLine.from : bodyLine.from,
+            from: sourceState.startLine.from,
             to: bodyLine.to,
-            startLine: sourceStartLine ? sourceStartLine.number : bodyLine.number,
+            startLine: sourceState.startLine.number,
             endLine: bodyLine.number
           })
-          sourceDelimiter = null
-          sourceStartLine = null
+          sourceState = null
         }
 
         blockEndLine = bodyLine
@@ -690,8 +689,7 @@ const collectRawBlocks = (
       const detectedDelimiter = findSourceDelimiter(bodyLine.trimmed)
 
       if (detectedDelimiter !== null && detectedDelimiter.length > 0) {
-        sourceDelimiter = detectedDelimiter
-        sourceStartLine = bodyLine
+        sourceState = { delimiter: detectedDelimiter, startLine: bodyLine }
       }
 
       if (bodyLine.trimmed.endsWith('{')) {
@@ -716,13 +714,13 @@ const collectRawBlocks = (
       bodyIndex += 1
     }
 
-    if (sourceDelimiter) {
+    if (sourceState) {
       createDiagnostic(
         diagnostics,
         'pgml/source-unclosed',
         'error',
         'Dollar-quoted source block is not closed.',
-        sourceStartLine ? sourceStartLine : line
+        sourceState.startLine
       )
     }
 
@@ -949,18 +947,20 @@ const collectTableBody = (
     if (/^Indexes\s*\{$/i.test(line.trimmed)) {
       const nested = collectNestedBlock(block.body, index, diagnostics)
 
-      nested.body.forEach((nestedLine) => {
-        if (nestedLine.trimmed.length === 0 || nestedLine.trimmed.startsWith('//')) {
+      collectDbmlCompatibleMultilineEntries(nested.body.map(entry => entry.text)).forEach((nestedEntry) => {
+        const diagnosticLine = nested.body[nestedEntry.startIndex]
+
+        if (!diagnosticLine || nestedEntry.text.startsWith('//')) {
           return
         }
 
-        if (!parseDbmlCompatibleIndexDefinition(nestedLine.trimmed)) {
+        if (!parseDbmlCompatibleIndexDefinition(nestedEntry.text)) {
           createDiagnostic(
             diagnostics,
             'pgml/table-index-entry',
             'error',
             'Index entries inside `Indexes {}` must use `(column_a, column_b) [name: ...]`.',
-            nestedLine
+            diagnosticLine
           )
         }
       })
@@ -994,9 +994,17 @@ const collectTableBody = (
       continue
     }
 
-    const indexMatch = line.trimmed.match(/^Index\s+([^\s(]+)\s*\(([^)]*)\)(?:\s*\[([^\]]+)\])?$/)
+    if (line.trimmed.startsWith('Index ')) {
+      if (!parsePgmlInlineIndexDefinition(line.trimmed)) {
+        createDiagnostic(
+          diagnostics,
+          'pgml/table-entry',
+          'error',
+          'Index entries must use `Index name (column_a, column_b) [type: ...]`.',
+          line
+        )
+      }
 
-    if (indexMatch) {
       index += 1
       continue
     }

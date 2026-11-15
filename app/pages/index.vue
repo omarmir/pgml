@@ -1,5 +1,4 @@
 <script setup lang="ts">
-import type { Ref } from 'vue'
 import { storeToRefs } from 'pinia'
 import AppDbmlImportModal from '~/components/app/AppDbmlImportModal.vue'
 import AppGithubGistConnectModal from '~/components/app/AppGithubGistConnectModal.vue'
@@ -110,20 +109,32 @@ type PendingComputerFileAction = { kind: 'create-example' }
   | { kind: 'open-picker' }
   | { kind: 'open-recent', recentFileId: string }
 
-type ImportedSchemaResult = {
-  pgml: string
-  schemaName: string
+type HomeImportDraft = {
+  kind: 'dbml' | 'pg_dump'
+  target: PgDumpImportTarget
+  text: string
+  file: File | null
+  foldIdentifiersToLowercase: boolean
+  parseExecutableComments: boolean
 }
-
-type ImportDialogState = {
-  dialogOpen: Ref<boolean>
-  error: Ref<string | null>
-  isSubmitting: Ref<boolean>
-  selectedFile: Ref<File | null>
-  target: Ref<PgDumpImportTarget | null>
-  text: Ref<string>
-}
-
+const schemaImport = useSchemaImportSession<HomeImportDraft>()
+const dbmlImportDraft = computed(() => schemaImport.draft.value?.kind === 'dbml' ? schemaImport.draft.value : null)
+const pgDumpImportDraft = computed(() => schemaImport.draft.value?.kind === 'pg_dump' ? schemaImport.draft.value : null)
+const dbmlImportDialogOpen = computed(() => schemaImport.isOpen.value && dbmlImportDraft.value !== null)
+const pgDumpImportDialogOpen = computed(() => schemaImport.isOpen.value && pgDumpImportDraft.value !== null)
+const dbmlImportError = computed(() => dbmlImportDraft.value === null ? null : schemaImport.error.value)
+const pgDumpImportError = computed(() => pgDumpImportDraft.value === null ? null : schemaImport.error.value)
+const dbmlImportTarget = computed(() => dbmlImportDraft.value === null ? null : dbmlImportDraft.value.target)
+const pgDumpImportTarget = computed(() => pgDumpImportDraft.value === null ? null : pgDumpImportDraft.value.target)
+const dbmlImportText = computed(() => dbmlImportDraft.value === null ? '' : dbmlImportDraft.value.text)
+const pgDumpImportText = computed(() => pgDumpImportDraft.value === null ? '' : pgDumpImportDraft.value.text)
+const dbmlImportSelectedFile = computed(() => dbmlImportDraft.value === null ? null : dbmlImportDraft.value.file)
+const pgDumpImportSelectedFile = computed(() => pgDumpImportDraft.value === null ? null : pgDumpImportDraft.value.file)
+const dbmlImportFoldIdentifiersToLowercase = computed(() => dbmlImportDraft.value !== null && dbmlImportDraft.value.foldIdentifiersToLowercase)
+const pgDumpImportFoldIdentifiersToLowercase = computed(() => pgDumpImportDraft.value !== null && pgDumpImportDraft.value.foldIdentifiersToLowercase)
+const dbmlImportParseExecutableComments = computed(() => dbmlImportDraft.value !== null && dbmlImportDraft.value.parseExecutableComments)
+const isSubmittingDbmlImport = computed(() => schemaImport.isBusy.value && dbmlImportDraft.value !== null)
+const isSubmittingPgDumpImport = computed(() => schemaImport.isBusy.value && pgDumpImportDraft.value !== null)
 type ImportDialogCopy = {
   confirmLabel: string
   description: string
@@ -137,32 +148,19 @@ type PendingImportedSchemaLaunch = {
   snapshotSource: string
 }
 
-const computerFileAccessDialogOpen: Ref<boolean> = ref(false)
-const dbmlImportDialogOpen: Ref<boolean> = ref(false)
-const dbmlImportError: Ref<string | null> = ref(null)
-const dbmlImportFoldIdentifiersToLowercase: Ref<boolean> = ref(false)
-const dbmlImportParseExecutableComments: Ref<boolean> = ref(false)
-const dbmlImportSelectedFile: Ref<File | null> = ref(null)
-const dbmlImportTarget: Ref<PgDumpImportTarget | null> = ref(null)
-const dbmlImportText: Ref<string> = ref('')
-const isConfirmingComputerFileAction: Ref<boolean> = ref(false)
-const isSubmittingDbmlImport: Ref<boolean> = ref(false)
-const isSubmittingGithubGistConnection: Ref<boolean> = ref(false)
-const isSubmittingPgDumpImport: Ref<boolean> = ref(false)
-const isSubmittingImportedSchemaLaunch: Ref<boolean> = ref(false)
-const pendingComputerFileAction: Ref<PendingComputerFileAction | null> = ref(null)
-const pendingImportedSchemaLaunch: Ref<PendingImportedSchemaLaunch | null> = ref(null)
-const pgDumpImportDialogOpen: Ref<boolean> = ref(false)
-const pgDumpImportError: Ref<string | null> = ref(null)
-const pgDumpImportFoldIdentifiersToLowercase: Ref<boolean> = ref(false)
-const pgDumpImportSelectedFile: Ref<File | null> = ref(null)
-const pgDumpImportTarget: Ref<PgDumpImportTarget | null> = ref(null)
-const pgDumpImportText: Ref<string> = ref('')
-const importedSchemaLaunchDialogOpen: Ref<boolean> = ref(false)
-const githubGistConnectDialogOpen: Ref<boolean> = ref(false)
-const githubGistId: Ref<string> = ref('')
-const githubGistTokenInput: Ref<string> = ref('')
-const githubGistConnectError: Ref<string | null> = ref(null)
+let homeLifetime: 'active' | 'disposed' = 'active'
+onScopeDispose(() => {
+  homeLifetime = 'disposed'
+})
+const computerFileAccessDialog = useDialogDraft<PendingComputerFileAction>()
+const { draft: pendingComputerFileAction, isOpen: computerFileAccessDialogOpen, isSaving: isConfirmingComputerFileAction } = computerFileAccessDialog
+const importedSchemaLaunch = useDialogDraft<PendingImportedSchemaLaunch & { error: string | null }>()
+const { draft: pendingImportedSchemaLaunch, isOpen: importedSchemaLaunchDialogOpen, isSaving: isSubmittingImportedSchemaLaunch } = importedSchemaLaunch
+const githubGistDialog = useDialogDraft<{ gistId: string, token: string, error: string | null }>()
+const { isOpen: githubGistConnectDialogOpen, isSaving: isSubmittingGithubGistConnection } = githubGistDialog
+const githubGistId = computed(() => githubGistDialog.draft.value === null ? '' : githubGistDialog.draft.value.gistId)
+const githubGistTokenInput = computed(() => githubGistDialog.draft.value === null ? '' : githubGistDialog.draft.value.token)
+const githubGistConnectError = computed(() => githubGistDialog.draft.value === null ? null : githubGistDialog.draft.value.error)
 const browserNewQuery = buildBrowserStudioNewQuery()
 const browserExampleQuery = buildBrowserStudioExampleQuery()
 const studioSessionStore = useStudioSessionStore()
@@ -195,22 +193,6 @@ const sourceImportTargetByCardId: Record<SourceCardId, PgDumpImportTarget> = {
   'computer-saved-file': 'file',
   'github-gist': 'gist'
 }
-const dbmlImportState: ImportDialogState = {
-  dialogOpen: dbmlImportDialogOpen,
-  error: dbmlImportError,
-  isSubmitting: isSubmittingDbmlImport,
-  selectedFile: dbmlImportSelectedFile,
-  target: dbmlImportTarget,
-  text: dbmlImportText
-}
-const pgDumpImportState: ImportDialogState = {
-  dialogOpen: pgDumpImportDialogOpen,
-  error: pgDumpImportError,
-  isSubmitting: isSubmittingPgDumpImport,
-  selectedFile: pgDumpImportSelectedFile,
-  target: pgDumpImportTarget,
-  text: pgDumpImportText
-}
 const getActionErrorMessage = (error: unknown, fallbackMessage: string) => {
   if (error instanceof Error && error.message.trim().length > 0) {
     return error.message
@@ -238,132 +220,32 @@ const pushComputerFileActionErrorToast = (description: string) => {
     icon: 'i-lucide-circle-alert'
   })
 }
-const resetImportDialogState = (state: ImportDialogState) => {
-  state.dialogOpen.value = false
-  state.error.value = null
-  state.selectedFile.value = null
-  state.target.value = null
-  state.text.value = ''
-}
-const syncImportConflictError = (input: {
-  conflictErrorMessage: string
-  state: ImportDialogState
-}) => {
-  const hasFile = input.state.selectedFile.value !== null
-  const hasText = input.state.text.value.trim().length > 0
-
-  if (hasFile && hasText) {
-    input.state.error.value = input.conflictErrorMessage
-    return false
+const editImport = (patch: Partial<HomeImportDraft>) => {
+  schemaImport.edit(draft => ({ ...draft, ...patch }))
+  const draft = schemaImport.draft.value
+  if (draft !== null && draft.file !== null && draft.text.trim().length > 0) {
+    schemaImport.setError(draft.kind === 'dbml' ? dbmlImportConflictErrorMessage : pgDumpImportConflictErrorMessage)
   }
-
-  if (input.state.error.value !== null) {
-    input.state.error.value = null
-  }
-
-  return true
 }
-const openImportDialogForCard = (state: ImportDialogState, cardId: SourceCardId) => {
-  resetImportDialogState(state)
-  state.dialogOpen.value = true
-  state.target.value = sourceImportTargetByCardId[cardId]
-}
-const closeImportDialog = (state: ImportDialogState) => {
-  if (state.isSubmitting.value) {
-    return
-  }
-
-  resetImportDialogState(state)
-}
-const handleImportDialogOpenChange = (state: ImportDialogState, nextOpen: boolean) => {
-  if (nextOpen) {
-    state.dialogOpen.value = true
-    return
-  }
-
-  closeImportDialog(state)
-}
-const setImportText = (
-  state: ImportDialogState,
-  value: string,
-  conflictErrorMessage: string
-) => {
-  state.text.value = value
-  syncImportConflictError({
-    conflictErrorMessage,
-    state
-  })
-}
-const setImportFile = (
-  state: ImportDialogState,
-  files: FileList | null,
-  conflictErrorMessage: string
-) => {
-  state.selectedFile.value = files?.[0] || null
-  syncImportConflictError({
-    conflictErrorMessage,
-    state
-  })
-}
-const clearImportFile = (state: ImportDialogState, conflictErrorMessage: string) => {
-  state.selectedFile.value = null
-  syncImportConflictError({
-    conflictErrorMessage,
-    state
-  })
-}
-const submitImportedSchema = async (input: {
-  conflictErrorMessage: string
-  convert: (input: {
-    preferredName?: string | null
-    sourceText: string
-  }) => ImportedSchemaResult
-  fallbackErrorMessage: string
-  missingInputErrorMessage: string
-  state: ImportDialogState
-}) => {
-  const importTarget = input.state.target.value
-
-  if (!importTarget) {
-    return
-  }
-
-  if (!syncImportConflictError({
-    conflictErrorMessage: input.conflictErrorMessage,
-    state: input.state
-  })) {
-    return
-  }
-
-  const selectedFile = input.state.selectedFile.value
-  const trimmedText = input.state.text.value.trim()
-
-  if (!selectedFile && trimmedText.length === 0) {
-    input.state.error.value = input.missingInputErrorMessage
-    return
-  }
-
-  input.state.isSubmitting.value = true
-
+const submitImportedSchema = async (kind: HomeImportDraft['kind']) => {
+  if (schemaImport.draft.value?.kind !== kind) return
+  const request = schemaImport.begin(kind === 'dbml'
+    ? { conflict: dbmlImportConflictErrorMessage, missing: dbmlImportMissingInputErrorMessage }
+    : { conflict: pgDumpImportConflictErrorMessage, missing: pgDumpImportMissingInputErrorMessage })
+  if (request === null) return
+  const draft = request.draft
   try {
-    const importedSource = selectedFile ? await selectedFile.text() : input.state.text.value
-    const importedSchema = input.convert({
-      preferredName: selectedFile?.name,
-      sourceText: importedSource
-    })
+    const sourceText = draft.file === null ? draft.text : await draft.file.text()
+    if (!schemaImport.owns(request)) return
+    const importedSchema = kind === 'dbml'
+      ? convertDbmlToPgml({ dbml: sourceText, foldIdentifiersToLowercase: draft.foldIdentifiersToLowercase,
+          parseExecutableComments: draft.parseExecutableComments, preferredName: draft.file?.name })
+      : convertPgDumpToPgml({ sql: sourceText, foldIdentifiersToLowercase: draft.foldIdentifiersToLowercase, preferredName: draft.file?.name })
     const preparedImport = prepareImportedExecutableAttachments(importedSchema.pgml)
-
-    resetImportDialogState(input.state)
-    pendingImportedSchemaLaunch.value = {
-      importTarget,
-      schemaName: importedSchema.schemaName,
-      snapshotSource: preparedImport.pgml
-    }
-    importedSchemaLaunchDialogOpen.value = true
+    if (!schemaImport.complete(request)) return
+    importedSchemaLaunch.open({ importTarget: draft.target, schemaName: importedSchema.schemaName, snapshotSource: preparedImport.pgml, error: null })
   } catch (error) {
-    input.state.error.value = getActionErrorMessage(error, input.fallbackErrorMessage)
-  } finally {
-    input.state.isSubmitting.value = false
+    schemaImport.fail(request, getActionErrorMessage(error, kind === 'dbml' ? 'Unable to import that DBML.' : 'Unable to import that pg_dump.'))
   }
 }
 const buildVersionedPgmlText = (input: {
@@ -408,25 +290,19 @@ const refreshRecentComputerFiles = async () => {
 const refreshGithubGistFiles = async () => {
   await studioSourcesStore.refreshGithubGistFiles()
 }
-const closeImportedSchemaLaunchDialog = () => {
-  if (isSubmittingImportedSchemaLaunch.value) {
-    return
-  }
-
-  importedSchemaLaunchDialogOpen.value = false
-  pendingImportedSchemaLaunch.value = null
-}
+const closeImportedSchemaLaunchDialog = () => importedSchemaLaunch.close()
 const finishImportedSchemaLaunch = async (input: {
   importTarget: PgDumpImportTarget
   schemaName: string
   snapshotSource: string
   workspacePage: StudioWorkspacePage
+  canNavigate: () => boolean
 }) => {
   // Browser imports become saved browser documents immediately. File imports
   // queue the file-system permission dialog first so the actual save target is
   // still chosen by the user.
   if (input.importTarget === 'file') {
-    queueComputerFileAccessAction({
+    return queueComputerFileAccessAction({
       kind: 'create-import',
       schemaName: input.schemaName,
       text: buildVersionedPgmlText({
@@ -437,19 +313,15 @@ const finishImportedSchemaLaunch = async (input: {
       }),
       workspacePage: input.workspacePage
     })
-    return
   }
 
   if (input.importTarget === 'gist') {
-    await createGithubGistFileFromImport({
-      name: input.schemaName,
-      snapshotSource: input.snapshotSource,
-      workspacePage: input.workspacePage
+    return await createGithubGistFileFromImport({
+      name: input.schemaName, snapshotSource: input.snapshotSource, workspacePage: input.workspacePage, canNavigate: input.canNavigate
     })
-    return
   }
 
-  await createBrowserSchemaFromImport({
+  return await createBrowserSchemaFromImport({
     name: input.schemaName,
     snapshotSource: input.snapshotSource,
     workspacePage: input.workspacePage
@@ -486,6 +358,7 @@ const createGithubGistFile = async (input: {
   name: string
   text: string
   workspacePage?: StudioWorkspacePage
+  canNavigate?: () => boolean
 }) => {
   if (!githubGistConnection.value || !githubGistToken.value) {
     openGithubGistConnectDialog()
@@ -502,6 +375,7 @@ const createGithubGistFile = async (input: {
     return false
   }
 
+  if (homeLifetime === 'disposed' || (input.canNavigate && !input.canNavigate())) return false
   await router.push({
     path: getStudioWorkspacePath(input.workspacePage || 'diagram'),
     query: buildGistStudioFileQuery({
@@ -516,6 +390,7 @@ const createGithubGistFileFromImport = async (input: {
   name: string
   snapshotSource: string
   workspacePage: StudioWorkspacePage
+  canNavigate: () => boolean
 }) => {
   return await createGithubGistFile({
     name: input.name,
@@ -525,7 +400,8 @@ const createGithubGistFileFromImport = async (input: {
       role: 'implementation',
       snapshotSource: input.snapshotSource
     }),
-    workspacePage: input.workspacePage
+    workspacePage: input.workspacePage,
+    canNavigate: input.canNavigate
   })
 }
 const deleteBrowserSavedSchema = (schemaId: string) => {
@@ -560,6 +436,7 @@ const navigateToRecentComputerFile = async (
     text: string
   }
 ) => {
+  if (homeLifetime === 'disposed') return
   if (preloadedFile) {
     studioSessionStore.primePreloadedFileLaunch(buildFileLaunchRequest(recentFileId), preloadedFile)
   }
@@ -574,13 +451,15 @@ const openComputerFileFromPicker = async () => {
     const loadedFile = await openComputerPgmlFile()
 
     if (!loadedFile) {
-      return
+      return false
     }
 
     await refreshRecentComputerFiles()
     await navigateToRecentComputerFile(loadedFile.entry.id, 'diagram', loadedFile)
+    return true
   } catch (error) {
     pushComputerFileActionErrorToast(getActionErrorMessage(error, 'Unable to open the selected file.'))
+    return false
   }
 }
 const createComputerFile = async (input: {
@@ -595,17 +474,19 @@ const createComputerFile = async (input: {
     })
 
     if (!createdFile) {
-      return
+      return false
     }
 
     await refreshRecentComputerFiles()
     await navigateToRecentComputerFile(createdFile.entry.id, input.workspacePage || 'diagram', createdFile)
+    return true
   } catch (error) {
     pushSaveErrorToast(getActionErrorMessage(error, 'Unable to save to the selected file.'))
+    return false
   }
 }
 const createComputerFileFromLaunch = async (launchType: 'example' | 'new') => {
-  await createComputerFile({
+  return await createComputerFile({
     name: launchType === 'example' ? exampleSchemaName : untitledSchemaName,
     text: launchType === 'example'
       ? pgmlVersionedExample
@@ -636,13 +517,15 @@ const openRecentComputerFileFromLaunch = async (recentFileId: string) => {
     const loadedFile = await loadRecentComputerPgmlFile(recentFileId)
 
     if (!loadedFile) {
-      return
+      return false
     }
 
     await refreshRecentComputerFiles()
     await navigateToRecentComputerFile(loadedFile.entry.id, 'diagram', loadedFile)
+    return true
   } catch (error) {
     pushComputerFileActionErrorToast(getActionErrorMessage(error, 'Unable to reopen the selected file.'))
+    return false
   }
 }
 const handleRecentComputerFileLaunch = async (recentFileId: string) => {
@@ -662,187 +545,87 @@ const handleRecentComputerFileLaunch = async (recentFileId: string) => {
     pushComputerFileActionErrorToast(getActionErrorMessage(error, 'Unable to reopen the selected file.'))
   }
 }
-const queueComputerFileAccessAction = (action: PendingComputerFileAction) => {
-  pendingComputerFileAction.value = action
-  computerFileAccessDialogOpen.value = true
+const queueComputerFileAccessAction = (action: PendingComputerFileAction) => computerFileAccessDialog.open(action)
+const openImportDialog = (kind: HomeImportDraft['kind'], cardId: SourceCardId) => {
+  schemaImport.open({ kind, target: sourceImportTargetByCardId[cardId], text: '', file: null,
+    foldIdentifiersToLowercase: false, parseExecutableComments: false })
 }
-const openDbmlImportDialog = (cardId: SourceCardId) => {
-  dbmlImportFoldIdentifiersToLowercase.value = false
-  dbmlImportParseExecutableComments.value = false
-  openImportDialogForCard(dbmlImportState, cardId)
+const openDbmlImportDialog = (cardId: SourceCardId) => openImportDialog('dbml', cardId)
+const openPgDumpImportDialog = (cardId: SourceCardId) => openImportDialog('pg_dump', cardId)
+const handlePgDumpImportDialogOpenChange = (open: boolean) => {
+  if (!open) schemaImport.close()
 }
-const openPgDumpImportDialog = (cardId: SourceCardId) => {
-  pgDumpImportFoldIdentifiersToLowercase.value = false
-  openImportDialogForCard(pgDumpImportState, cardId)
+const handleDbmlImportDialogOpenChange = (open: boolean) => {
+  if (!open) schemaImport.close()
 }
-const handlePgDumpImportDialogOpenChange = (nextOpen: boolean) => {
-  handleImportDialogOpenChange(pgDumpImportState, nextOpen)
-}
-const handleDbmlImportDialogOpenChange = (nextOpen: boolean) => {
-  if (nextOpen) {
-    dbmlImportFoldIdentifiersToLowercase.value = false
-    dbmlImportParseExecutableComments.value = false
-    dbmlImportState.dialogOpen.value = true
-    return
-  }
-
-  dbmlImportFoldIdentifiersToLowercase.value = false
-  dbmlImportParseExecutableComments.value = false
-  closeImportDialog(dbmlImportState)
-}
-const setDbmlImportText = (value: string) => {
-  setImportText(dbmlImportState, value, dbmlImportConflictErrorMessage)
-}
-const setDbmlImportFile = (files: FileList | null) => {
-  setImportFile(dbmlImportState, files, dbmlImportConflictErrorMessage)
-}
-const clearDbmlImportFile = () => {
-  clearImportFile(dbmlImportState, dbmlImportConflictErrorMessage)
-}
-const submitDbmlImport = async () => {
-  await submitImportedSchema({
-    conflictErrorMessage: dbmlImportConflictErrorMessage,
-    convert: ({ preferredName, sourceText }) => {
-      return convertDbmlToPgml({
-        dbml: sourceText,
-        foldIdentifiersToLowercase: dbmlImportFoldIdentifiersToLowercase.value,
-        parseExecutableComments: dbmlImportParseExecutableComments.value,
-        preferredName
-      })
-    },
-    fallbackErrorMessage: 'Unable to import that DBML.',
-    missingInputErrorMessage: dbmlImportMissingInputErrorMessage,
-    state: dbmlImportState
-  })
-}
-const setPgDumpImportText = (value: string) => {
-  setImportText(pgDumpImportState, value, pgDumpImportConflictErrorMessage)
-}
-const setPgDumpImportFile = (files: FileList | null) => {
-  setImportFile(pgDumpImportState, files, pgDumpImportConflictErrorMessage)
-}
-const clearPgDumpImportFile = () => {
-  clearImportFile(pgDumpImportState, pgDumpImportConflictErrorMessage)
-}
-const submitPgDumpImport = async () => {
-  await submitImportedSchema({
-    conflictErrorMessage: pgDumpImportConflictErrorMessage,
-    convert: ({ preferredName, sourceText }) => {
-      return convertPgDumpToPgml({
-        foldIdentifiersToLowercase: pgDumpImportFoldIdentifiersToLowercase.value,
-        preferredName,
-        sql: sourceText
-      })
-    },
-    fallbackErrorMessage: 'Unable to import that pg_dump.',
-    missingInputErrorMessage: pgDumpImportMissingInputErrorMessage,
-    state: pgDumpImportState
-  })
-}
-const closeComputerFileAccessDialog = () => {
-  if (isConfirmingComputerFileAction.value) {
-    return
-  }
-
-  computerFileAccessDialogOpen.value = false
-  pendingComputerFileAction.value = null
-}
+const setDbmlImportText = (text: string) => editImport({ text })
+const setPgDumpImportText = (text: string) => editImport({ text })
+const setDbmlImportFile = (files: FileList | null) => editImport({ file: files === null ? null : files.item(0) })
+const setPgDumpImportFile = (files: FileList | null) => editImport({ file: files === null ? null : files.item(0) })
+const clearDbmlImportFile = () => editImport({ file: null })
+const clearPgDumpImportFile = () => editImport({ file: null })
+const submitDbmlImport = () => submitImportedSchema('dbml')
+const submitPgDumpImport = () => submitImportedSchema('pg_dump')
+const closeComputerFileAccessDialog = () => computerFileAccessDialog.close()
 const confirmComputerFileAccessAction = async () => {
-  const pendingAction = pendingComputerFileAction.value
-
-  if (!pendingAction) {
-    return
-  }
-
-  computerFileAccessDialogOpen.value = false
-  isConfirmingComputerFileAction.value = true
-
+  const action = computerFileAccessDialog.beginSave()
+  if (action === null) return
   try {
-    if (pendingAction.kind === 'open-picker') {
-      await openComputerFileFromPicker()
-      return
-    }
-
-    if (pendingAction.kind === 'open-recent') {
-      await openRecentComputerFileFromLaunch(pendingAction.recentFileId)
-      return
-    }
-
-    if (pendingAction.kind === 'create-new') {
-      await createComputerFileFromLaunch('new')
-      return
-    }
-
-    if (pendingAction.kind === 'create-import') {
-      await createComputerFile({
-        name: pendingAction.schemaName,
-        text: pendingAction.text,
-        workspacePage: pendingAction.workspacePage
-      })
-      return
-    }
-
-    await createComputerFileFromLaunch('example')
+    // Invoke the native picker from this click before any awaited work.
+    const operation = action.kind === 'open-picker'
+      ? openComputerFileFromPicker()
+      : action.kind === 'open-recent'
+        ? openRecentComputerFileFromLaunch(action.recentFileId)
+        : action.kind === 'create-new'
+          ? createComputerFileFromLaunch('new')
+          : action.kind === 'create-import'
+            ? createComputerFile({ name: action.schemaName, text: action.text, workspacePage: action.workspacePage })
+            : createComputerFileFromLaunch('example')
+    const accepted = await operation
+    computerFileAccessDialog.completeSave(action, accepted)
   } finally {
-    isConfirmingComputerFileAction.value = false
-    pendingComputerFileAction.value = null
+    computerFileAccessDialog.completeSave(action, false)
   }
 }
 const launchImportedSchemaIntoWorkspace = async (workspacePage: StudioWorkspacePage) => {
-  const pendingLaunch = pendingImportedSchemaLaunch.value
-
-  if (!pendingLaunch) {
-    return
-  }
-
-  isSubmittingImportedSchemaLaunch.value = true
-
+  const draft = importedSchemaLaunch.beginSave()
+  if (draft === null) return
+  draft.error = null
   try {
-    await finishImportedSchemaLaunch({
-      ...pendingLaunch,
-      workspacePage
-    })
-    importedSchemaLaunchDialogOpen.value = false
-    pendingImportedSchemaLaunch.value = null
+    const accepted = await finishImportedSchemaLaunch({ ...draft, workspacePage,
+      canNavigate: () => importedSchemaLaunch.isSaving.value && importedSchemaLaunch.draft.value === draft })
+    if (accepted) importedSchemaLaunch.completeSave(draft, true)
+    else draft.error = draft.importTarget === 'browser' ? 'Unable to save to local storage.' : 'Unable to save to the connected GitHub Gist.'
+  } catch (error) {
+    draft.error = getActionErrorMessage(error, 'Unable to open the imported schema.')
+    if (importedSchemaLaunch.draft.value === draft) pushSaveErrorToast(draft.error)
   } finally {
-    isSubmittingImportedSchemaLaunch.value = false
+    importedSchemaLaunch.completeSave(draft, false)
   }
 }
 const openGithubGistConnectDialog = () => {
-  githubGistId.value = githubGistConnection.value?.gistId || ''
-  githubGistTokenInput.value = ''
-  githubGistConnectError.value = null
-  githubGistConnectDialogOpen.value = true
+  githubGistDialog.open({ gistId: githubGistConnection.value === null ? '' : githubGistConnection.value.gistId, token: '', error: null })
 }
-const handleGithubGistConnectDialogOpenChange = (nextOpen: boolean) => {
-  githubGistConnectDialogOpen.value = nextOpen
-
-  if (nextOpen) {
-    return
-  }
-
-  githubGistTokenInput.value = ''
-  githubGistConnectError.value = null
+const handleGithubGistConnectDialogOpenChange = (open: boolean) => {
+  if (!open) githubGistDialog.close()
 }
 const submitGithubGistConnection = async () => {
-  isSubmittingGithubGistConnection.value = true
-  githubGistConnectError.value = null
-
+  const draft = githubGistDialog.beginSave()
+  if (draft === null) return
+  draft.error = null
   try {
-    const didConnect = await studioSourcesStore.connectGithubGist({
-      gistId: githubGistId.value,
-      token: githubGistTokenInput.value
-    })
-
+    const didConnect = await studioSourcesStore.connectGithubGist({ gistId: draft.gistId, token: draft.token })
+    if (githubGistDialog.draft.value !== draft) return
     if (!didConnect) {
-      githubGistConnectError.value = studioSourcesStore.githubGistError || 'Unable to connect to that GitHub Gist.'
+      draft.error = studioSourcesStore.githubGistError || 'Unable to connect to that GitHub Gist.'
       return
     }
-
-    githubGistTokenInput.value = ''
-    githubGistConnectDialogOpen.value = false
+    draft.token = ''
+    githubGistDialog.completeSave(draft, true)
+  } catch (error) {
+    if (githubGistDialog.draft.value === draft) draft.error = getActionErrorMessage(error, 'Unable to connect to that GitHub Gist.')
   } finally {
-    isSubmittingGithubGistConnection.value = false
+    githubGistDialog.completeSave(draft, false)
   }
 }
 const handleSourceCardAction = async (payload: {
@@ -1410,12 +1193,13 @@ onBeforeRouteLeave((to) => {
         :error-message="dbmlImportError"
         :is-submitting="isSubmittingDbmlImport"
         @update:open="handleDbmlImportDialogOpenChange"
-        @update:fold-identifiers-to-lowercase="dbmlImportFoldIdentifiersToLowercase = $event"
+        @update:fold-identifiers-to-lowercase="editImport({ foldIdentifiersToLowercase: $event })"
         @update:model-value="setDbmlImportText"
-        @update:parse-executable-comments="dbmlImportParseExecutableComments = $event"
+        @update:parse-executable-comments="editImport({ parseExecutableComments: $event })"
         @select-file="setDbmlImportFile"
         @clear-file="clearDbmlImportFile"
         @submit="submitDbmlImport"
+        @after-leave="schemaImport.afterLeave('dbml')"
       />
 
       <AppPgDumpImportModal
@@ -1430,11 +1214,12 @@ onBeforeRouteLeave((to) => {
         :error-message="pgDumpImportError"
         :is-submitting="isSubmittingPgDumpImport"
         @update:open="handlePgDumpImportDialogOpenChange"
-        @update:fold-identifiers-to-lowercase="pgDumpImportFoldIdentifiersToLowercase = $event"
+        @update:fold-identifiers-to-lowercase="editImport({ foldIdentifiersToLowercase: $event })"
         @update:model-value="setPgDumpImportText"
         @select-file="setPgDumpImportFile"
         @clear-file="clearPgDumpImportFile"
         @submit="submitPgDumpImport"
+        @after-leave="schemaImport.afterLeave('pg_dump')"
       />
 
       <AppGithubGistConnectModal
@@ -1444,17 +1229,20 @@ onBeforeRouteLeave((to) => {
         :error-message="githubGistConnectError"
         :is-submitting="isSubmittingGithubGistConnection"
         @update:open="handleGithubGistConnectDialogOpenChange"
-        @update:gist-id="githubGistId = $event"
-        @update:token="githubGistTokenInput = $event"
+        @update:gist-id="githubGistDialog.updateDraft({ gistId: $event })"
+        @update:token="githubGistDialog.updateDraft({ token: $event })"
         @submit="submitGithubGistConnection"
+        @after-leave="githubGistDialog.afterLeave"
       />
 
       <StudioModalFrame
-        v-model:open="importedSchemaLaunchDialogOpen"
+        :open="importedSchemaLaunchDialogOpen"
         title="Open imported schema"
         description="Choose which workspace should open the imported document first. Diagram keeps the visual canvas and editor; Analysis skips both and opens directly into versions, compare, and migrations."
         surface-id="imported-schema-launch"
         body-class="grid gap-3 px-4 py-3"
+        @update:open="importedSchemaLaunch.updateOpen"
+        @after-leave="importedSchemaLaunch.afterLeave"
         @close="closeImportedSchemaLaunchDialog"
       >
         <div :class="computerFileAccessInfoPanelClass">
@@ -1466,6 +1254,13 @@ onBeforeRouteLeave((to) => {
           </p>
         </div>
 
+        <p
+          v-if="pendingImportedSchemaLaunch && pendingImportedSchemaLaunch.error"
+          role="alert"
+          class="text-sm text-[color:var(--studio-shell-error)]"
+        >
+          {{ pendingImportedSchemaLaunch.error }}
+        </p>
         <template #footer>
           <UButton
             label="Cancel"
@@ -1495,11 +1290,13 @@ onBeforeRouteLeave((to) => {
       </StudioModalFrame>
 
       <StudioModalFrame
-        v-model:open="computerFileAccessDialogOpen"
+        :open="computerFileAccessDialogOpen"
         :title="computerFileAccessDialogCopy.title"
         description="PGML only asks for browser-managed access to the exact `.pgml` file you choose or reopen. Your browser still shows its own native picker or permission prompt next."
         surface-id="computer-file-access"
         body-class="grid gap-3 px-4 py-3"
+        @update:open="computerFileAccessDialog.updateOpen"
+        @after-leave="computerFileAccessDialog.afterLeave"
         @close="closeComputerFileAccessDialog"
       >
         <div :class="computerFileAccessInfoPanelClass">
